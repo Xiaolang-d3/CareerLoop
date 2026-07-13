@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from .agent import get_agent_capabilities, get_agent_runtime
 from .browser import browser_controller
 from .db import connect, init_db, json_dump, row_to_dict, rows_to_dicts
 from .workflow.engine import open_boss_via_workflow, refresh_workflow_status
@@ -85,6 +86,11 @@ def workflow_status() -> dict[str, Any]:
     return refresh_workflow_status()
 
 
+@app.get("/agent/capabilities")
+def agent_capabilities() -> dict[str, Any]:
+    return get_agent_capabilities()
+
+
 @app.post("/workflow/open-boss")
 def workflow_open_boss() -> dict[str, Any]:
     return open_boss_via_workflow()
@@ -121,9 +127,10 @@ def list_chat_messages() -> list[dict[str, Any]]:
 
 
 @app.post("/chat/messages")
-def create_chat_message(payload: ChatMessageIn) -> dict[str, Any]:
+async def create_chat_message(payload: ChatMessageIn) -> dict[str, Any]:
     user_message = _save_chat_message("user", payload.content)
     text = payload.content.lower()
+    agent_result = None
 
     if ("boss" in text or "直聘" in text) and ("打开" in text or "登录" in text):
         workflow = open_boss_via_workflow()
@@ -132,18 +139,14 @@ def create_chat_message(payload: ChatMessageIn) -> dict[str, Any]:
         workflow = refresh_workflow_status()
         assistant_text = _workflow_summary(workflow)
     else:
+        agent_result = await get_agent_runtime().run(payload.content)
         workflow = refresh_workflow_status()
-        browser_node = next((node for node in workflow["nodes"] if node["id"] == "open_boss"), None)
-        login_hint = "你还没有打开 BOSS 官方页面。需要我继续操作时，可以直接说“打开 BOSS 登录”。"
-        if browser_node and browser_node["status"] == "done":
-            login_hint = "BOSS 官方页面已经打开。你完成官方登录后，我就可以继续规划岗位采集和分析。"
-        assistant_text = (
-            "我先记录你的求职目标，并会根据当前状态规划下一步。"
-            f"{login_hint}"
-            "后续会接入 LLM planner，由大模型根据你的目标动态选择工具。"
-        )
+        assistant_text = agent_result.content
 
-    assistant_message = _save_chat_message("assistant", assistant_text, {"workflow": workflow})
+    assistant_payload: dict[str, Any] = {"workflow": workflow}
+    if agent_result is not None:
+        assistant_payload["agent"] = agent_result.model_dump(mode="json")
+    assistant_message = _save_chat_message("assistant", assistant_text, assistant_payload)
     return {
         "user_message": user_message,
         "assistant_message": assistant_message,
