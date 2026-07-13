@@ -2,6 +2,14 @@
 
 Personal BOSS recruitment assistant for higher-quality resume delivery.
 
+## Project Documentation
+
+- [Technical architecture](docs/technical-architecture.md)
+- [Implementation roadmap](docs/implementation-roadmap.md)
+- [Development environment and editors](docs/development-environment.md)
+- [Contributing and Git workflow](CONTRIBUTING.md)
+- [Changelog](CHANGELOG.md)
+
 ## Local Development
 
 ### One-command Start
