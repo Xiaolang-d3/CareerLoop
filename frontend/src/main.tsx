@@ -74,7 +74,21 @@ type ChatMessage = {
   created_at: string;
   payload?: {
     workflow?: WorkflowStatus;
+    agent?: AgentRunResult;
   };
+};
+
+type AgentRunResult = {
+  provider: string;
+  platform: string;
+  rounds: number;
+  events: Array<{
+    round: number;
+    tool_call_id: string;
+    tool_name: string;
+    status: string;
+    message: string;
+  }>;
 };
 
 type ViewKey = "chat" | "applications" | "review";
@@ -159,21 +173,37 @@ function App() {
 
   function renderToolStatus(message: ChatMessage) {
     const messageWorkflow = message.payload?.workflow;
-    if (!messageWorkflow) {
+    const agentRun = message.payload?.agent;
+    if (!messageWorkflow && !agentRun) {
       return null;
     }
-    const latestEvents = messageWorkflow.events?.slice(0, 3) ?? [];
-    const doneCount = messageWorkflow.nodes.filter((node) => node.status === "done").length;
+    const latestEvents = messageWorkflow?.events?.slice(0, 3) ?? [];
+    const doneCount = messageWorkflow?.nodes.filter((node) => node.status === "done").length ?? 0;
     return (
       <div className="inline-tool-status">
-        <strong>工具状态：{messageWorkflow.status}</strong>
-        <span>{doneCount}/{messageWorkflow.nodes.length} 个节点完成</span>
+        {messageWorkflow ? (
+          <>
+            <strong>工作流状态：{messageWorkflow.status}</strong>
+            <span>{doneCount}/{messageWorkflow.nodes.length} 个节点完成</span>
+          </>
+        ) : null}
         {latestEvents.map((event) => (
           <div className="inline-tool-event" key={event.id}>
             <em>{event.event_type}</em>
             <span>{event.message}</span>
           </div>
         ))}
+        {agentRun ? (
+          <>
+            <strong>Agent：{agentRun.provider} · 平台：{agentRun.platform} · {agentRun.rounds} 轮</strong>
+            {agentRun.events.map((event) => (
+              <div className="inline-tool-event" key={event.tool_call_id}>
+                <em>{event.tool_name}</em>
+                <span>{event.message}</span>
+              </div>
+            ))}
+          </>
+        ) : null}
       </div>
     );
   }
