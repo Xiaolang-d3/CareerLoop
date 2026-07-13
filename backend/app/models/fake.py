@@ -8,6 +8,36 @@ from ..domain import ModelRequest, ModelResponse, ToolCall
 class FakeModelProvider:
     name = "fake"
 
+    _cities = ("北京", "上海", "广州", "深圳", "杭州", "南京", "苏州", "成都", "武汉", "西安", "重庆", "天津")
+
+    @classmethod
+    def _search_arguments(cls, user_message: str) -> dict:
+        cities = [city for city in cls._cities if city in user_message]
+        keyword = user_message
+        for city in cities:
+            keyword = keyword.replace(city, " ")
+        for phrase in (
+            "帮我",
+            "请",
+            "我想找",
+            "我想要找",
+            "找",
+            "相关的工作",
+            "相关工作",
+            "相关岗位",
+            "工作",
+            "岗位",
+            "职位",
+            "的",
+        ):
+            keyword = keyword.replace(phrase, " ")
+        keyword = " ".join(keyword.replace("，", " ").replace(",", " ").split())
+        return {
+            "keywords": [keyword or user_message],
+            "cities": cities,
+            "limit": 5,
+        }
+
     async def generate(self, request: ModelRequest) -> ModelResponse:
         tool_messages = [message for message in request.messages if message.role == "tool"]
         if not tool_messages:
@@ -20,13 +50,17 @@ class FakeModelProvider:
                     ToolCall(
                         id=f"fake-{uuid4().hex[:12]}",
                         name="search_jobs",
-                        arguments={"keywords": [user_message], "limit": 5},
+                        arguments=self._search_arguments(user_message),
                     )
                 ],
                 provider_metadata={"mode": "deterministic"},
             )
 
-        jobs = tool_messages[-1].payload.get("jobs", [])
+        last_tool_message = tool_messages[-1]
+        if last_tool_message.payload.get("status") not in {None, "done"}:
+            return ModelResponse(content=f"岗位搜索未完成：{last_tool_message.content}")
+
+        jobs = last_tool_message.payload.get("jobs", [])
         if not jobs:
             return ModelResponse(content="暂时没有找到符合条件的岗位，请调整关键词或城市后重试。")
 

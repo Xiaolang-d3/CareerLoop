@@ -5,13 +5,13 @@ from typing import Any
 
 from ..config import get_settings
 from ..models import FakeModelProvider, ModelProviderRegistry
-from ..platforms import JobPlatformRegistry, MockJobPlatform
-from ..tools import SearchJobsTool, ToolRegistry
+from ..platforms import BossJobPlatform, JobPlatformRegistry, MockJobPlatform
+from ..tools import GetJobDetailTool, SearchJobsTool, ToolRegistry
 from .runtime import AgentRuntime
 
 
 @lru_cache
-def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
+def _build_components() -> tuple[AgentRuntime, dict[str, Any], JobPlatformRegistry]:
     settings = get_settings()
 
     models = ModelProviderRegistry()
@@ -21,9 +21,12 @@ def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
     platforms = JobPlatformRegistry()
     mock_platform = MockJobPlatform()
     platforms.register(mock_platform.name, mock_platform)
+    boss_platform = BossJobPlatform()
+    platforms.register(boss_platform.name, boss_platform)
 
     tools = ToolRegistry()
     tools.register_handler(SearchJobsTool(platforms))
+    tools.register_handler(GetJobDetailTool(platforms))
 
     runtime = AgentRuntime(
         models=models,
@@ -40,16 +43,21 @@ def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
         "platforms": platforms.names(),
         "tools": tools.names(),
     }
-    return runtime, capabilities
+    return runtime, capabilities, platforms
 
 
 @lru_cache
 def get_agent_runtime() -> AgentRuntime:
-    runtime, _ = _build_components()
+    runtime, _, _ = _build_components()
     return runtime
 
 
 @lru_cache
 def get_agent_capabilities() -> dict[str, Any]:
-    _, capabilities = _build_components()
+    _, capabilities, _ = _build_components()
     return capabilities
+
+
+def get_job_platform(name: str):
+    _, _, platforms = _build_components()
+    return platforms.get(name)

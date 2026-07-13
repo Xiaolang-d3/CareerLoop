@@ -6,9 +6,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .agent import get_agent_capabilities, get_agent_runtime
+from .agent import get_agent_capabilities, get_agent_runtime, get_job_platform
 from .browser import browser_controller
 from .db import connect, init_db, json_dump, row_to_dict, rows_to_dicts
+from .errors import UnknownRegistrationError
 from .workflow.engine import open_boss_via_workflow, refresh_workflow_status
 
 
@@ -89,6 +90,24 @@ def workflow_status() -> dict[str, Any]:
 @app.get("/agent/capabilities")
 def agent_capabilities() -> dict[str, Any]:
     return get_agent_capabilities()
+
+
+@app.post("/platforms/{platform_name}/session")
+async def start_platform_session(platform_name: str) -> dict[str, Any]:
+    try:
+        platform = get_job_platform(platform_name)
+    except UnknownRegistrationError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return (await platform.start_session()).model_dump(mode="json")
+
+
+@app.get("/platforms/{platform_name}/auth")
+async def platform_auth_status(platform_name: str) -> dict[str, Any]:
+    try:
+        platform = get_job_platform(platform_name)
+    except UnknownRegistrationError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return (await platform.check_auth()).model_dump(mode="json")
 
 
 @app.post("/workflow/open-boss")

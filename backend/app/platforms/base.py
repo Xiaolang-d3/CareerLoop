@@ -18,6 +18,13 @@ class AuthStatus(BaseModel):
     message: str = ""
 
 
+class PlatformOperationError(RuntimeError):
+    def __init__(self, code: str, message: str, blocked: bool = False) -> None:
+        super().__init__(message)
+        self.code = code
+        self.blocked = blocked
+
+
 class JobPlatform(Protocol):
     name: str
 

@@ -1,43 +1,49 @@
 from __future__ import annotations
 
-from pydantic import ValidationError
+from typing import Any
 
-from ..domain import JobSearchQuery, ToolDefinition, ToolError, ToolResult
+from pydantic import BaseModel, Field, ValidationError
+
+from ..domain import ToolDefinition, ToolError, ToolResult
 from ..errors import CapabilityNotSupportedError, UnknownRegistrationError
 from ..platforms import JobPlatformRegistry, PlatformOperationError
 from .base import ToolContext
 
 
-class SearchJobsTool:
+class GetJobDetailArguments(BaseModel):
+    external_id: str = Field(min_length=1)
+
+
+class GetJobDetailTool:
     definition = ToolDefinition(
-        name="search_jobs",
-        description="根据关键词、城市和薪资等条件搜索招聘岗位",
-        input_schema=JobSearchQuery.model_json_schema(),
+        name="get_job_detail",
+        description="读取指定招聘平台的岗位详情",
+        input_schema=GetJobDetailArguments.model_json_schema(),
     )
 
     def __init__(self, platforms: JobPlatformRegistry) -> None:
         self._platforms = platforms
 
-    async def execute(self, arguments: dict, context: ToolContext) -> ToolResult:
+    async def execute(self, arguments: dict[str, Any], context: ToolContext) -> ToolResult:
         try:
-            query = JobSearchQuery.model_validate(arguments)
+            payload = GetJobDetailArguments.model_validate(arguments)
             platform = self._platforms.get(context.platform_name)
-            if not platform.capabilities().search_jobs:
+            if not platform.capabilities().read_job_detail:
                 raise CapabilityNotSupportedError(
-                    f"平台 {context.platform_name} 不支持岗位搜索"
+                    f"平台 {context.platform_name} 不支持岗位详情读取"
                 )
-            jobs = await platform.search_jobs(query)
+            job = await platform.get_job_detail(payload.external_id)
             return ToolResult(
                 ok=True,
                 status="done",
-                data={"jobs": [job.model_dump(mode="json") for job in jobs]},
-                message=f"在 {context.platform_name} 平台找到 {len(jobs)} 个岗位",
+                data={"job": job.model_dump(mode="json")},
+                message=f"已读取岗位详情：{job.title}",
             )
         except ValidationError as exc:
             return ToolResult(
                 ok=False,
                 status="failed",
-                message="岗位搜索参数不合法",
+                message="岗位详情参数不合法",
                 error=ToolError(code="invalid_arguments", message=str(exc)),
             )
         except (UnknownRegistrationError, CapabilityNotSupportedError) as exc:

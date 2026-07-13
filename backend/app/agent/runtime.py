@@ -69,7 +69,7 @@ class AgentRuntime:
                         ToolContext(platform_name=self._platform_name),
                     )
                 except Exception as exc:
-                    result_data = {"error": str(exc)}
+                    result_data = {"status": "failed", "error": str(exc)}
                     events.append(
                         ToolEvent(
                             round=round_number,
@@ -105,7 +105,11 @@ class AgentRuntime:
                         role="tool",
                         tool_call_id=tool_call.id,
                         content=result.message,
-                        payload=result.data,
+                        payload={
+                            "status": result.status,
+                            **result.data,
+                            "error": result.error.model_dump(mode="json") if result.error else None,
+                        },
                     )
                 )
 
