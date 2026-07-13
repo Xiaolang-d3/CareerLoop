@@ -4,6 +4,10 @@
 
 Architecture documentation and contracts are completed before business implementation. Each phase is delivered in a focused Git commit or short commit series and must pass its verification commands before moving to the next phase.
 
+## Current execution priority
+
+The current priority is a working end-to-end feature flow. A comprehensive automated test suite, repository-wide database refactor, migration framework, and CI pipeline are deferred to Phase 6. Each functional commit still requires Python import/compile verification, a manual API smoke check when relevant, frontend production build verification, and `git diff --check`.
+
 ## Phase 0: Documentation baseline
 
 Deliverables:
@@ -38,7 +42,7 @@ Exit criteria:
 
 - Core modules contain no OpenAI, BOSS, Playwright, or HTTP-specific imports.
 - Duplicate provider/platform registration and unknown lookups return explicit errors.
-- Unit tests cover contracts, registries, configuration, and repository behavior.
+- The configured provider, platform, and tools can be inspected through the runtime capability endpoint.
 
 ## Phase 2: Mock platform and agent runtime
 
@@ -123,4 +127,3 @@ Exit criteria:
 - A clean checkout can be configured and verified from documented commands.
 - Core flows have automated regression coverage.
 - Sensitive local data is absent from Git and redacted from diagnostics.
-
