@@ -58,19 +58,46 @@ class FakeModelProvider:
 
         last_tool_message = tool_messages[-1]
         if last_tool_message.payload.get("status") not in {None, "done"}:
-            return ModelResponse(content=f"岗位搜索未完成：{last_tool_message.content}")
+            return ModelResponse(content=f"任务未完成：{last_tool_message.content}")
 
-        jobs = last_tool_message.payload.get("jobs", [])
-        if not jobs:
-            return ModelResponse(content="暂时没有找到符合条件的岗位，请调整关键词或城市后重试。")
+        tool_name = last_tool_message.payload.get("tool_name")
+        if tool_name == "search_jobs":
+            jobs = last_tool_message.payload.get("jobs", [])
+            if not jobs:
+                return ModelResponse(content="暂时没有找到符合条件的岗位，请调整关键词或城市后重试。")
+            user_message = next(
+                (message.content for message in request.messages if message.role == "user"),
+                "",
+            )
+            search_arguments = self._search_arguments(user_message)
+            return ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        id=f"fake-{uuid4().hex[:12]}",
+                        name="rank_jobs",
+                        arguments={
+                            "platform": last_tool_message.payload.get("platform", "mock"),
+                            "jobs": jobs,
+                            "keywords": search_arguments["keywords"],
+                            "cities": search_arguments["cities"],
+                        },
+                    )
+                ],
+                provider_metadata={"mode": "deterministic"},
+            )
 
-        lines = ["我通过模拟招聘平台找到了这些候选岗位："]
-        for index, job in enumerate(jobs, start=1):
+        matches = last_tool_message.payload.get("matches", [])
+        if not matches:
+            return ModelResponse(content="岗位已经搜索完成，但暂时没有可展示的匹配结果。")
+
+        platform = last_tool_message.payload.get("platform", "招聘")
+        lines = [f"我通过 {platform} 平台完成了岗位搜索和匹配排序："]
+        for index, match in enumerate(matches, start=1):
+            job = match["job"]
             salary = job.get("salary", {}) or {}
             salary_text = salary.get("text") or "薪资面议"
             location = job.get("location") or "地点未注明"
             lines.append(
-                f"{index}. {job['title']}｜{job['company']}｜{location}｜{salary_text}"
+                f"{index}. {job['title']}｜{job['company']}｜{location}｜{salary_text}｜匹配 {match['score']} 分"
             )
-        lines.append("当前结果来自 Mock Platform，用于验证 Agent 工具调用链路。")
         return ModelResponse(content="\n".join(lines), provider_metadata={"mode": "deterministic"})

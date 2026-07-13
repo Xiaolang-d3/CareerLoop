@@ -10,12 +10,13 @@ from .agent import (
     ToolEvent,
     ToolResult,
 )
-from .jobs import Job, JobSearchQuery, JobSummary, PlatformCapabilities, SalaryRange
+from .jobs import Job, JobMatch, JobSearchQuery, JobSummary, PlatformCapabilities, SalaryRange
 
 __all__ = [
     "AgentMessage",
     "AgentRunResult",
     "Job",
+    "JobMatch",
     "JobSearchQuery",
     "JobSummary",
     "ModelRequest",

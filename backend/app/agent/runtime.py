@@ -108,6 +108,7 @@ class AgentRuntime:
                         content=result.message,
                         payload={
                             "status": result.status,
+                            "tool_name": tool_call.name,
                             **result.data,
                             "error": result.error.model_dump(mode="json") if result.error else None,
                         },

@@ -6,7 +6,8 @@ from typing import Any
 from ..config import get_settings
 from ..models import FakeModelProvider, ModelProviderRegistry
 from ..platforms import BossJobPlatform, JobPlatformRegistry, MockJobPlatform
-from ..tools import GetJobDetailTool, SearchJobsTool, ToolRegistry
+from ..repositories import JobRepository
+from ..tools import GetJobDetailTool, RankJobsTool, SearchJobsTool, ToolRegistry
 from .runtime import AgentRuntime
 
 
@@ -25,8 +26,9 @@ def _build_components() -> tuple[AgentRuntime, dict[str, Any], JobPlatformRegist
     platforms.register(boss_platform.name, boss_platform)
 
     tools = ToolRegistry()
-    tools.register_handler(SearchJobsTool(platforms))
+    tools.register_handler(SearchJobsTool(platforms, JobRepository()))
     tools.register_handler(GetJobDetailTool(platforms))
+    tools.register_handler(RankJobsTool())
 
     runtime = AgentRuntime(
         models=models,

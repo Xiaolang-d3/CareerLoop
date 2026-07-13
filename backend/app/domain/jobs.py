@@ -38,6 +38,14 @@ class Job(JobSummary):
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
+class JobMatch(BaseModel):
+    job: JobSummary
+    score: int = Field(ge=0, le=100)
+    level: str
+    reasons: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+
+
 class PlatformCapabilities(BaseModel):
     search_jobs: bool = False
     read_job_detail: bool = False
