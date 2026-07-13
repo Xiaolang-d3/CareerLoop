@@ -11,16 +11,17 @@ DATA_DIR = ROOT_DIR / "data"
 DB_PATH = DATA_DIR / "bosscopilot.db"
 
 
-def connect() -> sqlite3.Connection:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+def connect(db_path: str | Path | None = None) -> sqlite3.Connection:
+    path = Path(db_path) if db_path is not None else DB_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
-def init_db() -> None:
-    with connect() as conn:
+def init_db(db_path: str | Path | None = None) -> None:
+    with connect(db_path) as conn:
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS profiles (
