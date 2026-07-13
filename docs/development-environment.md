@@ -84,5 +84,16 @@ cd frontend
 npm run build
 ```
 
-Backend verification consists of importing the application and calling the health endpoint. Phase 1 will add automated backend tests and make them part of the required commit checks.
+Backend verification currently consists of importing the application and calling the health and affected feature endpoints. The product-hardening phase will add automated backend tests and make them part of the required commit checks.
 
+## BOSS read-only mode
+
+The default remains the offline Mock Platform. To use the BOSS adapter, copy `backend/.env.example` to the ignored `backend/.env` file and set:
+
+```text
+JOB_PLATFORM=boss
+```
+
+Then start the application and say `打开 BOSS 登录` in chat. Complete login only on the official BOSS page. After login, ordinary job-search requests use the registered `search_jobs` tool. The adapter stops and reports a blocked state when login expires, a security verification appears, the page becomes blank, or the supported job-card structure is unavailable.
+
+OpenAI remains optional at this stage. Keep `MODEL_PROVIDER=fake` and leave `OPENAI_API_KEY` unset until the OpenAI provider implementation is resumed.
