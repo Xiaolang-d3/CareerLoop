@@ -70,6 +70,7 @@ class ApplicationIn(BaseModel):
 
 class ChatMessageIn(BaseModel):
     content: str = Field(min_length=1)
+    platform: str | None = None
 
 
 @app.on_event("startup")
@@ -158,7 +159,7 @@ async def create_chat_message(payload: ChatMessageIn) -> dict[str, Any]:
         workflow = refresh_workflow_status()
         assistant_text = _workflow_summary(workflow)
     else:
-        agent_result = await get_agent_runtime().run(payload.content)
+        agent_result = await get_agent_runtime().run(payload.content, payload.platform)
         workflow = refresh_workflow_status()
         assistant_text = agent_result.content
 

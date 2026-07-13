@@ -25,8 +25,9 @@ class AgentRuntime:
         self._platform_name = platform_name
         self._max_tool_rounds = max_tool_rounds
 
-    async def run(self, user_content: str) -> AgentRunResult:
+    async def run(self, user_content: str, platform_name: str | None = None) -> AgentRunResult:
         provider = self._models.get(self._model_provider)
+        selected_platform = platform_name or self._platform_name
         messages = [AgentMessage(role="user", content=user_content)]
         events: list[ToolEvent] = []
 
@@ -38,7 +39,7 @@ class AgentRuntime:
                 return AgentRunResult(
                     content=response.content,
                     provider=self._model_provider,
-                    platform=self._platform_name,
+                    platform=selected_platform,
                     rounds=round_number,
                     events=events,
                 )
@@ -47,7 +48,7 @@ class AgentRuntime:
                 return AgentRunResult(
                     content="模型没有返回可执行工具或最终回答。",
                     provider=self._model_provider,
-                    platform=self._platform_name,
+                    platform=selected_platform,
                     rounds=round_number,
                     events=events,
                 )
@@ -66,7 +67,7 @@ class AgentRuntime:
                     handler = self._tools.get(tool_call.name)
                     result = await handler.execute(
                         tool_call.arguments,
-                        ToolContext(platform_name=self._platform_name),
+                        ToolContext(platform_name=selected_platform),
                     )
                 except Exception as exc:
                     result_data = {"status": "failed", "error": str(exc)}
@@ -116,7 +117,7 @@ class AgentRuntime:
         return AgentRunResult(
             content=f"Agent 已达到最大工具调用轮数（{self._max_tool_rounds}），本次任务已安全停止。",
             provider=self._model_provider,
-            platform=self._platform_name,
+            platform=selected_platform,
             rounds=self._max_tool_rounds,
             events=events,
         )

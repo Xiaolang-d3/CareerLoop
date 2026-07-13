@@ -91,6 +91,15 @@ type AgentRunResult = {
   }>;
 };
 
+type AgentCapabilities = {
+  active_model_provider: string;
+  active_model_name: string;
+  active_platform: string;
+  model_providers: string[];
+  platforms: string[];
+  tools: string[];
+};
+
 type ViewKey = "chat" | "applications" | "review";
 
 function App() {
@@ -102,6 +111,8 @@ function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
+  const [platforms, setPlatforms] = useState<string[]>(["mock"]);
+  const [selectedPlatform, setSelectedPlatform] = useState("mock");
 
   const appliedCount = applications.filter((item) => item.status === "applied").length;
   const queuedCount = applications.filter((item) => item.status === "queued").length;
@@ -130,6 +141,12 @@ function App() {
     setChatMessages(nextMessages);
   }
 
+  async function refreshCapabilities() {
+    const capabilities = await fetchJson<AgentCapabilities>("/agent/capabilities");
+    setPlatforms(capabilities.platforms);
+    setSelectedPlatform(capabilities.active_platform);
+  }
+
   async function sendChatMessage() {
     const content = chatInput.trim();
     if (!content) {
@@ -144,7 +161,7 @@ function App() {
       }>("/chat/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content })
+        body: JSON.stringify({ content, platform: selectedPlatform })
       });
       setWorkflow(response.workflow);
       await refreshChat();
@@ -157,6 +174,7 @@ function App() {
   useEffect(() => {
     refreshData().catch(() => undefined);
     refreshChat().catch(() => undefined);
+    refreshCapabilities().catch(() => undefined);
   }, []);
 
   const viewTitle = {
@@ -253,6 +271,20 @@ function App() {
               )}
             </div>
             <div className="chat-composer">
+              <label className="platform-picker">
+                <span>招聘平台</span>
+                <select
+                  value={selectedPlatform}
+                  onChange={(event) => setSelectedPlatform(event.target.value)}
+                  disabled={chatBusy}
+                >
+                  {platforms.map((platform) => (
+                    <option value={platform} key={platform}>
+                      {platform === "boss" ? "BOSS 直聘" : "模拟平台"}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <textarea
                 value={chatInput}
                 onChange={(event) => setChatInput(event.target.value)}
