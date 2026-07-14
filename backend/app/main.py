@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
@@ -14,6 +15,7 @@ from .workflow.engine import open_boss_via_workflow, refresh_workflow_status
 
 
 app = FastAPI(title="BossCopilot API", version="0.1.0")
+login_resume_lock = asyncio.Lock()
 
 app.add_middleware(
     CORSMiddleware,
@@ -138,11 +140,67 @@ def _workflow_summary(status: dict[str, Any]) -> str:
     return f"当前工作流 {done}/{total} 个节点完成。"
 
 
+def _is_login_resume(text: str) -> bool:
+    return any(phrase in text for phrase in ("已登录", "登录完成", "完成登录"))
+
+
+def _find_pending_login_request() -> str | None:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM chat_messages WHERE role = 'assistant' ORDER BY id DESC"
+        ).fetchall()
+        for row in rows:
+            assistant = row_to_dict(row)
+            agent = (assistant.get("payload") or {}).get("agent") if assistant else None
+            if not agent:
+                continue
+            error = agent.get("error") or {}
+            if agent.get("status") != "waiting_user" or error.get("code") != "boss_login_required":
+                return None
+            pending = conn.execute(
+                """
+                SELECT content FROM chat_messages
+                WHERE role = 'user' AND id < ?
+                ORDER BY id DESC LIMIT 1
+                """,
+                (assistant["id"],),
+            ).fetchone()
+            return pending["content"] if pending else None
+    return None
+
+
 @app.get("/chat/messages")
 def list_chat_messages() -> list[dict[str, Any]]:
     with connect() as conn:
         rows = conn.execute("SELECT * FROM chat_messages ORDER BY id ASC").fetchall()
     return rows_to_dicts(rows)
+
+
+@app.post("/chat/resume-after-login")
+async def resume_after_login() -> dict[str, Any]:
+    async with login_resume_lock:
+        platform = get_job_platform("boss")
+        auth = await platform.check_auth()
+        if auth.status != "authenticated":
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "boss_login_pending", "message": auth.message},
+            )
+        pending_request = _find_pending_login_request()
+        if not pending_request:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "pending_search_not_found", "message": "没有等待恢复的搜索任务"},
+            )
+        agent_result = await get_agent_runtime().run(pending_request)
+        workflow = refresh_workflow_status()
+        assistant_text = f"已自动检测到 BOSS 登录成功，继续执行刚才的搜索。\n\n{agent_result.content}"
+        assistant_message = _save_chat_message(
+            "assistant",
+            assistant_text,
+            {"workflow": workflow, "agent": agent_result.model_dump(mode="json")},
+        )
+        return {"assistant_message": assistant_message, "workflow": workflow}
 
 
 @app.post("/chat/messages")
@@ -151,9 +209,26 @@ async def create_chat_message(payload: ChatMessageIn) -> dict[str, Any]:
     text = payload.content.lower()
     agent_result = None
 
-    if ("boss" in text or "直聘" in text) and ("打开" in text or "登录" in text):
+    if _is_login_resume(text):
+        platform = get_job_platform("boss")
+        auth = await platform.check_auth()
+        pending_request = _find_pending_login_request()
+        if auth.status != "authenticated":
+            workflow = refresh_workflow_status()
+            assistant_text = (
+                f"尚未检测到有效的 BOSS 登录状态（{auth.message}）。"
+                "系统会继续自动检测；你也可以登录完成后回复“已登录，继续”。"
+            )
+        elif pending_request:
+            agent_result = await get_agent_runtime().run(pending_request)
+            workflow = refresh_workflow_status()
+            assistant_text = f"已确认 BOSS 登录成功，继续执行刚才的搜索。\n\n{agent_result.content}"
+        else:
+            workflow = refresh_workflow_status()
+            assistant_text = "已确认 BOSS 登录成功。目前没有等待恢复的搜索任务，可以直接告诉我想找的岗位。"
+    elif ("boss" in text or "直聘" in text) and ("打开" in text or "登录" in text):
         workflow = open_boss_via_workflow()
-        assistant_text = "我已经在 Mac 上打开 BOSS 官方页面。你可以按官方方式扫码/登录，我会在任务流里记录这个节点状态。"
+        assistant_text = "我已经打开 BOSS 官方页面。请按官方方式完成登录；有等待中的搜索时，系统会自动检测并继续。"
     elif "状态" in text or "进度" in text or "到哪" in text:
         workflow = refresh_workflow_status()
         assistant_text = _workflow_summary(workflow)

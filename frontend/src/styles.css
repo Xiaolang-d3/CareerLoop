@@ -97,6 +97,8 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visi
 .message-content > p { margin: 0; padding: 12px 14px; border-radius: 4px 12px 12px 12px; color: #2d3934; background: #f5f7f5; font-size: 13px; line-height: 1.75; white-space: pre-wrap; }
 .message.user .message-content > p { color: #143e30; background: #e9f6ef; }
 .is-loading .message-content { display: flex; align-items: center; gap: 8px; padding-top: 7px; color: #6d7a74; font-size: 12px; }
+.login-observer .message-content { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border: 1px solid #ead59e; border-radius: 9px; color: #80621c; background: #fffaf0; font-size: 11px; }
+.login-observer .avatar { color: #9b701d; background: #fff2cc; }
 
 .execution-card { margin-top: 8px; border: 1px solid #e1e8e4; border-radius: 9px; overflow: hidden; background: #fbfcfb; }
 .execution-card summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; color: #4c5d55; cursor: pointer; list-style: none; }
@@ -107,11 +109,16 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visi
 .execution-card.failed summary { color: #934a34; }
 .execution-card.failed summary svg { color: #cf6241; }
 .execution-card.failed .execution-list { border-top-color: #f1d9d1; }
+.execution-card.waiting { border-color: #ead59e; background: #fffaf0; }
+.execution-card.waiting summary { color: #80621c; }
+.execution-card.waiting summary svg { color: #c18b24; }
+.execution-card.waiting .execution-list { border-top-color: #eee0bd; }
 .execution-card summary small { color: #89958f; font-size: 10px; }
 .execution-list { display: grid; gap: 10px; padding: 11px 12px; border-top: 1px solid #e8ece9; }
 .execution-row { display: grid; grid-template-columns: 8px minmax(0, 1fr); gap: 9px; align-items: start; }
 .event-dot { width: 7px; height: 7px; margin-top: 5px; border-radius: 50%; background: #42b67c; }
 .event-dot.failed, .event-dot.blocked { background: #d87555; }
+.event-dot.waiting_approval { background: #d49b2e; }
 .execution-row strong { display: block; color: #425149; font-size: 11px; }
 .execution-row p { margin: 3px 0 0; color: #7b8781; font-size: 10px; line-height: 1.5; }
 
@@ -124,6 +131,7 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visi
 .composer-input:focus-within { border-color: #65b894; box-shadow: 0 0 0 3px rgba(62, 161, 116, .08); }
 .composer-input textarea { width: 100%; min-height: 50px; max-height: 140px; padding: 8px 9px; border: 0; outline: 0; resize: vertical; color: #26342e; background: transparent; font-size: 12px; line-height: 1.6; }
 .composer-input textarea::placeholder { color: #a3aca8; }
+.composer-input textarea:disabled { cursor: wait; opacity: .65; }
 .send-button, .primary-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 39px; padding: 0 15px; border: 1px solid #1d7957; border-radius: 8px; color: #fff; background: #207a58; font-weight: 700; cursor: pointer; text-decoration: none; transition: .18s ease; }
 .send-button:hover, .primary-button:hover { background: #176848; transform: translateY(-1px); }
 .send-button:disabled { cursor: not-allowed; opacity: .45; transform: none; }

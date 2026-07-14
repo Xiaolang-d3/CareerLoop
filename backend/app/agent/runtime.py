@@ -159,6 +159,16 @@ class AgentRuntime:
                         },
                     )
                 )
+                if result.status == "waiting_approval":
+                    return AgentRunResult(
+                        content=result.message,
+                        provider=self._model_provider,
+                        platform=selected_platform,
+                        rounds=round_number,
+                        status="waiting_user",
+                        error=result.error,
+                        events=events,
+                    )
 
         return AgentRunResult(
             content=f"Agent 已达到最大工具调用轮数（{self._max_tool_rounds}），本次任务已安全停止。",

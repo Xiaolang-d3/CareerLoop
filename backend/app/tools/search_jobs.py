@@ -69,6 +69,17 @@ class SearchJobsTool:
                 error=ToolError(code="platform_unavailable", message=str(exc)),
             )
         except PlatformOperationError as exc:
+            if exc.code == "boss_login_required":
+                message = (
+                    "需要登录 BOSS 直聘。请在已打开的 BOSS 官方页面完成登录，"
+                    "系统正在自动检测登录状态，登录成功后会自动恢复本次搜索，无需重复输入。"
+                )
+                return ToolResult(
+                    ok=False,
+                    status="waiting_approval",
+                    message=message,
+                    error=ToolError(code=exc.code, message=message),
+                )
             return ToolResult(
                 ok=False,
                 status="blocked" if exc.blocked else "failed",

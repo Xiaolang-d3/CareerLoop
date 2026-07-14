@@ -159,6 +159,8 @@ An approval token is single-use, expires, and binds user/session, platform, job,
 
 CAPTCHA, login loss, unexpected navigation, selector failure, platform warning, or rate-limit warning pauses execution and records an audit event. The system does not bypass CAPTCHA or platform controls.
 
+When a read-only BOSS operation requires login, the tool returns a `waiting_approval` pause result and the Agent run becomes `waiting_user`. The original search request remains recoverable from chat history. The frontend observes the official BOSS session at a bounded interval and calls the resume endpoint after authentication is detected; the backend verifies authentication again and serializes resume attempts before replaying the pending request. A manual `已登录，继续` message remains an optional fallback. No search continues before authentication is confirmed.
+
 ## 6. Configuration
 
 Configuration comes from environment variables or a local ignored `.env` file:

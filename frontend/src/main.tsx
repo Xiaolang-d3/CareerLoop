@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   BarChart3,
@@ -77,7 +77,7 @@ type AgentRunResult = {
   provider: string;
   platform: string;
   rounds: number;
-  status: "done" | "failed";
+  status: "done" | "failed" | "waiting_user";
   error?: { code: string; message: string; retryable: boolean } | null;
   events: Array<{
     round: number;
@@ -103,6 +103,11 @@ type AgentCapabilities = {
   model_providers: string[];
   platforms: string[];
   tools: string[];
+};
+
+type BossAuthStatus = {
+  status: "authenticated" | "unauthenticated" | "unknown" | "blocked";
+  message: string;
 };
 
 type ViewKey = "chat" | "jobs" | "applications" | "review";
@@ -154,6 +159,9 @@ function App() {
   const [refreshBusy, setRefreshBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
+  const [loginWatching, setLoginWatching] = useState(false);
+  const [loginWatchMessage, setLoginWatchMessage] = useState("");
+  const loginWatcherRef = useRef(false);
 
   const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? jobs[0] ?? null;
   const appliedCount = applications.filter((item) => item.status === "applied").length;
@@ -198,9 +206,42 @@ function App() {
     setCapabilities(next);
   }
 
+  async function watchBossLogin() {
+    if (loginWatcherRef.current) return;
+    loginWatcherRef.current = true;
+    setLoginWatching(true);
+    setLoginWatchMessage("正在观察 BOSS 登录状态，登录完成后会自动继续…");
+    try {
+      for (let attempt = 0; attempt < 180; attempt += 1) {
+        const auth = await fetchJson<BossAuthStatus>("/platforms/boss/auth");
+        if (auth.status === "authenticated") {
+          setLoginWatchMessage("已检测到登录成功，正在恢复刚才的搜索…");
+          const response = await fetchJson<{ workflow: WorkflowStatus }>("/chat/resume-after-login", {
+            method: "POST"
+          });
+          setWorkflow(response.workflow);
+          await Promise.all([refreshChat(), refreshData()]);
+          return;
+        }
+        if (auth.status === "blocked") {
+          throw new Error(`BOSS 登录被阻塞：${auth.message}`);
+        }
+        setLoginWatchMessage(auth.message || "等待在 BOSS 官方页面完成登录…");
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      }
+      throw new Error("等待 BOSS 登录超时，请重新发起搜索后再试");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "BOSS 登录检测失败");
+    } finally {
+      loginWatcherRef.current = false;
+      setLoginWatching(false);
+      setLoginWatchMessage("");
+    }
+  }
+
   async function sendChatMessage(contentOverride?: string) {
     const content = (contentOverride ?? chatInput).trim();
-    if (!content || chatBusy) return;
+    if (!content || chatBusy || loginWatching) return;
     setChatBusy(true);
     setChatInput("");
     setErrorMessage("");
@@ -225,6 +266,16 @@ function App() {
       setErrorMessage(error instanceof Error ? error.message : "系统连接失败");
     });
   }, []);
+
+  useEffect(() => {
+    const latestAgentMessage = [...chatMessages]
+      .reverse()
+      .find((message) => message.role === "assistant" && message.payload?.agent);
+    const agent = latestAgentMessage?.payload?.agent;
+    if (agent?.status === "waiting_user" && agent.error?.code === "boss_login_required") {
+      void watchBossLogin();
+    }
+  }, [chatMessages]);
 
   const pageCopy: Record<ViewKey, { eyebrow: string; title: string; subtitle: string }> = {
     chat: {
@@ -260,12 +311,13 @@ function App() {
     const agentRun = message.payload?.agent;
     if (!agentRun?.events.length) return null;
     const failed = agentRun.status === "failed" || agentRun.events.some((event) => event.status === "failed");
+    const waiting = agentRun.status === "waiting_user";
     return (
-      <details className={`execution-card ${failed ? "failed" : ""}`} open={failed}>
+      <details className={`execution-card ${failed ? "failed" : waiting ? "waiting" : ""}`} open={failed || waiting}>
         <summary>
           <span>
-            {failed ? <TriangleAlert size={15} /> : <CheckCircle2 size={15} />}
-            {failed ? "执行失败，需要处理" : `已完成 ${agentRun.events.length} 个步骤`}
+            {failed || waiting ? <TriangleAlert size={15} /> : <CheckCircle2 size={15} />}
+            {failed ? "执行失败，需要处理" : waiting ? "等待完成 BOSS 登录" : `已完成 ${agentRun.events.length} 个步骤`}
           </span>
           <small>BOSS 直聘 · {agentRun.rounds} 轮</small>
         </summary>
@@ -365,6 +417,12 @@ function App() {
                     <div className="message-content"><LoaderCircle className="spinning" size={18} /><span>Agent 正在分析并调用工具…</span></div>
                   </article>
                 ) : null}
+                {loginWatching ? (
+                  <article className="message assistant login-observer">
+                    <span className="avatar"><Clock3 size={17} /></span>
+                    <div className="message-content"><LoaderCircle className="spinning" size={18} /><span>{loginWatchMessage}</span></div>
+                  </article>
+                ) : null}
               </div>
 
               <div className="chat-composer">
@@ -378,6 +436,7 @@ function App() {
                 <div className="composer-input">
                   <textarea
                     value={chatInput}
+                    disabled={loginWatching}
                     placeholder="例如：帮我找上海的 AI Agent 工程师岗位，薪资 25K 以上"
                     onChange={(event) => setChatInput(event.target.value)}
                     onKeyDown={(event) => {
@@ -387,7 +446,7 @@ function App() {
                       }
                     }}
                   />
-                  <button className="send-button" onClick={() => void sendChatMessage()} disabled={chatBusy || !chatInput.trim()}>
+                  <button className="send-button" onClick={() => void sendChatMessage()} disabled={chatBusy || loginWatching || !chatInput.trim()}>
                     <Send size={18} /><span>发送</span>
                   </button>
                 </div>
@@ -408,7 +467,7 @@ function App() {
                 <span className="card-kicker">快捷开始</span>
                 <div className="quick-prompts">
                   {quickPrompts.map((prompt) => (
-                    <button key={prompt} onClick={() => void sendChatMessage(prompt)} disabled={chatBusy}>
+                    <button key={prompt} onClick={() => void sendChatMessage(prompt)} disabled={chatBusy || loginWatching}>
                       <span>{prompt}</span><ChevronRight size={15} />
                     </button>
                   ))}
