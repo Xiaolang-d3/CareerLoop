@@ -5,7 +5,7 @@ from typing import Any
 
 from ..config import get_settings
 from ..models import ModelProviderRegistry, OpenAICompatibleProvider
-from ..platforms import BossJobPlatform, JobPlatformRegistry, MockJobPlatform
+from ..platforms import BossJobPlatform, JobPlatformRegistry
 from ..repositories import JobRepository
 from ..tools import GetJobDetailTool, RankJobsTool, SearchJobsTool, ToolRegistry
 from .runtime import AgentRuntime
@@ -29,8 +29,6 @@ def _build_components() -> tuple[AgentRuntime, dict[str, Any], JobPlatformRegist
     models.register(openai_model.name, openai_model)
 
     platforms = JobPlatformRegistry()
-    mock_platform = MockJobPlatform()
-    platforms.register(mock_platform.name, mock_platform)
     boss_platform = BossJobPlatform()
     platforms.register(boss_platform.name, boss_platform)
 

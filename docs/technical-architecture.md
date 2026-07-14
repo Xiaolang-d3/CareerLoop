@@ -25,7 +25,7 @@ React Web UI
   -> Agent Runtime
        -> Model Provider Registry -> OpenAI Provider / future providers
        -> Tool Registry
-            -> Platform Registry -> Mock / BOSS / future platforms
+            -> Platform Registry -> BOSS / future platforms
             -> Domain Services -> matching / applications / approvals
        -> LangGraph workflow
        -> Repositories -> SQLite
@@ -171,7 +171,7 @@ MODEL_BASE_URL=<optional-compatible-api-root>
 MODEL_MAX_TOOL_ROUNDS=5
 MODEL_TIMEOUT_SECONDS=60
 
-JOB_PLATFORM=mock
+JOB_PLATFORM=boss
 DATABASE_URL=sqlite:///...
 ```
 

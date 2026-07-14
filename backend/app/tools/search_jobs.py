@@ -33,7 +33,7 @@ class SearchJobsTool:
                     f"平台 {context.platform_name} 不支持岗位搜索"
                 )
             jobs = await platform.search_jobs(query)
-            stored = self._jobs.upsert_summaries(jobs) if context.platform_name != "mock" else []
+            stored = self._jobs.upsert_summaries(jobs)
             stored_ids = {row["source_url"]: row["id"] for row in stored}
             job_payloads = []
             for job in jobs:

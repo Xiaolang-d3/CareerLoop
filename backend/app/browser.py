@@ -44,7 +44,25 @@ class BrowserController:
         self._page: Page | None = None
 
     def _submit(self, operation: Callable[..., T], *args: Any) -> T:
-        return self._executor.submit(operation, *args).result()
+        try:
+            return self._executor.submit(operation, *args).result()
+        except BrowserOperationError:
+            raise
+        except PlaywrightTimeoutError as exc:
+            raise BrowserOperationError(
+                "browser_timeout",
+                "BOSS 浏览器操作超时，请检查网络或页面状态后重试",
+                blocked=True,
+            ) from exc
+        except Error as exc:
+            message = str(exc)
+            if "Executable doesn't exist" in message:
+                user_message = "BOSS 浏览器组件尚未安装，请先安装 Playwright Chromium"
+                code = "browser_not_installed"
+            else:
+                user_message = "BOSS 浏览器启动或操作失败，请检查本地浏览器环境"
+                code = "browser_unavailable"
+            raise BrowserOperationError(code, user_message, blocked=True) from exc
 
     def start(self) -> dict[str, Any]:
         return self._submit(self._start)

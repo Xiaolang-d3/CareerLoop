@@ -18,7 +18,7 @@ class Settings(BaseModel):
     model_base_url: str | None = None
     openai_api_key: str | None = None
     model_timeout_seconds: float = Field(default=60, gt=0, le=300)
-    job_platform: str = "mock"
+    job_platform: str = "boss"
     model_max_tool_rounds: int = Field(default=5, ge=1, le=20)
 
 
@@ -30,6 +30,6 @@ def get_settings() -> Settings:
         model_base_url=os.getenv("MODEL_BASE_URL") or None,
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         model_timeout_seconds=os.getenv("MODEL_TIMEOUT_SECONDS", "60"),
-        job_platform=os.getenv("JOB_PLATFORM", "mock"),
+        job_platform=os.getenv("JOB_PLATFORM", "boss"),
         model_max_tool_rounds=os.getenv("MODEL_MAX_TOOL_ROUNDS", "5"),
     )

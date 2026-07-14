@@ -8,7 +8,7 @@ Architecture documentation and contracts are completed before business implement
 
 The current priority is a working end-to-end feature flow. A comprehensive automated test suite, repository-wide database refactor, migration framework, and CI pipeline are deferred to Phase 6. Each functional commit still requires Python import/compile verification, a manual API smoke check when relevant, frontend production build verification, and `git diff --check`.
 
-The current flow covers platform selection, job search, normalization, non-Mock SQLite deduplication, and deterministic ranking. The OpenAI-compatible provider supports configuration-driven model and Base URL selection. Runtime model failures are surfaced explicitly and never trigger a silent fallback.
+The current flow uses BOSS Zhipin as its only runtime data source and covers job search, normalization, SQLite deduplication, and deterministic ranking. The OpenAI-compatible provider supports configuration-driven model and Base URL selection. Model or platform failures are surfaced explicitly and never trigger a silent fallback.
 
 ## Phase 0: Documentation baseline
 
@@ -46,11 +46,11 @@ Exit criteria:
 - Duplicate provider/platform registration and unknown lookups return explicit errors.
 - The configured provider, platform, and tools can be inspected through the runtime capability endpoint.
 
-## Phase 2: Mock platform and agent runtime
+## Phase 2: Agent runtime
 
 Deliverables:
 
-- Deterministic Mock Platform with representative job fixtures
+- Deterministic job fixtures isolated to future tests and never registered at runtime
 - Tool registry with argument validation and structured results
 - Agent runtime with maximum rounds, per-tool timeout, cancellation, and event persistence
 - Deterministic model fixtures isolated to future tests, never registered as a runtime fallback
@@ -94,7 +94,7 @@ Exit criteria:
 
 - The adapter never attempts to bypass login or CAPTCHA.
 - Selector failures produce structured platform errors and diagnostic events.
-- The core flow can switch between Mock and BOSS through configuration.
+- The core flow uses the BOSS adapter exclusively and returns structured blocks when BOSS is unavailable.
 - Parsed fixtures have regression tests that do not require live BOSS access.
 
 ## Phase 5: Approval and assisted application

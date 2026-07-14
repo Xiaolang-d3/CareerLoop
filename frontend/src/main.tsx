@@ -154,7 +154,6 @@ function App() {
   const [refreshBusy, setRefreshBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
-  const [selectedPlatform, setSelectedPlatform] = useState("mock");
 
   const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? jobs[0] ?? null;
   const appliedCount = applications.filter((item) => item.status === "applied").length;
@@ -197,7 +196,6 @@ function App() {
   async function refreshCapabilities() {
     const next = await fetchJson<AgentCapabilities>("/agent/capabilities");
     setCapabilities(next);
-    setSelectedPlatform(next.active_platform);
   }
 
   async function sendChatMessage(contentOverride?: string) {
@@ -210,7 +208,7 @@ function App() {
       const response = await fetchJson<{ workflow: WorkflowStatus }>("/chat/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content, platform: selectedPlatform })
+        body: JSON.stringify({ content })
       });
       setWorkflow(response.workflow);
       await Promise.all([refreshChat(), refreshData()]);
@@ -269,7 +267,7 @@ function App() {
             {failed ? <TriangleAlert size={15} /> : <CheckCircle2 size={15} />}
             {failed ? "执行失败，需要处理" : `已完成 ${agentRun.events.length} 个步骤`}
           </span>
-          <small>{agentRun.platform === "boss" ? "BOSS 直聘" : "模拟平台"} · {agentRun.rounds} 轮</small>
+          <small>BOSS 直聘 · {agentRun.rounds} 轮</small>
         </summary>
         <div className="execution-list">
           {agentRun.events.map((event) => (
@@ -373,11 +371,7 @@ function App() {
                 <div className="composer-tools">
                   <label>
                     <Database size={14} /> 数据来源
-                    <select value={selectedPlatform} onChange={(event) => setSelectedPlatform(event.target.value)} disabled={chatBusy}>
-                      {(capabilities?.platforms ?? ["mock"]).map((platform) => (
-                        <option value={platform} key={platform}>{platform === "boss" ? "BOSS 直聘" : "模拟平台"}</option>
-                      ))}
-                    </select>
+                    <strong>BOSS 直聘</strong>
                   </label>
                   <span>Enter 发送 · Shift + Enter 换行</span>
                 </div>
@@ -406,7 +400,7 @@ function App() {
                 <div className="agent-identity"><span><Bot size={20} /></span><div><strong>求职搜索助手</strong><small>状态正常</small></div></div>
                 <dl>
                   <div><dt>模型</dt><dd>{capabilities?.active_model_name ?? "—"}</dd></div>
-                  <div><dt>平台</dt><dd>{selectedPlatform === "boss" ? "BOSS 直聘" : "模拟平台"}</dd></div>
+                  <div><dt>平台</dt><dd>BOSS 直聘</dd></div>
                   <div><dt>工具</dt><dd>{capabilities?.tools.length ?? 0} 个</dd></div>
                 </dl>
               </section>
@@ -514,7 +508,7 @@ function App() {
               <section className="data-panel data-note">
                 <span className="metric-icon green"><Database size={18} /></span>
                 <h3>数据真实可追溯</h3>
-                <p>岗位与投递统计来自本地 SQLite。模拟平台结果不会混入真实岗位数据。</p>
+                <p>岗位与投递统计来自本地 SQLite，所有岗位数据均由 BOSS 直聘只读采集。</p>
               </section>
             </div>
           </section>

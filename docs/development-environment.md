@@ -64,6 +64,7 @@ cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+playwright install chromium
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -88,7 +89,7 @@ Backend verification currently consists of importing the application and calling
 
 ## BOSS read-only mode
 
-The default remains the offline Mock Platform. To use the BOSS adapter, copy `backend/.env.example` to the ignored `backend/.env` file and set:
+The runtime data source is BOSS Zhipin only. Copy `backend/.env.example` to the ignored `backend/.env` file and set:
 
 ```text
 JOB_PLATFORM=boss
