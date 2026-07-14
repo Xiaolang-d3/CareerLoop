@@ -19,6 +19,7 @@ import {
   Search,
   Send,
   Sparkles,
+  TriangleAlert,
   UserRound
 } from "lucide-react";
 import "./styles.css";
@@ -76,6 +77,8 @@ type AgentRunResult = {
   provider: string;
   platform: string;
   rounds: number;
+  status: "done" | "failed";
+  error?: { code: string; message: string; retryable: boolean } | null;
   events: Array<{
     round: number;
     tool_call_id: string;
@@ -120,6 +123,7 @@ const applicationLabels: Record<string, string> = {
 };
 
 const toolLabels: Record<string, string> = {
+  model_provider: "模型服务",
   search_jobs: "搜索岗位",
   get_job_detail: "读取岗位详情",
   rank_jobs: "分析匹配度"
@@ -257,10 +261,14 @@ function App() {
   function renderExecution(message: ChatMessage) {
     const agentRun = message.payload?.agent;
     if (!agentRun?.events.length) return null;
+    const failed = agentRun.status === "failed" || agentRun.events.some((event) => event.status === "failed");
     return (
-      <details className="execution-card">
+      <details className={`execution-card ${failed ? "failed" : ""}`} open={failed}>
         <summary>
-          <span><CheckCircle2 size={15} /> 已完成 {agentRun.events.length} 个步骤</span>
+          <span>
+            {failed ? <TriangleAlert size={15} /> : <CheckCircle2 size={15} />}
+            {failed ? "执行失败，需要处理" : `已完成 ${agentRun.events.length} 个步骤`}
+          </span>
           <small>{agentRun.platform === "boss" ? "BOSS 直聘" : "模拟平台"} · {agentRun.rounds} 轮</small>
         </summary>
         <div className="execution-list">

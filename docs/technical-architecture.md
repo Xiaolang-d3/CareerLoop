@@ -15,6 +15,7 @@ The first delivery target is a local, single-user application that can understan
 5. **Observable and recoverable**: model calls, tool calls, workflow transitions, and failures are persisted as events.
 6. **Capability driven**: platforms and models declare supported capabilities; the runtime does not assume parity.
 7. **Local-first privacy**: browser profiles, API keys, resumes, and runtime databases stay outside Git.
+8. **No silent model fallback**: provider failures stop the current Agent run and surface an actionable alert.
 
 ## 3. System context
 
@@ -168,6 +169,7 @@ MODEL_NAME=<configured-model>
 OPENAI_API_KEY=<secret>
 MODEL_BASE_URL=<optional-compatible-api-root>
 MODEL_MAX_TOOL_ROUNDS=5
+MODEL_TIMEOUT_SECONDS=60
 
 JOB_PLATFORM=mock
 DATABASE_URL=sqlite:///...

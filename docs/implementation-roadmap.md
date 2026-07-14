@@ -8,7 +8,7 @@ Architecture documentation and contracts are completed before business implement
 
 The current priority is a working end-to-end feature flow. A comprehensive automated test suite, repository-wide database refactor, migration framework, and CI pipeline are deferred to Phase 6. Each functional commit still requires Python import/compile verification, a manual API smoke check when relevant, frontend production build verification, and `git diff --check`.
 
-The current flow covers platform selection, job search, normalization, non-Mock SQLite deduplication, and deterministic ranking. The OpenAI-compatible provider supports configuration-driven model and Base URL selection while the Fake Provider remains available for offline development.
+The current flow covers platform selection, job search, normalization, non-Mock SQLite deduplication, and deterministic ranking. The OpenAI-compatible provider supports configuration-driven model and Base URL selection. Runtime model failures are surfaced explicitly and never trigger a silent fallback.
 
 ## Phase 0: Documentation baseline
 
@@ -53,7 +53,7 @@ Deliverables:
 - Deterministic Mock Platform with representative job fixtures
 - Tool registry with argument validation and structured results
 - Agent runtime with maximum rounds, per-tool timeout, cancellation, and event persistence
-- Fake model provider for deterministic tests
+- Deterministic model fixtures isolated to future tests, never registered as a runtime fallback
 - LangGraph workflow for goal, search, collection, analysis, shortlist, and approval pause
 
 Exit criteria:
@@ -77,7 +77,7 @@ Exit criteria:
 
 - Provider selection and model name are configuration-only changes.
 - OpenAI SDK types do not escape the adapter.
-- Fake provider tests remain the default offline test path.
+- Provider contract fixtures remain isolated from production runtime registration.
 - A gated integration test verifies one model response and one tool-call round.
 
 ## Phase 4: Read-only BOSS adapter

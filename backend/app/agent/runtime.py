@@ -4,9 +4,10 @@ from ..domain import (
     AgentMessage,
     AgentRunResult,
     ModelRequest,
+    ToolError,
     ToolEvent,
 )
-from ..models import ModelProviderRegistry
+from ..models import ModelProviderError, ModelProviderRegistry
 from ..tools import ToolContext, ToolRegistry
 
 
@@ -36,12 +37,47 @@ class AgentRuntime:
                 response = await provider.generate(
                     ModelRequest(messages=messages, tools=self._tools.definitions())
                 )
-            except Exception as exc:
+            except ModelProviderError as exc:
+                events.append(
+                    ToolEvent(
+                        round=round_number,
+                        tool_call_id=f"model-round-{round_number}",
+                        tool_name="model_provider",
+                        status="failed",
+                        message=str(exc),
+                        data={"code": exc.code, "retryable": exc.retryable},
+                    )
+                )
                 return AgentRunResult(
-                    content=f"模型调用失败：{exc}",
+                    content=f"模型服务不可用：{exc}。系统没有切换到备用模型，请处理后重试。",
                     provider=self._model_provider,
                     platform=selected_platform,
                     rounds=round_number,
+                    status="failed",
+                    error=ToolError(code=exc.code, message=str(exc), retryable=exc.retryable),
+                    events=events,
+                )
+            except Exception:
+                events.append(
+                    ToolEvent(
+                        round=round_number,
+                        tool_call_id=f"model-round-{round_number}",
+                        tool_name="model_provider",
+                        status="failed",
+                        message="模型服务发生未知异常",
+                        data={"code": "unknown_model_error", "retryable": False},
+                    )
+                )
+                return AgentRunResult(
+                    content="模型服务发生未知异常。系统没有切换到备用模型，请检查服务日志后重试。",
+                    provider=self._model_provider,
+                    platform=selected_platform,
+                    rounds=round_number,
+                    status="failed",
+                    error=ToolError(
+                        code="unknown_model_error",
+                        message="模型服务发生未知异常",
+                    ),
                     events=events,
                 )
             if response.content and not response.tool_calls:
@@ -129,5 +165,10 @@ class AgentRuntime:
             provider=self._model_provider,
             platform=selected_platform,
             rounds=self._max_tool_rounds,
+            status="failed",
+            error=ToolError(
+                code="round_limit_reached",
+                message="Agent 已达到最大工具调用轮数",
+            ),
             events=events,
         )

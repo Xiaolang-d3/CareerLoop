@@ -1,10 +1,9 @@
-from .base import ModelProvider, ModelProviderRegistry
-from .fake import FakeModelProvider
+from .base import ModelProvider, ModelProviderError, ModelProviderRegistry
 from .openai_compatible import OpenAICompatibleProvider
 
 __all__ = [
-    "FakeModelProvider",
     "ModelProvider",
+    "ModelProviderError",
     "ModelProviderRegistry",
     "OpenAICompatibleProvider",
 ]

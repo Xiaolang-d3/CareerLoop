@@ -3,9 +3,17 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from openai import AsyncOpenAI, OpenAIError
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AsyncOpenAI,
+    AuthenticationError,
+    RateLimitError,
+)
 
 from ..domain import ModelRequest, ModelResponse, ModelUsage, ToolCall
+from .base import ModelProviderError
 
 
 SYSTEM_PROMPT = """你是 BossCopilot 的求职搜索 Agent，使用中文回答。
@@ -18,12 +26,23 @@ SYSTEM_PROMPT = """你是 BossCopilot 的求职搜索 Agent，使用中文回答
 class OpenAICompatibleProvider:
     name = "openai"
 
-    def __init__(self, api_key: str, model: str, base_url: str | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        base_url: str | None = None,
+        timeout_seconds: float = 60,
+    ) -> None:
         if not api_key:
             raise ValueError("启用 OpenAI Provider 时必须配置 OPENAI_API_KEY")
         self._model = model
         self._base_url = self._normalize_base_url(base_url)
-        self._client = AsyncOpenAI(api_key=api_key, base_url=self._base_url)
+        self._client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=self._base_url,
+            timeout=timeout_seconds,
+            max_retries=0,
+        )
 
     @staticmethod
     def _normalize_base_url(base_url: str | None) -> str | None:
@@ -56,8 +75,35 @@ class OpenAICompatibleProvider:
 
         try:
             response = await self._client.chat.completions.create(**arguments)
-        except OpenAIError as exc:
-            raise RuntimeError(f"模型服务请求失败：{exc}") from exc
+        except AuthenticationError as exc:
+            raise ModelProviderError(
+                "authentication_failed",
+                "模型服务认证失败，请检查 API Key 是否有效",
+            ) from exc
+        except RateLimitError as exc:
+            raise ModelProviderError(
+                "rate_limited",
+                "模型服务触发限流，请稍后重试",
+                retryable=True,
+            ) from exc
+        except APITimeoutError as exc:
+            raise ModelProviderError(
+                "request_timeout",
+                "模型服务响应超时，请稍后重试",
+                retryable=True,
+            ) from exc
+        except APIConnectionError as exc:
+            raise ModelProviderError(
+                "service_unavailable",
+                "无法连接模型服务，请检查网关地址或网络状态",
+                retryable=True,
+            ) from exc
+        except APIStatusError as exc:
+            raise ModelProviderError(
+                "provider_error",
+                f"模型服务返回异常状态（{exc.status_code}）",
+                retryable=exc.status_code >= 500,
+            ) from exc
 
         choice = response.choices[0]
         message = choice.message
@@ -66,7 +112,10 @@ class OpenAICompatibleProvider:
             try:
                 parsed_arguments = json.loads(call.function.arguments or "{}")
             except json.JSONDecodeError as exc:
-                raise RuntimeError(f"模型工具参数不是合法 JSON：{call.function.name}") from exc
+                raise ModelProviderError(
+                    "invalid_tool_arguments",
+                    f"模型返回的工具参数无法解析：{call.function.name}",
+                ) from exc
             tool_calls.append(
                 ToolCall(id=call.id, name=call.function.name, arguments=parsed_arguments)
             )

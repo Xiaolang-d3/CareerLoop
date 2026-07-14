@@ -103,6 +103,10 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visi
 .execution-card summary::-webkit-details-marker { display: none; }
 .execution-card summary > span { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; }
 .execution-card summary svg { color: #2ba46e; }
+.execution-card.failed { border-color: #efc7ba; background: #fff8f5; }
+.execution-card.failed summary { color: #934a34; }
+.execution-card.failed summary svg { color: #cf6241; }
+.execution-card.failed .execution-list { border-top-color: #f1d9d1; }
 .execution-card summary small { color: #89958f; font-size: 10px; }
 .execution-list { display: grid; gap: 10px; padding: 11px 12px; border-top: 1px solid #e8ece9; }
 .execution-row { display: grid; grid-template-columns: 8px minmax(0, 1fr); gap: 9px; align-items: start; }

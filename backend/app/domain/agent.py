@@ -70,4 +70,6 @@ class AgentRunResult(BaseModel):
     provider: str
     platform: str
     rounds: int
+    status: Literal["done", "failed"] = "done"
+    error: ToolError | None = None
     events: list[ToolEvent] = Field(default_factory=list)

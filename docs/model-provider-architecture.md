@@ -79,9 +79,11 @@ Model choice should come from environment/config, not source edits:
 ```text
 MODEL_PROVIDER=openai
 MODEL_NAME=<configured GPT model>
-MODEL_API_KEY=<secret>
+OPENAI_API_KEY=<secret>
 MODEL_BASE_URL=<optional OpenAI-compatible endpoint>
 ```
+
+Only the configured provider is registered at runtime. The application does not silently switch to a fake, cheaper, or alternate model. Authentication failures, rate limits, timeouts, connection failures, and upstream error responses must become structured Agent failures and visible UI alerts.
 
 ## Current Plan
 
@@ -90,4 +92,3 @@ MODEL_BASE_URL=<optional OpenAI-compatible endpoint>
 3. Keep browser/BOSS actions as normal tools.
 4. Store model/tool events in workflow/chat payloads.
 5. Add other model providers by implementing the same adapter interface.
-
