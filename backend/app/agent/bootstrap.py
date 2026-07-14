@@ -4,7 +4,7 @@ from functools import lru_cache
 from typing import Any
 
 from ..config import get_settings
-from ..models import FakeModelProvider, ModelProviderRegistry
+from ..models import FakeModelProvider, ModelProviderRegistry, OpenAICompatibleProvider
 from ..platforms import BossJobPlatform, JobPlatformRegistry, MockJobPlatform
 from ..repositories import JobRepository
 from ..tools import GetJobDetailTool, RankJobsTool, SearchJobsTool, ToolRegistry
@@ -18,6 +18,15 @@ def _build_components() -> tuple[AgentRuntime, dict[str, Any], JobPlatformRegist
     models = ModelProviderRegistry()
     fake_model = FakeModelProvider()
     models.register(fake_model.name, fake_model)
+    if settings.model_provider == "openai" and not settings.openai_api_key:
+        raise ValueError("MODEL_PROVIDER=openai 时必须配置 OPENAI_API_KEY")
+    if settings.openai_api_key:
+        openai_model = OpenAICompatibleProvider(
+            api_key=settings.openai_api_key,
+            model=settings.model_name,
+            base_url=settings.model_base_url,
+        )
+        models.register(openai_model.name, openai_model)
 
     platforms = JobPlatformRegistry()
     mock_platform = MockJobPlatform()

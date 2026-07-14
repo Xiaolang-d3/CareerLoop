@@ -8,7 +8,7 @@ Architecture documentation and contracts are completed before business implement
 
 The current priority is a working end-to-end feature flow. A comprehensive automated test suite, repository-wide database refactor, migration framework, and CI pipeline are deferred to Phase 6. Each functional commit still requires Python import/compile verification, a manual API smoke check when relevant, frontend production build verification, and `git diff --check`.
 
-The current offline-capable flow now covers platform selection, job search, normalization, non-Mock SQLite deduplication, and deterministic ranking. OpenAI integration remains intentionally unconfigured; the Fake Provider drives the same tool contracts until credentials are enabled later.
+The current flow covers platform selection, job search, normalization, non-Mock SQLite deduplication, and deterministic ranking. The OpenAI-compatible provider supports configuration-driven model and Base URL selection while the Fake Provider remains available for offline development.
 
 ## Phase 0: Documentation baseline
 

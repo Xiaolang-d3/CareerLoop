@@ -32,9 +32,18 @@ class AgentRuntime:
         events: list[ToolEvent] = []
 
         for round_number in range(1, self._max_tool_rounds + 1):
-            response = await provider.generate(
-                ModelRequest(messages=messages, tools=self._tools.definitions())
-            )
+            try:
+                response = await provider.generate(
+                    ModelRequest(messages=messages, tools=self._tools.definitions())
+                )
+            except Exception as exc:
+                return AgentRunResult(
+                    content=f"模型调用失败：{exc}",
+                    provider=self._model_provider,
+                    platform=selected_platform,
+                    rounds=round_number,
+                    events=events,
+                )
             if response.content and not response.tool_calls:
                 return AgentRunResult(
                     content=response.content,

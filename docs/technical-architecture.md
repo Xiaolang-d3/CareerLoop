@@ -71,7 +71,7 @@ Required internal types:
 - `ToolDefinition`: neutral name, description, and JSON input schema.
 - `ToolCall`: internal call ID, tool name, and validated arguments.
 
-The OpenAI adapter uses the Responses API and converts between OpenAI objects and these types. Provider-specific IDs and raw responses may be stored only as optional diagnostic metadata.
+The OpenAI-compatible adapter converts between provider objects and these types. It currently uses Chat Completions because the configured compatible gateway has been verified for text generation and function tool calls on that endpoint. The adapter boundary allows a later switch to Responses API without changing the agent runtime. Provider-specific IDs and raw responses may be stored only as optional diagnostic metadata.
 
 ### Recruitment platforms
 
@@ -165,16 +165,17 @@ Configuration comes from environment variables or a local ignored `.env` file:
 ```text
 MODEL_PROVIDER=openai
 MODEL_NAME=<configured-model>
-MODEL_API_KEY=<secret>
-MODEL_BASE_URL=<optional>
-MODEL_TIMEOUT_SECONDS=60
-MODEL_MAX_TOOL_ROUNDS=10
+OPENAI_API_KEY=<secret>
+MODEL_BASE_URL=<optional-compatible-api-root>
+MODEL_MAX_TOOL_ROUNDS=5
 
 JOB_PLATFORM=mock
 DATABASE_URL=sqlite:///...
 ```
 
 Secrets, browser profiles, databases, logs, screenshots containing personal data, and generated resumes must not be committed.
+
+`MODEL_BASE_URL` may be the gateway root or an explicit `/v1` URL; the adapter normalizes it internally. Omitting it uses the OpenAI SDK default endpoint. Local credentials belong in `backend/.env`, which is ignored by Git. The committed `backend/.env.example` contains names only and must never contain a real key.
 
 ## 7. Initial request flow
 
@@ -203,4 +204,3 @@ The following are intentionally out of the first architecture implementation:
 - CAPTCHA solving or login bypass
 - Microservices, Redis queues, and distributed locks
 - Simultaneous implementation of multiple real recruitment platforms
-
