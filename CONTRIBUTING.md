@@ -37,9 +37,9 @@ git pull --ff-only
 ```text
 docs(architecture): 定义模块化 Agent 架构边界
 feat(agent): 增加模型工具调用循环
-feat(platform): 增加模拟招聘平台
-fix(boss): 登录失效时暂停工作流
-test(approval): 验证确认令牌不可重复使用
+feat(import): 增加用户确认的岗位导入
+fix(privacy): 修复脱敏简历证据泄露
+test(attachments): 验证附件删除会清理底层对象
 ```
 
 摘要使用动词开头，保持简洁，结尾不加句号。变更动机、迁移方式、风险或验证过程不明显时，需要在提交正文中补充说明。
@@ -76,7 +76,7 @@ fix bug
 
 - `.env` 文件和 API Key
 - SQLite 数据库
-- Playwright/BOSS 浏览器配置、Cookie 和登录信息
+- 招聘网站 Cookie、登录信息或其他会话凭据
 - 简历和候选人个人数据
 - 包含隐私信息的运行日志或截图
 - `node_modules`、Python 虚拟环境和构建产物

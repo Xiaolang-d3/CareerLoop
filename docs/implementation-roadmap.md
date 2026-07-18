@@ -1,131 +1,267 @@
-# BossCopilot Implementation Roadmap
+# BossCopilot 实施路线
 
-## Delivery rule
+## 交付原则
 
-Architecture documentation and contracts are completed before business implementation. Each phase is delivered in a focused Git commit or short commit series and must pass its verification commands before moving to the next phase.
+每个阶段都应形成一个或一组内聚的 Git 提交，并在进入下一阶段前完成相应验证。
 
-## Current execution priority
+提交前至少执行：
 
-The current priority is a working end-to-end feature flow. A comprehensive automated test suite, repository-wide database refactor, migration framework, and CI pipeline are deferred to Phase 6. Each functional commit still requires Python import/compile verification, a manual API smoke check when relevant, frontend production build verification, and `git diff --check`.
+```bash
+cd backend
+.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python -m compileall -q app tests
 
-The current flow uses BOSS Zhipin as its only runtime data source and covers job search, normalization, SQLite deduplication, and deterministic ranking. The OpenAI-compatible provider supports configuration-driven model and Base URL selection. Model or platform failures are surfaced explicitly and never trigger a silent fallback.
+cd ../frontend
+npm run build
 
-## Phase 0: Documentation baseline
+cd ..
+git diff --check
+```
 
-Deliverables:
+涉及敏感数据的修改还必须检查：
 
-- Technical architecture and module boundaries
-- Git workflow and commit policy
-- Development environment and editor guidance
-- Implementation phases and acceptance criteria
+- 原始简历是否可能被发送到模型。
+- 删除操作是否同步清理附件和知识索引。
+- 日志、测试数据和截图是否包含个人信息。
+- 新接口是否扩大了局域网或本机访问范围。
 
-Exit criteria:
+## 当前产品边界
 
-- Documentation is linked from the README.
-- Documentation is committed independently of application code.
+第一版定位为本地、单用户的求职分析与记录工具。
 
-## Phase 1: Neutral contracts and registries
+当前明确支持：
 
-Deliverables:
+- 候选人画像、简历和求职偏好
+- 用户主动粘贴或上传并确认的岗位导入
+- 本地岗位保存、去重和状态管理
+- 匹配分析、简历差距分析和本地知识检索
+- 沟通草稿、待投递队列和投递进展记录
+- 多对话、上下文记忆和 Agent 设置
+- AG-UI 流式聊天和工具执行状态
+- 本地附件或 MinIO 私有对象存储
 
-- Domain models for jobs, searches, match results, applications, approvals, model messages, and tool calls
-- `ModelProvider`, `JobPlatform`, and tool handler protocols
-- Model, platform, and tool registries
-- Typed configuration with environment loading
-- Repository layer around existing SQLite access
+当前明确不支持：
 
-Compatibility:
+- 自动访问或读取招聘网站
+- 浏览器自动登录、搜索、刷新或翻页
+- 自动向招聘者发送消息
+- 自动发送简历或提交职位申请
+- 验证码处理、风控对抗或私有接口逆向
 
-- Existing read APIs continue working during migration.
-- Existing SQLite data is not deleted or rewritten.
-- The old browser controller is not expanded in this phase.
+用户本人负责在招聘平台完成所有外部操作。BossCopilot 中的草稿、待投递和投递状态仅代表本地记录。
 
-Exit criteria:
+## 阶段 0：方向收口与版本基线
 
-- Core modules contain no OpenAI, BOSS, Playwright, or HTTP-specific imports.
-- Duplicate provider/platform registration and unknown lookups return explicit errors.
-- The configured provider, platform, and tools can be inspected through the runtime capability endpoint.
+### 目标
 
-## Phase 2: Agent runtime
+把当前手动导入、本地分析的产品方向形成可恢复、可审查的版本基线。
 
-Deliverables:
+### 交付内容
 
-- Deterministic job fixtures isolated to future tests and never registered at runtime
-- Tool registry with argument validation and structured results
-- Agent runtime with maximum rounds, per-tool timeout, cancellation, and event persistence
-- Deterministic model fixtures isolated to future tests, never registered as a runtime fallback
-- LangGraph workflow for goal, search, collection, analysis, shortlist, and approval pause
+- 统一 README、PRD、技术架构和实施路线
+- 删除或归档旧版 BOSS 浏览器自动化说明
+- 将大规模工作区改动拆分为内聚提交
+- 推送本地超前提交和新功能提交
+- 记录当前数据库和附件兼容策略
 
-Exit criteria:
+### 退出标准
 
-- A complete job-search conversation runs without network or BOSS access.
-- The runtime handles sequential and multiple tool calls.
-- Invalid tools, invalid arguments, timeouts, and round exhaustion terminate safely.
-- Every model call and tool call has a run ID and traceable result.
+- 干净克隆可以看到全部当前代码和测试。
+- 文档只描述一种产品边界。
+- 工作区不存在无法解释的大批未提交核心文件。
+- 当前分支已推送到远程仓库。
 
-## Phase 3: OpenAI provider
+## 阶段 1：隐私与访问安全
 
-Deliverables:
+### 目标
 
-- OpenAI Responses API adapter
-- Function-call conversion to and from neutral tool types
-- Structured outputs for analysis and ranking
-- Timeout, retryable error, rate-limit, and authentication error mapping
-- Usage and latency metadata without secrets
+确保本地隐私承诺在所有代码路径中成立。
 
-Exit criteria:
+### 交付内容
 
-- Provider selection and model name are configuration-only changes.
-- OpenAI SDK types do not escape the adapter.
-- Provider contract fixtures remain isolated from production runtime registration.
-- A gated integration test verifies one model response and one tool-call round.
+- 后端默认只监听 `127.0.0.1`
+- 可选局域网模式的访问令牌或等效认证
+- 数据库和附件目录的私有文件权限
+- 简历差距分析统一使用脱敏文本
+- 工具权限只根据用户原始指令决定
+- 附件、岗位描述和知识片段按不可信输入处理
+- 敏感错误和日志脱敏
+- 一键清除全部个人数据
 
-## Phase 4: Read-only BOSS adapter
+### 退出标准
 
-Deliverables:
+- 未认证客户端不能读取或修改个人数据。
+- `privacy_mode=redacted` 时，任何模型请求都不包含原始简历。
+- 附件内容不能扩大本地写工具权限。
+- 日志和测试输出不包含 API Key、签名 URL 或原始个人信息。
 
-- Persistent local browser session
-- Login-state, CAPTCHA, and unexpected-page detection
-- Search navigation and visible job collection
-- Job detail parsing and normalization
-- Raw-page mapping isolated behind the BOSS adapter
+## 阶段 2：数据生命周期和数据库可靠性
 
-Exit criteria:
+### 目标
 
-- The adapter never attempts to bypass login or CAPTCHA.
-- Selector failures produce structured platform errors and diagnostic events.
-- The core flow uses the BOSS adapter exclusively and returns structured blocks when BOSS is unavailable.
-- Parsed fixtures have regression tests that do not require live BOSS access.
+解决连接泄漏、孤儿文件、幽灵知识和 schema 演进问题。
 
-## Phase 5: Approval and assisted application
+### 交付内容
 
-Deliverables:
+- 真正关闭 SQLite 连接的上下文管理器
+- WAL、busy timeout 和明确事务边界
+- 数据库 schema 版本
+- 可重复执行的迁移机制
+- 删除对话时同步删除附件对象
+- 删除岗位时同步删除岗位知识片段和向量
+- 清空或替换简历时同步更新简历知识索引
+- 对附件删除失败提供补偿或重试机制
+- 数据备份、导出和恢复说明
 
-- Application draft generation
-- Approval request API and UI
-- Single-use, expiring approval tokens bound to reviewed content
-- BOSS external-write executor behind policy checks
-- Application and audit history
+### 退出标准
 
-Exit criteria:
+- 测试运行不再出现未关闭数据库连接警告。
+- 删除敏感数据后，数据库、向量表、本地目录和 MinIO 中均无残留。
+- 旧数据库可以通过迁移升级，不需要手工修改表结构。
+- 并发读取和常见写操作不会频繁触发 `database is locked`。
 
-- No external write works without valid approval.
-- Changed, expired, reused, or mismatched approvals are rejected.
-- CAPTCHA, login loss, warning pages, and platform limits pause the workflow.
-- The user can see exactly what was attempted and the resulting state.
+## 阶段 3：Agent 运行时与 AG-UI 协议收口
 
-## Phase 6: Product hardening
+### 目标
 
-Deliverables:
+让路由、计划、工具执行、取消和流式协议具有一致、可测试的状态语义。
 
-- Frontend feature modules and error states
-- Database migrations
-- Evaluation set for job extraction, analysis, and ranking
-- Log redaction, retention rules, backup/export, and recovery documentation
-- CI checks for backend tests and frontend type/build verification
+### 交付内容
 
-Exit criteria:
+- 区分状态查询和状态更新意图
+- 为路由规则建立覆盖同义词和冲突意图的测试集
+- 统一规划结果、工具结果和最终运行状态
+- 修正 AG-UI 对业务失败的状态映射
+- 增加每个工具的执行超时
+- 持久化模型调用、工具调用和运行标识
+- 记录模型用量与延迟，不保存敏感信息
+- 验证断连、取消、失败、等待用户和重新生成流程
+- 明确 LangGraph 的职责范围
 
-- A clean checkout can be configured and verified from documented commands.
-- Core flows have automated regression coverage.
-- Sensitive local data is absent from Git and redacted from diagnostics.
+### 退出标准
+
+- `done`、`failed`、`waiting_user` 和 `cancelled` 在数据库、AG-UI 和前端中含义一致。
+- 计划外工具始终被代码阻止。
+- 工具超时能够安全终止当前运行。
+- 用户断开连接或点击停止后，不会留下无法恢复的运行状态。
+
+## 阶段 4：服务层与前端模块化
+
+### 目标
+
+降低 `backend/app/main.py` 和 `frontend/src/main.tsx` 的职责密度。
+
+### 后端交付内容
+
+- 按功能拆分 API 路由
+- 建立画像、岗位、对话、附件和投递服务层
+- API 层不再直接拼接主要业务 SQL
+- 统一仓储访问和事务边界
+- 移除或限制绕过新流程的旧 CRUD 接口
+- 为服务层增加单元测试和端点集成测试
+
+建议目录：
+
+```text
+backend/app/
+  api/
+  services/
+  repositories/
+  agent/
+  tools/
+  models/
+  domain/
+```
+
+### 前端交付内容
+
+- 按聊天、画像、岗位、投递和 Agent 设置拆分功能模块
+- 抽取统一 API 客户端和错误处理
+- 拆分数据加载、页面状态和展示组件
+- 增加组件测试和关键交互测试
+- 按功能动态加载较大的依赖和页面
+
+建议目录：
+
+```text
+frontend/src/
+  api/
+  features/chat/
+  features/profile/
+  features/jobs/
+  features/applications/
+  features/agent-settings/
+  components/layout/
+```
+
+### 退出标准
+
+- 新业务不需要继续扩展单个超大入口文件。
+- 核心页面可以独立测试。
+- 前端生产构建不再出现无法解释的超大业务 chunk。
+- API 兼容行为有明确测试保护。
+
+## 阶段 5：核心求职闭环
+
+### 目标
+
+完成一条真实、可复现的本地求职流程。
+
+### 交付内容
+
+1. 创建或更新候选人画像。
+2. 解析并脱敏简历。
+3. 粘贴岗位文字或上传岗位截图。
+4. 用户检查后确认导入。
+5. 执行岗位匹配和简历差距分析。
+6. 保存个性化沟通草稿。
+7. 加入本地待投递队列。
+8. 用户在招聘网站自行完成外部操作。
+9. 用户回到 BossCopilot 记录真实进展。
+10. 在工作台查看状态和后续建议。
+
+### 退出标准
+
+- 上述流程可以在干净数据库中完整走通。
+- 所有关键状态均可在重新启动后恢复。
+- 每个分析结论能够追溯到简历、岗位或本地资料证据。
+- 系统不会声称已经执行任何外部发送或投递。
+
+## 阶段 6：产品硬化与发布
+
+### 目标
+
+达到可交付的本地 MVP 标准。
+
+### 交付内容
+
+- GitHub Actions 或等效 CI
+- Ruff、ESLint、格式化和类型检查
+- 前端组件与端到端测试
+- 真实模型的受控集成测试
+- 数据导出、备份、恢复和清除工具
+- 依赖安全检查
+- 错误诊断和日志保留策略
+- 可移植的启动方式和健康检查
+- 发布说明和升级说明
+
+### 退出标准
+
+- 干净克隆可以按中文文档一次配置并启动。
+- 后端测试、前端构建和静态检查由 CI 强制执行。
+- 敏感数据不存在于 Git 和诊断产物中。
+- 本地数据库升级和恢复流程经过验证。
+- 至少一条真实求职闭环有自动化回归保护。
+
+## 暂缓事项
+
+以下能力不进入第一版本：
+
+- 多租户账号、团队空间和计费
+- 远程浏览器集群
+- 自动化批量投递
+- 自动发送招聘消息或简历
+- 验证码识别和风控对抗
+- 多招聘平台自动接入
+- 微服务、Redis 队列和分布式锁
+- 未经验证的长期自主运行

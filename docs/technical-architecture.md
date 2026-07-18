@@ -1,61 +1,110 @@
-# BossCopilot Technical Architecture
+# BossCopilot 技术架构
 
-## 1. Purpose
+## 1. 目标与范围
 
-BossCopilot is a modular job-search agent. The first production integrations are BOSS Zhipin and OpenAI, but neither platform-specific browser behavior nor provider-specific model objects may enter the agent core.
+BossCopilot 是一个本地优先、面向个人用户的求职 Agent。第一版帮助用户管理求职画像、导入真实岗位、分析岗位与简历的匹配度、准备沟通草稿并记录求职进展。
 
-The first delivery target is a local, single-user application that can understand a job-search goal, search and normalize jobs, analyze and rank them, and pause for user approval before any external write action.
+当前版本不访问、不读取也不控制招聘网站。用户本人负责在招聘平台完成登录、搜索、沟通和投递；系统只处理用户主动提供并确认的岗位、简历和求职记录。
 
-## 2. Architecture principles
+第一版采用模块化单体架构：模块边界需要清楚，但暂不引入微服务、Redis、PostgreSQL 或远程任务执行器。
 
-1. **Provider neutral**: the core depends on internal model request/response types, not an OpenAI SDK type.
-2. **Platform neutral**: the core works with normalized job and application types, not BOSS page structures.
-3. **Tools are the execution boundary**: the model proposes tool calls; the runtime validates and executes them.
-4. **Human approval for external writes**: messages, resume submissions, and applications require an approval token.
-5. **Observable and recoverable**: model calls, tool calls, workflow transitions, and failures are persisted as events.
-6. **Capability driven**: platforms and models declare supported capabilities; the runtime does not assume parity.
-7. **Local-first privacy**: browser profiles, API keys, resumes, and runtime databases stay outside Git.
-8. **No silent model fallback**: provider failures stop the current Agent run and surface an actionable alert.
+## 2. 架构原则
 
-## 3. System context
+1. **本地优先**：简历、岗位、聊天记录和求职进展默认保存在本机。
+2. **用户控制外部行为**：系统不代表用户在招聘网站执行任何写操作。
+3. **模型提供商无关**：Agent 核心依赖内部模型协议，不依赖某个 SDK 对象。
+4. **工具是执行边界**：模型只能调用代码允许的结构化工具。
+5. **最小权限**：每个任务只向模型开放完成该任务所需的最小工具集合。
+6. **不可信内容隔离**：岗位描述、简历、附件 OCR 和知识片段不能扩大工具权限。
+7. **隐私默认脱敏**：向模型提供简历时默认使用脱敏文本，视觉上传必须按轮授权。
+8. **失败显式可见**：模型、工具、存储和解析错误不得静默降级或伪装成功。
+9. **可恢复和可审计**：对话、工具结果、工作流状态和用户确认需要持久化。
+10. **删除语义完整**：删除记录时同步处理数据库、知识索引和附件对象。
+
+## 3. 系统上下文
 
 ```text
-React Web UI
-  -> FastAPI API
+React Web 工作台
+  -> FastAPI HTTP API
+  -> AG-UI HTTP/SSE
   -> Agent Runtime
-       -> Model Provider Registry -> OpenAI Provider / future providers
-       -> Tool Registry
-            -> Platform Registry -> BOSS / future platforms
-            -> Domain Services -> matching / applications / approvals
-       -> LangGraph workflow
-       -> Repositories -> SQLite
+       -> 任务路由与计划
+       -> 模型提供商注册表
+            -> OpenAI 兼容适配器
+       -> 工具注册表
+            -> 候选人画像工具
+            -> 岗位导入与读取工具
+            -> 匹配和简历差距分析工具
+            -> 本地知识检索工具
+            -> 草稿、待投递和状态记录工具
+       -> 工作流状态投影
+       -> SQLite 仓储
+  -> 本地附件目录或 MinIO
+  -> 本地文档解析和隐私脱敏
 ```
 
-The application remains a modular monolith for the first version. Module boundaries must be explicit, but separate services, Redis, PostgreSQL, and remote browser workers are deferred until a multi-user deployment is required.
+## 4. 前端
 
-## 4. Module boundaries
+前端使用 React、TypeScript 和 Vite，主要职责包括：
 
-### API
+- 多对话和聊天消息展示
+- AG-UI 流式事件消费
+- Agent 推理摘要和工具状态展示
+- 消息发送、停止、编辑、复制、重试和重新生成
+- 候选人画像和求职偏好编辑
+- 简历上传、解析、隐私扫描和脱敏确认
+- 岗位手动导入和岗位工作台
+- 沟通草稿、待投递队列和求职状态展示
+- Agent 人设、记忆和上下文设置
+- 附件上传以及单轮图片直传授权
 
-Owns HTTP validation, authentication when introduced, response mapping, and streaming. It does not contain SQL, browser selectors, model prompts, or business decisions.
+聊天交互使用 `@assistant-ui/react` 的 External Store Runtime。AG-UI 只负责运行事件传输，不替代本地 SQLite 中的权威消息记录。
 
-### Agent runtime
+前端不应持有 MinIO 密钥、模型 API Key 或附件对象存储路径。
 
-Owns the model/tool loop:
+## 5. API 层
 
-1. Load conversation and workflow state.
-2. Resolve the configured model provider.
-3. Provide only permitted tools to the model.
-4. Validate returned tool calls.
-5. Execute tools with timeouts and policy checks.
-6. Persist model and tool events.
-7. Continue until a final response, approval pause, error, or round limit.
+FastAPI API 负责：
 
-LangGraph owns durable workflow transitions. It must call internal services and tools instead of platform implementations directly.
+- HTTP 请求校验
+- 对话和资源存在性检查
+- 响应结构转换
+- 文件上传
+- SSE 和 AG-UI 事件编码
+- 调用领域服务、Agent Runtime 和存储服务
+- 把领域错误转换为明确的 HTTP 错误
 
-### Model providers
+目标状态下，API 层不应包含主要业务 SQL、模型提示词或复杂业务决策。当前部分旧接口仍直接访问 SQLite，后续应迁移到服务层和仓储层。
 
-All providers implement one internal protocol:
+本地模式默认只应监听 `127.0.0.1`。如果开放到局域网，必须增加访问认证，不能把 CORS 当作安全边界。
+
+## 6. Agent Runtime
+
+Agent Runtime 负责模型与工具循环：
+
+1. 接收用户原始指令和权威对话历史。
+2. 根据用户原始意图选择任务路由。
+3. 为复杂任务生成结构化计划。
+4. 只向模型提供计划允许的工具。
+5. 校验模型返回的工具名称和参数。
+6. 执行本地工具并记录结构化结果。
+7. 在失败、阻塞、等待用户、取消或达到轮数上限时停止。
+8. 生成最终回答并持久化运行结果。
+
+用户上传的附件文本可以作为模型分析材料，但不能参与工具权限判定。工具风险策略由代码维护，不能由模型或附件内容覆盖。
+
+运行结果状态包括：
+
+- `done`：正常完成
+- `failed`：模型或工具失败
+- `waiting_user`：等待用户主动提供或确认信息
+- `cancelled`：用户停止或客户端断开
+
+这些状态必须在 Agent Runtime、SQLite、AG-UI 和前端中保持一致。
+
+## 7. 模型提供商
+
+所有模型提供商实现统一内部协议：
 
 ```python
 class ModelProvider(Protocol):
@@ -65,52 +114,53 @@ class ModelProvider(Protocol):
         ...
 ```
 
-Required internal types:
+内部核心类型包括：
 
-- `ModelRequest`: messages, tool definitions, optional output schema, model options.
-- `ModelResponse`: assistant content, tool calls, structured output, usage, provider metadata.
-- `ToolDefinition`: neutral name, description, and JSON input schema.
-- `ToolCall`: internal call ID, tool name, and validated arguments.
+- `ModelRequest`：消息、工具定义和模型选项
+- `ModelResponse`：文本、工具调用、使用量和诊断元数据
+- `ModelStreamEvent`：文本增量和完成事件
+- `ToolDefinition`：模型无关的工具名称、描述和 JSON Schema
+- `ToolCall`：模型无关的工具调用标识、名称和参数
 
-The OpenAI-compatible adapter converts between provider objects and these types. It currently uses Chat Completions because the configured compatible gateway has been verified for text generation and function tool calls on that endpoint. The adapter boundary allows a later switch to Responses API without changing the agent runtime. Provider-specific IDs and raw responses may be stored only as optional diagnostic metadata.
+当前 OpenAI 兼容适配器使用 Chat Completions 接口，并负责：
 
-### Recruitment platforms
+- 请求和消息格式转换
+- 流式分片合并
+- 工具调用参数解析
+- Base URL 规范化
+- Token 使用量转换
+- 认证、限流、超时、连接和上游状态错误映射
 
-All platform adapters implement a capability-aware protocol:
+提供商 SDK 类型不得进入 Agent Runtime、工具或领域模型。
 
-```python
-class JobPlatform(Protocol):
-    name: str
+## 8. 工具边界
 
-    def capabilities(self) -> PlatformCapabilities: ...
-    async def start_session(self) -> SessionStatus: ...
-    async def check_auth(self) -> AuthStatus: ...
-    async def search_jobs(self, query: JobSearchQuery) -> list[JobSummary]: ...
-    async def get_job_detail(self, external_id: str) -> Job: ...
-    async def prepare_application(self, external_id: str) -> ApplicationDraft: ...
-    async def submit_application(
-        self, draft: ApplicationDraft, approval_token: str
-    ) -> ApplicationResult: ...
-```
+工具暴露领域动作，而不是浏览器动作。
 
-`PlatformCapabilities` covers job search, job-detail reading, recruiter status, greeting, resume submission, application submission, and conversation tracking.
+### 只读工具
 
-The BOSS adapter is internally divided into browser session, page parser, normalized mapper, and action executor. Selectors and BOSS URLs must stay inside that adapter.
-
-### Tools
-
-Tools expose domain actions rather than browser operations:
-
-- `search_jobs`
+- `get_candidate_context`
 - `get_job_detail`
-- `analyze_job`
+- `search_local_knowledge`
+
+### 分析工具
+
 - `rank_jobs`
-- `prepare_application`
-- `request_application_approval`
-- `submit_application`
+- `analyze_job`
+- `analyze_resume_gap`
+
+### 用户输入工具
+
+- `request_manual_job_import`
+
+### 本地写工具
+
+- `update_job_status`
+- `save_greeting_draft`
+- `queue_application`
 - `update_application_status`
 
-Every handler returns:
+所有工具返回统一的 `ToolResult`：
 
 ```python
 class ToolResult(BaseModel):
@@ -121,90 +171,173 @@ class ToolResult(BaseModel):
     error: ToolError | None = None
 ```
 
-Unknown tools, invalid arguments, unavailable capabilities, expired approvals, timeouts, and platform blocks return structured failures. They do not crash the runtime.
+未知工具、参数错误、能力缺失、超时和策略阻止都应返回结构化失败，不能让运行时崩溃。
 
-### Domain and persistence
+本地写工具只能在用户原始指令明确表达对应意图时开放。即使模型要求执行，计划外工具也必须被运行时代码阻止。
 
-Canonical domain objects include:
+## 9. 岗位输入边界
 
-- Candidate profile and job preferences
-- Job, salary range, recruiter information, and source reference
-- Match result with score, evidence, risks, and recommendation
-- Application draft, approval request, and application result
-- Agent run, message, tool call, workflow event, and audit event
+BossCopilot 不直接从招聘网站采集岗位。
 
-Normalized fields support cross-platform behavior. A `raw` object retains noncanonical source data without making business logic depend on it.
+支持两种输入方式：
 
-Existing business tables remain during migration. New runtime tables are additive:
+1. 用户粘贴岗位名称、公司、地点、薪资、经验、学历和岗位描述。
+2. 用户上传自己保存的岗位截图，由本机提取文字。
 
-- `agent_runs`
-- `agent_messages`
-- `tool_calls`
-- `platform_sessions`
-- `approval_requests`
-- `audit_events`
-
-Schema changes require versioned migrations before a cloud or multi-user release.
-
-## 5. Approval and safety model
-
-The following operations always require explicit approval:
-
-- Send or modify an external greeting/message
-- Submit a resume
-- Submit or withdraw an application
-- Execute a batch of external write actions
-
-An approval token is single-use, expires, and binds user/session, platform, job, action, and a hash of the reviewed content. Any changed content invalidates the token.
-
-CAPTCHA, login loss, unexpected navigation, selector failure, platform warning, or rate-limit warning pauses execution and records an audit event. The system does not bypass CAPTCHA or platform controls.
-
-When a read-only BOSS operation requires login, the tool returns a `waiting_approval` pause result and the Agent run becomes `waiting_user`. The original search request remains recoverable from chat history. The frontend observes the official BOSS session at a bounded interval and calls the resume endpoint after authentication is detected; the backend verifies authentication again and serializes resume attempts before replaying the pending request. A manual `已登录，继续` message remains an optional fallback. No search continues before authentication is confirmed.
-
-## 6. Configuration
-
-Configuration comes from environment variables or a local ignored `.env` file:
+导入流程：
 
 ```text
+用户提供岗位内容
+  -> 本地解析或 OCR
+  -> 前端展示提取结果
+  -> 用户检查和修改
+  -> 用户明确确认
+  -> 写入 SQLite
+  -> 建立对话关联
+  -> 建立本地知识索引
+```
+
+没有来源链接时，系统根据岗位标题、公司和描述生成稳定的 `manual://` 标识，用于本地去重。
+
+## 10. 附件与隐私
+
+附件类型包括：
+
+- `resume`：PDF、DOCX、TXT 和 Markdown 简历
+- `job_screenshot`：PNG、JPG、JPEG 和 WebP 岗位截图
+
+默认处理方式：
+
+- 原始附件保存在本地目录或私有 MinIO 桶。
+- 简历在本机解析，并扫描邮箱、手机号和身份证号。
+- 简历提供给模型时默认使用脱敏文本。
+- 岗位截图默认只向模型提供本地 OCR 文本。
+- 用户勾选“模型看图”后，才为当前一轮生成短期签名 URL。
+- 简历不支持视觉直传。
+- 签名 URL 不写入数据库、聊天记录或日志。
+
+附件 API 返回安全元数据，不返回对象存储路径或密钥。
+
+删除对话或附件时，应同步删除数据库记录和底层对象。删除失败需要可重试，避免产生无法定位的敏感文件。
+
+## 11. 本地知识检索
+
+知识来源包括：
+
+- 脱敏简历
+- 已确认导入的岗位
+- 用户本地笔记
+
+文本先分块，再使用本机确定性哈希向量建立 `sqlite-vec` 索引。该机制不调用远程嵌入模型，适合本地初步检索。
+
+如果原生向量扩展不可用，可以回退到 SQLite 文本匹配，但回退状态应对用户或诊断信息可见。
+
+删除或更新原始资料时，必须同步更新 `knowledge_chunks` 和向量表，避免检索到已删除或过期内容。
+
+## 12. 对话、记忆与工作流
+
+对话由以下数据组成：
+
+- `conversations`：对话标题、归档状态、摘要和上下文截断点
+- `conversation_tasks`：当前任务状态
+- `chat_messages`：权威用户和 Assistant 消息
+- `conversation_jobs`：对话与岗位的关联
+- `workflow_runs`、`workflow_nodes`、`workflow_events`：工作台状态和审计事件
+
+上下文由以下内容组合：
+
+- 最近若干条用户和 Assistant 消息
+- 可选的早期对话摘要
+- 当前用户消息
+- 用户本轮主动附加的脱敏资料
+
+重置上下文不会删除历史消息，只会移动上下文读取起点。
+
+当前 LangGraph 用于根据数据库状态计算和同步工作台节点，尚未承担完整的 Agent 工具编排。后续可以选择：
+
+- 扩展为真正的可恢复任务状态机；或
+- 保持轻量状态投影，把业务编排留在 Agent Runtime 和服务层。
+
+两种方向只能选择一种作为正式架构，避免重复状态来源。
+
+## 13. 数据与持久化
+
+当前使用 SQLite，主要表包括：
+
+- `profiles`
+- `preferences`
+- `jobs`
+- `match_results`
+- `messages`
+- `applications`
+- `conversations`
+- `conversation_tasks`
+- `conversation_jobs`
+- `chat_messages`
+- `attachments`
+- `knowledge_chunks`
+- `agent_settings`
+- `workflow_runs`
+- `workflow_nodes`
+- `workflow_events`
+
+SQLite 连接应由真正的上下文管理器关闭，并为本地并发场景配置 WAL 和 busy timeout。
+
+在发布前需要引入 schema 版本和可重复执行的迁移机制。`CREATE TABLE IF NOT EXISTS` 和临时 `ALTER TABLE` 只能作为早期本地兼容手段。
+
+## 14. 配置
+
+配置来自环境变量或被 Git 忽略的 `backend/.env`：
+
+```dotenv
 MODEL_PROVIDER=openai
-MODEL_NAME=<configured-model>
-OPENAI_API_KEY=<secret>
-MODEL_BASE_URL=<optional-compatible-api-root>
+MODEL_NAME=<模型名称>
+OPENAI_API_KEY=<密钥>
+MODEL_BASE_URL=<可选的 OpenAI 兼容服务地址>
 MODEL_MAX_TOOL_ROUNDS=5
 MODEL_TIMEOUT_SECONDS=60
 
-JOB_PLATFORM=boss
-DATABASE_URL=sqlite:///...
+ATTACHMENT_STORAGE=local
+MINIO_ENDPOINT=127.0.0.1:9000
+MINIO_ACCESS_KEY=<本地用户名>
+MINIO_SECRET_KEY=<本地密钥>
+MINIO_BUCKET=bosscopilot-attachments
+MINIO_SECURE=false
+MINIO_PUBLIC_ENDPOINT=<可选的 HTTPS 公网地址>
+ATTACHMENT_VISION_ENABLED=false
+ATTACHMENT_VISION_URL_TTL_SECONDS=300
 ```
 
-Secrets, browser profiles, databases, logs, screenshots containing personal data, and generated resumes must not be committed.
+密钥、数据库、简历、附件、日志和其他个人数据禁止提交到 Git。
 
-`MODEL_BASE_URL` may be the gateway root or an explicit `/v1` URL; the adapter normalizes it internally. Omitting it uses the OpenAI SDK default endpoint. Local credentials belong in `backend/.env`, which is ignored by Git. The committed `backend/.env.example` contains names only and must never contain a real key.
-
-## 7. Initial request flow
+## 15. 典型请求流程
 
 ```text
-User goal
-  -> runtime selects search tools
-  -> platform searches jobs
-  -> adapter normalizes results
-  -> analysis service/model creates evidence-backed match results
-  -> runtime ranks candidates
-  -> UI presents shortlist
-  -> user selects jobs
-  -> runtime prepares drafts
-  -> approval request pauses execution
-  -> approved platform action executes
-  -> application and audit events are stored
+用户提出岗位分析请求
+  -> API 加载对话和本轮附件
+  -> 只根据用户原始指令选择任务路由
+  -> Agent 生成受限执行计划
+  -> 读取脱敏候选人画像
+  -> 读取本地岗位详情
+  -> 执行确定性或结构化分析
+  -> 保存本地匹配结果
+  -> 模型生成有依据的最终回答
+  -> AG-UI 流式返回文本、工具和状态事件
+  -> SQLite 持久化权威消息与工作流状态
 ```
 
-## 8. Deferred architecture
+如果本地系统中还没有岗位，Agent 调用 `request_manual_job_import`，等待用户粘贴文字或上传截图并确认，不能自行访问招聘网站补充数据。
 
-The following are intentionally out of the first architecture implementation:
+## 16. 暂缓架构
 
-- Multi-tenant accounts and billing
-- Remote browser farms
-- Fully autonomous batch applications
-- CAPTCHA solving or login bypass
-- Microservices, Redis queues, and distributed locks
-- Simultaneous implementation of multiple real recruitment platforms
+第一版本暂不实现：
+
+- 多租户账号和计费
+- 云端共享数据库
+- 远程浏览器或浏览器集群
+- 自动招聘网站采集
+- 自动发送消息、简历或申请
+- 验证码处理和风控对抗
+- 微服务和分布式队列
+- 多招聘平台自动适配
+- 长时间无人监督的自主任务
