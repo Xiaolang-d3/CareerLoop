@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Protocol
 
-from ..domain import ModelRequest, ModelResponse
+from ..domain import ModelRequest, ModelResponse, ModelStreamEvent
 from ..registry import NamedRegistry
 
 
@@ -17,6 +18,9 @@ class ModelProvider(Protocol):
     name: str
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
+        ...
+
+    def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
         ...
 
 

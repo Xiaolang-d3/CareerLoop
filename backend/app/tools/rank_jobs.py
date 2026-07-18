@@ -14,6 +14,9 @@ class RankJobsArguments(BaseModel):
     jobs: list[JobSummary]
     keywords: list[str] = Field(default_factory=list)
     cities: list[str] = Field(default_factory=list)
+    salary_minimum: int | None = Field(default=None, ge=0)
+    blocked_keywords: list[str] = Field(default_factory=list)
+    blocked_companies: list[str] = Field(default_factory=list)
 
 
 class RankJobsTool:
@@ -34,7 +37,17 @@ class RankJobsTool:
                 error=ToolError(code="invalid_arguments", message=str(exc)),
             )
 
-        matches = [self._score(job, payload.keywords, payload.cities) for job in payload.jobs]
+        matches = [
+            self._score(
+                job,
+                payload.keywords,
+                payload.cities,
+                payload.salary_minimum,
+                payload.blocked_keywords,
+                payload.blocked_companies,
+            )
+            for job in payload.jobs
+        ]
         matches.sort(key=lambda item: item.score, reverse=True)
         return ToolResult(
             ok=True,
@@ -53,7 +66,15 @@ class RankJobsTool:
         return list(dict.fromkeys(tokens))
 
     @classmethod
-    def _score(cls, job: JobSummary, keywords: list[str], cities: list[str]) -> JobMatch:
+    def _score(
+        cls,
+        job: JobSummary,
+        keywords: list[str],
+        cities: list[str],
+        salary_minimum: int | None = None,
+        blocked_keywords: list[str] | None = None,
+        blocked_companies: list[str] | None = None,
+    ) -> JobMatch:
         score = 40
         reasons: list[str] = []
         risks: list[str] = []
@@ -76,6 +97,12 @@ class RankJobsTool:
         if job.salary and job.salary.minimum is not None:
             score += 5
             reasons.append("薪资信息完整")
+        if salary_minimum and job.salary and job.salary.maximum is not None:
+            if job.salary.maximum >= salary_minimum:
+                reasons.append("薪资范围覆盖期望下限")
+            else:
+                score -= 20
+                risks.append("薪资上限低于期望下限")
 
         risk_text = f"{job.title} {job.company}"
         if "外包" in risk_text:
@@ -84,6 +111,15 @@ class RankJobsTool:
         if "培训" in risk_text:
             risks.append("疑似培训相关岗位")
             score -= 15
+        for blocked in blocked_companies or []:
+            if blocked and blocked.lower() in job.company.lower():
+                risks.append(f"命中屏蔽公司：{blocked}")
+                score -= 50
+        searchable = f"{risk_text} {tags}".lower()
+        for blocked in blocked_keywords or []:
+            if blocked and blocked.lower() in searchable:
+                risks.append(f"命中屏蔽关键词：{blocked}")
+                score -= 25
 
         score = max(0, min(100, score))
         level = "recommended" if score >= 75 else "consider" if score >= 55 else "skip"

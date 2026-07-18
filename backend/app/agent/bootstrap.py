@@ -5,14 +5,25 @@ from typing import Any
 
 from ..config import get_settings
 from ..models import ModelProviderRegistry, OpenAICompatibleProvider
-from ..platforms import BossJobPlatform, JobPlatformRegistry
-from ..repositories import JobRepository
-from ..tools import GetJobDetailTool, RankJobsTool, SearchJobsTool, ToolRegistry
+from ..tools import (
+    AnalyzeJobTool,
+    AnalyzeResumeGapTool,
+    GetCandidateContextTool,
+    GetJobDetailTool,
+    QueueApplicationTool,
+    RankJobsTool,
+    SearchLocalKnowledgeTool,
+    RequestManualJobImportTool,
+    SaveGreetingDraftTool,
+    ToolRegistry,
+    UpdateApplicationStatusTool,
+    UpdateJobStatusTool,
+)
 from .runtime import AgentRuntime
 
 
 @lru_cache
-def _build_components() -> tuple[AgentRuntime, dict[str, Any], JobPlatformRegistry]:
+def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
     settings = get_settings()
 
     models = ModelProviderRegistry()
@@ -28,45 +39,44 @@ def _build_components() -> tuple[AgentRuntime, dict[str, Any], JobPlatformRegist
     )
     models.register(openai_model.name, openai_model)
 
-    platforms = JobPlatformRegistry()
-    boss_platform = BossJobPlatform()
-    platforms.register(boss_platform.name, boss_platform)
-
     tools = ToolRegistry()
-    tools.register_handler(SearchJobsTool(platforms, JobRepository()))
-    tools.register_handler(GetJobDetailTool(platforms))
+    tools.register_handler(GetCandidateContextTool())
+    tools.register_handler(RequestManualJobImportTool())
+    tools.register_handler(GetJobDetailTool())
     tools.register_handler(RankJobsTool())
+    tools.register_handler(AnalyzeJobTool())
+    tools.register_handler(AnalyzeResumeGapTool())
+    tools.register_handler(SearchLocalKnowledgeTool())
+    tools.register_handler(UpdateJobStatusTool())
+    tools.register_handler(SaveGreetingDraftTool())
+    tools.register_handler(QueueApplicationTool())
+    tools.register_handler(UpdateApplicationStatusTool())
 
     runtime = AgentRuntime(
         models=models,
         tools=tools,
         model_provider=settings.model_provider,
-        platform_name=settings.job_platform,
+        platform_name="manual",
         max_tool_rounds=settings.model_max_tool_rounds,
     )
     capabilities = {
         "active_model_provider": settings.model_provider,
         "active_model_name": settings.model_name,
-        "active_platform": settings.job_platform,
+        "active_platform": "manual",
         "model_providers": models.names(),
-        "platforms": platforms.names(),
+        "platforms": ["manual"],
         "tools": tools.names(),
     }
-    return runtime, capabilities, platforms
+    return runtime, capabilities
 
 
 @lru_cache
 def get_agent_runtime() -> AgentRuntime:
-    runtime, _, _ = _build_components()
+    runtime, _ = _build_components()
     return runtime
 
 
 @lru_cache
 def get_agent_capabilities() -> dict[str, Any]:
-    _, capabilities, _ = _build_components()
+    _, capabilities = _build_components()
     return capabilities
-
-
-def get_job_platform(name: str):
-    _, _, platforms = _build_components()
-    return platforms.get(name)

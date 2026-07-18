@@ -44,13 +44,3 @@ class JobMatch(BaseModel):
     level: str
     reasons: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
-
-
-class PlatformCapabilities(BaseModel):
-    search_jobs: bool = False
-    read_job_detail: bool = False
-    read_recruiter_status: bool = False
-    send_greeting: bool = False
-    submit_resume: bool = False
-    submit_application: bool = False
-    track_conversation: bool = False

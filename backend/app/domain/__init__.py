@@ -1,8 +1,12 @@
 from .agent import (
     AgentMessage,
+    AgentPlan,
+    AgentPlanStep,
     AgentRunResult,
+    AgentStreamEvent,
     ModelRequest,
     ModelResponse,
+    ModelStreamEvent,
     ModelUsage,
     ToolCall,
     ToolDefinition,
@@ -10,19 +14,22 @@ from .agent import (
     ToolEvent,
     ToolResult,
 )
-from .jobs import Job, JobMatch, JobSearchQuery, JobSummary, PlatformCapabilities, SalaryRange
+from .jobs import Job, JobMatch, JobSearchQuery, JobSummary, SalaryRange
 
 __all__ = [
     "AgentMessage",
+    "AgentPlan",
+    "AgentPlanStep",
     "AgentRunResult",
+    "AgentStreamEvent",
     "Job",
     "JobMatch",
     "JobSearchQuery",
     "JobSummary",
     "ModelRequest",
     "ModelResponse",
+    "ModelStreamEvent",
     "ModelUsage",
-    "PlatformCapabilities",
     "SalaryRange",
     "ToolCall",
     "ToolDefinition",

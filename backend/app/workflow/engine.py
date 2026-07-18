@@ -4,16 +4,13 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from ..browser import browser_controller
 from ..db import connect, json_dump, row_to_dict, rows_to_dicts
 
 
 NODE_DEFS = [
     ("user_goal", "用户目标"),
     ("agent_planning", "Agent 规划"),
-    ("open_boss", "打开 BOSS 官方页面"),
-    ("wait_login", "等待官方登录"),
-    ("collect_jobs", "采集岗位"),
+    ("import_job", "导入当前岗位"),
     ("analyze_jobs", "分析岗位"),
     ("confirm_apply", "等待确认"),
     ("applications", "投递记录"),
@@ -22,22 +19,24 @@ NODE_DEFS = [
 
 class WorkflowState(TypedDict, total=False):
     run_id: int
+    conversation_id: int | None
     browser: dict[str, Any]
     counts: dict[str, int]
     nodes: list[dict[str, Any]]
     status: str
 
 
-def ensure_default_run() -> int:
+def ensure_default_run(conversation_id: int | None = None) -> int:
+    run_name = f"conversation-{conversation_id}" if conversation_id is not None else "default"
     with connect() as conn:
         row = conn.execute(
             "SELECT id FROM workflow_runs WHERE name = ? ORDER BY id DESC LIMIT 1",
-            ("default",),
+            (run_name,),
         ).fetchone()
         if row is None:
             cursor = conn.execute(
                 "INSERT INTO workflow_runs (name, status) VALUES (?, ?)",
-                ("default", "in_progress"),
+                (run_name, "in_progress"),
             )
             run_id = cursor.lastrowid
             _ensure_nodes(conn, run_id)
@@ -70,12 +69,42 @@ def _ensure_nodes(conn, run_id: int) -> None:
         )
 
 
-def _counts() -> dict[str, int]:
+def _counts(conversation_id: int | None = None) -> dict[str, int]:
     with connect() as conn:
+        if conversation_id is None:
+            job_filter = ""
+            params: tuple[int, ...] = ()
+        else:
+            job_filter = " WHERE id IN (SELECT job_id FROM conversation_jobs WHERE conversation_id = ?)"
+            params = (conversation_id,)
         return {
             "profiles": conn.execute("SELECT COUNT(*) AS count FROM profiles").fetchone()["count"],
-            "jobs": conn.execute("SELECT COUNT(*) AS count FROM jobs").fetchone()["count"],
-            "applications": conn.execute("SELECT COUNT(*) AS count FROM applications").fetchone()["count"],
+            "jobs": conn.execute(f"SELECT COUNT(*) AS count FROM jobs{job_filter}", params).fetchone()["count"],
+            "matches": conn.execute(
+                "SELECT COUNT(*) AS count FROM match_results" + (
+                    " WHERE job_id IN (SELECT job_id FROM conversation_jobs WHERE conversation_id = ?)" if conversation_id is not None else ""
+                ), params,
+            ).fetchone()["count"],
+            "drafts": conn.execute(
+                "SELECT COUNT(*) AS count FROM messages WHERE status = 'draft'" + (
+                    " AND job_id IN (SELECT job_id FROM conversation_jobs WHERE conversation_id = ?)" if conversation_id is not None else ""
+                ), params,
+            ).fetchone()["count"],
+            "queued_applications": conn.execute(
+                "SELECT COUNT(*) AS count FROM applications WHERE status = 'queued'" + (
+                    " AND job_id IN (SELECT job_id FROM conversation_jobs WHERE conversation_id = ?)" if conversation_id is not None else ""
+                ), params,
+            ).fetchone()["count"],
+            "progressed_applications": conn.execute(
+                "SELECT COUNT(*) AS count FROM applications WHERE status != 'queued'" + (
+                    " AND job_id IN (SELECT job_id FROM conversation_jobs WHERE conversation_id = ?)" if conversation_id is not None else ""
+                ), params,
+            ).fetchone()["count"],
+            "applications": conn.execute(
+                "SELECT COUNT(*) AS count FROM applications" + (
+                    " WHERE job_id IN (SELECT job_id FROM conversation_jobs WHERE conversation_id = ?)" if conversation_id is not None else ""
+                ), params,
+            ).fetchone()["count"],
         }
 
 
@@ -111,18 +140,27 @@ def record_event(run_id: int, event_type: str, message: str, node_id: str = "", 
 def _read_runtime_state(state: WorkflowState) -> WorkflowState:
     return {
         **state,
-        "browser": browser_controller.status(),
-        "counts": _counts(),
+        "browser": {"mode": "user_controlled", "auth": {"status": "user_managed"}},
+        "counts": _counts(state.get("conversation_id")),
     }
 
 
 def _sync_nodes(state: WorkflowState) -> WorkflowState:
     run_id = state["run_id"]
-    browser = state["browser"]
     counts = state["counts"]
     with connect() as conn:
-        user_messages = conn.execute("SELECT COUNT(*) AS count FROM chat_messages WHERE role = 'user'").fetchone()["count"]
-        assistant_messages = conn.execute("SELECT COUNT(*) AS count FROM chat_messages WHERE role = 'assistant'").fetchone()["count"]
+        conversation_id = state.get("conversation_id")
+        if conversation_id is None:
+            user_messages = conn.execute("SELECT COUNT(*) AS count FROM chat_messages WHERE role = 'user'").fetchone()["count"]
+        else:
+            user_messages = conn.execute(
+                "SELECT COUNT(*) AS count FROM chat_messages WHERE role = 'user' AND conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()["count"]
+        plan_events = conn.execute(
+            "SELECT COUNT(*) AS count FROM workflow_events WHERE run_id = ? AND event_type = 'agent_plan_created'",
+            (run_id,),
+        ).fetchone()["count"]
 
     _set_node(
         run_id,
@@ -133,44 +171,36 @@ def _sync_nodes(state: WorkflowState) -> WorkflowState:
     _set_node(
         run_id,
         "agent_planning",
-        "done" if assistant_messages > 0 else "pending",
-        f"{assistant_messages} 条系统回复/规划",
+        "done" if plan_events > 0 else "pending",
+        f"{plan_events} 个结构化执行计划" if plan_events > 0 else "复杂任务尚未生成执行计划",
     )
     _set_node(
         run_id,
-        "open_boss",
-        "done" if browser["is_boss_page"] else "pending",
-        "当前在 zhipin.com" if browser["is_boss_page"] else "尚未打开 BOSS 页面",
-    )
-    _set_node(
-        run_id,
-        "wait_login",
-        "done" if browser["is_boss_page"] else "pending",
-        "等待用户在官方页面完成登录" if browser["is_boss_page"] else "需先打开 BOSS 官方页面",
-    )
-    _set_node(
-        run_id,
-        "collect_jobs",
+        "import_job",
         "done" if counts["jobs"] > 0 else "pending",
-        f"{counts['jobs']} 个真实岗位",
+        f"当前对话关联 {counts['jobs']} 个真实岗位",
     )
     _set_node(
         run_id,
         "analyze_jobs",
-        "done" if counts["jobs"] > 0 else "pending",
-        "已有岗位可进入分析" if counts["jobs"] > 0 else "等待岗位采集",
+        "done" if counts["matches"] > 0 else "pending",
+        f"{counts['matches']} 个岗位已有匹配分析" if counts["matches"] > 0 else "等待岗位分析",
     )
     _set_node(
         run_id,
         "confirm_apply",
-        "pending",
-        "等待用户确认投递",
+        "running" if counts["queued_applications"] > 0 else "pending",
+        (
+            f"{counts['queued_applications']} 个岗位在本地待投递队列，等待用户确认"
+            if counts["queued_applications"] > 0
+            else "等待用户选择并确认待投岗位"
+        ),
     )
     _set_node(
         run_id,
         "applications",
-        "done" if counts["applications"] > 0 else "pending",
-        f"{counts['applications']} 条投递记录",
+        "done" if counts["progressed_applications"] > 0 else "pending",
+        f"{counts['progressed_applications']} 条已推进求职记录",
     )
 
     return state
@@ -210,9 +240,9 @@ def _build_graph():
 workflow_graph = _build_graph()
 
 
-def refresh_workflow_status() -> dict[str, Any]:
-    run_id = ensure_default_run()
-    state = workflow_graph.invoke({"run_id": run_id})
+def refresh_workflow_status(conversation_id: int | None = None) -> dict[str, Any]:
+    run_id = ensure_default_run(conversation_id)
+    state = workflow_graph.invoke({"run_id": run_id, "conversation_id": conversation_id})
     with connect() as conn:
         run = row_to_dict(conn.execute("SELECT * FROM workflow_runs WHERE id = ?", (run_id,)).fetchone())
         nodes = rows_to_dicts(
@@ -240,12 +270,3 @@ def refresh_workflow_status() -> dict[str, Any]:
         "nodes": nodes,
         "events": events,
     }
-
-
-def open_boss_via_workflow() -> dict[str, Any]:
-    run_id = ensure_default_run()
-    _set_node(run_id, "open_boss", "running", "正在打开 BOSS 官方页面")
-    record_event(run_id, "node_started", "开始打开 BOSS 官方页面", "open_boss")
-    browser = browser_controller.open_boss()
-    record_event(run_id, "node_completed", "BOSS 官方页面已打开", "open_boss", browser)
-    return refresh_workflow_status()

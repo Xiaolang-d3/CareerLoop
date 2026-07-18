@@ -10,6 +10,8 @@ from ..registry import NamedRegistry
 
 class ToolContext(BaseModel):
     platform_name: str
+    conversation_id: int | None = None
+    task_id: int | None = None
 
 
 class ToolHandler(Protocol):
