@@ -77,7 +77,10 @@ class ChatStreamingApiTest(unittest.TestCase):
     def test_legacy_write_endpoints_are_not_available(self) -> None:
         self.assertIn(self.client.post("/chat/messages", json={"content": "测试"}).status_code, {404, 405})
         self.assertIn(self.client.post("/jobs", json={}).status_code, {404, 405})
+        self.assertIn(self.client.post("/jobs/manual-import", json={}).status_code, {404, 405})
+        self.assertEqual(self.client.get("/jobs").status_code, 404)
         self.assertIn(self.client.post("/applications", json={}).status_code, {404, 405})
+        self.assertEqual(self.client.get("/applications").status_code, 404)
         self.assertIn(self.client.post("/profiles", json={}).status_code, {404, 405})
 
     def test_ag_ui_endpoint_emits_standard_lifecycle_text_and_state_events(self) -> None:

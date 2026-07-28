@@ -5,6 +5,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from ..agent import get_agent_capabilities
+from ..agent.bootstrap import reload_agent_components
 from ..agent_settings import get_agent_settings, save_agent_settings
 from ..attachments import (
     create_attachment,
@@ -22,8 +23,6 @@ from ..conversations import (
     update_conversation,
 )
 from ..db import connect
-from ..job_import import ManualJobImport, extract_screenshot_text, import_manual_job
-from ..services import jobs as job_service
 from ..services import profile as profile_service
 from ..workflow.engine import refresh_workflow_status
 from .dependencies import require_conversation
@@ -85,20 +84,6 @@ def conversations_delete(conversation_id: int) -> dict[str, Any]:
     return {"deleted": True, "next_conversation": remaining[0]}
 
 
-@router.post("/conversations/{conversation_id}/jobs/{job_id}")
-def conversations_link_job(conversation_id: int, job_id: int) -> dict[str, bool]:
-    require_conversation(conversation_id)
-    with connect() as conn:
-        job = conn.execute("SELECT id FROM jobs WHERE id = ?", (job_id,)).fetchone()
-        if job is None:
-            raise HTTPException(status_code=404, detail="岗位不存在")
-        conn.execute(
-            "INSERT OR IGNORE INTO conversation_jobs (conversation_id, job_id) VALUES (?, ?)",
-            (conversation_id, job_id),
-        )
-    return {"linked": True}
-
-
 @router.post("/conversations/{conversation_id}/context/reset")
 def conversation_context_reset(conversation_id: int) -> dict[str, Any]:
     require_conversation(conversation_id)
@@ -108,54 +93,6 @@ def conversation_context_reset(conversation_id: int) -> dict[str, Any]:
         "context_cutoff_message_id": conversation["context_cutoff_message_id"],
         "conversation": conversation,
     }
-
-
-@router.post("/jobs/manual-import")
-def manual_job_import(payload: ManualJobImport) -> dict[str, Any]:
-    try:
-        result = import_manual_job(payload)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail={"code": "manual_job_import_invalid", "message": str(exc)},
-        ) from exc
-    result["workflow"] = refresh_workflow_status(payload.conversation_id)
-    return result
-
-
-@router.post("/jobs/screenshot/extract")
-async def extract_job_screenshot(file: UploadFile = File(...)) -> dict[str, Any]:
-    content = await file.read()
-    try:
-        text = extract_screenshot_text(file.filename or "job.png", content)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail={"code": "job_screenshot_unreadable", "message": str(exc)},
-        ) from exc
-    finally:
-        await file.close()
-    return {"text": text, "parser": "local_ocr", "requires_confirmation": True}
-
-
-@router.get("/jobs")
-def list_jobs() -> list[dict[str, Any]]:
-    return job_service.list_jobs()
-
-
-@router.delete("/jobs/{job_id}")
-def delete_job(job_id: int) -> dict[str, Any]:
-    return job_service.delete_job(job_id)
-
-
-@router.delete("/jobs")
-def delete_all_jobs() -> dict[str, Any]:
-    return job_service.delete_all_jobs()
-
-
-@router.get("/applications")
-def list_applications() -> list[dict[str, Any]]:
-    return job_service.list_applications()
 
 
 @router.get("/conversations/{conversation_id}/attachments")
@@ -296,7 +233,9 @@ def agent_settings_get() -> dict[str, Any]:
 
 @router.put("/agent/settings")
 def agent_settings_put(payload: AgentSettingsIn) -> dict[str, Any]:
-    return save_agent_settings(payload.model_dump())
+    saved = save_agent_settings(payload.model_dump())
+    reload_agent_components()
+    return saved
 
 
 @router.get("/candidate-profile")
@@ -323,7 +262,7 @@ async def parse_candidate_resume(
     except Exception as exc:
         raise HTTPException(
             status_code=422,
-            detail="无法解析该简历文件，请确认文件未加密、未损坏且包含可复制文字",
+            detail="无法解析该简历，请确认文件或截图清晰、未损坏且包含可识别文字",
         ) from exc
     finally:
         await file.close()

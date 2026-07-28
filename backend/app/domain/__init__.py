@@ -14,7 +14,6 @@ from .agent import (
     ToolEvent,
     ToolResult,
 )
-from .jobs import Job, JobMatch, JobSearchQuery, JobSummary, SalaryRange
 
 __all__ = [
     "AgentMessage",
@@ -22,15 +21,10 @@ __all__ = [
     "AgentPlanStep",
     "AgentRunResult",
     "AgentStreamEvent",
-    "Job",
-    "JobMatch",
-    "JobSearchQuery",
-    "JobSummary",
     "ModelRequest",
     "ModelResponse",
     "ModelStreamEvent",
     "ModelUsage",
-    "SalaryRange",
     "ToolCall",
     "ToolDefinition",
     "ToolError",

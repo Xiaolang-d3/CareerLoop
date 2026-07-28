@@ -211,6 +211,14 @@ def _ag_ui_vision_attachment_ids(payload: RunAgentInput) -> list[str]:
     return raw_ids[:4]
 
 
+def _ag_ui_web_search(payload: RunAgentInput) -> bool:
+    forwarded = payload.forwarded_props or {}
+    value = forwarded.get("webSearch", False) if isinstance(forwarded, dict) else False
+    if not isinstance(value, bool):
+        raise HTTPException(status_code=422, detail="webSearch 必须是布尔值")
+    return value
+
+
 async def _stream_chat_message_response(
     payload: ChatMessageIn,
     *,
@@ -227,10 +235,15 @@ async def _stream_chat_message_response(
     attachment_context, attachment_summaries, image_urls = _attachment_context(
         conversation_id, payload.attachment_ids, payload.vision_attachment_ids
     )
+    user_payload: dict[str, Any] = {}
+    if attachment_summaries:
+        user_payload["attachments"] = attachment_summaries
+    if payload.web_search:
+        user_payload["web_search"] = True
     user_message = _save_chat_message(
         "user",
         payload.content,
-        {"attachments": attachment_summaries} if attachment_summaries else None,
+        user_payload or None,
         conversation_id,
         task_id,
     )
@@ -270,13 +283,24 @@ async def _stream_chat_message_response(
                 await queue.put(("text_delta", {"delta": assistant_text}))
             else:
                 result = None
+                trusted_routing_content = payload.content.replace(
+                    "[系统可信开关：本轮允许联网搜索]",
+                    "",
+                )
+                if payload.web_search:
+                    trusted_routing_content += "\n[系统可信开关：本轮允许联网搜索]"
+                if any(
+                    item.get("kind") == "job_screenshot"
+                    for item in attachment_summaries
+                ):
+                    trusted_routing_content += "\n[系统确认：本轮请求分析岗位截图]"
                 async for stream_event in get_agent_runtime().run_stream(
                     agent_input,
                     history=history,
                     conversation_id=conversation_id,
                     task_id=task_id,
                     image_urls=image_urls,
-                    routing_content=payload.content,
+                    routing_content=trusted_routing_content,
                 ):
                     if stream_event.type == "text_delta":
                         partial_content += stream_event.delta
@@ -497,6 +521,7 @@ async def run_ag_ui(payload: dict[str, Any], request: Request) -> StreamingRespo
             conversation_id=conversation_id,
             attachment_ids=_ag_ui_attachment_ids(ag_ui_input),
             vision_attachment_ids=_ag_ui_vision_attachment_ids(ag_ui_input),
+            web_search=_ag_ui_web_search(ag_ui_input),
         ),
         ag_ui_input=ag_ui_input,
         accept=request.headers.get("accept"),

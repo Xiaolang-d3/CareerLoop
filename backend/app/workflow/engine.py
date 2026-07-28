@@ -10,10 +10,11 @@ from ..db import connect, json_dump, row_to_dict, rows_to_dicts
 NODE_DEFS = [
     ("user_goal", "用户目标"),
     ("agent_planning", "Agent 规划"),
-    ("import_job", "导入当前岗位"),
-    ("analyze_jobs", "分析岗位"),
-    ("confirm_apply", "等待确认"),
-    ("applications", "投递记录"),
+    ("jd_analysis", "JD 与简历分析"),
+    ("resume_evidence", "简历证据检索"),
+    ("tailored_resume_content", "高匹配简历内容"),
+    ("interview_advice", "面试建议"),
+    ("company_research", "公司公开信息研究"),
 ]
 
 
@@ -71,39 +72,33 @@ def _ensure_nodes(conn, run_id: int) -> None:
 
 def _counts(conversation_id: int | None = None) -> dict[str, int]:
     with connect() as conn:
-        if conversation_id is None:
-            job_filter = ""
-            params: tuple[int, ...] = ()
-        else:
-            job_filter = " WHERE id IN (SELECT job_id FROM conversation_jobs WHERE conversation_id = ?)"
-            params = (conversation_id,)
+        run_name = f"conversation-{conversation_id}" if conversation_id is not None else "default"
+        run = conn.execute(
+            "SELECT id FROM workflow_runs WHERE name = ? ORDER BY id DESC LIMIT 1",
+            (run_name,),
+        ).fetchone()
+        run_id = run["id"] if run else -1
         return {
             "profiles": conn.execute("SELECT COUNT(*) AS count FROM profiles").fetchone()["count"],
-            "jobs": conn.execute(f"SELECT COUNT(*) AS count FROM jobs{job_filter}", params).fetchone()["count"],
-            "matches": conn.execute(
-                "SELECT COUNT(*) AS count FROM match_results" + (
-                    " WHERE job_id IN (SELECT job_id FROM conversation_jobs WHERE conversation_id = ?)" if conversation_id is not None else ""
-                ), params,
+            "jd_analyses": conn.execute(
+                "SELECT COUNT(*) AS count FROM workflow_events WHERE run_id = ? AND node_id = 'jd_analysis' AND event_type = 'tool_completed'",
+                (run_id,),
             ).fetchone()["count"],
-            "drafts": conn.execute(
-                "SELECT COUNT(*) AS count FROM messages WHERE status = 'draft'" + (
-                    " AND job_id IN (SELECT job_id FROM conversation_jobs WHERE conversation_id = ?)" if conversation_id is not None else ""
-                ), params,
+            "resume_evidence_searches": conn.execute(
+                "SELECT COUNT(*) AS count FROM workflow_events WHERE run_id = ? AND node_id = 'resume_evidence' AND event_type = 'tool_completed'",
+                (run_id,),
             ).fetchone()["count"],
-            "queued_applications": conn.execute(
-                "SELECT COUNT(*) AS count FROM applications WHERE status = 'queued'" + (
-                    " AND job_id IN (SELECT job_id FROM conversation_jobs WHERE conversation_id = ?)" if conversation_id is not None else ""
-                ), params,
+            "tailored_resume_generations": conn.execute(
+                "SELECT COUNT(*) AS count FROM workflow_events WHERE run_id = ? AND node_id = 'tailored_resume_content' AND event_type = 'tool_completed'",
+                (run_id,),
             ).fetchone()["count"],
-            "progressed_applications": conn.execute(
-                "SELECT COUNT(*) AS count FROM applications WHERE status != 'queued'" + (
-                    " AND job_id IN (SELECT job_id FROM conversation_jobs WHERE conversation_id = ?)" if conversation_id is not None else ""
-                ), params,
+            "interview_advice_generations": conn.execute(
+                "SELECT COUNT(*) AS count FROM workflow_events WHERE run_id = ? AND node_id = 'interview_advice' AND event_type = 'tool_completed'",
+                (run_id,),
             ).fetchone()["count"],
-            "applications": conn.execute(
-                "SELECT COUNT(*) AS count FROM applications" + (
-                    " WHERE job_id IN (SELECT job_id FROM conversation_jobs WHERE conversation_id = ?)" if conversation_id is not None else ""
-                ), params,
+            "company_researches": conn.execute(
+                "SELECT COUNT(*) AS count FROM workflow_events WHERE run_id = ? AND node_id = 'company_research' AND event_type = 'tool_completed'",
+                (run_id,),
             ).fetchone()["count"],
         }
 
@@ -176,33 +171,50 @@ def _sync_nodes(state: WorkflowState) -> WorkflowState:
     )
     _set_node(
         run_id,
-        "import_job",
-        "done" if counts["jobs"] > 0 else "pending",
-        f"当前对话关联 {counts['jobs']} 个真实岗位",
+        "jd_analysis",
+        "done" if counts["jd_analyses"] > 0 else "pending",
+        f"已完成 {counts['jd_analyses']} 次 JD 与简历分析" if counts["jd_analyses"] > 0 else "等待用户提供 JD",
     )
     _set_node(
         run_id,
-        "analyze_jobs",
-        "done" if counts["matches"] > 0 else "pending",
-        f"{counts['matches']} 个岗位已有匹配分析" if counts["matches"] > 0 else "等待岗位分析",
-    )
-    _set_node(
-        run_id,
-        "confirm_apply",
-        "running" if counts["queued_applications"] > 0 else "pending",
+        "resume_evidence",
+        "done" if counts["resume_evidence_searches"] > 0 else "pending",
         (
-            f"{counts['queued_applications']} 个岗位在本地待投递队列，等待用户确认"
-            if counts["queued_applications"] > 0
-            else "等待用户选择并确认待投岗位"
+            f"已完成 {counts['resume_evidence_searches']} 次简历证据检索"
+            if counts["resume_evidence_searches"] > 0
+            else "按任务需要检索简历经历"
         ),
     )
     _set_node(
         run_id,
-        "applications",
-        "done" if counts["progressed_applications"] > 0 else "pending",
-        f"{counts['progressed_applications']} 条已推进求职记录",
+        "tailored_resume_content",
+        "done" if counts["tailored_resume_generations"] > 0 else "pending",
+        (
+            f"已完成 {counts['tailored_resume_generations']} 次高匹配简历内容生成"
+            if counts["tailored_resume_generations"] > 0
+            else "等待用户提出简历定制要求"
+        ),
     )
-
+    _set_node(
+        run_id,
+        "interview_advice",
+        "done" if counts["interview_advice_generations"] > 0 else "pending",
+        (
+            f"已完成 {counts['interview_advice_generations']} 次面试建议生成"
+            if counts["interview_advice_generations"] > 0
+            else "等待用户提出面试准备要求"
+        ),
+    )
+    _set_node(
+        run_id,
+        "company_research",
+        "done" if counts["company_researches"] > 0 else "pending",
+        (
+            f"已完成 {counts['company_researches']} 次公司公开信息研究"
+            if counts["company_researches"] > 0
+            else "等待用户指定要研究的公司"
+        ),
+    )
     return state
 
 
@@ -210,8 +222,14 @@ def _finalize_run(state: WorkflowState) -> WorkflowState:
     run_id = state["run_id"]
     with connect() as conn:
         pending_count = conn.execute(
-            "SELECT COUNT(*) AS count FROM workflow_nodes WHERE run_id = ? AND status != ?",
-            (run_id, "done"),
+            f"""
+            SELECT COUNT(*) AS count
+            FROM workflow_nodes
+            WHERE run_id = ?
+              AND status != ?
+              AND node_id IN ({','.join('?' for _ in NODE_DEFS)})
+            """,
+            (run_id, "done", *(node_id for node_id, _ in NODE_DEFS)),
         ).fetchone()["count"]
         status = "done" if pending_count == 0 else "in_progress"
         conn.execute(

@@ -8,24 +8,23 @@ import {
   type AppendMessage,
   type MessageState,
   type ThreadMessageLike,
-  useAssistantRuntime,
-  useExternalStoreRuntime,
-  useThreadComposer
+  useExternalStoreRuntime
 } from "@assistant-ui/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { XMarkdown } from "@ant-design/x-markdown";
 import {
   ArrowUpRight,
   Check,
   CheckCircle2,
-  CircleDot,
   Copy,
-  Database,
+  ChevronDown,
   FileText,
   ImagePlus,
   LoaderCircle,
   Pencil,
   RefreshCw,
+  Search,
   Send,
   ShieldCheck,
   SquareCheck,
@@ -48,6 +47,7 @@ export type AgentRunResult = {
     tool_name: string;
     status: string;
     message: string;
+    data?: Record<string, unknown>;
   }>;
   plan?: {
     goal: string;
@@ -96,12 +96,11 @@ export type AttachmentConfig = {
   }>;
 };
 
-type NextStep = { action: string };
-
 export type ChatRetryDraft = {
   content: string;
   attachmentIds: string[];
   visionAttachmentIds: string[];
+  webSearch: boolean;
 };
 
 type ChatWorkspaceProps = {
@@ -113,21 +112,18 @@ type ChatWorkspaceProps = {
   latestAgent?: AgentRunResult;
   taskCancelBusy: boolean;
   retryDraft: ChatRetryDraft | null;
-  nextStep: NextStep;
   chatEndRef: RefObject<HTMLDivElement | null>;
   chatInputRef: RefObject<HTMLTextAreaElement | null>;
   onLoadMore: () => void;
-  onNextStep: () => void;
-  onOpenBoss: () => void;
-  onImportJob: () => void;
   attachmentBusy: boolean;
   attachmentConfig: AttachmentConfig | null;
+  webSearchAvailable: boolean;
   onUploadAttachment: (file: File) => Promise<ChatAttachment>;
   onRemoveAttachment: (attachmentId: string) => Promise<void>;
   onAttachmentInvalid: (message: string) => void;
   onSuggestedAction: () => void;
   onCancelTask: () => void;
-  onSend: (content: string, attachmentIds?: string[], visionAttachmentIds?: string[]) => Promise<void>;
+  onSend: (content: string, attachmentIds?: string[], visionAttachmentIds?: string[], webSearch?: boolean) => Promise<void>;
   onStop: () => Promise<void>;
   onEdit: (userMessageId: number, content: string) => Promise<void>;
   onRegenerate: (userMessageId: number) => Promise<void>;
@@ -197,6 +193,54 @@ function MarkdownContent({ children }: { children: string }) {
   );
 }
 
+function ThinkingProcess({ content, currentNode }: { content: string; currentNode: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const frame = window.requestAnimationFrame(() => {
+      const element = scrollRef.current;
+      if (element) element.scrollTop = element.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [content, expanded]);
+
+  return (
+    <section className={`thinking-process ${expanded ? "expanded" : ""} streaming`}>
+      <button
+        className="thinking-process-header"
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <span className="thinking-process-icon">
+          <LoaderCircle size={14} />
+        </span>
+        <strong>{currentNode}</strong>
+        <ChevronDown className="thinking-process-chevron" size={14} />
+      </button>
+      <div className="thinking-process-collapse" aria-hidden={!expanded}>
+        <div className="thinking-process-scroll" ref={scrollRef}>
+          {content ? (
+            <XMarkdown
+              content={content}
+              streaming={{
+                hasNextChunk: true,
+                enableAnimation: true,
+                animationConfig: { fadeDuration: 180, easing: "ease-out" },
+                tail: false
+              }}
+            />
+          ) : (
+            <p className="thinking-process-placeholder">正在分析当前请求…</p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function EditMessageComposer() {
   return (
     <MessagePrimitive.Root className="message user message-editing">
@@ -215,18 +259,78 @@ function EditMessageComposer() {
   );
 }
 
+type WebSource = {
+  title: string;
+  url: string;
+  domain?: string;
+};
+
+function WebSourcesPanel({ sources }: { sources: WebSource[] }) {
+  const [expanded, setExpanded] = useState(true);
+  if (!sources.length) return null;
+  return (
+    <section className={`web-sources-panel ${expanded ? "expanded" : ""}`} aria-label="联网搜索来源">
+      <button
+        type="button"
+        className="web-sources-heading"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <ChevronDown size={15} />
+        <Search size={16} />
+        <strong>已搜索 {sources.length} 个网站</strong>
+      </button>
+      {expanded ? (
+        <div className="web-source-grid">
+          {sources.map((source, index) => (
+            <a
+              key={`${source.url}-${index}`}
+              href={source.url}
+              target="_blank"
+              rel="noreferrer"
+              title={source.title}
+            >
+              <span className="web-source-icon">{(source.domain || source.title).slice(0, 1).toUpperCase()}</span>
+              <span>
+                <strong>{source.title}</strong>
+                <small>{source.domain || source.url.replace(/^https?:\/\//, "").split("/")[0]}</small>
+              </span>
+              <ArrowUpRight size={13} />
+            </a>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: boolean }) {
   const source = state.metadata.custom.source as ChatMessage | undefined;
   if (!source) return null;
   const isCopied = "isCopied" in state && Boolean(state.isCopied);
-  const thoughtSummary = source.payload?.agent?.events.find(
+  const thoughtEvent = source.payload?.agent?.events.find(
     (event) => event.tool_name === "agent_thinking"
-  )?.message;
+  );
+  const thoughtSummary = thoughtEvent?.message;
+  const isActiveAssistant = chatBusy && source.id < 0;
   const resultContent = resultOnlyContent(source.content, Boolean(thoughtSummary));
   const failed = source.payload?.agent?.status === "failed";
   const liveEvents = chatBusy && source.id < 0
     ? source.payload?.agent?.events.filter((event) => event.tool_name !== "agent_thinking") ?? []
     : [];
+  const currentNode = [...liveEvents].reverse().find((event) => event.status === "running")?.message
+    || (thoughtEvent?.status === "running" ? "正在分析" : "正在生成回复");
+  const webSources = (source.payload?.agent?.events
+    .filter((event) => ["search_public_web", "research_company"].includes(event.tool_name))
+    .flatMap((event) => Array.isArray(event.data?.sources) ? event.data.sources : [])
+    .filter((item): item is WebSource => {
+      if (!item || typeof item !== "object") return false;
+      const candidate = item as Partial<WebSource>;
+      return typeof candidate.title === "string"
+        && typeof candidate.url === "string"
+        && /^https?:\/\//.test(candidate.url);
+    }) ?? [])
+    .filter((item, index, all) => all.findIndex((candidate) => candidate.url === item.url) === index);
 
   return (
     <MessagePrimitive.Root className={`message ${source.role}`}>
@@ -238,25 +342,12 @@ function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: boolean 
         </div>
         {source.role === "assistant" ? (
           <>
-            {thoughtSummary ? (
-              <details className="message-thought">
-                <summary><span><CircleDot size={11} />思考完成</span><small>查看</small></summary>
-                <p>{thoughtSummary}</p>
-              </details>
+            {isActiveAssistant ? (
+              <ThinkingProcess content={thoughtSummary || ""} currentNode={currentNode} />
             ) : null}
+            <WebSourcesPanel sources={webSources} />
             <section className="message-result" aria-label="输出结果">
-              <span className="message-section-label"><CircleDot size={10} />输出结果</span>
               <MarkdownContent>{resultContent}</MarkdownContent>
-              {liveEvents.length ? (
-                <div className="message-live-events" aria-label="实时执行状态">
-                  {liveEvents.map((event) => (
-                    <span className={event.status} key={event.tool_call_id}>
-                      {event.status === "running" ? <LoaderCircle className="spinning" size={11} /> : <CheckCircle2 size={11} />}
-                      {event.message || event.tool_name}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
               <AgentResultNote run={source.payload?.agent} />
               <ActionBarPrimitive.Root className="message-actions" hideWhenRunning>
                 <ActionBarPrimitive.Copy aria-label="复制回答">
@@ -284,6 +375,10 @@ function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: boolean 
               </div>
             ) : null}
             <ActionBarPrimitive.Root className="message-actions user-message-actions" hideWhenRunning>
+              <ActionBarPrimitive.Copy aria-label="复制消息">
+                {isCopied ? <Check size={12} /> : <Copy size={12} />}
+                {isCopied ? "已复制" : "复制"}
+              </ActionBarPrimitive.Copy>
               <ActionBarPrimitive.Edit aria-label="编辑消息"><Pencil size={12} />编辑</ActionBarPrimitive.Edit>
             </ActionBarPrimitive.Root>
           </>
@@ -293,28 +388,19 @@ function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: boolean 
   );
 }
 
-function ComposerStatus() {
-  const textLength = useThreadComposer((state) => state.text.length);
-  return <span>{textLength}/1000 · Enter 发送 · Shift+Enter 换行</span>;
-}
-
 type ChatWorkspaceContentProps = ChatWorkspaceProps & {
   pendingAttachments: ChatAttachment[];
   visionAttachmentIds: string[];
   onUpload: (file?: File) => Promise<void>;
   onRemovePendingAttachment: (attachmentId: string) => Promise<void>;
   onToggleVisionAttachment: (attachmentId: string) => void;
+  webSearchSelected: boolean;
+  onToggleWebSearch: () => void;
 };
 
 function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
-  const runtime = useAssistantRuntime();
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const [isDraggingAttachment, setIsDraggingAttachment] = useState(false);
-
-  function useStarterPrompt(prompt: string) {
-    runtime.thread.composer.setText(prompt);
-    window.setTimeout(() => props.chatInputRef.current?.focus(), 0);
-  }
 
   async function selectAttachment(file?: File) {
     if (!file || props.attachmentBusy) return;
@@ -362,20 +448,8 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
 
           {props.messages.length === 0 ? (
             <div className="chat-welcome">
-              <span className="welcome-icon"><Sparkles size={28} /></span>
-              <span className="welcome-kicker">你的本地求职副驾驶</span>
-              <h2>少一点重复操作，多一点高质量沟通</h2>
-              <p>你在招聘平台中自行浏览和操作，将岗位文字或截图主动带回来；我负责本地分析、简历匹配和沟通准备。</p>
-              <div className="starter-prompts" aria-label="常用任务">
-                <button onClick={() => useStarterPrompt("请评估我的简历竞争力，并给出最值得优先改进的三点。")}>评估简历竞争力</button>
-                <button onClick={() => useStarterPrompt("请根据我的求职画像，分析最近导入岗位的匹配度和主要风险。")}>分析岗位匹配度</button>
-                <button onClick={() => useStarterPrompt("请帮我准备一段专业、自然、不夸张的首次沟通话术。")}>准备首次沟通</button>
-              </div>
-              <div className="welcome-actions">
-                <button className="primary-button" onClick={props.onNextStep}>{props.nextStep.action}<ArrowUpRight size={16} /></button>
-                <button className="secondary-button" onClick={props.onOpenBoss}>打开 BOSS 官网</button>
-              </div>
-              <div className="trust-row"><span><ShieldCheck size={14} /> 不接入招聘网站</span><span><CircleDot size={14} /> 用户主动导入</span><span><Database size={14} /> 数据保存在本地</span></div>
+              <h2>今天想聊点什么？</h2>
+              <p>可以聊经历、岗位、简历，或下一步计划。</p>
             </div>
           ) : (
             <ThreadPrimitive.Messages>
@@ -387,10 +461,11 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
 
           {props.chatBusy && !props.messages.some((message) => message.id < 0 && message.role === "assistant") ? (
             <article className="message assistant is-loading">
-              <span className="avatar"><Sparkles size={17} /></span>
               <div className="message-content thinking-state">
-                <div className="message-meta"><strong>BossCopilot</strong></div>
-                <div className="thinking-indicator"><span className="thinking-dots"><i /><i /><i /></span><strong>正在思考</strong></div>
+                <div className="thinking-indicator">
+                  <LoaderCircle size={14} />
+                  <span>正在思考</span>
+                </div>
               </div>
             </article>
           ) : null}
@@ -422,15 +497,11 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
               <TriangleAlert size={14} /><span>上一条消息未发送成功</span>
               <button onClick={() => {
                 const draft = props.retryDraft;
-                if (draft) void props.onSend(draft.content, draft.attachmentIds, draft.visionAttachmentIds);
+                if (draft) void props.onSend(draft.content, draft.attachmentIds, draft.visionAttachmentIds, draft.webSearch);
               }}><RefreshCw size={12} />重试</button>
             </section>
           ) : null}
 
-          <div className="composer-tools">
-            <label><ShieldCheck size={14} /> 本地安全辅助<strong>不会自动发送或投递</strong></label>
-            <ComposerStatus />
-          </div>
           <div
             className={`composer-dropzone ${isDraggingAttachment ? "is-dragging" : ""}`}
             onDragEnter={handleDragOver}
@@ -450,18 +521,26 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                 ref={props.chatInputRef}
                 rows={1}
                 maxLength={1000}
-                aria-label="输入求职任务"
-                placeholder="描述你的求职任务，或粘贴岗位 JD…"
+                aria-label="输入消息"
+                placeholder="输入消息…"
                 submitMode="enter"
               />
               <div className="composer-bottom-row">
                 <div className="composer-shortcuts" aria-label="添加求职资料">
                   <button type="button" onClick={() => attachmentInputRef.current?.click()} disabled={props.attachmentBusy} title="上传岗位截图或简历">
                     {props.attachmentBusy ? <LoaderCircle className="spinning" size={15} /> : <ImagePlus size={15} />}
-                    <span>{props.attachmentBusy ? "正在本地处理…" : "上传截图 / 简历"}</span>
+                    <span>{props.attachmentBusy ? "处理中…" : "上传资料"}</span>
                   </button>
-                  <button type="button" onClick={props.onImportJob} title="前往岗位工作台粘贴 JD">
-                    <FileText size={15} /><span>粘贴 JD</span>
+                  <button
+                    type="button"
+                    className={`${props.webSearchSelected ? "active" : ""} ${!props.webSearchAvailable ? "unavailable" : ""}`.trim()}
+                    onClick={props.onToggleWebSearch}
+                    disabled={props.chatBusy}
+                    aria-pressed={props.webSearchSelected}
+                    title={props.webSearchAvailable ? "仅为下一条消息启用公开互联网搜索" : "可以选中；发送后会提示配置 AgentSearch"}
+                  >
+                    <Search size={15} />
+                    <span>联网搜索</span>
                   </button>
                 </div>
                 {props.chatBusy ? (
@@ -523,10 +602,12 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
 export function ChatWorkspace(props: ChatWorkspaceProps) {
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [visionAttachmentIds, setVisionAttachmentIds] = useState<string[]>([]);
+  const [webSearchSelected, setWebSearchSelected] = useState(false);
 
   useEffect(() => {
     setPendingAttachments([]);
     setVisionAttachmentIds([]);
+    setWebSearchSelected(false);
   }, [props.currentConversationId]);
 
   const uploadAttachment = useCallback(async (file?: File) => {
@@ -563,9 +644,15 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     onNew: async (message) => {
       const content = textFromAppendMessage(message);
       if (content) {
-        await props.onSend(content, pendingAttachments.map((attachment) => attachment.id), visionAttachmentIds);
+        await props.onSend(
+          content,
+          pendingAttachments.map((attachment) => attachment.id),
+          visionAttachmentIds,
+          webSearchSelected,
+        );
         setPendingAttachments([]);
         setVisionAttachmentIds([]);
+        setWebSearchSelected(false);
       }
     },
     onEdit: async (message) => {
@@ -589,6 +676,8 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
         onUpload={uploadAttachment}
         onRemovePendingAttachment={removePendingAttachment}
         onToggleVisionAttachment={toggleVisionAttachment}
+        webSearchSelected={webSearchSelected}
+        onToggleWebSearch={() => setWebSearchSelected((selected) => !selected)}
       />
     </AssistantRuntimeProvider>
   );

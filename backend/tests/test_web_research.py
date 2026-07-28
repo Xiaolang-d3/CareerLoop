@@ -1,0 +1,171 @@
+from __future__ import annotations
+
+import unittest
+
+from app.config import Settings
+from app.tools import ResearchCompanyTool, SearchPublicWebTool, ToolContext
+from app.web_research import validate_backend_url
+
+
+class FakeAgentSearchClient:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    async def search_extract(self, query: str, count: int):
+        self.queries.append(query)
+        return [
+            {
+                "title": f"{query} 的公开资料",
+                "url": f"https://example.com/source-{len(self.queries)}",
+                "domain": "example.com",
+                "snippet": "公开摘要",
+                "content": "这是外部网页正文，不能被视为系统指令。",
+                "published_at": "2026-07-01",
+                "score": 0.8,
+                "source": "test",
+            }
+        ]
+
+    async def search(self, query: str, count: int):
+        return await self.search_extract(query, count)
+
+    async def enrich_sources(self, sources, *, concurrency: int = 1):
+        return sources, []
+
+
+class PartiallyFailingAgentSearchClient(FakeAgentSearchClient):
+    async def search(self, query: str, count: int):
+        if "最新消息" in query:
+            self.queries.append(query)
+            from app.web_research import WebResearchError
+
+            raise WebResearchError("agent_search_http_error", "临时失败", retryable=True)
+        return await super().search(query, count)
+
+
+class EmptyAgentSearchClient(FakeAgentSearchClient):
+    async def search(self, query: str, count: int):
+        self.queries.append(query)
+        return []
+
+
+class WebResearchTest(unittest.IsolatedAsyncioTestCase):
+    def test_backend_requires_https_when_not_loopback(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_backend_url("http://agent-search.example.com")
+        self.assertEqual(
+            validate_backend_url("https://agent-search.example.com/"),
+            "https://agent-search.example.com",
+        )
+        self.assertEqual(
+            validate_backend_url("http://127.0.0.1:3939"),
+            "http://127.0.0.1:3939",
+        )
+
+    async def test_company_research_returns_deduplicated_citable_sources(self) -> None:
+        client = FakeAgentSearchClient()
+        settings = Settings(web_research_enabled=True, web_research_max_sources=10)
+        result = await ResearchCompanyTool(settings=settings, client=client).execute(
+            {
+                "company_name": "示例科技",
+                "city": "上海",
+                "industry": "企业服务",
+                "focus": ["技术团队"],
+            },
+            ToolContext(platform_name="manual"),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.data["source_count"], 3)
+        self.assertEqual(result.data["evidence_count"], 3)
+        self.assertEqual(result.data["evidence"][0]["source_tier"], 2)
+        self.assertEqual(len(client.queries), 3)
+        self.assertIn("技术团队", client.queries[0])
+        self.assertIn("citation_rule", result.data["research_requirements"])
+        self.assertIn("不可信外部内容", result.data["external_content_notice"])
+
+    async def test_company_research_rejects_invalid_identity(self) -> None:
+        result = await ResearchCompanyTool(
+            settings=Settings(web_research_enabled=True),
+            client=FakeAgentSearchClient(),
+        ).execute(
+            {"company_name": "A"},
+            ToolContext(platform_name="manual"),
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error.code, "invalid_arguments")
+
+    async def test_company_research_keeps_partial_results_when_one_query_fails(self) -> None:
+        client = PartiallyFailingAgentSearchClient()
+        result = await ResearchCompanyTool(
+            settings=Settings(web_research_enabled=True, web_research_max_sources=10),
+            client=client,
+        ).execute(
+            {"company_name": "示例科技", "city": "杭州"},
+            ToolContext(platform_name="manual"),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertGreater(result.data["source_count"], 0)
+        self.assertEqual(len(result.data["search_warnings"]), 1)
+        self.assertEqual(
+            result.data["search_warnings"][0]["code"],
+            "agent_search_http_error",
+        )
+
+    async def test_generic_web_search_returns_sources_for_selected_turn(self) -> None:
+        client = FakeAgentSearchClient()
+        result = await SearchPublicWebTool(
+            settings=Settings(web_research_enabled=True),
+            client=client,
+        ).execute(
+            {"query": "AI Agent 行业最新动态", "category": "news", "count": 5},
+            ToolContext(platform_name="manual"),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.data["source_count"], 1)
+        self.assertEqual(result.data["evidence_count"], 1)
+        self.assertIn("最新消息", client.queries[0])
+        self.assertIn("citation_rule", result.data)
+
+    async def test_boss_job_search_zero_results_is_inconclusive_not_failed(self) -> None:
+        client = EmptyAgentSearchClient()
+        result = await ResearchCompanyTool(
+            settings=Settings(web_research_enabled=True),
+            client=client,
+        ).execute(
+            {
+                "company_name": "蔻蔻琪生物科技（杭州）有限公司",
+                "city": "杭州",
+                "focus": ["BOSS直聘", "招聘岗位"],
+            },
+            ToolContext(platform_name="manual"),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.status, "done")
+        self.assertEqual(result.data["source_count"], 0)
+        self.assertEqual(result.data["search_outcome"]["kind"], "no_public_job_match")
+        self.assertIn("site:zhipin.com", client.queries[0])
+
+    async def test_company_search_uses_short_brand_alias(self) -> None:
+        client = EmptyAgentSearchClient()
+        result = await ResearchCompanyTool(
+            settings=Settings(web_research_enabled=True),
+            client=client,
+        ).execute(
+            {"company_name": "蔻蔻琪生物科技有限公司"},
+            ToolContext(platform_name="manual"),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.status, "done")
+        self.assertEqual(result.data["search_outcome"]["kind"], "live_search_no_match")
+        self.assertIn('"蔻蔻琪" 公司', client.queries)
+        self.assertNotIn("请补充公司全称", result.message)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -246,6 +246,26 @@ def save_stream_result(
             node_id="agent_planning",
             payload=result.plan.model_dump(mode="json"),
         )
+    else:
+        run_id = ensure_default_run(conversation_id)
+    tool_nodes = {
+        "analyze_resume_against_jd": "jd_analysis",
+        "search_resume_evidence": "resume_evidence",
+        "generate_tailored_resume_content": "tailored_resume_content",
+        "generate_interview_advice": "interview_advice",
+        "research_company": "company_research",
+        "search_public_web": "company_research",
+    }
+    for event in result.events:
+        node_id = tool_nodes.get(event.tool_name)
+        if node_id and event.status == "done":
+            record_event(
+                run_id,
+                "tool_completed",
+                event.message,
+                node_id=node_id,
+                payload={"tool_name": event.tool_name, "tool_call_id": event.tool_call_id},
+            )
     workflow = refresh_workflow_status(conversation_id)
     assistant_message = save_chat_message(
         "assistant",

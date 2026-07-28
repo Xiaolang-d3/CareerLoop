@@ -1,22 +1,16 @@
 import {
   Archive,
   BarChart3,
-  Bot,
   BriefcaseBusiness,
-  CircleDot,
-  Layers3,
   MessageCircle,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
   Plus,
-  SlidersHorizontal,
-  Sparkles,
+  Settings,
   Trash2,
-  UserRound
 } from "lucide-react";
 import type { ReactNode } from "react";
-import type { AttachmentConfig } from "./ChatWorkspace";
 import type { AgentCapabilities, Conversation, ViewKey } from "../types";
 
 type AppSidebarProps = {
@@ -25,10 +19,7 @@ type AppSidebarProps = {
   conversations: Conversation[];
   currentConversationId: number | null;
   conversationBusy: boolean;
-  jobCount: number;
-  applicationCount: number;
   capabilities: AgentCapabilities | null;
-  attachmentConfig: AttachmentConfig | null;
   onToggle: () => void;
   onSelectView: (view: ViewKey) => void;
   onSelectConversation: (conversationId: number) => void;
@@ -44,10 +35,7 @@ export function AppSidebar({
   conversations,
   currentConversationId,
   conversationBusy,
-  jobCount,
-  applicationCount,
   capabilities,
-  attachmentConfig,
   onToggle,
   onSelectView,
   onSelectConversation,
@@ -57,27 +45,26 @@ export function AppSidebar({
   onRemoveConversation
 }: AppSidebarProps) {
   const navItems: Array<{ key: ViewKey; label: string; icon: ReactNode; count?: number }> = [
-    { key: "chat", label: "Agent 对话", icon: <MessageCircle size={18} /> },
-    { key: "profile", label: "我的资料", icon: <UserRound size={18} /> },
-    { key: "jobs", label: "岗位工作台", icon: <BriefcaseBusiness size={18} />, count: jobCount },
-    { key: "tools", label: "Agent 工具", icon: <Bot size={18} />, count: capabilities?.tools.length },
-    { key: "agent", label: "Agent 设置", icon: <SlidersHorizontal size={18} /> },
-    { key: "applications", label: "投递记录", icon: <Layers3 size={18} />, count: applicationCount },
-    { key: "review", label: "求职复盘", icon: <BarChart3 size={18} /> }
+    { key: "workbench", label: "工作台", icon: <BriefcaseBusiness size={18} /> },
+    { key: "dashboard", label: "数据看板", icon: <BarChart3 size={18} /> },
+    { key: "chat", label: "对话", icon: <MessageCircle size={18} /> },
+    { key: "settings", label: "设置", icon: <Settings size={18} /> }
   ];
 
   return (
     <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
       <div className="brand">
-        <span className="brand-mark"><Sparkles size={19} /></span>
-        <div className="brand-copy"><strong>BossCopilot</strong><small>求职 Agent</small></div>
+        <span className="brand-mark" aria-hidden="true">
+          <span className="brand-monogram">B</span>
+          <i />
+        </span>
+        <div className="brand-copy"><strong>BossCopilot</strong></div>
         <button className="sidebar-toggle" onClick={onToggle} title={collapsed ? "展开侧边栏" : "收起侧边栏"} aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}>
           {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
         </button>
       </div>
 
       <nav className="nav" aria-label="主导航">
-        <span className="nav-label">工作空间</span>
         {navItems.map((item) => (
           <button
             className={`nav-item ${activeView === item.key ? "active" : ""}`}
@@ -115,10 +102,6 @@ export function AppSidebar({
         </div>
       </section>
 
-      <div className="sidebar-status">
-        <div className="status-heading"><CircleDot size={13} /><strong>{capabilities ? "本地 Agent 已就绪" : "正在连接"}</strong></div>
-        <p>{attachmentConfig?.vision_ready ? "安全辅助 · 截图可按次授权看图" : "安全辅助 · 附件默认本地解析"}</p>
-      </div>
     </aside>
   );
 }

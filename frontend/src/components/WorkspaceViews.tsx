@@ -1,173 +1,213 @@
+import { useState } from "react";
 import {
-  Bot,
-  BriefcaseBusiness,
+  ArrowRight,
+  BarChart3,
+  Building2,
   CheckCircle2,
-  CircleDot,
-  Clock3,
-  Database,
-  ShieldCheck,
-  WandSparkles
+  Circle,
+  FileText,
+  LockKeyhole,
+  MessageCircle,
+  Target,
+  Search,
+  UsersRound
 } from "lucide-react";
-import { applicationLabels, toolLabels, toolProfiles } from "../constants";
-import type { AgentCapabilities, Application, Job, WorkflowStatus } from "../types";
-import type { AgentRunResult, AttachmentConfig } from "./ChatWorkspace";
+import type { Conversation, WorkflowStatus } from "../types";
 
-type ToolsViewProps = {
-  capabilities: AgentCapabilities | null;
-  attachmentConfig: AttachmentConfig | null;
-  recentToolEvents: AgentRunResult["events"];
+type WorkbenchViewProps = {
+  hasProfile: boolean;
+  chatBusy: boolean;
+  onRunTask: (content: string) => void;
+  webResearchEnabled: boolean;
 };
 
-export function ToolsView({ capabilities, attachmentConfig, recentToolEvents }: ToolsViewProps) {
+const taskCards = [
+  {
+    key: "company",
+    title: "公司背景调查",
+    description: "搜索业务、近期动态和公开风险，生成带来源报告",
+    icon: <Building2 size={20} />,
+    action: "调查公司",
+  },
+  {
+    key: "match",
+    title: "岗位匹配分析",
+    description: "查看匹配优势、能力缺口和改进优先级",
+    icon: <Target size={20} />,
+    action: "开始分析",
+  },
+  {
+    key: "resume",
+    title: "生成高匹配简历",
+    description: "基于真实经历，生成针对当前岗位的简历文本",
+    icon: <FileText size={20} />,
+    action: "生成简历",
+  },
+  {
+    key: "interview",
+    title: "面试准备",
+    description: "准备自我介绍、问题预测和回答思路",
+    icon: <UsersRound size={20} />,
+    action: "准备面试",
+  }
+] as const;
+
+export function WorkbenchView({
+  hasProfile,
+  chatBusy,
+  onRunTask,
+  webResearchEnabled
+}: WorkbenchViewProps) {
+  const [jobDescription, setJobDescription] = useState("");
+  const [companyName, setCompanyName] = useState("");
+
+  function runTask(task: "company" | "match" | "resume" | "interview") {
+    const instruction = {
+      company: `请联网调查“${companyName.trim()}”的公开信息。核验公司身份，研究核心产品与商业模式、近期动态、正面和风险信号、与这个岗位的关系，并列出信息冲突、未知项和建议向 HR 确认的问题。每项可核验事实必须附来源链接。`,
+      match: "请分析这份岗位 JD 与我的当前简历的匹配度、优势、缺口和优先改进建议。",
+      resume: "请根据这份岗位 JD 和我的当前简历，生成一份完整、可直接复制的高度匹配简历内容，不要生成文件。",
+      interview: "请根据这份岗位 JD 和我的当前简历，生成个人化面试准备建议，包括自我介绍、问题预测、回答方向、STAR 素材、反向提问和准备清单。"
+    }[task];
+    onRunTask(`${instruction}${jobDescription.trim() ? `\n\n岗位 JD：\n${jobDescription.trim()}` : ""}`);
+  }
+
+  const ready = hasProfile && Boolean(jobDescription.trim()) && !chatBusy;
+  const companyReady = webResearchEnabled && Boolean(companyName.trim()) && !chatBusy;
+  const anyTaskReady = ready || companyReady;
+
   return (
-    <section className="tool-center">
-      <div className="tool-center-hero">
-        <div>
-          <span className="card-kicker">透明执行</span>
-          <h2>Agent 能做什么，一目了然</h2>
-          <p>这里只展示工具能力、数据范围和执行结果摘要，不展示简历原文、模型提示词或敏感参数。</p>
+    <section className="workbench-page">
+      <section className={`flow-step jd-entry-card ${jobDescription.trim() ? "complete" : ""}`}>
+        <header className="flow-step-heading">
+          <span className="flow-step-number">2</span>
+          <div>
+            <h2>填写目标岗位</h2>
+            <p>复制招聘页面中的岗位职责和任职要求。</p>
+          </div>
+          <span className={`flow-step-status ${jobDescription.trim() ? "complete" : ""}`}>
+            {jobDescription.trim() ? <CheckCircle2 size={14} /> : <Circle size={14} />}
+            {jobDescription.trim() ? "已填写" : "必填"}
+          </span>
+        </header>
+        <div className="section-heading">
+          <div>
+            <div>
+              <h3>岗位描述</h3>
+            </div>
+          </div>
         </div>
-        <div className="tool-health">
-          <span><CircleDot size={14} />{capabilities ? "工具系统已连接" : "正在连接"}</span>
-          <strong>{capabilities?.tools.length ?? 0}<small> 个可用工具</small></strong>
+        <textarea
+          value={jobDescription}
+          maxLength={50_000}
+          placeholder="例如：岗位职责、任职要求、技能要求、工作地点等…"
+          onChange={(event) => setJobDescription(event.target.value)}
+        />
+        <label className="company-research-field">
+          <span>公司名称</span>
+          <input
+            value={companyName}
+            maxLength={200}
+            placeholder="例如：北京示例科技有限公司"
+            onChange={(event) => setCompanyName(event.target.value)}
+          />
+          <small>{webResearchEnabled ? "用于公开信息检索；填写公司全称可减少同名误判。" : "联网研究尚未启用，请先配置 AgentSearch。"}</small>
+        </label>
+        <p className="field-help">
+          {jobDescription.trim()
+            ? "岗位信息已就绪，可以选择下一步。"
+            : "这些信息只用于本次匹配、简历或面试准备。"}
+        </p>
+      </section>
+
+      <section className={`flow-step output-step ${anyTaskReady ? "ready" : ""}`}>
+        <header className="flow-step-heading">
+          <span className="flow-step-number">3</span>
+          <div>
+            <h2>选择需要的结果</h2>
+            <p>{anyTaskReady ? "资料齐全，选择一项开始。" : "完善所选任务需要的资料后即可使用。"}</p>
+          </div>
+          <span className={`flow-step-status ${anyTaskReady ? "complete" : ""}`}>
+            {anyTaskReady ? <CheckCircle2 size={14} /> : <LockKeyhole size={14} />}
+            {anyTaskReady ? "可开始" : "未就绪"}
+          </span>
+        </header>
+        <div className="task-card-grid">
+          {taskCards.map((task) => (
+            <article className="workbench-task-card" key={task.key}>
+              <span className="task-card-icon">{task.icon}</span>
+              <div><h3>{task.title}</h3><p>{task.description}</p></div>
+              <button
+                disabled={task.key === "company" ? !companyReady : !ready}
+                title={task.key === "company"
+                  ? !webResearchEnabled ? "请先启用联网公司研究" : !companyName.trim() ? "请先填写公司名称" : undefined
+                  : !hasProfile ? "请先完成人物资料并保存简历" : !jobDescription.trim() ? "请先填写目标岗位" : undefined}
+                onClick={() => runTask(task.key)}
+              >
+                {task.action}<ArrowRight size={14} />
+              </button>
+            </article>
+          ))}
         </div>
+      </section>
+    </section>
+  );
+}
+
+type DashboardViewProps = {
+  workflow: WorkflowStatus | null;
+  conversations: Conversation[];
+  onOpenConversation: (conversationId: number) => void;
+};
+
+export function DashboardView({
+  workflow,
+  conversations,
+  onOpenConversation
+}: DashboardViewProps) {
+  const counts = workflow?.counts;
+  const cards = [
+    { label: "匹配分析", value: counts?.jd_analyses ?? 0, icon: <Target size={18} />, note: "当前对话累计" },
+    { label: "简历生成", value: counts?.tailored_resume_generations ?? 0, icon: <FileText size={18} />, note: "高匹配文本" },
+    { label: "面试准备", value: counts?.interview_advice_generations ?? 0, icon: <UsersRound size={18} />, note: "个人化建议" },
+    { label: "公司研究", value: counts?.company_researches ?? 0, icon: <Search size={18} />, note: "带来源报告" },
+    { label: "活跃对话", value: conversations.filter((item) => item.status === "active").length, icon: <MessageCircle size={18} />, note: "可继续追问" }
+  ];
+
+  return (
+    <section className="dashboard-page">
+      <div className="dashboard-hero">
+        <div><h2>任务概览</h2></div>
+        <span className="dashboard-badge"><BarChart3 size={17} />本地任务数据</span>
       </div>
 
-      {attachmentConfig ? (
-        <section className="attachment-health-card">
-          <div className="tool-category-heading">
-            <span>附件与图片能力</span>
-            <small>{attachmentConfig.vision_ready ? "截图可按次授权看图" : "默认本地解析"}</small>
-          </div>
-          <div className="attachment-health-grid">
-            {(attachmentConfig.checks ?? []).map((check) => (
-              <article className={check.status} key={check.key}>
-                <span><CircleDot size={12} />{check.status === "ok" ? "正常" : check.status === "warning" ? "需配置" : "未启用"}</span>
-                <strong>{check.label}</strong>
-                <small>{check.message}</small>
-              </article>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      <div className="tool-category-list">
-        {(["读取资料", "分析判断", "准备行动", "进展记录"] as const).map((category) => (
-          <section className="tool-category" key={category}>
-            <div className="tool-category-heading">
-              <span>{category}</span>
-              <small>{toolProfiles.filter((tool) => tool.category === category).length} 项能力</small>
-            </div>
-            <div className="tool-grid">
-              {toolProfiles.filter((tool) => tool.category === category).map((tool) => {
-                const available = capabilities?.tools.includes(tool.name) ?? false;
-                return (
-                  <article className={`tool-card ${available ? "available" : "unavailable"}`} key={tool.name}>
-                    <div className="tool-card-top">
-                      <span className="tool-icon">{tool.category === "分析判断" ? <WandSparkles size={17} /> : tool.category === "读取资料" ? <Database size={17} /> : <Bot size={17} />}</span>
-                      <span className="tool-availability"><i />{available ? "可用" : "未连接"}</span>
-                    </div>
-                    <strong>{toolLabels[tool.name] ?? tool.name}</strong>
-                    <code>{tool.name}</code>
-                    <p>{tool.description}</p>
-                    <div className="tool-meta">
-                      <span><Database size={12} />{tool.dataScope}</span>
-                      <span><ShieldCheck size={12} />{tool.control}</span>
-                      <span>{tool.local ? "仅本地操作" : "需外部授权"}</span>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          </section>
+      <div className="metric-grid">
+        {cards.map((card) => (
+          <article className="metric-card" key={card.label}>
+            <span>{card.icon}</span>
+            <div><small>{card.label}</small><strong>{card.value}</strong><p>{card.note}</p></div>
+          </article>
         ))}
       </div>
 
-      <aside className="tool-activity">
-        <div className="tool-category-heading"><span>当前对话最近调用</span><small>只显示安全摘要</small></div>
-        {recentToolEvents.length ? (
-          <div className="tool-activity-list">
-            {recentToolEvents.map((event) => (
-              <div key={`${event.tool_call_id}-${event.round}`}>
-                <span className={`event-dot ${event.status}`} />
-                <strong>{toolLabels[event.tool_name] ?? event.tool_name}</strong>
-                <p>{event.message}</p>
-                <small>第 {event.round} 轮 · {event.status === "done" ? "完成" : event.status}</small>
-              </div>
-            ))}
-          </div>
-        ) : <div className="tool-activity-empty"><Clock3 size={20} /><span>当前对话还没有工具调用记录</span></div>}
-      </aside>
-    </section>
-  );
-}
-
-export function ApplicationsView({
-  applications,
-  onOpenJobs
-}: {
-  applications: Application[];
-  onOpenJobs: () => void;
-}) {
-  return (
-    <section className="data-panel">
-      <div className="section-heading"><div><span>全部进展</span><strong>{applications.length} 条求职记录</strong></div><small>本地待确认与真实进展清楚分开</small></div>
-      {applications.length === 0 ? (
-        <div className="large-empty compact"><span><Clock3 size={28} /></span><h2>还没有求职进展</h2><p>把感兴趣的岗位加入待投队列；真正开聊或投递后，再记录状态。</p><button className="secondary-button" onClick={onOpenJobs}>查看岗位</button></div>
-      ) : (
-        <div className="application-list">
-          {applications.map((item) => (
-            <div className="application-row" key={item.id}>
-              <span className="company-avatar">{(item.company || "岗").slice(0, 1)}</span>
-              <div><strong>{item.job_title || `岗位 #${item.job_id}`}</strong><span>{item.company || "公司未记录"}</span></div>
-              <em className={`status-pill ${item.status}`}>{applicationLabels[item.status] ?? item.status}</em>
-            </div>
-          ))}
+      <section className="dashboard-history">
+        <div className="section-heading">
+          <div><div><h3>最近任务</h3></div></div>
+          <small>{conversations.length} 条记录</small>
         </div>
-      )}
-    </section>
-  );
-}
-
-export function ReviewView({
-  jobs,
-  queuedCount,
-  appliedCount,
-  completedNodes,
-  workflow
-}: {
-  jobs: Job[];
-  queuedCount: number;
-  appliedCount: number;
-  completedNodes: number;
-  workflow: WorkflowStatus | null;
-}) {
-  return (
-    <section className="review-layout">
-      <div className="metric-grid">
-        <article><span className="metric-icon green"><BriefcaseBusiness size={18} /></span><div><small>真实岗位</small><strong>{jobs.length}</strong><em>已进入本地岗位库</em></div></article>
-        <article><span className="metric-icon amber"><Clock3 size={18} /></span><div><small>待投递</small><strong>{queuedCount}</strong><em>等待你的确认</em></div></article>
-        <article><span className="metric-icon blue"><CheckCircle2 size={18} /></span><div><small>已投递</small><strong>{appliedCount}</strong><em>持续跟进结果</em></div></article>
-      </div>
-      <div className="review-panels">
-        <section className="data-panel workflow-card">
-          <div className="section-heading"><div><span>任务流程</span><strong>{completedNodes}/{workflow?.nodes.length ?? 0} 已完成</strong></div></div>
-          <div className="workflow-list">
-            {workflow?.nodes.map((node, index) => (
-              <div className={`workflow-row ${node.status}`} key={node.id}>
-                <span className="workflow-index">{node.status === "done" ? <CheckCircle2 size={16} /> : index + 1}</span>
-                <div><strong>{node.title}</strong><p>{node.detail}</p></div>
-                <em>{node.status === "done" ? "已完成" : node.status === "blocked" ? "已阻塞" : node.status === "running" ? "进行中" : "待开始"}</em>
-              </div>
+        {conversations.length ? (
+          <div className="dashboard-history-list">
+            {conversations.slice(0, 8).map((conversation) => (
+              <button key={conversation.id} onClick={() => onOpenConversation(conversation.id)}>
+                <span className={conversation.status} />
+                <div><strong>{conversation.title}</strong><small>{conversation.message_count ?? 0} 条消息 · {conversation.task_status === "active" ? "任务进行中" : conversation.status === "archived" ? "已归档" : "可继续"}</small></div>
+                <ArrowRight size={15} />
+              </button>
             ))}
           </div>
-        </section>
-        <section className="data-panel data-note">
-          <span className="metric-icon green"><ShieldCheck size={18} /></span>
-          <h3>安全辅助，不替你做决定</h3>
-          <p>数据保存在本地；浏览器保持可见；登录、验证、沟通和投递都由你本人确认。</p>
-        </section>
-      </div>
+        ) : (
+          <div className="dashboard-empty"><BarChart3 size={24} /><span>完成第一次岗位分析后，任务记录会显示在这里。</span></div>
+        )}
+      </section>
     </section>
   );
 }

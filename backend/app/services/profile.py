@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from ..api.schemas import CandidateProfileIn
 from ..db import connect, json_dump, row_to_dict
 from ..knowledge import delete_document, index_document
 from ..privacy import scan_and_redact
-from ..profile_intelligence import extract_skills
+from ..profile_intelligence import extract_skills, suggest_profile_fields
 from ..resume_parser import parse_resume_result
 
 
@@ -142,17 +143,29 @@ def parse_candidate_resume(
     content: bytes,
     mode: str,
 ) -> dict[str, Any]:
-    parsed = parse_resume_result(filename, content, mode)
-    findings, redacted_text = scan_and_redact(parsed.text)
+    suffix = Path(filename).suffix.lower()
+    if suffix in {".png", ".jpg", ".jpeg", ".webp"}:
+        from ..screenshot_ocr import extract_screenshot_text
+
+        text = extract_screenshot_text(filename, content)
+        parser = "local_ocr"
+        warnings = ["截图 OCR 结果可能受清晰度和裁剪范围影响，请保存前检查文本。"]
+    else:
+        parsed = parse_resume_result(filename, content, mode)
+        text = parsed.text
+        parser = parsed.parser
+        warnings = parsed.warnings
+    findings, redacted_text = scan_and_redact(text)
     return {
         "filename": filename[:255],
-        "text": parsed.text,
+        "text": text,
         "redacted_text": redacted_text,
         "privacy_findings": findings,
-        "suggested_skills": extract_skills(parsed.text),
-        "character_count": len(parsed.text),
-        "parser": parsed.parser,
-        "warnings": parsed.warnings,
+        "suggested_skills": extract_skills(text),
+        "suggested_profile": suggest_profile_fields(text),
+        "character_count": len(text),
+        "parser": parser,
+        "warnings": warnings,
         "notice": "仅完成本地文本提取；确认保存前不会写入人物画像。",
     }
 

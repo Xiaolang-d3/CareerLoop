@@ -1,31 +1,3 @@
-export type Job = {
-  id: number;
-  source?: string;
-  source_url?: string;
-  title: string;
-  company: string;
-  city: string;
-  district: string;
-  salary_text: string;
-  experience: string;
-  education: string;
-  industry?: string;
-  company_size?: string;
-  hr_active_text?: string;
-  description: string;
-  status: string;
-};
-
-export type Application = {
-  id: number;
-  job_id: number;
-  profile_id: number;
-  status: string;
-  notes: string;
-  job_title?: string;
-  company?: string;
-};
-
 export type WorkflowNode = {
   id: string;
   title: string;
@@ -38,12 +10,11 @@ export type WorkflowStatus = {
   status: string;
   counts: {
     profiles: number;
-    jobs: number;
-    applications: number;
-    matches?: number;
-    drafts?: number;
-    queued_applications?: number;
-    progressed_applications?: number;
+    jd_analyses: number;
+    resume_evidence_searches: number;
+    tailored_resume_generations: number;
+    interview_advice_generations: number;
+    company_researches: number;
   };
   nodes: WorkflowNode[];
   events?: Array<{
@@ -88,6 +59,13 @@ export type CandidateProfileBundle = {
   } | null;
 };
 
+export type ResumeProfileSuggestion = {
+  name: string;
+  target_roles: string[];
+  target_cities: string[];
+  skills: string[];
+};
+
 export type AgentCapabilities = {
   active_model_provider: string;
   active_model_name: string;
@@ -95,16 +73,17 @@ export type AgentCapabilities = {
   model_providers: string[];
   platforms: string[];
   tools: string[];
+  web_research?: {
+    enabled: boolean;
+    provider: string;
+  };
 };
 
 export type ViewKey =
+  | "workbench"
+  | "dashboard"
   | "chat"
-  | "profile"
-  | "jobs"
-  | "tools"
-  | "agent"
-  | "applications"
-  | "review";
+  | "settings";
 
 export type AgentSettings = {
   display_name: string;
@@ -116,6 +95,10 @@ export type AgentSettings = {
   knowledge_memory_enabled: boolean;
   summary_enabled: boolean;
   context_message_limit: number;
+  model_name: string;
+  model_base_url: string;
+  api_key: string;
+  api_key_configured: boolean;
 };
 
 export type ToolProfile = {

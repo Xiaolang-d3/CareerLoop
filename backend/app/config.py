@@ -29,6 +29,11 @@ class Settings(BaseModel):
     minio_public_endpoint: str | None = None
     attachment_vision_enabled: bool = False
     attachment_vision_url_ttl_seconds: int = Field(default=300, ge=60, le=3600)
+    web_research_enabled: bool = False
+    agent_search_base_url: str = "http://127.0.0.1:3939"
+    agent_search_token: str | None = None
+    web_research_timeout_seconds: float = Field(default=25, gt=0, le=120)
+    web_research_max_sources: int = Field(default=10, ge=3, le=20)
 
 
 @lru_cache
@@ -49,4 +54,9 @@ def get_settings() -> Settings:
         minio_public_endpoint=os.getenv("MINIO_PUBLIC_ENDPOINT") or None,
         attachment_vision_enabled=os.getenv("ATTACHMENT_VISION_ENABLED", "false").lower() == "true",
         attachment_vision_url_ttl_seconds=os.getenv("ATTACHMENT_VISION_URL_TTL_SECONDS", "300"),
+        web_research_enabled=os.getenv("WEB_RESEARCH_ENABLED", "false").lower() == "true",
+        agent_search_base_url=os.getenv("AGENT_SEARCH_BASE_URL", "http://127.0.0.1:3939"),
+        agent_search_token=os.getenv("AGENT_SEARCH_TOKEN") or None,
+        web_research_timeout_seconds=os.getenv("WEB_RESEARCH_TIMEOUT_SECONDS", "25"),
+        web_research_max_sources=os.getenv("WEB_RESEARCH_MAX_SOURCES", "10"),
     )

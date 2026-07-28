@@ -6,12 +6,25 @@ from io import BytesIO
 from docx import Document
 
 from app.resume_parser import parse_resume
+from app.services.profile import parse_candidate_resume
 
 
 class ResumeParserTest(unittest.TestCase):
     def test_parses_utf8_text_resume(self) -> None:
         text = parse_resume("resume.txt", "张三\nPython 开发工程师\n五年后端开发经验".encode())
         self.assertIn("Python 开发工程师", text)
+
+    def test_parse_response_includes_profile_fill_suggestions(self) -> None:
+        result = parse_candidate_resume(
+            "resume.txt",
+            "姓名：张三\n求职意向：后端工程师\n期望城市：上海\n技能：Python、Docker".encode(),
+            "fast",
+        )
+
+        self.assertEqual(result["suggested_profile"]["name"], "张三")
+        self.assertEqual(result["suggested_profile"]["target_roles"], ["后端工程师"])
+        self.assertEqual(result["suggested_profile"]["target_cities"], ["上海"])
+        self.assertGreaterEqual(set(result["suggested_profile"]["skills"]), {"Python", "Docker"})
 
     def test_parses_docx_paragraphs_and_tables(self) -> None:
         document = Document()

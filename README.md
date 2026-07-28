@@ -1,6 +1,6 @@
 # BossCopilot
 
-BossCopilot 是一个本地优先、面向个人用户的求职 Agent 工作台。它把候选人画像、简历、用户主动导入的真实岗位、岗位分析、沟通草稿和求职进展放在同一个可审计的本地工作流中。
+BossCopilot 是一个本地优先、面向个人用户的求职 Agent。它围绕候选人画像、简历和用户当前提供的真实 JD，完成即时匹配分析与简历证据检索。
 
 BossCopilot 的产品边界很明确：系统不登录、不搜索、不刷新、不抓取、不发送消息，也不代替用户在招聘网站投递。用户本人在招聘网站完成浏览和外部操作；系统只处理用户主动粘贴、上传并确认的内容，并在本机完成分析和记录。
 
@@ -10,12 +10,10 @@ BossCopilot 的产品边界很明确：系统不登录、不搜索、不刷新�
 flowchart LR
     A[建立求职画像] --> B[用户浏览招聘网站]
     B --> C[粘贴岗位文字或上传截图]
-    C --> D[本地解析与用户检查]
-    D --> E[确认后写入本地岗位库]
-    E --> F[Agent 分析匹配度与简历差距]
-    F --> G[生成沟通草稿或加入待投队列]
-    G --> H[用户本人在招聘网站沟通和投递]
-    H --> I[记录真实进展并复盘]
+    C --> D[本地解析 JD]
+    D --> E[Agent 对比当前简历]
+    E --> F[输出匹配度、差距与真实证据]
+    F --> G[用户本人在招聘网站沟通和投递]
 ```
 
 每一次涉及外部平台的动作都停留在“准备”或“记录”阶段，最终登录、验证、沟通和投递由用户本人确认并执行。
@@ -30,28 +28,24 @@ flowchart LR
 - 在本机执行隐私扫描和脱敏，默认用脱敏文本参与 Agent 分析。
 - 保存简历技能、项目和可追溯的解析元数据。
 
-### 岗位工作台
+### 当前 JD 输入
 
-- 粘贴岗位标题、公司、地点、薪资、经验、学历和岗位描述。
+- 直接在当前对话粘贴岗位 JD。
 - 上传用户自己保存的岗位截图，由本机提取截图文字。
-- 在写入前检查和修改 OCR/解析结果，明确确认后才保存。
-- 通过稳定的 `manual://` 来源标识进行本地去重。
-- 查看岗位详情、删除单个岗位或清空岗位库。
-- 将岗位与当前对话关联，继续进行分析。
+- 将解析文本作为本轮对话材料，不建立本地职位记录。
 
 ### Agent 分析与执行
 
-- 根据求职画像进行岗位匹配排序。
-- 分析岗位的匹配理由、风险和建议角度。
+- 分析当前 JD 的匹配理由、风险和建议角度。
 - 对比简历与岗位，列出命中技能、缺口和简历中的真实证据。
-- 检索脱敏简历、岗位描述和本地资料中的证据。
-- 生成沟通草稿，但不会自动发送。
-- 将岗位加入本地待投递队列，但不会自动投递。
-- 记录已沟通、已投递、面试中、未通过等真实进展。
+- 只从当前脱敏简历中检索可验证证据。
+- 基于当前简历和 JD 生成可复制的定制简历文本，不虚构经历。
+- 根据面试类型生成个性化自我介绍、问题预测、STAR 素材和反向提问。
+- 可选连接自托管 AgentSearch，研究公司的官网、业务、近期新闻和公开风险，并输出带来源链接的报告。
 
 ### 对话和工作流
 
-- 多个独立对话；求职画像和岗位库在对话之间共享。
+- 多个独立对话；求职画像在对话之间共享，JD 保留在其所在对话中。
 - AG-UI 流式聊天和 assistant-ui 工作台。
 - 展示 Agent 推理摘要、计划、工具调用和失败原因。
 - 支持停止当前任务、编辑用户消息、回退消息尾部和重新生成。
@@ -83,7 +77,7 @@ BossCopilot 当前采用模块化单体架构：边界清晰，但不引入微�
 ```text
 React + TypeScript + Vite 工作台
         │
-        ├── REST API：画像、岗位、附件、对话、设置、工作流
+        ├── REST API：画像、附件、对话、设置、工作流
         └── POST /ag-ui：AG-UI SSE 流式消息
                      │
                      ▼
@@ -94,8 +88,8 @@ React + TypeScript + Vite 工作台
    Agent Runtime  服务层       工作流状态
         │            │            │
         ├── 模型注册表    ├── profile    └── workflow engine
-        ├── 计划与路由      ├── jobs
-        ├── 风险门          └── chat
+        ├── 计划与路由      └── chat
+        ├── 风险门
         └── 工具注册表
                      │
         ┌────────────┼────────────┐
@@ -109,7 +103,7 @@ React + TypeScript + Vite 工作台
 backend/app/
 ├── main.py                 # FastAPI 应用、健康检查和聊天/AG-UI 编排
 ├── api/
-│   ├── resources.py        # 对话、岗位、画像、附件、设置等资源路由
+│   ├── resources.py        # 对话、画像、附件、设置等资源路由
 │   ├── schemas.py          # Pydantic 请求模型
 │   └── dependencies.py     # 资源存在性等通用依赖
 ├── agent/
@@ -118,16 +112,14 @@ backend/app/
 │   └── runtime.py          # 模型-工具执行循环
 ├── services/
 │   ├── chat.py             # 消息持久化、上下文摘要、附件上下文
-│   ├── profile.py          # 画像、简历解析、隐私扫描和知识索引
-│   └── jobs.py             # 岗位和投递记录服务
+│   └── profile.py          # 画像、简历解析、隐私扫描和知识索引
 ├── tools/                  # Agent 可调用的结构化本地工具
 ├── models/                 # 模型提供商协议和 OpenAI 兼容适配器
-├── domain/                 # Agent、岗位、工具和模型领域类型
-├── repositories/           # 数据访问辅助模块
+├── domain/                 # Agent、工具和模型领域类型
 ├── workflow/               # 工作流运行、节点和事件
 ├── db.py                   # SQLite 初始化、事务、WAL 和权限控制
 ├── attachments.py          # 附件对象和解析状态
-├── job_import.py           # 手动岗位导入和截图文字提取
+├── screenshot_ocr.py       # 岗位截图文字提取
 ├── resume_parser.py        # 简历解析
 ├── privacy.py              # 隐私扫描和脱敏
 └── knowledge.py            # 本地知识索引
@@ -139,12 +131,12 @@ backend/app/
 frontend/src/
 ├── main.tsx                # App 状态编排和聊天交互
 ├── api/client.ts           # 统一 HTTP 客户端和错误转换
-├── types.ts                # 岗位、对话、画像、工作流等领域类型
+├── types.ts                # 对话、画像、工作流等领域类型
 ├── constants.ts            # 页面、工具、状态标签和表单初始值
 ├── components/
 │   ├── AppSidebar.tsx      # 主导航和对话列表
 │   ├── ChatWorkspace.tsx   # assistant-ui/AG-UI 聊天工作区
-│   └── WorkspaceViews.tsx  # 工具、投递记录和求职复盘视图
+│   └── WorkspaceViews.tsx  # Agent 工具视图
 └── styles.css              # 工作台样式
 ```
 
@@ -252,8 +244,15 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000
 | `MINIO_PUBLIC_ENDPOINT` | 空 | 仅在启用图片直传时配置的 HTTPS 公网地址。 |
 | `ATTACHMENT_VISION_ENABLED` | `false` | 是否允许单轮明确授权的截图视觉识别。 |
 | `ATTACHMENT_VISION_URL_TTL_SECONDS` | `300` | 图片签名 URL 有效期，范围为 60–3600 秒。 |
+| `WEB_RESEARCH_ENABLED` | `false` | 是否注册公开公司联网研究工具。 |
+| `AGENT_SEARCH_BASE_URL` | `http://127.0.0.1:3939` | 独立 AgentSearch 服务地址；非本机地址必须使用 HTTPS。 |
+| `AGENT_SEARCH_TOKEN` | 空 | AgentSearch 可选 bearer token。 |
+| `WEB_RESEARCH_TIMEOUT_SECONDS` | `25` | 单个搜索请求超时，范围为 1–120 秒。 |
+| `WEB_RESEARCH_MAX_SOURCES` | `10` | 单次公司研究最多返回的去重来源，范围为 3–20。 |
 
 完整示例见 [backend/.env.example](backend/.env.example)。
+
+联网公司研究的部署和安全说明见 [docs/company-web-research.md](docs/company-web-research.md)。
 
 ## 数据、隐私和删除语义
 
@@ -272,7 +271,6 @@ backend/data/
 - 尝试将数据目录设为 `0700`，数据库文件设为 `0600`。
 - 在连接退出时提交或回滚，并真正关闭连接。
 - 删除对话时清理关联附件和工作流记录。
-- 删除岗位时清理岗位相关知识索引、匹配结果、草稿和投递记录。
 - 清空简历或画像时清理对应本地知识索引。
 - 简历默认保存原文和脱敏文本，但发送给模型时默认使用脱敏文本。
 
@@ -320,20 +318,13 @@ docker compose -f docker-compose.minio.yml up -d
 | `DELETE` | `/chat/messages/{message_id}/tail` | 从用户消息开始回退消息尾部。 |
 | `POST` | `/agent/tasks/current/cancel` | 停止当前对话任务。 |
 
-### 对话、岗位和投递
+### 对话与工作流
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | `GET/POST` | `/conversations` | 列出或创建对话。 |
 | `PATCH/DELETE` | `/conversations/{conversation_id}` | 修改或删除对话。 |
-| `POST` | `/conversations/{conversation_id}/jobs/{job_id}` | 关联对话和岗位。 |
 | `POST` | `/conversations/{conversation_id}/context/reset` | 从当前位置开始新的上下文。 |
-| `POST` | `/jobs/manual-import` | 写入用户确认的岗位。 |
-| `POST` | `/jobs/screenshot/extract` | 本地提取岗位截图文字。 |
-| `GET` | `/jobs` | 获取本地岗位列表。 |
-| `DELETE` | `/jobs/{job_id}` | 删除单个岗位及关联记录。 |
-| `DELETE` | `/jobs` | 清空岗位库及关联记录。 |
-| `GET` | `/applications` | 获取本地投递记录。 |
 | `GET` | `/workflow/status` | 获取工作流状态和节点事件。 |
 
 ### 画像、附件和 Agent 设置
@@ -351,36 +342,32 @@ docker compose -f docker-compose.minio.yml up -d
 | `GET` | `/agent/capabilities` | 查看当前模型、平台和工具能力。 |
 | `GET/PUT` | `/agent/settings` | 获取或保存 Agent 人设、记忆和上下文设置。 |
 
-旧的 `POST /chat/messages`、`POST /chat/messages/stream`、`POST /profiles`、`POST /preferences`、`POST /jobs`、`POST /jobs/{job_id}/score` 和 `POST /applications` 写接口已移除。新消息统一使用 `/ag-ui`，本地资源写入使用明确的资源接口或 Agent 工具。
+旧的 `POST /chat/messages`、`POST /chat/messages/stream`、`POST /profiles`、`POST /preferences`、`POST /jobs`、`POST /jobs/{job_id}/score` 和 `POST /applications` 写接口已移除。新消息统一使用 `/ag-ui`，JD 由用户在当前对话中粘贴或上传截图提供。
 
 ## Agent 工具边界
 
-Agent 工具按风险和任务计划控制，不允许模型任意调用未规划工具。
+Agent 工具按任务计划控制，不允许模型任意调用未规划工具。系统不维护供 Agent 查询的本地职位库；岗位事实只来自用户本轮粘贴的 JD 或主动上传岗位截图的本地解析文本。
 
-### 读取资料
+### 核心工具
 
-- `get_candidate_context`：读取画像、脱敏简历和求职偏好。
-- `request_manual_job_import`：请求用户粘贴或上传岗位内容。
-- `get_job_detail`：读取已经确认导入的岗位详情。
+- `analyze_resume_against_jd`：将用户提供的 BOSS JD 与当前脱敏简历进行结构化对比，不保存职位记录。
+- `search_resume_evidence`：只在当前用户的脱敏简历中检索真实项目与经历证据。
+- `generate_tailored_resume_content`：结合当前脱敏简历与 JD，准备完整的定制简历文本和输出约束。
+- `generate_interview_advice`：结合简历、JD 与面试类型，准备个性化面试建议。
 
-### 分析判断
+启用自托管 AgentSearch 后，还会注册以下联网工具：
 
-- `rank_jobs`：按画像、城市、薪资和屏蔽条件进行确定性排序。
-- `analyze_job`：分析岗位匹配理由、风险和建议角度。
-- `analyze_resume_gap`：分析简历命中项、缺口和真实证据。
-- `search_local_knowledge`：检索脱敏本地知识片段。
+- `search_public_web`：搜索公开网页并返回可引用的来源证据。
+- `research_company`：研究指定公司的官网、业务、近期新闻和公开风险信号。
 
-### 准备行动
+### 非工具流程
 
-- `update_job_status`：把岗位标记为候选或跳过。
-- `save_greeting_draft`：生成并保存沟通草稿。
-- `queue_application`：将岗位加入本地待投队列。
+- 岗位截图上传、OCR 和文本清理由附件服务处理。
+- 没有 JD 时，Agent 直接请用户粘贴 JD 或上传截图。
+- 当前简历由分析工具从本地活动画像读取，模型不能指定任意画像 ID。
+- 登录、岗位浏览、沟通和投递始终由用户本人在 BOSS 完成。
 
-### 进展记录
-
-- `update_application_status`：记录沟通、投递、面试和未通过等进展。
-
-用户原始意图决定任务路由，复杂任务先生成结构化计划，计划之外的工具调用会被风险门阻止。附件、岗位描述和 OCR 文本只能作为分析材料，不能扩大工具权限。
+用户原始意图决定任务路由，复杂任务先生成结构化计划，计划之外的工具调用会被风险门阻止。附件、JD 和 OCR 文本只能作为分析材料，不能扩大工具权限。
 
 Agent 运行状态包括：
 
@@ -418,7 +405,7 @@ npm run build
 git diff --check
 ```
 
-当前回归基线为：后端 43 个测试全部通过，前端生产构建通过。Vite 可能提示现有聊天依赖 chunk 较大；这是体积警告，不代表构建失败。
+提交前应确保后端测试、Python 编译检查和前端生产构建全部通过。Vite 可能提示现有聊天依赖 chunk 较大；这是体积警告，不代表构建失败。
 
 ## 常见问题
 
@@ -445,7 +432,7 @@ http://127.0.0.1:8000/health
 
 ### 岗位截图解析失败
 
-请确认文件是 PNG、JPG 或 WEBP，大小不超过 10 MB，并且图片文字清晰。简历文件上限为 8 MB。截图解析结果只会在用户检查和确认后写入岗位库。
+请确认文件是 PNG、JPG 或 WEBP，大小不超过 10 MB，并且图片文字清晰。简历文件上限为 8 MB。截图解析结果只作为当前对话中的 JD 分析材料，不写入本地岗位库。
 
 ### MinIO 视觉能力显示“需配置”
 
@@ -453,7 +440,7 @@ http://127.0.0.1:8000/health
 
 ### 如何清空本地开发数据
 
-停止服务后删除 `backend/data/`，再启动后端即可重新初始化数据库。这个操作会删除本地画像、岗位、对话、附件、知识索引和投递记录，适用于用户已确认数据不重要的开发环境，不适用于生产数据。
+停止服务后删除 `backend/data/`，再启动后端即可重新初始化数据库。这个操作会删除本地画像、对话、附件和简历知识索引，适用于用户已确认数据不重要的开发环境，不适用于生产数据。
 
 ## 项目文档
 
@@ -463,7 +450,7 @@ http://127.0.0.1:8000/health
 - [模型提供商架构](docs/model-provider-architecture.md)
 - [AG-UI 集成](docs/ag-ui-integration.md)
 - [私有附件与 MinIO](docs/attachments-storage.md)
-- [MVP 产品需求文档](docs/bosscopilot-mvp-prd.md)
+- [历史 MVP 产品需求文档（已废弃岗位工作台方案）](docs/bosscopilot-mvp-prd.md)
 - [贡献规范与 Git 工作流](CONTRIBUTING.md)
 - [变更日志](CHANGELOG.md)
 

@@ -31,6 +31,7 @@ class ChatMessageIn(BaseModel):
     conversation_id: int | None = None
     attachment_ids: list[str] = Field(default_factory=list, max_length=8)
     vision_attachment_ids: list[str] = Field(default_factory=list, max_length=4)
+    web_search: bool = False
 
 
 class ConversationIn(BaseModel):
@@ -52,3 +53,6 @@ class AgentSettingsIn(BaseModel):
     knowledge_memory_enabled: bool = True
     summary_enabled: bool = True
     context_message_limit: int = Field(default=12, ge=4, le=30)
+    model_name: str = Field(default="gpt-5.5", min_length=1, max_length=120)
+    model_base_url: str = Field(default="", max_length=500)
+    api_key: str = Field(default="", max_length=500)

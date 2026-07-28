@@ -4,55 +4,33 @@ import type { AgentSubscriber, HttpAgent as HttpAgentType } from "@ag-ui/client"
 import { createApiClient } from "./api/client";
 import { AppSidebar } from "./components/AppSidebar";
 import { ChatWorkspace, type AgentRunResult, type AttachmentConfig, type ChatAttachment, type ChatMessage, type ChatRetryDraft } from "./components/ChatWorkspace";
-import { ApplicationsView, ReviewView, ToolsView } from "./components/WorkspaceViews";
+import { DashboardView, WorkbenchView } from "./components/WorkspaceViews";
 import {
   bossHomeUrl,
   defaultAgentSettings,
   emptyCandidateEditor,
-  emptyJobImport,
   emptyProfile,
-  pageMeta,
-  toolLabels
+  pageMeta
 } from "./constants";
 import type {
   AgentCapabilities,
   AgentSettings,
-  Application,
   CandidateProfileBundle,
   Conversation,
-  Job,
+  ResumeProfileSuggestion,
   ViewKey,
   WorkflowStatus
 } from "./types";
 import {
-  ArrowUpRight,
-  Archive,
-  BarChart3,
-  Bookmark,
   Bot,
-  BriefcaseBusiness,
-  Building2,
   CheckCircle2,
-  CircleDot,
-  Clock3,
   Database,
-  ExternalLink,
   FileText,
-  GraduationCap,
-  Layers3,
   LoaderCircle,
-  MapPin,
   MessageCircle,
-  Pencil,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Plus,
   RefreshCw,
-  Search,
   Save,
-  SlidersHorizontal,
   ShieldCheck,
-  Sparkles,
   Trash2,
   TriangleAlert,
   UserRound,
@@ -67,12 +45,13 @@ function App() {
   const fetchJson = useMemo(() => createApiClient(apiBase), [apiBase]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem("bosscopilot-sidebar") === "collapsed");
   const [activeView, setActiveView] = useState<ViewKey>(() => {
-    const savedView = window.localStorage.getItem("bosscopilot-view") as ViewKey | null;
-    return savedView && ["chat", "profile", "jobs", "tools", "agent", "applications", "review"].includes(savedView) ? savedView : "chat";
+    const savedView = window.localStorage.getItem("bosscopilot-view");
+    if (savedView === "profile" || savedView === "agent") return "settings";
+    if (savedView === "tools") return "dashboard";
+    return savedView && ["workbench", "dashboard", "chat", "settings"].includes(savedView)
+      ? savedView as ViewKey
+      : "workbench";
   });
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
-  const [applications, setApplications] = useState<Application[]>([]);
   const [workflow, setWorkflow] = useState<WorkflowStatus | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentConversationId, setCurrentConversationId] = useState<number | null>(null);
@@ -84,11 +63,6 @@ function App() {
   const [retryChatDraft, setRetryChatDraft] = useState<ChatRetryDraft | null>(null);
   const chatAgentRef = useRef<HttpAgentType | null>(null);
   const [taskCancelBusy, setTaskCancelBusy] = useState(false);
-  const [jobCleanupBusy, setJobCleanupBusy] = useState(false);
-  const [jobImportOpen, setJobImportOpen] = useState(false);
-  const [jobImportBusy, setJobImportBusy] = useState(false);
-  const [jobScreenshotBusy, setJobScreenshotBusy] = useState(false);
-  const [jobImport, setJobImport] = useState(emptyJobImport);
   const [refreshBusy, setRefreshBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [noticeMessage, setNoticeMessage] = useState("");
@@ -97,6 +71,7 @@ function App() {
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [profileExpanded, setProfileExpanded] = useState(false);
   const [profileBusy, setProfileBusy] = useState(false);
   const [profileDraft, setProfileDraft] = useState(emptyProfile);
   const [candidateEditor, setCandidateEditor] = useState(emptyCandidateEditor);
@@ -105,6 +80,7 @@ function App() {
   const [chatAttachmentBusy, setChatAttachmentBusy] = useState(false);
   const [enhancedResumeParse, setEnhancedResumeParse] = useState(false);
   const [privacyFindings, setPrivacyFindings] = useState<Array<{ entity_type: string; preview: string }>>([]);
+  const [resumeProfileSuggestion, setResumeProfileSuggestion] = useState<ResumeProfileSuggestion | null>(null);
   const [agentSettings, setAgentSettings] = useState<AgentSettings>(defaultAgentSettings);
   const [agentSettingsBusy, setAgentSettingsBusy] = useState(false);
   const currentConversation = conversations.find((item) => item.id === currentConversationId) ?? null;
@@ -145,43 +121,23 @@ function App() {
     });
   }
 
-  const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? jobs[0] ?? null;
-  const appliedCount = applications.filter((item) => item.status === "applied").length;
-  const queuedCount = applications.filter((item) => item.status === "queued").length;
-  const completedNodes = workflow?.nodes.filter((node) => node.status === "done").length ?? 0;
   const hasProfile = (workflow?.counts.profiles ?? 0) > 0;
-  const hasJobs = (workflow?.counts.jobs ?? 0) > 0;
+  const workbenchProfileReady = hasProfile && Boolean(candidateEditor.resumeText.trim());
   const hiddenMessageCount = Math.max(0, chatMessages.length - visibleMessageCount);
   const visibleChatMessages = chatMessages.slice(-visibleMessageCount);
   const latestAgent = [...chatMessages]
     .reverse()
     .find((message) => message.role === "assistant" && message.payload?.agent)?.payload?.agent;
   const waitingForUser = latestAgent?.status === "waiting_user";
-  const recentToolEvents = chatMessages
-    .flatMap((message) => message.payload?.agent?.events ?? [])
-    .slice(-8)
-    .reverse();
-
   const nextStep = !hasProfile
-    ? { title: "先建立求职画像", detail: "用 1 分钟告诉我目标岗位、城市和核心技能。", action: "设置画像", kind: "profile" as const }
-    : !hasJobs
-      ? { title: "导入一个真实岗位", detail: "粘贴岗位文字或上传自己保存的截图，检查后进入本地岗位库。", action: "手动导入", kind: "import" as const }
-      : queuedCount > 0
-        ? { title: `确认 ${queuedCount} 个待投岗位`, detail: "检查岗位和沟通草稿后，再由你决定是否前往 BOSS。", action: "查看待投", kind: "applications" as const }
-        : { title: "继续分析岗位", detail: `岗位库已有 ${jobs.length} 个岗位，可以深挖高匹配机会。`, action: "查看岗位", kind: "jobs" as const };
+    ? { title: "先保存当前简历", detail: "上传简历截图并检查 OCR 文本，保存后即可开始分析。", action: "打开设置", kind: "settings" as const }
+    : { title: "分析一个岗位 JD", detail: "把 BOSS 岗位 JD 粘贴到输入框，或上传你自己保存的岗位截图。", action: "开始分析", kind: "chat" as const };
 
   async function refreshData(showFeedback = false, conversationId = currentConversationId) {
     if (showFeedback) setRefreshBusy(true);
     try {
-      const [nextJobs, nextApplications, nextWorkflow] = await Promise.all([
-        fetchJson<Job[]>("/jobs"),
-        fetchJson<Application[]>("/applications"),
-        fetchJson<WorkflowStatus>(`/workflow/status${conversationId ? `?conversation_id=${conversationId}` : ""}`)
-      ]);
-      setJobs(nextJobs);
-      setApplications(nextApplications);
+      const nextWorkflow = await fetchJson<WorkflowStatus>(`/workflow/status${conversationId ? `?conversation_id=${conversationId}` : ""}`);
       setWorkflow(nextWorkflow);
-      setSelectedJobId((current) => current ?? nextJobs[0]?.id ?? null);
       setErrorMessage("");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "数据刷新失败");
@@ -213,7 +169,7 @@ function App() {
       await refreshConversations();
       setCurrentConversationId(created.id);
       setActiveView("chat");
-      setNoticeMessage("已新建独立对话。求职画像和岗位库仍会共享。");
+      setNoticeMessage("已新建独立对话。求职画像仍会共享。");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "新建对话失败");
     } finally {
@@ -256,7 +212,7 @@ function App() {
   }
 
   async function removeConversation(conversation: Conversation) {
-    if (!window.confirm(`确定删除对话“${conversation.title}”吗？\n\n只删除该对话和任务记录，不会删除求职画像或岗位库。`)) return;
+    if (!window.confirm(`确定删除对话“${conversation.title}”吗？\n\n只删除该对话和任务记录，不会删除求职画像。`)) return;
     setConversationBusy(true);
     try {
       const result = await fetchJson<{ next_conversation: Conversation }>(`/conversations/${conversation.id}`, { method: "DELETE" });
@@ -282,7 +238,8 @@ function App() {
   }
 
   async function refreshAgentSettings() {
-    setAgentSettings(await fetchJson<AgentSettings>("/agent/settings"));
+    const next = await fetchJson<AgentSettings>("/agent/settings");
+    setAgentSettings({ ...next, api_key: "" });
   }
 
   async function saveAgentPreferences() {
@@ -294,8 +251,9 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(agentSettings)
       });
-      setAgentSettings(saved);
-      setNoticeMessage("Agent 人设、记忆和上下文设置已保存在本地，将从下一条消息开始生效。");
+      setAgentSettings({ ...saved, api_key: "" });
+      await refreshCapabilities();
+      setNoticeMessage("模型设置已保存，将从下一条消息开始生效。");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "保存 Agent 设置失败");
     } finally {
@@ -304,7 +262,7 @@ function App() {
   }
 
   async function resetCurrentContext() {
-    if (!currentConversationId || !window.confirm("从当前位置开始新的上下文吗？\n\n历史消息仍然可见，但 Agent 后续不会再读取此前对话。人物画像和岗位库不会删除。")) return;
+    if (!currentConversationId || !window.confirm("从当前位置开始新的上下文吗？\n\n历史消息仍然可见，但 Agent 后续不会再读取此前对话。人物画像不会删除。")) return;
     setAgentSettingsBusy(true);
     setErrorMessage("");
     try {
@@ -324,6 +282,7 @@ function App() {
 
   async function refreshCandidateProfile() {
     const bundle = await fetchJson<CandidateProfileBundle>("/candidate-profile");
+    setResumeProfileSuggestion(null);
     if (!bundle.profile) {
       setCandidateEditor(emptyCandidateEditor);
       return;
@@ -374,6 +333,7 @@ function App() {
         })
       });
       await Promise.all([refreshCandidateProfile(), refreshData()]);
+      setProfileExpanded(false);
       setNoticeMessage("个人资料已保存在本地，Agent 后续分析会读取这些信息。");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "保存个人资料失败");
@@ -382,33 +342,66 @@ function App() {
     }
   }
 
-  async function parseResumeFile(file: File | undefined) {
-    if (!file) return;
+  async function parseResumeFiles(files: File[]) {
+    if (!files.length) return;
     setResumeParseBusy(true);
+    setResumeProfileSuggestion(null);
     setErrorMessage("");
     try {
-      const form = new FormData();
-      form.append("file", file);
-      form.append("mode", enhancedResumeParse ? "enhanced" : "fast");
-      const result = await fetchJson<{ filename: string; text: string; redacted_text: string; privacy_findings: Array<{ entity_type: string; preview: string }>; suggested_skills: string[]; character_count: number; parser: string; warnings: string[] }>("/candidate-profile/resume/parse", {
-        method: "POST",
-        body: form
-      });
+      type ParsedResume = { filename: string; text: string; redacted_text: string; privacy_findings: Array<{ entity_type: string; preview: string }>; suggested_skills: string[]; suggested_profile: ResumeProfileSuggestion; character_count: number; parser: string; warnings: string[] };
+      const results: ParsedResume[] = [];
+      for (const file of files) {
+        const form = new FormData();
+        form.append("file", file);
+        form.append("mode", enhancedResumeParse ? "enhanced" : "fast");
+        results.push(await fetchJson<ParsedResume>("/candidate-profile/resume/parse", {
+          method: "POST",
+          body: form
+        }));
+      }
+      const text = results.map((result) => result.text.trim()).filter(Boolean).join("\n\n");
+      const redactedText = results.map((result) => result.redacted_text.trim()).filter(Boolean).join("\n\n");
+      const suggestions = results.map((result) => result.suggested_profile);
+      const resultSuggestion: ResumeProfileSuggestion = {
+        name: suggestions.find((item) => item.name)?.name || "",
+        target_roles: Array.from(new Set(suggestions.flatMap((item) => item.target_roles))),
+        target_cities: Array.from(new Set(suggestions.flatMap((item) => item.target_cities))),
+        skills: Array.from(new Set(suggestions.flatMap((item) => item.skills)))
+      };
       setCandidateEditor((current) => ({
         ...current,
-        resumeText: result.text,
-        resumeFilename: result.filename,
-        resumeRedactedText: result.redacted_text,
-        skills: splitList(current.skills).length ? current.skills : result.suggested_skills.join("，")
+        resumeText: text,
+        resumeFilename: results.map((result) => result.filename).join("、").slice(0, 255),
+        resumeRedactedText: redactedText
       }));
-      setPrivacyFindings(result.privacy_findings);
-      const fallback = result.warnings.length ? ` ${result.warnings.join("；")}。` : "";
-      setNoticeMessage(`已用${result.parser === "docling" ? "增强" : "快速"}模式解析“${result.filename}”，提取 ${result.character_count} 个字符。${fallback}`);
+      setPrivacyFindings(results.flatMap((result) => result.privacy_findings));
+      setResumeProfileSuggestion(resultSuggestion);
+      const warnings = results.flatMap((result) => result.warnings);
+      const fallback = warnings.length ? ` ${warnings.join("；")}。` : "";
+      const characterCount = results.reduce((total, result) => total + result.character_count, 0);
+      setNoticeMessage(`已按选择顺序解析 ${results.length} 份简历材料，提取 ${characterCount} 个字符。${fallback}`);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "简历解析失败");
     } finally {
       setResumeParseBusy(false);
     }
+  }
+
+  function fillProfileFromResume() {
+    if (!resumeProfileSuggestion) return;
+    setCandidateEditor((current) => {
+      const currentSkills = splitList(current.skills);
+      const mergedSkills = Array.from(new Set([...currentSkills, ...resumeProfileSuggestion.skills]));
+      return {
+        ...current,
+        name: current.name.trim() || resumeProfileSuggestion.name,
+        targetRole: current.targetRole.trim() || resumeProfileSuggestion.target_roles.join("，"),
+        targetCity: current.targetCity.trim() || resumeProfileSuggestion.target_cities.join("，"),
+        skills: mergedSkills.join("，")
+      };
+    });
+    setResumeProfileSuggestion(null);
+    setNoticeMessage("已从简历补充人物画像，原有内容未被覆盖；保存前仍可继续修改。");
   }
 
   async function scanResumePrivacy() {
@@ -474,7 +467,12 @@ function App() {
     setNoticeMessage("附件已从本地临时存储中删除。");
   }
 
-  async function sendChatMessage(contentOverride: string, attachmentIds: string[] = [], visionAttachmentIds: string[] = []) {
+  async function sendChatMessage(
+    contentOverride: string,
+    attachmentIds: string[] = [],
+    visionAttachmentIds: string[] = [],
+    webSearch = false,
+  ) {
     const content = contentOverride.trim();
     if (!content || chatBusy || !currentConversationId) return;
     const { HttpAgent } = await import("@ag-ui/client");
@@ -602,6 +600,24 @@ function App() {
             : message
         ));
       },
+      onReasoningMessageStartEvent: ({ event }) => {
+        updateAgentEvent({
+          round: 0,
+          tool_call_id: event.messageId,
+          tool_name: "agent_thinking",
+          status: "running",
+          message: ""
+        });
+      },
+      onReasoningMessageContentEvent: ({ event, reasoningMessageBuffer }) => {
+        updateAgentEvent({
+          round: 0,
+          tool_call_id: event.messageId,
+          tool_name: "agent_thinking",
+          status: "running",
+          message: reasoningMessageBuffer + event.delta
+        });
+      },
       onReasoningMessageEndEvent: ({ event, reasoningMessageBuffer }) => {
         updateAgentEvent({
           round: 0,
@@ -647,7 +663,7 @@ function App() {
           runId: crypto.randomUUID(),
           tools: [],
           context: [],
-          forwardedProps: { conversationId, client: "bosscopilot-web", attachmentIds, visionAttachmentIds }
+          forwardedProps: { conversationId, client: "bosscopilot-web", attachmentIds, visionAttachmentIds, webSearch }
         },
         subscriber
       );
@@ -662,7 +678,7 @@ function App() {
       }
       if (error instanceof DOMException && error.name === "AbortError") return;
       setErrorMessage(error instanceof Error ? error.message : "消息发送失败");
-      setRetryChatDraft({ content, attachmentIds, visionAttachmentIds });
+      setRetryChatDraft({ content, attachmentIds, visionAttachmentIds, webSearch });
     } finally {
       if (chatAgentRef.current === agent) {
         chatAgentRef.current = null;
@@ -768,86 +784,18 @@ function App() {
     setNoticeMessage("已打开 BOSS 官网。请由你本人浏览和操作，需要分析时可将岗位文字或截图带回 BossCopilot。 ");
   }
 
-  async function extractJobScreenshot(file?: File) {
-    if (!file) return;
-    setJobScreenshotBusy(true);
-    setErrorMessage("");
-    try {
-      const body = new FormData();
-      body.append("file", file);
-      const result = await fetchJson<{ text: string }>("/jobs/screenshot/extract", {
-        method: "POST",
-        body
-      });
-      setJobImport((current) => ({ ...current, description: result.text, inputMethod: "screenshot" }));
-      setNoticeMessage("已在本地提取截图文字，请检查并补全岗位标题和公司。 ");
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "截图文字识别失败");
-    } finally {
-      setJobScreenshotBusy(false);
-    }
-  }
-
-  async function saveManualJob() {
-    if (!jobImport.title.trim() || !jobImport.company.trim() || !jobImport.description.trim()) {
-      setErrorMessage("请填写岗位标题、公司和岗位内容");
-      return;
-    }
-    setJobImportBusy(true);
-    setErrorMessage("");
-    try {
-      const result = await fetchJson<{ job: Job }>("/jobs/manual-import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          consent: true,
-          input_method: jobImport.inputMethod,
-          source_url: jobImport.sourceUrl.trim(),
-          title: jobImport.title.trim(),
-          company: jobImport.company.trim(),
-          location: jobImport.location.trim(),
-          salary_text: jobImport.salaryText.trim(),
-          experience: jobImport.experience.trim(),
-          education: jobImport.education.trim(),
-          description: jobImport.description.trim(),
-          conversation_id: currentConversationId
-        })
-      });
-      setJobImportOpen(false);
-      setJobImport(emptyJobImport);
-      setSelectedJobId(result.job.id);
-      await refreshData(false);
-      setNoticeMessage(`已将「${result.job.title}」保存到本地岗位库。`);
-      if (latestAgent?.error?.code === "manual_job_import_required") {
-        setActiveView("chat");
-        await sendChatMessage(`我已手动导入本地岗位 ID ${result.job.id}，请读取并继续分析`);
-      } else {
-        setActiveView("jobs");
-      }
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "岗位导入失败");
-    } finally {
-      setJobImportBusy(false);
-    }
-  }
-
   function handleNextStep() {
-    if (nextStep.kind === "profile") {
-      setProfileOpen(true);
-    } else if (nextStep.kind === "import") {
-      setJobImportOpen(true);
+    if (nextStep.kind === "settings") {
+      setActiveView("settings");
     } else {
-      setActiveView(nextStep.kind);
+      setActiveView("chat");
+      window.setTimeout(() => chatInputRef.current?.focus(), 0);
     }
   }
 
   function handleSuggestedAction() {
     if (!waitingForUser) {
       handleNextStep();
-      return;
-    }
-    if (latestAgent?.error?.code === "manual_job_import_required") {
-      setJobImportOpen(true);
       return;
     }
     void sendChatMessage("检查刚才的失败原因，告诉我最简单的恢复步骤");
@@ -864,59 +812,6 @@ function App() {
       setErrorMessage(error instanceof Error ? error.message : "结束当前任务失败");
     } finally {
       setTaskCancelBusy(false);
-    }
-  }
-
-  async function runJobAction(action: "analyze" | "gap" | "shortlist" | "greeting") {
-    if (!selectedJob || !currentConversationId) return;
-    await fetchJson(`/conversations/${currentConversationId}/jobs/${selectedJob.id}`, { method: "POST" });
-    setActiveView("chat");
-    const prompts = {
-      analyze: `读取并分析岗位「${selectedJob.title} - ${selectedJob.company}」，告诉我匹配理由和风险`,
-      gap: `对比我的简历与岗位「${selectedJob.title} - ${selectedJob.company}」，调用简历岗位差距分析，列出已匹配技能、缺口和简历中的真实证据`,
-      shortlist: `把岗位「${selectedJob.title} - ${selectedJob.company}」加入我的候选清单`,
-      greeting: `为岗位「${selectedJob.title} - ${selectedJob.company}」准备一条真实、简洁的沟通话术并保存为草稿`
-    };
-    await sendChatMessage(prompts[action]);
-  }
-
-  async function deleteSelectedJob() {
-    if (!selectedJob) return;
-    const confirmed = window.confirm(
-      `确定删除“${selectedJob.title} · ${selectedJob.company}”吗？\n\n关联的匹配分析、话术草稿和本地投递记录也会一起删除。`
-    );
-    if (!confirmed) return;
-    setJobCleanupBusy(true);
-    setErrorMessage("");
-    try {
-      await fetchJson(`/jobs/${selectedJob.id}`, { method: "DELETE" });
-      setSelectedJobId(null);
-      await refreshData();
-      setNoticeMessage("岗位及其关联记录已删除。");
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "删除岗位失败");
-    } finally {
-      setJobCleanupBusy(false);
-    }
-  }
-
-  async function clearAllJobs() {
-    if (!jobs.length) return;
-    const confirmed = window.confirm(
-      `确定清空全部 ${jobs.length} 个岗位吗？\n\n所有关联的匹配分析、话术草稿和本地投递记录也会删除，此操作无法撤销。`
-    );
-    if (!confirmed) return;
-    setJobCleanupBusy(true);
-    setErrorMessage("");
-    try {
-      const result = await fetchJson<{ deleted_count: number }>("/jobs", { method: "DELETE" });
-      setSelectedJobId(null);
-      await refreshData();
-      setNoticeMessage(`已清理 ${result.deleted_count} 个岗位及其关联记录。`);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "清理岗位失败");
-    } finally {
-      setJobCleanupBusy(false);
     }
   }
 
@@ -964,10 +859,7 @@ function App() {
         conversations={conversations}
         currentConversationId={currentConversationId}
         conversationBusy={conversationBusy}
-        jobCount={jobs.length}
-        applicationCount={applications.length}
         capabilities={capabilities}
-        attachmentConfig={attachmentConfig}
         onToggle={toggleSidebar}
         onSelectView={setActiveView}
         onSelectConversation={(conversationId) => {
@@ -983,13 +875,11 @@ function App() {
       <section className={`content ${activeView === "chat" ? "chat-content" : ""}`}>
         <header className="topbar">
           <div>
-            <span className="page-eyebrow">{activeView === "chat" ? "Workspace" : "BossCopilot"}</span>
             <h1>{activeView === "chat" && currentConversation ? currentConversation.title : pageMeta[activeView].title}</h1>
-            <p>{pageMeta[activeView].description}</p>
           </div>
           <div className="topbar-actions">
             {activeView !== "chat" ? (
-              <button className="icon-button" onClick={() => void refreshData(true)} disabled={refreshBusy} title="刷新数据">
+              <button className="icon-button" onClick={() => void refreshData(true)} disabled={refreshBusy} title="刷新数据" aria-label="刷新当前页面数据">
                 <RefreshCw className={refreshBusy ? "spinning" : ""} size={18} />
               </button>
             ) : null}
@@ -1007,7 +897,7 @@ function App() {
           <section className="profile-setup" aria-label="设置求职画像">
             <div className="profile-setup-copy">
               <span className="setup-icon"><UserRound size={20} /></span>
-              <div><span className="card-kicker">1 分钟设置</span><h2>告诉 Agent 你在找什么</h2><p>先填写最必要的信息，简历和详细偏好可以之后继续补充。</p></div>
+              <div><h2>告诉 Agent 你在找什么</h2></div>
             </div>
             <div className="profile-form">
               <label><span>怎么称呼你</span><input value={profileDraft.name} placeholder="例如：小林" onChange={(event) => setProfileDraft({ ...profileDraft, name: event.target.value })} /></label>
@@ -1020,34 +910,15 @@ function App() {
           </section>
         ) : null}
 
-        {jobImportOpen ? (
-          <section className="job-import-panel" aria-label="手动导入岗位">
-            <div className="job-import-heading">
-              <div><span className="card-kicker">用户主动提供</span><h2>导入一个岗位</h2><p>粘贴岗位内容，或上传你自己保存的截图。BossCopilot不会访问招聘网站。</p></div>
-              <button className="icon-button" onClick={() => setJobImportOpen(false)} aria-label="关闭岗位导入"><X size={17} /></button>
-            </div>
-            <div className="job-import-source">
-              <label className={`job-screenshot-upload ${jobScreenshotBusy ? "busy" : ""}`}>
-                {jobScreenshotBusy ? <LoaderCircle className="spinning" size={20} /> : <Upload size={20} />}
-                <span><strong>{jobScreenshotBusy ? "正在本地识别…" : "上传岗位截图"}</strong><small>PNG、JPG、WEBP，最大 10MB；识别后仍需你确认</small></span>
-                <input type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" disabled={jobScreenshotBusy} onChange={(event) => { void extractJobScreenshot(event.target.files?.[0]); event.currentTarget.value = ""; }} />
-              </label>
-              <span>或者直接粘贴岗位文字</span>
-            </div>
-            <div className="job-import-grid">
-              <label><span>岗位标题 *</span><input value={jobImport.title} placeholder="例如：AI Agent 工程师" onChange={(event) => setJobImport({ ...jobImport, title: event.target.value })} /></label>
-              <label><span>公司 *</span><input value={jobImport.company} placeholder="公司名称" onChange={(event) => setJobImport({ ...jobImport, company: event.target.value })} /></label>
-              <label><span>岗位链接（可选）</span><input value={jobImport.sourceUrl} placeholder="由你手动复制的来源链接" onChange={(event) => setJobImport({ ...jobImport, sourceUrl: event.target.value })} /></label>
-              <label><span>地点</span><input value={jobImport.location} placeholder="上海 浦东新区" onChange={(event) => setJobImport({ ...jobImport, location: event.target.value })} /></label>
-              <label><span>薪资</span><input value={jobImport.salaryText} placeholder="25-40K" onChange={(event) => setJobImport({ ...jobImport, salaryText: event.target.value })} /></label>
-              <label><span>经验 / 学历</span><div className="job-import-inline"><input value={jobImport.experience} placeholder="3-5年" onChange={(event) => setJobImport({ ...jobImport, experience: event.target.value })} /><input value={jobImport.education} placeholder="本科" onChange={(event) => setJobImport({ ...jobImport, education: event.target.value })} /></div></label>
-              <label className="job-import-description"><span>岗位内容 *</span><textarea value={jobImport.description} placeholder="在这里粘贴岗位职责、任职要求等内容。请先移除不希望保存的个人信息。" onChange={(event) => setJobImport({ ...jobImport, description: event.target.value, inputMethod: "paste" })} /></label>
-            </div>
-            <div className="job-import-actions">
-              <span><ShieldCheck size={14} /> 内容只在你确认后保存到本地</span>
-              <div><button className="text-button" onClick={() => setJobImportOpen(false)}>取消</button><button className="primary-button" onClick={() => void saveManualJob()} disabled={jobImportBusy || jobScreenshotBusy}>{jobImportBusy ? <LoaderCircle className="spinning" size={16} /> : <Save size={16} />}确认导入</button></div>
-            </div>
-          </section>
+        {activeView === "dashboard" ? (
+          <DashboardView
+            workflow={workflow}
+            conversations={conversations}
+            onOpenConversation={(conversationId) => {
+              setCurrentConversationId(conversationId);
+              setActiveView("chat");
+            }}
+          />
         ) : null}
 
         {activeView === "chat" ? (
@@ -1060,15 +931,12 @@ function App() {
             latestAgent={latestAgent}
             taskCancelBusy={taskCancelBusy}
             retryDraft={retryChatDraft}
-            nextStep={nextStep}
             chatEndRef={chatEndRef}
             chatInputRef={chatInputRef}
             onLoadMore={() => setVisibleMessageCount((count) => count + 12)}
-            onNextStep={handleNextStep}
-            onOpenBoss={() => void openBoss()}
-            onImportJob={() => { setActiveView("jobs"); setJobImportOpen(true); }}
             attachmentBusy={chatAttachmentBusy}
             attachmentConfig={attachmentConfig}
+            webSearchAvailable={Boolean(capabilities?.web_research?.enabled)}
             onUploadAttachment={uploadChatAttachment}
             onRemoveAttachment={removeChatAttachment}
             onAttachmentInvalid={setErrorMessage}
@@ -1081,15 +949,35 @@ function App() {
           />
         ) : null}
 
-        {activeView === "profile" ? (
-          <section className="profile-workspace">
+        {activeView === "workbench" ? (
+          <section className="profile-workspace" id="candidate-profile-section">
+            <header className="flow-step-heading profile-flow-heading">
+              <span className="flow-step-number">1</span>
+              <div>
+                <h2>完善人物资料</h2>
+                <p>填写基本求职信息并上传简历，后续结果会以此为依据。</p>
+              </div>
+              <div className="flow-step-actions">
+                <span className={`flow-step-status ${workbenchProfileReady ? "complete" : ""}`}>
+                  {workbenchProfileReady ? <CheckCircle2 size={14} /> : <TriangleAlert size={14} />}
+                  {workbenchProfileReady ? "已完成" : "待完成"}
+                </span>
+                {workbenchProfileReady ? (
+                  <button className="profile-edit-toggle" onClick={() => setProfileExpanded((value) => !value)}>
+                    {profileExpanded ? "收起" : "编辑"}
+                  </button>
+                ) : null}
+              </div>
+            </header>
+            {!workbenchProfileReady || profileExpanded ? (
+              <>
             <div className="profile-editor-card">
               <div className="profile-card-heading">
                 <span className="profile-card-icon"><UserRound size={19} /></span>
                 <div><h2>人物画像</h2><p>这些信息会用于岗位匹配和沟通准备。</p></div>
               </div>
               <div className="candidate-form">
-                <label><span>称呼</span><input value={candidateEditor.name} placeholder="例如：小林" onChange={(event) => setCandidateEditor({ ...candidateEditor, name: event.target.value })} /></label>
+                <label><span>称呼 <em className="required-mark">必填</em></span><input required value={candidateEditor.name} placeholder="例如：小林" onChange={(event) => setCandidateEditor({ ...candidateEditor, name: event.target.value })} /></label>
                 <label><span>目标岗位</span><input value={candidateEditor.targetRole} placeholder="AI Agent 工程师" onChange={(event) => setCandidateEditor({ ...candidateEditor, targetRole: event.target.value })} /></label>
                 <label><span>目标城市</span><input value={candidateEditor.targetCity} placeholder="上海，杭州" onChange={(event) => setCandidateEditor({ ...candidateEditor, targetCity: event.target.value })} /></label>
                 <label className="wide-field"><span>核心技能</span><input value={candidateEditor.skills} placeholder="Python，FastAPI，LLM，Agent" onChange={(event) => setCandidateEditor({ ...candidateEditor, skills: event.target.value })} /></label>
@@ -1101,170 +989,123 @@ function App() {
               </div>
             </div>
 
-            <div className="resume-editor-card">
+            <div className="resume-upload-card">
               <div className="profile-card-heading">
-                <span className="profile-card-icon"><FileText size={19} /></span>
-                <div><h2>简历</h2><p>文件只在本机解析，保存前可以检查和修改。</p></div>
+                <span className="profile-card-icon"><Upload size={19} /></span>
+                <div><h2>上传简历 <em className="required-mark">岗位功能必填</em></h2><p>选择文件并在本机解析。</p></div>
               </div>
               <label className={`resume-upload ${resumeParseBusy ? "busy" : ""}`}>
                 {resumeParseBusy ? <LoaderCircle className="spinning" size={23} /> : <Upload size={23} />}
-                <strong>{resumeParseBusy ? "正在本地解析…" : candidateEditor.resumeFilename || "上传简历"}</strong>
-                <span>支持 PDF、DOCX、TXT，最大 8MB</span>
-                <input type="file" accept=".pdf,.docx,.txt,.md" disabled={resumeParseBusy} onChange={(event) => { void parseResumeFile(event.target.files?.[0]); event.currentTarget.value = ""; }} />
+                <strong>{resumeParseBusy ? "正在本地解析…" : candidateEditor.resumeFilename || "上传简历截图"}</strong>
+                <span>支持多张 PNG、JPG、WEBP 截图，也兼容 PDF、DOCX、TXT</span>
+                <input type="file" multiple accept=".png,.jpg,.jpeg,.webp,.pdf,.docx,.txt,.md" disabled={resumeParseBusy} onChange={(event) => { void parseResumeFiles(Array.from(event.target.files || [])); event.currentTarget.value = ""; }} />
               </label>
               <div className="resume-options">
                 <label><input type="checkbox" checked={enhancedResumeParse} onChange={(event) => setEnhancedResumeParse(event.target.checked)} /><span>增强解析</span><small>适合复杂排版或扫描版，首次可能较慢</small></label>
                 <button onClick={() => void scanResumePrivacy()} disabled={resumeParseBusy || !candidateEditor.resumeText}><ShieldCheck size={14} />隐私检查</button>
               </div>
-              <div className="resume-preview-heading">
-                <span>文本预览</span>
-                <small>{candidateEditor.resumeText.length.toLocaleString()} 字符</small>
-              </div>
-              <textarea className="resume-preview" value={candidateEditor.resumeText} placeholder="上传简历或直接粘贴简历文本。内容只会在点击保存后进入人物画像。" onChange={(event) => { setCandidateEditor({ ...candidateEditor, resumeText: event.target.value, resumeRedactedText: "" }); setPrivacyFindings([]); }} />
               {privacyFindings.length ? (
                 <div className="privacy-result">
                   <ShieldCheck size={16} /><div><strong>检测到 {privacyFindings.length} 处敏感信息</strong><span>{privacyFindings.slice(0, 3).map((item) => item.preview).join("、")}；默认向 Agent 提供脱敏版本。</span></div>
                 </div>
               ) : null}
+            </div>
+
+            <div className="resume-editor-card resume-text-card">
+              <div className="profile-card-heading">
+                <span className="profile-card-icon"><FileText size={19} /></span>
+                <div><h2>编辑简历内容</h2><p>检查解析结果，也可以直接粘贴或修改文本。</p></div>
+              </div>
+              <div className="resume-preview-heading">
+                <span>简历文本</span>
+                <small>{candidateEditor.resumeText.length.toLocaleString()} 字符</small>
+              </div>
+              <textarea className="resume-preview" value={candidateEditor.resumeText} placeholder="上传简历或直接粘贴简历文本。内容只会在点击保存后进入人物画像。" onChange={(event) => { setCandidateEditor({ ...candidateEditor, resumeText: event.target.value, resumeRedactedText: "" }); setPrivacyFindings([]); setResumeProfileSuggestion(null); }} />
+              {resumeProfileSuggestion && (resumeProfileSuggestion.name || resumeProfileSuggestion.target_roles.length || resumeProfileSuggestion.target_cities.length || resumeProfileSuggestion.skills.length) ? (
+                <div className="profile-fill-suggestion">
+                  <WandSparkles size={17} />
+                  <div>
+                    <strong>识别到可填充的画像内容</strong>
+                    <span>{[
+                      resumeProfileSuggestion.name ? `称呼：${resumeProfileSuggestion.name}` : "",
+                      resumeProfileSuggestion.target_roles.length ? `目标岗位：${resumeProfileSuggestion.target_roles.join("、")}` : "",
+                      resumeProfileSuggestion.target_cities.length ? `目标城市：${resumeProfileSuggestion.target_cities.join("、")}` : "",
+                      resumeProfileSuggestion.skills.length ? `技能：${resumeProfileSuggestion.skills.join("、")}` : ""
+                    ].filter(Boolean).join("；")}</span>
+                    <small>只补充空字段，并合并新技能，不会覆盖已填写内容。</small>
+                  </div>
+                  <button type="button" onClick={fillProfileFromResume}>一键填充</button>
+                </div>
+              ) : null}
               <label className="agent-privacy-choice"><input type="checkbox" checked={candidateEditor.privacyMode === "original"} onChange={(event) => setCandidateEditor({ ...candidateEditor, privacyMode: event.target.checked ? "original" : "redacted" })} /><span>允许 Agent 使用简历原文</span><small>关闭时，手机号、邮箱和身份证号不会进入模型上下文</small></label>
-              {candidateEditor.resumeText ? <button className="clear-resume-button" onClick={() => { setCandidateEditor({ ...candidateEditor, resumeText: "", resumeFilename: "", resumeRedactedText: "" }); setPrivacyFindings([]); }}><Trash2 size={13} />清除简历内容</button> : null}
+              {candidateEditor.resumeText ? <button className="clear-resume-button" onClick={() => { setCandidateEditor({ ...candidateEditor, resumeText: "", resumeFilename: "", resumeRedactedText: "" }); setPrivacyFindings([]); setResumeProfileSuggestion(null); }}><Trash2 size={13} />清除简历内容</button> : null}
             </div>
 
             <div className="profile-save-bar">
-              <span><ShieldCheck size={15} /> 资料保存在本地，不会自动发送给招聘平台</span>
-              <button className="primary-button" onClick={() => void saveCandidateProfile()} disabled={candidateProfileBusy || resumeParseBusy}>
+              <span>
+                {(!candidateEditor.name.trim() || !candidateEditor.resumeText.trim()) ? <TriangleAlert size={15} /> : <ShieldCheck size={15} />}
+                {!candidateEditor.name.trim()
+                  ? "请先填写称呼"
+                  : !candidateEditor.resumeText.trim()
+                    ? "请上传简历或粘贴简历文本"
+                    : "资料保存在本地，不会自动发送给招聘平台"}
+              </span>
+              <button className="primary-button" onClick={() => void saveCandidateProfile()} disabled={candidateProfileBusy || resumeParseBusy || !candidateEditor.name.trim() || !candidateEditor.resumeText.trim()}>
                 {candidateProfileBusy ? <LoaderCircle className="spinning" size={16} /> : <Save size={16} />}
                 {candidateProfileBusy ? "保存中…" : "保存资料"}
               </button>
             </div>
+              </>
+            ) : null}
           </section>
         ) : null}
 
-        {activeView === "jobs" ? (
-          jobs.length === 0 ? (
-            <div className="large-empty">
-              <span><Search size={30} /></span><h2>还没有真实岗位</h2>
-              <p>粘贴岗位文字或上传你自己保存的截图，确认后进入本地岗位库。</p>
-              <button className="primary-button" onClick={() => setJobImportOpen(true)}><Plus size={17} /> 手动导入岗位</button>
-            </div>
-          ) : (
-            <section className="job-workspace">
-              <div className="job-list-panel">
-                <div className="section-heading"><div><span>机会列表</span><strong>{jobs.length} 个真实岗位</strong></div><div className="job-list-actions"><button className="secondary-button" onClick={() => setJobImportOpen(true)}><Plus size={13} />导入岗位</button><button className="cleanup-button" onClick={() => void clearAllJobs()} disabled={jobCleanupBusy}><Trash2 size={13} />清空岗位</button></div></div>
-                <div className="job-list">
-                  {jobs.map((job) => (
-                    <button className={`job-card ${selectedJob?.id === job.id ? "active" : ""}`} key={job.id} onClick={() => setSelectedJobId(job.id)}>
-                      <div className="job-card-top"><strong>{job.title}</strong><em>{job.salary_text || "薪资面议"}</em></div>
-                      <span><Building2 size={14} />{job.company}</span>
-                      <div className="job-tags">
-                        {job.city ? <small><MapPin size={12} />{job.city}{job.district}</small> : null}
-                        {job.experience ? <small>{job.experience}</small> : null}
-                        {job.education ? <small>{job.education}</small> : null}
-                        {!job.description ? <small>摘要</small> : null}
-                        {job.status === "shortlisted" ? <small className="shortlisted"><Bookmark size={11} />候选</small> : null}
-                      </div>
-                    </button>
-                  ))}
-                </div>
+        {activeView === "workbench" ? (
+          <WorkbenchView
+            hasProfile={workbenchProfileReady}
+            chatBusy={chatBusy}
+            webResearchEnabled={Boolean(capabilities?.web_research?.enabled)}
+            onRunTask={(content) => {
+              setActiveView("chat");
+              void sendChatMessage(content);
+            }}
+          />
+        ) : null}
+
+        {activeView === "settings" ? (
+          <section className="model-settings-page">
+            <section className="settings-card model-settings-card persona-settings">
+              <div className="settings-card-heading">
+                <span><Bot size={18} /></span>
+                <div><h3>模型连接</h3><p>使用 OpenAI Chat Completions 兼容接口。</p></div>
               </div>
-
-              {selectedJob ? (
-                <article className="job-detail">
-                  <div className="job-detail-header">
-                    <div><span>{selectedJob.source === "manual" ? "用户主动导入" : selectedJob.source?.toUpperCase() || "本地岗位"} · 可追溯来源</span><h2>{selectedJob.title}</h2><p>{selectedJob.company}</p></div>
-                    <strong>{selectedJob.salary_text || "薪资面议"}</strong>
-                  </div>
-                  <div className="detail-meta">
-                    {selectedJob.city ? <span><MapPin size={15} />{selectedJob.city}{selectedJob.district}</span> : null}
-                    {selectedJob.experience ? <span><BriefcaseBusiness size={15} />{selectedJob.experience}</span> : null}
-                    {selectedJob.education ? <span><GraduationCap size={15} />{selectedJob.education}</span> : null}
-                  </div>
-                  <section>
-                    <h3>岗位描述</h3>
-                    {selectedJob.description ? (
-                      <p className="job-description">{selectedJob.description}</p>
-                    ) : (
-                      <div className="job-description-empty">
-                        <p>当前记录缺少岗位描述。你可以重新手动导入完整岗位文字或截图。</p>
-                        {selectedJob.source_url?.startsWith("http") ? <a href={selectedJob.source_url} target="_blank" rel="noreferrer">打开岗位详情<ExternalLink size={13} /></a> : null}
-                      </div>
-                    )}
-                  </section>
-                  <section className="job-assistant-actions">
-                    <div><span className="card-kicker">让 Agent 继续</span><h3>从查看到决定，只需一步</h3></div>
-                    <div>
-                      <button className="secondary-button" onClick={() => runJobAction("analyze")}><WandSparkles size={15} /> 深度分析</button>
-                      <button className="secondary-button" onClick={() => runJobAction("gap")}><BarChart3 size={15} /> 简历差距</button>
-                      <button className="secondary-button" onClick={() => runJobAction("shortlist")}><Bookmark size={15} /> 加入候选</button>
-                      <button className="secondary-button" onClick={() => runJobAction("greeting")}><MessageCircle size={15} /> 准备话术</button>
-                    </div>
-                  </section>
-                  <div className="detail-actions">
-                    <span><ShieldCheck size={14} /> 打开原岗位后，由你决定是否发起沟通</span>
-                    <div>
-                      <button className="delete-job-button" onClick={() => void deleteSelectedJob()} disabled={jobCleanupBusy}><Trash2 size={14} />删除岗位</button>
-                      {selectedJob.source_url?.startsWith("http") ? <a className="primary-button" href={selectedJob.source_url} target="_blank" rel="noreferrer">打开来源页 <ExternalLink size={15} /></a> : null}
-                    </div>
-                  </div>
-                </article>
-              ) : null}
+              <label>
+                <span>模型名称</span>
+                <input list="model-options" value={agentSettings.model_name} placeholder="输入或选择模型" onChange={(event) => setAgentSettings({ ...agentSettings, model_name: event.target.value })} />
+                <datalist id="model-options">
+                  <option value="gpt-5.5" />
+                  <option value="gpt-5.4" />
+                  <option value="gpt-4.1" />
+                </datalist>
+              </label>
+              <label>
+                <span>Base URL</span>
+                <input value={agentSettings.model_base_url} placeholder="https://api.openai.com/v1" onChange={(event) => setAgentSettings({ ...agentSettings, model_base_url: event.target.value })} />
+                <small>留空使用 OpenAI 默认地址；也可填写兼容服务地址。</small>
+              </label>
+              <label>
+                <span>API Key</span>
+                <input type="password" autoComplete="new-password" value={agentSettings.api_key} placeholder={agentSettings.api_key_configured ? "已配置，留空则继续使用" : "请输入 API Key"} onChange={(event) => setAgentSettings({ ...agentSettings, api_key: event.target.value })} />
+                <small>{agentSettings.api_key_configured ? "当前已有可用密钥，系统不会显示原文。" : "密钥仅保存在本机后端。"}</small>
+              </label>
+              <button className="primary-button model-save-button" disabled={agentSettingsBusy || !agentSettings.model_name.trim()} onClick={() => void saveAgentPreferences()}>
+                {agentSettingsBusy ? <LoaderCircle className="spinning" size={16} /> : <Save size={16} />}
+                {agentSettingsBusy ? "保存中…" : "保存模型设置"}
+              </button>
             </section>
-          )
-        ) : null}
-
-        {activeView === "tools" ? <ToolsView capabilities={capabilities} attachmentConfig={attachmentConfig} recentToolEvents={recentToolEvents} /> : null}
-
-        {activeView === "agent" ? (
-          <section className="agent-settings-page">
-            <div className="agent-settings-intro">
-              <div><span className="card-kicker">行为与记忆</span><h2>决定 Agent 如何理解你</h2><p>人设影响表达方式；长期记忆决定可以读取哪些本地资料；当前上下文决定每次对话携带多少历史信息。</p></div>
-              <span className="settings-local-badge"><Database size={14} />设置保存在本地</span>
-            </div>
-
-            <div className="agent-settings-grid">
-              <section className="settings-card persona-settings">
-                <div className="settings-card-heading"><span><Bot size={18} /></span><div><h3>人设</h3><p>安全边界保持锁定，只调整角色和表达。</p></div></div>
-                <label><span>Agent 名称</span><input value={agentSettings.display_name} maxLength={40} onChange={(event) => setAgentSettings({ ...agentSettings, display_name: event.target.value })} /></label>
-                <label><span>角色定位</span><textarea value={agentSettings.persona_role} maxLength={300} onChange={(event) => setAgentSettings({ ...agentSettings, persona_role: event.target.value })} /></label>
-                <label><span>回答详细程度</span><select value={agentSettings.response_style} onChange={(event) => setAgentSettings({ ...agentSettings, response_style: event.target.value as AgentSettings["response_style"] })}><option value="concise">简洁直接</option><option value="balanced">平衡清晰</option><option value="detailed">详细分析</option></select></label>
-                <label><span>补充偏好</span><textarea value={agentSettings.custom_instructions} maxLength={1000} placeholder="例如：优先指出风险；不要使用夸张表达；给建议时附上依据。" onChange={(event) => setAgentSettings({ ...agentSettings, custom_instructions: event.target.value })} /></label>
-              </section>
-
-              <section className="settings-card memory-settings">
-                <div className="settings-card-heading"><span><Database size={18} /></span><div><h3>长期记忆</h3><p>控制 Agent 可以读取的本地持久资料。</p></div></div>
-                <label className="settings-switch"><div><strong>人物画像记忆</strong><small>简历、技能、项目和求职偏好</small></div><input type="checkbox" checked={agentSettings.profile_memory_enabled} onChange={(event) => setAgentSettings({ ...agentSettings, profile_memory_enabled: event.target.checked })} /></label>
-                <label className="settings-switch"><div><strong>本地知识记忆</strong><small>脱敏简历、岗位描述和本地资料片段</small></div><input type="checkbox" checked={agentSettings.knowledge_memory_enabled} onChange={(event) => setAgentSettings({ ...agentSettings, knowledge_memory_enabled: event.target.checked })} /></label>
-                <label className="settings-switch"><div><strong>对话记忆</strong><small>让 Agent 读取当前对话最近的消息</small></div><input type="checkbox" checked={agentSettings.conversation_memory_enabled} onChange={(event) => setAgentSettings({ ...agentSettings, conversation_memory_enabled: event.target.checked })} /></label>
-                <label className={`settings-switch ${!agentSettings.conversation_memory_enabled ? "disabled" : ""}`}><div><strong>早期内容摘要</strong><small>长对话中保留较早任务的本地摘要</small></div><input type="checkbox" disabled={!agentSettings.conversation_memory_enabled} checked={agentSettings.summary_enabled} onChange={(event) => setAgentSettings({ ...agentSettings, summary_enabled: event.target.checked })} /></label>
-              </section>
-
-              <section className="settings-card context-settings">
-                <div className="settings-card-heading"><span><MessageCircle size={18} /></span><div><h3>当前上下文</h3><p>只影响模型下一次收到的对话历史，不删除界面消息。</p></div></div>
-                <div className="context-window-control">
-                  <div><strong>最近消息数量</strong><span>{agentSettings.context_message_limit} 条</span></div>
-                  <input type="range" min="4" max="30" step="2" disabled={!agentSettings.conversation_memory_enabled} value={agentSettings.context_message_limit} onChange={(event) => setAgentSettings({ ...agentSettings, context_message_limit: Number(event.target.value) })} />
-                  <small>数量越大，连续性越好，但模型输入和成本也会增加。</small>
-                </div>
-                <div className="context-status">
-                  <span>当前对话</span><strong>{currentConversation?.title || "尚未选择"}</strong>
-                  <small>界面中共 {currentConversation?.message_count ?? chatMessages.length} 条消息 · Agent 最多读取最近 {agentSettings.context_message_limit} 条</small>
-                </div>
-                <button className="context-reset-button" disabled={!currentConversationId || agentSettingsBusy} onClick={() => void resetCurrentContext()}><RefreshCw size={14} />从当前位置开始新上下文</button>
-              </section>
-
-              <section className="settings-card safety-settings">
-                <div className="settings-card-heading"><span><ShieldCheck size={18} /></span><div><h3>固定安全边界</h3><p>以下规则不能由人设或记忆设置覆盖。</p></div></div>
-                <ul><li>不自动搜索、刷新或批量抓取 BOSS</li><li>不自动发送消息、简历或执行投递</li><li>岗位事实必须来自已确认导入的本地数据</li><li>外部操作始终需要用户确认</li></ul>
-              </section>
-            </div>
-
-            <div className="agent-settings-save"><span>设置从下一条 Agent 消息开始生效</span><button className="primary-button" disabled={agentSettingsBusy || !agentSettings.display_name.trim() || !agentSettings.persona_role.trim()} onClick={() => void saveAgentPreferences()}>{agentSettingsBusy ? <LoaderCircle className="spinning" size={16} /> : <Save size={16} />}{agentSettingsBusy ? "保存中…" : "保存 Agent 设置"}</button></div>
           </section>
         ) : null}
 
-        {activeView === "applications" ? <ApplicationsView applications={applications} onOpenJobs={() => setActiveView("jobs")} /> : null}
-
-        {activeView === "review" ? <ReviewView jobs={jobs} queuedCount={queuedCount} appliedCount={appliedCount} completedNodes={completedNodes} workflow={workflow} /> : null}
       </section>
     </main>
   );

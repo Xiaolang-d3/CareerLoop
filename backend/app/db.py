@@ -65,15 +65,6 @@ def init_db(db_path: str | Path | None = None) -> None:
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
             );
 
-            CREATE TABLE IF NOT EXISTS conversation_jobs (
-                conversation_id INTEGER NOT NULL,
-                job_id INTEGER NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (conversation_id, job_id),
-                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
-                FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
-            );
-
             CREATE TABLE IF NOT EXISTS profiles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -99,71 +90,6 @@ def init_db(db_path: str | Path | None = None) -> None:
                 blocked_companies_json TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS jobs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source TEXT NOT NULL DEFAULT 'boss',
-                source_url TEXT NOT NULL UNIQUE,
-                title TEXT NOT NULL,
-                company TEXT NOT NULL,
-                city TEXT NOT NULL DEFAULT '',
-                district TEXT NOT NULL DEFAULT '',
-                salary_text TEXT NOT NULL DEFAULT '',
-                salary_min INTEGER,
-                salary_max INTEGER,
-                experience TEXT NOT NULL DEFAULT '',
-                education TEXT NOT NULL DEFAULT '',
-                industry TEXT NOT NULL DEFAULT '',
-                company_size TEXT NOT NULL DEFAULT '',
-                hr_active_text TEXT NOT NULL DEFAULT '',
-                description TEXT NOT NULL DEFAULT '',
-                status TEXT NOT NULL DEFAULT 'new',
-                raw_json TEXT NOT NULL DEFAULT '{}',
-                first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS match_results (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                job_id INTEGER NOT NULL,
-                profile_id INTEGER NOT NULL,
-                score INTEGER NOT NULL,
-                level TEXT NOT NULL,
-                reasons_json TEXT NOT NULL DEFAULT '[]',
-                risks_json TEXT NOT NULL DEFAULT '[]',
-                suggested_angle TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
-                FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                job_id INTEGER NOT NULL,
-                profile_id INTEGER NOT NULL,
-                style TEXT NOT NULL DEFAULT 'concise',
-                generated_text TEXT NOT NULL,
-                final_text TEXT NOT NULL DEFAULT '',
-                status TEXT NOT NULL DEFAULT 'draft',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
-                FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS applications (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                job_id INTEGER NOT NULL,
-                profile_id INTEGER NOT NULL,
-                status TEXT NOT NULL DEFAULT 'queued',
-                applied_at TEXT,
-                last_contact_at TEXT,
-                notes TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
                 FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
             );
 
@@ -219,7 +145,6 @@ def init_db(db_path: str | Path | None = None) -> None:
                 id TEXT PRIMARY KEY,
                 conversation_id INTEGER NOT NULL,
                 profile_id INTEGER,
-                job_id INTEGER,
                 kind TEXT NOT NULL,
                 object_key TEXT NOT NULL UNIQUE,
                 original_filename TEXT NOT NULL,
@@ -235,8 +160,7 @@ def init_db(db_path: str | Path | None = None) -> None:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
-                FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE SET NULL,
-                FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE SET NULL
+                FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE SET NULL
             );
 
             CREATE TABLE IF NOT EXISTS knowledge_chunks (
@@ -261,6 +185,16 @@ def init_db(db_path: str | Path | None = None) -> None:
                 knowledge_memory_enabled INTEGER NOT NULL DEFAULT 1,
                 summary_enabled INTEGER NOT NULL DEFAULT 1,
                 context_message_limit INTEGER NOT NULL DEFAULT 12,
+                model_name TEXT NOT NULL DEFAULT '',
+                model_base_url TEXT NOT NULL DEFAULT '',
+                model_api_key TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS company_research_cache (
+                cache_key TEXT PRIMARY KEY,
+                company_name TEXT NOT NULL,
+                sources_json TEXT NOT NULL DEFAULT '[]',
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             """
@@ -281,6 +215,9 @@ def init_db(db_path: str | Path | None = None) -> None:
         ensure_column("conversations", "context_cutoff_message_id", "INTEGER NOT NULL DEFAULT 0")
         ensure_column("attachments", "vision_status", "TEXT NOT NULL DEFAULT 'not_requested'")
         ensure_column("attachments", "vision_consent_at", "TEXT")
+        ensure_column("agent_settings", "model_name", "TEXT NOT NULL DEFAULT ''")
+        ensure_column("agent_settings", "model_base_url", "TEXT NOT NULL DEFAULT ''")
+        ensure_column("agent_settings", "model_api_key", "TEXT NOT NULL DEFAULT ''")
 
         conn.execute("INSERT OR IGNORE INTO agent_settings (id) VALUES (1)")
 
@@ -316,6 +253,7 @@ def init_db(db_path: str | Path | None = None) -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_conversation ON conversation_tasks(conversation_id, status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_source ON knowledge_chunks(source_type, source_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_attachments_conversation ON attachments(conversation_id, created_at DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_company_research_cache_updated ON company_research_cache(updated_at DESC)")
 
 
 def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:

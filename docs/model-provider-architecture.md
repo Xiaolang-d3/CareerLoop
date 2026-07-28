@@ -9,7 +9,7 @@ BossCopilot 第一版使用 OpenAI 或 OpenAI 兼容模型服务，但 Agent 核
 - Agent 运行时和计划协议
 - 工具定义与参数结构
 - 聊天消息存储
-- 岗位、匹配和投递数据模型
+- JD 与简历分析协议
 - 本地知识检索
 - 附件和隐私处理
 
@@ -86,17 +86,10 @@ async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]
 
 当前主要工具包括：
 
-- `request_manual_job_import`：请求用户主动导入岗位
-- `get_candidate_context`：读取候选人画像和求职偏好
-- `get_job_detail`：读取本地岗位详情
-- `rank_jobs`：执行确定性岗位排序
-- `analyze_job`：分析岗位匹配度并保存结果
-- `analyze_resume_gap`：分析简历与岗位的技能差距
-- `search_local_knowledge`：检索本地资料证据
-- `update_job_status`：更新本地岗位状态
-- `save_greeting_draft`：保存本地沟通草稿
-- `queue_application`：加入本地待投递队列
-- `update_application_status`：记录用户确认的求职进展
+- `analyze_resume_against_jd`：对比用户本轮提供的 JD 与当前脱敏简历，不查询或保存本地职位
+- `search_resume_evidence`：只从本地脱敏简历中检索可验证证据
+
+岗位截图上传、OCR、文本清理和当前简历选择属于应用输入流程，不作为模型工具。没有 JD 时，模型直接请求用户提供内容；不得访问 BOSS 网站或从本地职位库补充岗位事实。
 
 每个工具返回统一结构：
 
@@ -121,14 +114,7 @@ async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]
 
 模型不能决定自身权限。工具开放范围由代码根据用户原始意图确定，运行时还会拒绝计划外工具。
 
-以下操作只有在用户明确表达意图时才允许：
-
-- 收藏或跳过岗位
-- 保存沟通草稿
-- 加入待投递队列
-- 更新投递状态
-
-这些操作只修改本地数据，不代表已经在任何招聘网站发送消息、提交简历或完成投递。
+当前工具均为读取或分析能力，不提供收藏、草稿、待投递或投递状态写入。招聘网站上的沟通和投递始终由用户本人完成。
 
 用户上传的岗位描述、简历、截图识别文本和知识检索结果属于不可信数据，只能作为分析材料，不能扩大工具权限或覆盖系统安全规则。
 

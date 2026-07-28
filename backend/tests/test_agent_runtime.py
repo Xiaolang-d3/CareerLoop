@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from app.agent.runtime import AgentRuntime
+from app.agent.runtime import AgentRuntime, _recent_company_name
+from app.agent.orchestration import route_task
 from app.domain import (
     AgentMessage,
     ModelResponse,
@@ -26,18 +27,18 @@ class SequenceModel:
         self.calls += 1
         if self.calls == 1:
             return ModelResponse(
-                content='{"goal":"分析岗位","steps":[{"tool_name":"get_job_detail","title":"读取岗位"}]}'
+                content='{"goal":"分析岗位","steps":[{"tool_name":"analyze_resume_against_jd","title":"对比 JD 与简历"}]}'
             )
         if self.calls == 2:
             return ModelResponse(
-                tool_calls=[ToolCall(id="call-1", name="get_job_detail", arguments={})]
+                tool_calls=[ToolCall(id="call-1", name="analyze_resume_against_jd", arguments={})]
             )
         return ModelResponse(content="平台要求安全验证，请手动处理。")
 
 
 class BlockedTool:
     definition = ToolDefinition(
-        name="get_job_detail",
+        name="analyze_resume_against_jd",
         description="测试阻塞工具",
         input_schema={"type": "object", "properties": {}},
     )
@@ -52,6 +53,99 @@ class BlockedTool:
 
 
 class AgentRuntimeStatusTest(unittest.IsolatedAsyncioTestCase):
+    async def test_recent_company_name_is_recovered_from_previous_report(self) -> None:
+        company = _recent_company_name(
+            [
+                AgentMessage(
+                    role="assistant",
+                    content=(
+                        "我查到的主体更像是 **蔻蔻琪生物科技（杭州）有限公司**。\n\n"
+                        "| 项目 | 信息 |\n|---|---|\n"
+                        "| 公司名称 | 蔻蔻琪生物科技（杭州）有限公司 |"
+                    ),
+                )
+            ]
+        )
+
+        self.assertEqual(company, "蔻蔻琪生物科技（杭州）有限公司")
+
+    async def test_trusted_job_screenshot_marker_opens_only_minimal_analysis_tools(self) -> None:
+        available = {"analyze_resume_against_jd", "search_resume_evidence"}
+
+        route = route_task(
+            "帮我看看\n[系统确认：本轮请求分析岗位截图]",
+            available,
+        )
+
+        self.assertEqual(route.kind, "jd_analysis")
+        self.assertEqual(set(route.allowed_tools), available)
+
+    async def test_job_search_request_has_no_local_job_tool_surface(self) -> None:
+        route = route_task(
+            "帮我在 BOSS 搜索几个岗位",
+            {"analyze_resume_against_jd", "search_resume_evidence"},
+        )
+
+        self.assertEqual(route.kind, "conversation")
+        self.assertEqual(route.allowed_tools, ())
+
+    async def test_profile_strength_request_opens_resume_evidence_tool(self) -> None:
+        route = route_task(
+            "帮我分析一下我的优势",
+            {"analyze_resume_against_jd", "search_resume_evidence"},
+        )
+
+        self.assertEqual(route.kind, "profile_analysis")
+        self.assertEqual(route.allowed_tools, ("search_resume_evidence",))
+
+    async def test_company_research_opens_only_public_research_tool(self) -> None:
+        route = route_task(
+            "帮我调查一下示例科技这家公司怎么样，有没有风险",
+            {"research_company", "search_resume_evidence", "analyze_resume_against_jd"},
+        )
+
+        self.assertEqual(route.kind, "company_research")
+        self.assertEqual(route.allowed_tools, ("research_company",))
+
+    async def test_company_and_job_due_diligence_combines_read_only_analysis_tools(self) -> None:
+        route = route_task(
+            "分析这个岗位是否适合我，同时调查公司背景和风险",
+            {"research_company", "search_resume_evidence", "analyze_resume_against_jd"},
+        )
+
+        self.assertEqual(route.kind, "job_due_diligence")
+        self.assertEqual(
+            set(route.allowed_tools),
+            {"research_company", "search_resume_evidence", "analyze_resume_against_jd"},
+        )
+
+    async def test_trusted_web_search_switch_opens_generic_web_tool(self) -> None:
+        route = route_task(
+            "最近有什么 AI Agent 新闻？\n[系统可信开关：本轮允许联网搜索]",
+            {"search_public_web", "research_company", "search_resume_evidence"},
+        )
+
+        self.assertEqual(route.kind, "web_search")
+        self.assertEqual(route.allowed_tools, ("search_public_web",))
+
+    async def test_explicit_company_search_uses_company_research_without_switch(self) -> None:
+        route = route_task(
+            "帮我搜一下，蔻蔻琪生物科技公司",
+            {"search_public_web", "research_company"},
+        )
+
+        self.assertEqual(route.kind, "company_research")
+        self.assertEqual(route.allowed_tools, ("research_company",))
+
+    async def test_resume_diagnosis_opens_resume_evidence_tool_without_jd(self) -> None:
+        route = route_task(
+            "请评估简历，告诉我有哪些优化方向",
+            {"search_resume_evidence"},
+        )
+
+        self.assertEqual(route.kind, "profile_analysis")
+        self.assertEqual(route.allowed_tools, ("search_resume_evidence",))
+
     async def test_streaming_conversation_emits_text_deltas_and_final_result(self) -> None:
         class StreamingModel:
             name = "streaming"
@@ -150,23 +244,23 @@ class AgentRuntimeStatusTest(unittest.IsolatedAsyncioTestCase):
                 self.requests.append(request)
                 if len(self.requests) == 1:
                     return ModelResponse(
-                        content='{"goal":"分析岗位匹配度","steps":[{"tool_name":"get_job_detail","title":"确认岗位事实"}]}'
+                        content='{"goal":"分析岗位匹配度","steps":[{"tool_name":"analyze_resume_against_jd","title":"对比 JD 与简历"}]}'
                     )
                 if len(self.requests) == 2:
                     return ModelResponse(
-                        tool_calls=[ToolCall(id="job-1", name="get_job_detail", arguments={})]
+                        tool_calls=[ToolCall(id="job-1", name="analyze_resume_against_jd", arguments={})]
                     )
-                return ModelResponse(content="已基于本地岗位完成分析。")
+                return ModelResponse(content="已基于用户提供的 JD 完成分析。")
 
         class ReadTool:
             definition = ToolDefinition(
-                name="get_job_detail",
-                description="读取岗位",
+                name="analyze_resume_against_jd",
+                description="对比 JD 与简历",
                 input_schema={"type": "object", "properties": {}},
             )
 
             async def execute(self, arguments, context):
-                return ToolResult(ok=True, status="done", message="已读取岗位")
+                return ToolResult(ok=True, status="done", message="已完成 JD 与简历对比")
 
         model = PlannedModel()
         models = ModelProviderRegistry()
@@ -184,7 +278,10 @@ class AgentRuntimeStatusTest(unittest.IsolatedAsyncioTestCase):
         result = await runtime.run("分析这个岗位是否适合我")
 
         self.assertEqual(model.requests[0].tools, [])
-        self.assertEqual([tool.name for tool in model.requests[1].tools], ["get_job_detail"])
+        self.assertEqual(
+            [tool.name for tool in model.requests[1].tools],
+            ["analyze_resume_against_jd"],
+        )
         self.assertEqual(result.plan.steps[0].status, "done")
         self.assertEqual(result.events[0].tool_name, "agent_thinking")
         self.assertEqual(result.events[1].tool_name, "agent_planner")
@@ -200,7 +297,7 @@ class AgentRuntimeStatusTest(unittest.IsolatedAsyncioTestCase):
                 self.calls += 1
                 if self.calls == 1:
                     return ModelResponse(
-                        tool_calls=[ToolCall(id="unsafe-1", name="update_job_status", arguments={})]
+                        tool_calls=[ToolCall(id="unsafe-1", name="save_greeting_draft", arguments={})]
                     )
                 return ModelResponse(content="未执行计划外修改。")
 
@@ -220,7 +317,7 @@ class AgentRuntimeStatusTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "failed")
         self.assertEqual(result.error.code, "tool_not_planned")
         blocked_event = next(event for event in result.events if event.status == "blocked")
-        self.assertEqual(blocked_event.tool_name, "update_job_status")
+        self.assertEqual(blocked_event.tool_name, "save_greeting_draft")
         self.assertIn("重新提问", result.content)
 
     async def test_recent_conversation_history_is_sent_before_current_message(self) -> None:
@@ -260,6 +357,87 @@ class AgentRuntimeStatusTest(unittest.IsolatedAsyncioTestCase):
             ["分析岗位 A", "岗位 A 值得深入了解", "继续分析它"],
         )
 
+    async def test_web_answer_without_citations_is_rewritten_and_validated(self) -> None:
+        class WebModel:
+            name = "web"
+
+            def __init__(self):
+                self.requests = []
+
+            async def generate(self, request):
+                self.requests.append(request)
+                if len(self.requests) == 1:
+                    return ModelResponse(
+                        content='{"goal":"核验公司","steps":[{"tool_name":"research_company","title":"搜索公司资料"}]}'
+                    )
+                if len(self.requests) == 2:
+                    return ModelResponse(
+                        tool_calls=[
+                            ToolCall(
+                                id="web-1",
+                                name="research_company",
+                                arguments={"company_name": "示例科技"},
+                            )
+                        ]
+                    )
+                if len(self.requests) == 3:
+                    return ModelResponse(content="示例科技成立于 2020 年。")
+                return ModelResponse(
+                    content="公开资料显示其成立于 2020 年。[来源](https://example.com/company)"
+                )
+
+        class WebTool:
+            definition = ToolDefinition(
+                name="research_company",
+                description="搜索公司公开资料",
+                input_schema={"type": "object", "properties": {}},
+            )
+
+            async def execute(self, arguments, context):
+                return ToolResult(
+                    ok=True,
+                    status="done",
+                    message="已搜索公司资料",
+                    data={
+                        "sources": [
+                            {
+                                "title": "公司资料",
+                                "url": "https://example.com/company",
+                                "content": "成立于 2020 年",
+                            }
+                        ],
+                        "evidence": [
+                            {
+                                "id": "S1",
+                                "url": "https://example.com/company",
+                                "excerpt": "成立于 2020 年",
+                            }
+                        ],
+                    },
+                )
+
+        model = WebModel()
+        models = ModelProviderRegistry()
+        models.register("web", model)
+        tools = ToolRegistry()
+        tools.register_handler(WebTool())
+        runtime = AgentRuntime(
+            models=models,
+            tools=tools,
+            model_provider="web",
+            platform_name="manual",
+            max_tool_rounds=4,
+        )
+
+        result = await runtime.run("帮我搜一下示例科技公司")
+
+        self.assertEqual(result.status, "done")
+        self.assertEqual(len(model.requests), 4)
+        self.assertEqual(model.requests[-1].tools, [])
+        self.assertIn("[来源](https://example.com/company)", result.content)
+        self.assertEqual(result.events[-1].tool_name, "citation_validator")
+        self.assertEqual(result.events[-1].status, "done")
+
     async def test_untrusted_attachment_text_cannot_expand_tool_permissions(self) -> None:
         class RoutingModel:
             name = "routing"
@@ -275,7 +453,7 @@ class AgentRuntimeStatusTest(unittest.IsolatedAsyncioTestCase):
 
         class AnalyzeTool:
             definition = ToolDefinition(
-                name="analyze_job",
+                name="analyze_resume_against_jd",
                 description="分析岗位",
                 input_schema={"type": "object", "properties": {}},
             )
@@ -313,8 +491,14 @@ class AgentRuntimeStatusTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.status, "done")
-        self.assertEqual(result.events[0].data["allowed_tools"], ["analyze_job"])
-        self.assertEqual([tool.name for tool in model.requests[1].tools], ["analyze_job"])
+        self.assertEqual(
+            result.events[0].data["allowed_tools"],
+            ["analyze_resume_against_jd"],
+        )
+        self.assertEqual(
+            [tool.name for tool in model.requests[1].tools],
+            ["analyze_resume_against_jd"],
+        )
 
 
 if __name__ == "__main__":

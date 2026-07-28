@@ -232,7 +232,7 @@ def parse_attachment(
     try:
         content = attachment_store.get(attachment["object_key"])
         if attachment["kind"] == "job_screenshot":
-            from .job_import import extract_screenshot_text
+            from .screenshot_ocr import extract_screenshot_text
 
             text = extract_screenshot_text(attachment["original_filename"], content)
             redacted_text = text

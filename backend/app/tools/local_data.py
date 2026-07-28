@@ -34,12 +34,6 @@ def resolve_profile(
     return row_to_dict(profile_row), row_to_dict(preference_row)
 
 
-def get_job(local_id: int, db_path: str | Path | None = None) -> dict[str, Any] | None:
-    with connect(db_path) as conn:
-        row = conn.execute("SELECT * FROM jobs WHERE id = ?", (local_id,)).fetchone()
-    return row_to_dict(row)
-
-
 def profile_for_agent(profile: dict[str, Any]) -> dict[str, Any]:
     """Return an isolated profile copy that respects the configured privacy mode."""
     safe_profile = dict(profile)
