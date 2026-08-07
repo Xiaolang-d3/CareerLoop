@@ -75,6 +75,24 @@ class AttachmentServiceTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_attachment("resume", "resume.exe", b"invalid")
 
+    def test_job_screenshot_skips_ocr_and_requires_vision(self) -> None:
+        attachment = create_attachment(
+            1,
+            "job_screenshot",
+            "job.png",
+            png_1x1(),
+            db_path=self.db_path,
+            store=self.store,
+        )
+
+        parsed = parse_attachment(attachment["id"], db_path=self.db_path, store=self.store)
+
+        self.assertEqual(parsed["parse_status"], "parsed")
+        self.assertEqual(parsed["parsed_text"], "")
+        self.assertEqual(parsed["redacted_text"], "")
+        self.assertEqual(parsed["metadata"]["parser"], "image_only")
+        self.assertTrue(parsed["metadata"]["vision_required"])
+
     def test_conversation_cleanup_deletes_database_rows_and_objects(self) -> None:
         first = create_attachment(
             1,

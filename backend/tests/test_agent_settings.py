@@ -35,6 +35,7 @@ class AgentSettingsTest(unittest.TestCase):
         self.assertEqual(saved["context_message_limit"], 20)
         prompt = persona_prompt(saved)
         self.assertIn("不得覆盖", prompt)
+        self.assertIn("实际工具权限", prompt)
         self.assertIn("优先指出风险", prompt)
 
     def test_context_reset_preserves_messages_and_moves_cutoff(self) -> None:

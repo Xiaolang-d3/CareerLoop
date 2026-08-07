@@ -19,7 +19,8 @@ class Settings(BaseModel):
     model_base_url: str | None = None
     openai_api_key: str | None = None
     model_timeout_seconds: float = Field(default=60, gt=0, le=300)
-    model_max_tool_rounds: int = Field(default=5, ge=1, le=20)
+    model_max_tool_rounds: int = Field(default=8, ge=1, le=20)
+    tool_execution_timeout_seconds: float = Field(default=60, gt=0, le=300)
     attachment_storage: Literal["local", "minio"] = "local"
     minio_endpoint: str | None = None
     minio_access_key: str | None = None
@@ -34,6 +35,7 @@ class Settings(BaseModel):
     agent_search_token: str | None = None
     web_research_timeout_seconds: float = Field(default=25, gt=0, le=120)
     web_research_max_sources: int = Field(default=10, ge=3, le=20)
+    browser_job_import_enabled: bool = True
 
 
 @lru_cache
@@ -44,7 +46,8 @@ def get_settings() -> Settings:
         model_base_url=os.getenv("MODEL_BASE_URL") or None,
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         model_timeout_seconds=os.getenv("MODEL_TIMEOUT_SECONDS", "60"),
-        model_max_tool_rounds=os.getenv("MODEL_MAX_TOOL_ROUNDS", "5"),
+        model_max_tool_rounds=os.getenv("MODEL_MAX_TOOL_ROUNDS", "8"),
+        tool_execution_timeout_seconds=os.getenv("TOOL_EXECUTION_TIMEOUT_SECONDS", "60"),
         attachment_storage=os.getenv("ATTACHMENT_STORAGE", "local"),
         minio_endpoint=os.getenv("MINIO_ENDPOINT") or None,
         minio_access_key=os.getenv("MINIO_ACCESS_KEY") or None,
@@ -59,4 +62,8 @@ def get_settings() -> Settings:
         agent_search_token=os.getenv("AGENT_SEARCH_TOKEN") or None,
         web_research_timeout_seconds=os.getenv("WEB_RESEARCH_TIMEOUT_SECONDS", "25"),
         web_research_max_sources=os.getenv("WEB_RESEARCH_MAX_SOURCES", "10"),
+        browser_job_import_enabled=os.getenv(
+            "BROWSER_JOB_IMPORT_ENABLED",
+            "true",
+        ).lower() == "true",
     )

@@ -9,7 +9,8 @@ from ..attachments import get_attachment, prepare_attachment_vision_url
 from ..conversations import create_conversation, list_conversations
 from ..db import connect, json_dump, row_to_dict
 from ..domain import AgentMessage, AgentRunResult, ToolEvent
-from ..workflow.engine import ensure_default_run, record_event, refresh_workflow_status
+from ..workflow.engine import ensure_default_run, record_events, refresh_workflow_status
+from ..workflow.stages import STAGE_TITLES, stage_for_route, stage_for_tool
 
 
 def save_chat_message(
@@ -194,24 +195,27 @@ def attachment_context(
                 status_code=422,
                 detail=f"附件“{attachment['original_filename']}”尚未完成本地解析",
             )
-        text = (
-            attachment["redacted_text"]
-            if attachment["kind"] == "resume"
-            else attachment["parsed_text"]
-        )
-        if not text:
+        wants_vision = attachment_id in requested_vision_ids
+        if attachment["kind"] == "job_screenshot" and not wants_vision:
             raise HTTPException(
                 status_code=422,
-                detail=f"附件“{attachment['original_filename']}”没有可用文本",
+                detail=f"岗位截图“{attachment['original_filename']}”不会提取文本，请勾选“模型看图”后发送",
             )
-        wants_vision = attachment_id in requested_vision_ids
         if wants_vision:
             try:
                 image_urls.append(prepare_attachment_vision_url(attachment_id))
             except (RuntimeError, ValueError) as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
-        label = "脱敏简历" if attachment["kind"] == "resume" else "岗位截图识别文本"
-        blocks.append(f"[{label}：{attachment['original_filename']}]\n{text}")
+        if attachment["kind"] == "resume":
+            text = attachment["redacted_text"]
+            if not text:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"附件“{attachment['original_filename']}”没有可用文本",
+                )
+            blocks.append(f"[脱敏简历：{attachment['original_filename']}]\n{text}")
+        else:
+            blocks.append(f"[岗位截图：{attachment['original_filename']}，由模型直接查看]")
         summaries.append(
             {
                 "id": attachment["id"],
@@ -231,41 +235,77 @@ def attachment_context(
     return "\n\n".join(blocks), summaries, image_urls
 
 
+def _result_route(result: AgentRunResult) -> str | None:
+    """取出本轮 route.kind。
+
+    runtime 与 local_answer_result 都把它放在首个 agent_thinking 事件的
+    data["route"]（runtime.py:115、本文件 local_answer_result）。AgentPlan.route
+    只在生成了计划时存在，因此仅作兜底。
+    """
+    for event in result.events:
+        if event.tool_name == "agent_thinking":
+            route = event.data.get("route")
+            if isinstance(route, str) and route:
+                return route
+            break
+    if result.plan is not None:
+        return result.plan.route
+    return None
+
+
+def _primary_stage(result: AgentRunResult) -> str | None:
+    return stage_for_route(_result_route(result))
+
+
 def save_stream_result(
     conversation_id: int,
     task_id: int,
     user_message: dict[str, Any],
     result: AgentRunResult,
 ) -> dict[str, Any]:
-    if result.plan is not None:
-        run_id = ensure_default_run(conversation_id)
-        record_event(
-            run_id,
-            "agent_plan_created",
-            f"已生成 {len(result.plan.steps)} 步执行计划：{result.plan.goal}",
-            node_id="agent_planning",
-            payload=result.plan.model_dump(mode="json"),
+    run_id = ensure_default_run(conversation_id)
+    primary_stage = _primary_stage(result)
+
+    # (event_type, message, node_id, payload)
+    pending_events: list[tuple[str, str, str, dict[str, Any] | None]] = []
+
+    if primary_stage is not None:
+        pending_events.append(
+            (
+                "stage_engaged",
+                f"本轮进入阶段：{STAGE_TITLES.get(primary_stage, primary_stage)}",
+                primary_stage,
+                {"route": _result_route(result)},
+            )
         )
-    else:
-        run_id = ensure_default_run(conversation_id)
-    tool_nodes = {
-        "analyze_resume_against_jd": "jd_analysis",
-        "search_resume_evidence": "resume_evidence",
-        "generate_tailored_resume_content": "tailored_resume_content",
-        "generate_interview_advice": "interview_advice",
-        "research_company": "company_research",
-        "search_public_web": "company_research",
-    }
+
+    if result.plan is not None:
+        pending_events.append(
+            (
+                "agent_plan_created",
+                f"已生成 {len(result.plan.steps)} 步执行计划：{result.plan.goal}",
+                primary_stage or "",
+                result.plan.model_dump(mode="json"),
+            )
+        )
+
     for event in result.events:
-        node_id = tool_nodes.get(event.tool_name)
-        if node_id and event.status == "done":
-            record_event(
-                run_id,
+        if event.status != "done":
+            continue
+        # stage_for_tool 只认真实工具名，runtime 的合成事件（agent_thinking 等）自动落空。
+        stage_id = stage_for_tool(event.tool_name)
+        if stage_id is None:
+            continue
+        pending_events.append(
+            (
                 "tool_completed",
                 event.message,
-                node_id=node_id,
-                payload={"tool_name": event.tool_name, "tool_call_id": event.tool_call_id},
+                stage_id,
+                {"tool_name": event.tool_name, "tool_call_id": event.tool_call_id},
             )
+        )
+
+    record_events(run_id, pending_events)
     workflow = refresh_workflow_status(conversation_id)
     assistant_message = save_chat_message(
         "assistant",

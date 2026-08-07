@@ -75,7 +75,12 @@ class AgentPlanStep(BaseModel):
     id: str = Field(min_length=1)
     title: str = Field(min_length=1)
     tool_name: str = Field(min_length=1)
-    risk: Literal["read_only", "analysis", "local_write", "user_input"]
+    risk: Literal[
+        "read_only", "derived_analysis", "local_pending_write",
+        "confirmed_local_write", "external_read",
+        # Legacy values stay valid for persisted operation records.
+        "analysis", "local_write", "user_input",
+    ]
     status: Literal["pending", "running", "done", "failed", "blocked"] = "pending"
 
 

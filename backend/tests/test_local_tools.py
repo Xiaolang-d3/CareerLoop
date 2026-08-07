@@ -56,7 +56,7 @@ class MinimalAgentToolTest(unittest.IsolatedAsyncioTestCase):
     def tearDown(self) -> None:
         self._temp_dir.cleanup()
 
-    async def test_analysis_uses_user_jd_and_current_redacted_resume_without_job_storage(self) -> None:
+    async def test_analysis_uses_user_jd_without_implicitly_writing_a_job(self) -> None:
         result = await AnalyzeResumeAgainstJdTool(self.db_path).execute(
             {
                 "job_title": "AI Agent 工程师",
@@ -67,16 +67,20 @@ class MinimalAgentToolTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertTrue(result.ok)
-        self.assertEqual(result.data["job_context"]["source"], "user_provided_boss_jd")
+        self.assertEqual(result.data["job_context"]["source"], "conversation_job_description")
         self.assertEqual(result.data["persistence"], "not_saved_as_job")
         self.assertIn("Python", result.data["analysis"]["matched_skills"])
         self.assertIn("Docker", result.data["analysis"]["missing_skills"])
         self.assertNotIn("13800138000", json_dump(result.data))
         with connect(self.db_path) as conn:
-            legacy_tables = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('jobs', 'match_results')"
+            job_count = conn.execute(
+                "SELECT COUNT(*) AS count FROM jobs"
+            ).fetchone()["count"]
+            legacy_match_tables = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'match_results'"
             ).fetchall()
-            self.assertEqual(legacy_tables, [])
+            self.assertEqual(job_count, 0)
+            self.assertEqual(legacy_match_tables, [])
 
     async def test_analysis_requires_a_current_resume(self) -> None:
         empty_db = Path(self._temp_dir.name) / "empty.db"

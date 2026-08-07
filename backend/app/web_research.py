@@ -141,6 +141,40 @@ class AgentSearchClient:
     async def health(self) -> dict[str, Any]:
         return await asyncio.to_thread(self._request, "/health", {})
 
+    async def browser_fetch(
+        self,
+        url: str,
+        *,
+        max_chars: int = 50_000,
+        max_links: int = 20,
+        timeout_ms: int = 20_000,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self.browser_fetch_sync,
+            url,
+            max_chars=max_chars,
+            max_links=max_links,
+            timeout_ms=timeout_ms,
+        )
+
+    def browser_fetch_sync(
+        self,
+        url: str,
+        *,
+        max_chars: int = 50_000,
+        max_links: int = 20,
+        timeout_ms: int = 20_000,
+    ) -> dict[str, Any]:
+        return self._request(
+            "/providers/browser/fetch",
+            {
+                "url": url,
+                "max_chars": max(200, min(max_chars, 50_000)),
+                "max_links": max(0, min(max_links, 200)),
+                "timeout_ms": max(1_000, min(timeout_ms, 60_000)),
+            },
+        )
+
     async def search_extract(self, query: str, count: int) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self._search_extract_sync, query, count)
 

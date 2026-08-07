@@ -230,18 +230,17 @@ def parse_attachment(
         raise ValueError("附件不存在")
     attachment_store = store or get_attachment_store()
     try:
-        content = attachment_store.get(attachment["object_key"])
         if attachment["kind"] == "job_screenshot":
-            from .screenshot_ocr import extract_screenshot_text
-
-            text = extract_screenshot_text(attachment["original_filename"], content)
-            redacted_text = text
+            text = ""
+            redacted_text = ""
             metadata = {
-                "parser": "local_ocr",
-                "character_count": len(text),
+                "parser": "image_only",
+                "character_count": 0,
                 "requires_confirmation": True,
+                "vision_required": True,
             }
         else:
+            content = attachment_store.get(attachment["object_key"])
             from .privacy import scan_and_redact
             from .profile_intelligence import extract_skills
             from .resume_parser import parse_resume_result

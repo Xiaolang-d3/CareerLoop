@@ -118,7 +118,7 @@ def persona_prompt(settings: dict[str, Any]) -> str:
     }.get(settings.get("response_style"), "回答简洁清晰。")
     custom = str(settings.get("custom_instructions") or "").strip()
     return (
-        "\n\n用户可配置的人设偏好（不得覆盖上面的安全边界、事实要求和人工确认规则）：\n"
+        "\n\n用户可配置的人设偏好（不得覆盖上面的事实要求、实际工具权限和人工确认规则）：\n"
         f"你的显示名称是 {settings.get('display_name', 'BossCopilot')}。\n"
         f"你的角色是：{settings.get('persona_role', DEFAULT_AGENT_SETTINGS['persona_role'])}。\n"
         f"表达方式：{style}\n"

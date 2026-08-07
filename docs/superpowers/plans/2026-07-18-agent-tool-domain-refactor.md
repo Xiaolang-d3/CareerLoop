@@ -1,18 +1,18 @@
-# Agent Tool Domain Refactor Implementation Plan
+# Agent 工具领域化重构实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **供 Agent 执行者使用：** 必须使用 `superpowers:subagent-driven-development`（推荐）或 `superpowers:executing-plans`，按任务逐项实施本计划。步骤使用复选框（`- [ ]`）跟踪状态。
 
-**Goal:** Replace BossCopilot's partially unreachable, SQL-owning Agent tools with thin, auditable tool adapters over shared domain services, while moving deterministic UI actions to REST APIs and preserving the local-first safety boundary.
+**目标：** 将部分不可达且直接操作 SQL 的 Agent 工具替换为基于共享领域服务、轻量且可审计的适配器；同时把确定性的 UI 操作迁移到 REST API，并保留本地优先的安全边界。
 
-**Architecture:** Introduce focused query, analysis, evidence, triage, and application services backed by repositories. REST endpoints and Agent tools call the same services; model-visible tools pass stable `job_id` values and user intent, while `ToolContext` supplies conversation, task, profile, and audit scope. Migrate incrementally so every task leaves the backend test suite passing and old model-visible tools are hidden only after replacements, routing, UI, and tests are ready.
+**架构：** 引入由 Repository 支撑、职责聚焦的查询、分析、证据、分流和投递服务。REST 端点与 Agent 工具调用同一组服务；模型可见工具传递稳定的 `job_id` 和用户意图，`ToolContext` 提供会话、任务、画像与审计范围。渐进迁移并保证每项任务完成后后端测试仍通过；只有替代工具、路由、UI 和测试全部就绪后，才隐藏旧工具。
 
-**Tech Stack:** Python 3.11+, FastAPI, Pydantic 2, SQLite, sqlite-vec, AG-UI, React 19, TypeScript 5.7, Vite 6, Vitest, Testing Library.
+**技术栈：** Python 3.11+、FastAPI、Pydantic 2、SQLite、sqlite-vec、AG-UI、React 19、TypeScript 5.7、Vite 6、Vitest、Testing Library。
 
 ---
 
-## File map
+## 文件清单
 
-### New backend files
+### 新增后端文件
 
 - `backend/app/services/job_query.py` — authoritative local-job lookup and ambiguity handling.
 - `backend/app/services/job_analysis.py` — ranking, match analysis, resume-gap analysis, and derived-result upsert.
@@ -37,7 +37,7 @@
 - `backend/tests/test_workflow_counts.py` — distinct current-job workflow aggregation.
 - `backend/tests/test_agent_bootstrap.py` — exact model-visible tool inventory without network calls.
 
-### New frontend files
+### 新增前端文件
 
 - `frontend/src/features/jobs/actions.ts` — typed REST helpers for deterministic job/application actions.
 - `frontend/src/features/jobs/JobAssistantActions.tsx` — isolated job action controls.
@@ -47,7 +47,7 @@
 - `frontend/src/features/applications/ApplicationProgressActions.test.tsx` — progress callback coverage.
 - `frontend/src/test/setup.ts` — Testing Library setup.
 
-### Backend files to modify
+### 需要修改的后端文件
 
 - `backend/app/db.py` — additive columns, derived-result deduplication, and uniqueness indexes.
 - `backend/app/domain/agent.py` — risk enum and result contract support.
@@ -75,7 +75,7 @@
 - `backend/tests/test_agent_runtime.py` — migrate fake tool names and context assertions.
 - `backend/tests/test_chat_streaming.py` — API and AG-UI regression updates.
 
-### Frontend files to modify
+### 需要修改的前端文件
 
 - `frontend/package.json` — Vitest and Testing Library scripts/dependencies.
 - `frontend/vite.config.ts` — Vitest jsdom configuration.
@@ -84,7 +84,7 @@
 - `frontend/src/components/WorkspaceViews.tsx` — use progress action component.
 - `frontend/src/main.tsx` — direct deterministic actions and structured `job_id` prompts.
 
-### Documentation files to modify
+### 需要修改的文档
 
 - `README.md` — final tool inventory and REST endpoints.
 - `docs/technical-architecture.md` — service/tool adapter architecture and risk classes.
@@ -93,7 +93,7 @@
 
 ---
 
-### Task 1: Add additive schema and uniqueness guarantees
+### 任务 1：添加增量 Schema 与唯一性保证
 
 **Files:**
 - Modify: `backend/app/db.py:105-318`
@@ -271,7 +271,7 @@ git commit -m "feat(db): add tool-domain data constraints"
 
 ---
 
-### Task 2: Build authoritative local-job query service
+### 任务 2：构建权威的本地岗位查询服务
 
 **Files:**
 - Modify: `backend/app/domain/jobs.py`
@@ -541,7 +541,7 @@ git commit -m "feat(jobs): add authoritative local job queries"
 
 ---
 
-### Task 3: Add stable job search and ID-only detail tools
+### 任务 3：添加稳定的岗位搜索与仅使用 ID 的详情工具
 
 **Files:**
 - Create: `backend/app/tools/search_local_jobs.py`
@@ -728,7 +728,7 @@ git commit -m "feat(agent): add stable local job lookup tools"
 
 ---
 
-### Task 4: Extract analysis service and current-result upsert
+### 任务 4：提取分析服务并实现当前结果 Upsert
 
 **Files:**
 - Create: `backend/app/repositories/matches.py`
@@ -1086,7 +1086,7 @@ git commit -m "feat(analysis): add authoritative job analysis service"
 
 ---
 
-### Task 5: Add new analysis tool adapters
+### 任务 5：添加新的分析工具适配器
 
 **Files:**
 - Create: `backend/app/tools/rank_local_jobs.py`
@@ -1318,7 +1318,7 @@ Expected: all backend tests pass before commit.
 
 ---
 
-### Task 6: Replace knowledge search with citation-shaped evidence search
+### 任务 6：用带引用结构的证据搜索替换知识搜索
 
 **Files:**
 - Modify: `backend/app/knowledge.py`
@@ -1592,7 +1592,7 @@ git commit -m "feat(knowledge): add citation-shaped local evidence search"
 
 ---
 
-### Task 7: Add job triage service, API, and tool
+### 任务 7：添加岗位分流服务、API 与工具
 
 **Files:**
 - Modify: `backend/app/repositories/jobs.py`
@@ -1838,7 +1838,7 @@ git commit -m "feat(jobs): add shared job triage operations"
 
 ---
 
-### Task 8: Unify drafts, queue, and factual progress by job ID
+### 任务 8：按岗位 ID 统一草稿、队列与事实进度
 
 **Files:**
 - Create: `backend/app/repositories/applications.py`
@@ -2315,7 +2315,7 @@ git commit -m "feat(applications): use job-based local progress operations"
 
 ---
 
-### Task 9: Expand ToolContext and replace routing capability matrix
+### 任务 9：扩展 ToolContext 并替换路由能力矩阵
 
 **Files:**
 - Modify: `backend/app/domain/agent.py`
@@ -2547,7 +2547,7 @@ git commit -m "refactor(agent): route domain tool capabilities"
 
 ---
 
-### Task 10: Register only replacement tools and update model guidance
+### 任务 10：仅注册替代工具并更新模型指导
 
 **Files:**
 - Modify: `backend/app/agent/bootstrap.py`
@@ -2696,7 +2696,7 @@ Expected: all backend tests pass and compileall is silent.
 
 ---
 
-### Task 11: Make deterministic frontend actions call REST directly
+### 任务 11：让确定性的前端操作直接调用 REST
 
 **Files:**
 - Create: `frontend/src/features/jobs/actions.ts`
@@ -2932,7 +2932,7 @@ Expected: TypeScript and Vite build succeed.
 
 ---
 
-### Task 12: Add frontend interaction tests
+### 任务 12：添加前端交互测试
 
 **Files:**
 - Modify: `frontend/package.json`
@@ -3081,7 +3081,7 @@ Expected: Vitest passes and production build succeeds.
 
 ---
 
-### Task 13: Update workflow counts, tool UI, and documentation
+### 任务 13：更新工作流计数、工具 UI 与文档
 
 **Files:**
 - Modify: `backend/app/workflow/engine.py`
@@ -3193,7 +3193,7 @@ git commit -m "docs(agent): document domain-oriented tool architecture"
 
 ---
 
-### Task 14: Final regression and acceptance verification
+### 任务 14：最终回归与验收验证
 
 **Files:**
 - Verify: all files changed in Tasks 1-13

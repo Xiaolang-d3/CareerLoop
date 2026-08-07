@@ -10,7 +10,10 @@ from pydantic import ValidationError
 from ..domain import AgentPlan, AgentPlanStep, ModelResponse
 
 
-ToolRisk = Literal["read_only", "analysis", "local_write", "user_input"]
+ToolRisk = Literal[
+    "read_only", "derived_analysis", "local_pending_write",
+    "confirmed_local_write", "external_read",
+]
 
 
 @dataclass(frozen=True)
@@ -20,12 +23,31 @@ class ToolPolicy:
 
 
 TOOL_POLICIES: dict[str, ToolPolicy] = {
-    "analyze_resume_against_jd": ToolPolicy("analysis", "对比 JD 与当前简历"),
+    "analyze_resume_against_jd": ToolPolicy("derived_analysis", "对比 JD 与当前简历"),
     "search_resume_evidence": ToolPolicy("read_only", "检索简历真实证据"),
-    "generate_tailored_resume_content": ToolPolicy("analysis", "生成高匹配简历内容"),
-    "generate_interview_advice": ToolPolicy("analysis", "生成个人化面试建议"),
-    "research_company": ToolPolicy("read_only", "搜索并核验公开公司资料"),
-    "search_public_web": ToolPolicy("read_only", "搜索公开互联网资料"),
+    "generate_tailored_resume_content": ToolPolicy("derived_analysis", "生成高匹配简历内容"),
+    "generate_interview_advice": ToolPolicy("derived_analysis", "生成个人化面试建议"),
+    "research_company": ToolPolicy("external_read", "搜索并核验公开公司资料"),
+    "search_public_web": ToolPolicy("external_read", "搜索公开互联网资料"),
+    "get_candidate_context": ToolPolicy("read_only", "装配最小候选人上下文"),
+    "search_candidate_evidence": ToolPolicy("read_only", "检索已确认候选人证据"),
+    "propose_candidate_knowledge": ToolPolicy("local_pending_write", "创建待确认候选人知识"),
+    "start_profile_interview": ToolPolicy("local_pending_write", "开始或恢复对话式画像访谈"),
+    "record_profile_interview_answer": ToolPolicy("local_pending_write", "记录画像访谈回答"),
+    "pause_profile_interview": ToolPolicy("local_pending_write", "暂停对话式画像访谈"),
+    "analyze_job_against_strategy": ToolPolicy("derived_analysis", "按职业策略分析岗位"),
+    "generate_candidate_material": ToolPolicy("derived_analysis", "生成可信候选人材料"),
+    "record_interview_debrief": ToolPolicy("local_pending_write", "记录面试复盘"),
+    "record_application_outcome": ToolPolicy("local_pending_write", "记录求职结果"),
+    "discover_companies": ToolPolicy("external_read", "发现适合的公司"),
+    "discover_funded_companies": ToolPolicy("external_read", "发现近期融资公司"),
+    "scan_career_sources": ToolPolicy("external_read", "扫描官方职位来源"),
+    "process_opportunity_pipeline": ToolPolicy("derived_analysis", "评估发现岗位队列"),
+    "create_job_evaluation": ToolPolicy("external_read", "生成完整岗位决策报告"),
+    "get_job_evaluation": ToolPolicy("read_only", "读取岗位决策报告"),
+    "review_job_evaluation": ToolPolicy("confirmed_local_write", "审核岗位决策报告"),
+    "run_job_deep_research": ToolPolicy("external_read", "执行岗位深度研究"),
+    "compare_job_evaluations": ToolPolicy("derived_analysis", "比较完整岗位评估"),
 }
 
 
@@ -47,6 +69,14 @@ ROUTE_LABELS = {
     "company_research": "公司公开信息研究",
     "job_due_diligence": "岗位匹配与公司尽调",
     "web_search": "单轮联网搜索",
+    "profile_onboarding": "对话式画像初始化",
+    "profile_enrichment": "候选人知识补充",
+    "career_strategy": "多职业策略维护",
+    "interview_debrief": "面试复盘",
+    "application_outcome": "求职结果记录",
+    "opportunity_discovery": "公司与岗位发现",
+    "skill_growth": "能力成长分析",
+    "job_evaluation": "岗位决策与评估",
 }
 
 
@@ -57,8 +87,19 @@ def route_summary(route: TaskRoute) -> str:
     return f"已识别为{label}，无需调用工具"
 
 
-def route_task(content: str, available_tools: set[str]) -> TaskRoute:
-    """Conservatively select a task lane and the smallest useful tool surface."""
+def route_task(
+    content: str,
+    available_tools: set[str],
+    *,
+    profile_interview_active: bool = False,
+) -> TaskRoute:
+    """Conservatively select a task lane and the smallest useful tool surface.
+
+    ``profile_interview_active`` comes from stored session state, not from the
+    message text: while an interview is running, any reply may be an answer to
+    the current question, so the interview tools stay on the table and the model
+    decides whether this turn is actually an answer.
+    """
     text = " ".join(content.lower().split())
     tools: list[str] = []
     kind = "conversation"
@@ -67,6 +108,9 @@ def route_task(content: str, available_tools: set[str]) -> TaskRoute:
         for name in names:
             if name in available_tools and name not in tools:
                 tools.append(name)
+
+    def add_preferred(current: str, legacy: str) -> None:
+        add(current if current in available_tools else legacy)
 
     mentions_jd = any(word in text for word in ("岗位", "职位", "jd", "职位描述", "岗位要求"))
     asks_analysis = any(
@@ -120,8 +164,98 @@ def route_task(content: str, available_tools: set[str]) -> TaskRoute:
         )
     ) or ("公司" in text and asks_explicit_web_search)
     trusted_web_search = "[系统可信开关：本轮允许联网搜索]" in content
+    # Deliberately broad: this only admits the message into the profile lane and
+    # widens the tool surface. Which tool to actually call is the model's decision.
+    asks_profile_onboarding = any(
+        phrase in text
+        for phrase in (
+            "初始化画像", "建立画像", "创建画像", "画像访谈", "开始了解我", "了解我",
+            "完善画像", "我的画像", "保存我的信息", "介绍一下我自己", "自我介绍一下",
+        )
+    )
+    asks_profile_enrichment = any(
+        phrase in text
+        for phrase in (
+            "补充画像", "补充经历", "记住我的", "加入画像", "记录我的能力",
+            "更新画像", "补充我的", "记录我的",
+        )
+    )
+    asks_strategy = any(
+        phrase in text for phrase in ("职业策略", "求职策略", "目标岗位方向", "薪资目标", "工作方式偏好")
+    )
+    asks_debrief = any(
+        phrase in text for phrase in ("面试复盘", "复盘面试", "刚面试完", "面试官问了")
+    )
+    asks_outcome = any(
+        phrase in text for phrase in ("记录投递", "投递结果", "收到 offer", "被拒", "进入面试", "招聘结果")
+    )
+    asks_discovery = any(
+        phrase in text for phrase in (
+            "发现适合的公司", "发现岗位", "找公司官网", "扫描职位来源", "刷新岗位来源",
+            "融资公司", "近期融资", "批量评估", "岗位队列",
+        )
+    )
+    asks_skill_growth = any(
+        phrase in text for phrase in ("能力成长", "学习计划", "重复缺口", "技能成长")
+    )
+    asks_job_evaluation = any(
+        phrase in text for phrase in (
+            "完整评估", "岗位决策报告", "a-g", "深度研究", "比较岗位", "岗位比较", "审核评估",
+        )
+    )
 
-    if trusted_web_search and asks_company_research:
+    if asks_job_evaluation:
+        kind = "job_evaluation"
+        if any(phrase in text for phrase in ("比较岗位", "岗位比较")):
+            add("compare_job_evaluations", "get_job_evaluation")
+        elif "深度研究" in text:
+            add("run_job_deep_research", "get_job_evaluation")
+        elif any(phrase in text for phrase in ("审核评估", "确认风险", "驳回风险")):
+            add("review_job_evaluation", "get_job_evaluation")
+        else:
+            add("create_job_evaluation", "get_job_evaluation")
+    elif asks_debrief:
+        kind = "interview_debrief"
+        add("record_interview_debrief", "get_candidate_context")
+    elif asks_outcome:
+        kind = "application_outcome"
+        add("record_application_outcome")
+    elif asks_discovery:
+        kind = "opportunity_discovery"
+        add("get_candidate_context")
+        if any(phrase in text for phrase in ("融资公司", "近期融资")):
+            add("discover_funded_companies")
+        elif any(phrase in text for phrase in ("批量评估", "岗位队列", "处理队列")):
+            add("process_opportunity_pipeline")
+        elif any(phrase in text for phrase in ("扫描职位来源", "刷新岗位来源")):
+            add("scan_career_sources")
+        else:
+            add("discover_companies")
+    elif asks_profile_onboarding:
+        kind = "profile_onboarding"
+        add(
+            "start_profile_interview",
+            "record_profile_interview_answer",
+            "pause_profile_interview",
+            "get_candidate_context",
+            "propose_candidate_knowledge",
+        )
+    elif asks_profile_enrichment:
+        kind = "profile_enrichment"
+        add(
+            "record_profile_interview_answer",
+            "start_profile_interview",
+            "pause_profile_interview",
+            "get_candidate_context",
+            "propose_candidate_knowledge",
+        )
+    elif asks_strategy:
+        kind = "career_strategy"
+        add("get_candidate_context", "propose_candidate_knowledge")
+    elif asks_skill_growth:
+        kind = "skill_growth"
+        add("get_candidate_context", "search_candidate_evidence")
+    elif trusted_web_search and asks_company_research:
         kind = "company_research"
         add("research_company")
     elif trusted_web_search:
@@ -129,7 +263,9 @@ def route_task(content: str, available_tools: set[str]) -> TaskRoute:
         add("search_public_web")
     elif asks_company_research and mentions_jd and asks_analysis:
         kind = "job_due_diligence"
-        add("analyze_resume_against_jd", "search_resume_evidence", "research_company")
+        add_preferred("analyze_job_against_strategy", "analyze_resume_against_jd")
+        add_preferred("search_candidate_evidence", "search_resume_evidence")
+        add("research_company")
     elif asks_company_research:
         kind = "company_research"
         add("research_company")
@@ -138,35 +274,42 @@ def route_task(content: str, available_tools: set[str]) -> TaskRoute:
         add("search_public_web")
     elif asks_tailored_resume and asks_interview:
         kind = "career_package"
-        add(
-            "analyze_resume_against_jd",
-            "search_resume_evidence",
-            "generate_tailored_resume_content",
-            "generate_interview_advice",
-        )
+        add_preferred("analyze_job_against_strategy", "analyze_resume_against_jd")
+        add_preferred("search_candidate_evidence", "search_resume_evidence")
+        add_preferred("generate_candidate_material", "generate_tailored_resume_content")
+        if "generate_candidate_material" not in available_tools:
+            add("generate_interview_advice")
     elif asks_tailored_resume:
         kind = "tailored_resume"
-        add(
-            "analyze_resume_against_jd",
-            "search_resume_evidence",
-            "generate_tailored_resume_content",
-        )
+        add_preferred("analyze_job_against_strategy", "analyze_resume_against_jd")
+        add_preferred("search_candidate_evidence", "search_resume_evidence")
+        add_preferred("generate_candidate_material", "generate_tailored_resume_content")
     elif asks_interview:
         kind = "interview_preparation"
-        add(
-            "analyze_resume_against_jd",
-            "search_resume_evidence",
-            "generate_interview_advice",
-        )
+        add_preferred("analyze_job_against_strategy", "analyze_resume_against_jd")
+        add_preferred("search_candidate_evidence", "search_resume_evidence")
+        add_preferred("generate_candidate_material", "generate_interview_advice")
     elif mentions_jd and asks_analysis:
         kind = "jd_analysis"
-        add("analyze_resume_against_jd", "search_resume_evidence")
+        add_preferred("analyze_job_against_strategy", "analyze_resume_against_jd")
+        add_preferred("search_candidate_evidence", "search_resume_evidence")
     elif asks_evidence:
         kind = "resume_evidence"
-        add("search_resume_evidence")
+        add_preferred("search_candidate_evidence", "search_resume_evidence")
     elif asks_profile_analysis:
         kind = "profile_analysis"
-        add("search_resume_evidence")
+        add_preferred("search_candidate_evidence", "search_resume_evidence")
+
+    if profile_interview_active:
+        # A running interview makes every reply a possible answer, whatever it
+        # says. Keep the lane open unless the turn clearly belongs elsewhere.
+        if kind == "conversation":
+            kind = "profile_enrichment"
+        add(
+            "record_profile_interview_answer",
+            "pause_profile_interview",
+            "start_profile_interview",
+        )
 
     return TaskRoute(kind=kind, needs_plan=bool(tools), allowed_tools=tuple(tools))
 
@@ -187,7 +330,7 @@ def fallback_plan(goal: str, route: TaskRoute) -> AgentPlan:
         goal=goal.strip()[:300] or "完成当前求职任务",
         route=route.kind,
         steps=steps,
-        requires_confirmation=any(step.risk == "user_input" for step in steps),
+        requires_confirmation=any(step.risk == "confirmed_local_write" for step in steps),
     )
 
 
@@ -239,14 +382,18 @@ def parse_plan(response: ModelResponse, goal: str, route: TaskRoute) -> AgentPla
     required_by_route = {
         "company_research": ("research_company",),
         "web_search": ("search_public_web",),
-        "job_due_diligence": ("analyze_resume_against_jd", "research_company"),
-        "profile_analysis": ("search_resume_evidence",),
-        "tailored_resume": ("generate_tailored_resume_content",),
-        "interview_preparation": ("generate_interview_advice",),
+        "job_due_diligence": ("analyze_job_against_strategy", "research_company"),
+        "profile_analysis": ("search_candidate_evidence",),
+        "tailored_resume": ("generate_candidate_material",),
+        "interview_preparation": ("generate_candidate_material",),
         "career_package": (
-            "generate_tailored_resume_content",
-            "generate_interview_advice",
+            "generate_candidate_material",
         ),
+        "interview_debrief": ("record_interview_debrief",),
+        "application_outcome": ("record_application_outcome",),
+        "profile_onboarding": ("start_profile_interview",),
+        "profile_enrichment": ("record_profile_interview_answer",),
+        "opportunity_discovery": ("discover_companies",),
     }
     for tool_name in required_by_route.get(route.kind, ()):
         if tool_name not in allowed or tool_name in {step.tool_name for step in steps}:
@@ -266,5 +413,5 @@ def parse_plan(response: ModelResponse, goal: str, route: TaskRoute) -> AgentPla
         goal=str(payload.get("goal") or goal).strip()[:300],
         route=route.kind,
         steps=steps,
-        requires_confirmation=any(step.risk == "user_input" for step in steps),
+        requires_confirmation=any(step.risk == "confirmed_local_write" for step in steps),
     )

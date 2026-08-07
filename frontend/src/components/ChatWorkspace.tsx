@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEvent, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type RefObject } from "react";
 import {
   ActionBarPrimitive,
   AssistantRuntimeProvider,
@@ -12,7 +12,7 @@ import {
 } from "@assistant-ui/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { XMarkdown } from "@ant-design/x-markdown";
+import { toolLabels } from "../constants";
 import {
   ArrowUpRight,
   Check,
@@ -26,8 +26,6 @@ import {
   RefreshCw,
   Search,
   Send,
-  ShieldCheck,
-  SquareCheck,
   Sparkles,
   Square,
   TriangleAlert,
@@ -168,11 +166,21 @@ function AgentResultNote({ run }: { run?: AgentRunResult }) {
   const waiting = run.status === "waiting_user";
   const cancelled = run.status === "cancelled";
   const waitingForManualImport = run.error?.code === "manual_job_import_required";
+  const profileRequired = run.error?.code === "profile_required";
   if (!failed && !waiting && !cancelled) return null;
+  const failureHint = profileRequired
+    ? "说“开始画像访谈”，我会创建画像并开始补充信息。"
+    : run.error?.retryable === false
+      ? "请先检查设置或输入后再继续。"
+      : "可以修改输入或直接点击下方重试。";
   return (
     <div className={`agent-result-note ${cancelled ? "cancelled" : failed ? "failed" : "waiting"}`}>
       {failed || waiting ? <TriangleAlert size={14} /> : <CheckCircle2 size={14} />}
-      <span>{cancelled ? "任务已结束" : failed ? "执行已终止，可以修复后重试" : waitingForManualImport ? "等待你手动导入岗位" : "已暂停，等待你的操作"}</span>
+      <span>
+        <strong>{cancelled ? "任务已结束" : failed ? (profileRequired ? "还需要先建立画像" : "执行已终止") : waitingForManualImport ? "等待你手动导入岗位" : "已暂停，等待你的操作"}</strong>
+        {run.error?.message ? <small>{run.error.message}</small> : null}
+        {failed ? <small>{failureHint}</small> : null}
+      </span>
     </div>
   );
 }
@@ -190,54 +198,6 @@ function MarkdownContent({ children }: { children: string }) {
         {children}
       </ReactMarkdown>
     </div>
-  );
-}
-
-function ThinkingProcess({ content, currentNode }: { content: string; currentNode: string }) {
-  const [expanded, setExpanded] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!expanded) return;
-    const frame = window.requestAnimationFrame(() => {
-      const element = scrollRef.current;
-      if (element) element.scrollTop = element.scrollHeight;
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [content, expanded]);
-
-  return (
-    <section className={`thinking-process ${expanded ? "expanded" : ""} streaming`}>
-      <button
-        className="thinking-process-header"
-        type="button"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((value) => !value)}
-      >
-        <span className="thinking-process-icon">
-          <LoaderCircle size={14} />
-        </span>
-        <strong>{currentNode}</strong>
-        <ChevronDown className="thinking-process-chevron" size={14} />
-      </button>
-      <div className="thinking-process-collapse" aria-hidden={!expanded}>
-        <div className="thinking-process-scroll" ref={scrollRef}>
-          {content ? (
-            <XMarkdown
-              content={content}
-              streaming={{
-                hasNextChunk: true,
-                enableAnimation: true,
-                animationConfig: { fadeDuration: 180, easing: "ease-out" },
-                tail: false
-              }}
-            />
-          ) : (
-            <p className="thinking-process-placeholder">正在分析当前请求…</p>
-          )}
-        </div>
-      </div>
-    </section>
   );
 }
 
@@ -266,7 +226,7 @@ type WebSource = {
 };
 
 function WebSourcesPanel({ sources }: { sources: WebSource[] }) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   if (!sources.length) return null;
   return (
     <section className={`web-sources-panel ${expanded ? "expanded" : ""}`} aria-label="联网搜索来源">
@@ -304,6 +264,75 @@ function WebSourcesPanel({ sources }: { sources: WebSource[] }) {
   );
 }
 
+function UserMessageContent({ content }: { content: string }) {
+  const hasJobContext = /以下内容来自我保存的岗位项目|岗位项目上下文|目标岗位[:：]|岗位描述[:：]/.test(content);
+  const collapsible = content.length > 600 || hasJobContext;
+  const [expanded, setExpanded] = useState(false);
+  if (!collapsible) return <p>{content}</p>;
+  const preview = content.replace(/\s+/g, " ").trim().slice(0, 180);
+  return (
+    <section className={`user-message-summary ${expanded ? "expanded" : ""}`}>
+      <div className="user-message-summary-meta">
+        <span>{hasJobContext ? "岗位项目上下文" : "长请求"}</span>
+        <em>{content.length.toLocaleString()} 字</em>
+      </div>
+      <p>{expanded ? content : `${preview}${content.length > 180 ? "…" : ""}`}</p>
+      <button type="button" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
+        {expanded ? "收起完整请求" : "展开完整请求"}<ChevronDown size={13} />
+      </button>
+    </section>
+  );
+}
+
+const executionStatusLabels: Record<string, string> = {
+  done: "已完成",
+  failed: "失败",
+  blocked: "已阻止",
+  waiting_approval: "等待确认",
+  running: "执行中",
+  pending: "待执行"
+};
+
+function AgentExecutionDetails({ run, active = false }: { run?: AgentRunResult; active?: boolean }) {
+  if (!run) return null;
+  const calls = Array.from(run.events.reduce((result, event) => {
+    if (event.tool_name !== "agent_thinking") result.set(event.tool_call_id, event);
+    return result;
+  }, new Map<string, AgentRunResult["events"][number]>()).values());
+  if (!run.plan && !calls.length && !active) return null;
+  const completedSteps = run.plan?.steps.filter((step) => step.status === "done").length ?? 0;
+  const totalSteps = run.plan?.steps.length || calls.length;
+  const currentStep = [...(run.plan?.steps || [])].reverse().find((step) => step.status === "running")?.title
+    || [...calls].reverse().find((call) => call.status === "running")?.message
+    || "正在分析你的请求";
+  return (
+    <details className={`agent-execution-details ${active ? "active" : ""}`} open={active}>
+      <summary>
+        <span><ChevronDown size={14} /><strong>{active ? "Agent 正在执行" : "Agent 执行记录"}</strong></span>
+        <em>{active ? `${totalSteps ? `${completedSteps}/${totalSteps} 步` : "准备中"} · ${currentStep}` : `${calls.length} 次调用`}</em>
+      </summary>
+      <div className="agent-execution-body">
+        {active && !run.plan && !calls.length ? <section><span>当前状态</span><strong>正在理解你的问题并确定下一步。</strong></section> : null}
+        {run.plan ? (
+          <section>
+            <span>执行计划</span>
+            <strong>{run.plan.goal}</strong>
+            {run.plan.steps.length ? (
+              <ol>{run.plan.steps.map((step) => <li key={step.id}><i className={step.status} />{step.title}<em>{executionStatusLabels[step.status] || step.status}</em></li>)}</ol>
+            ) : null}
+          </section>
+        ) : null}
+        {calls.length ? (
+          <section>
+            <span>工具调用</span>
+            <ul>{calls.map((call) => <li key={call.tool_call_id}><i className={call.status} /><strong>{toolLabels[call.tool_name] || call.tool_name}</strong><em>{executionStatusLabels[call.status] || call.status}</em>{call.message ? <small>{call.message}</small> : null}</li>)}</ul>
+          </section>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
 function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: boolean }) {
   const source = state.metadata.custom.source as ChatMessage | undefined;
   if (!source) return null;
@@ -315,11 +344,6 @@ function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: boolean 
   const isActiveAssistant = chatBusy && source.id < 0;
   const resultContent = resultOnlyContent(source.content, Boolean(thoughtSummary));
   const failed = source.payload?.agent?.status === "failed";
-  const liveEvents = chatBusy && source.id < 0
-    ? source.payload?.agent?.events.filter((event) => event.tool_name !== "agent_thinking") ?? []
-    : [];
-  const currentNode = [...liveEvents].reverse().find((event) => event.status === "running")?.message
-    || (thoughtEvent?.status === "running" ? "正在分析" : "正在生成回复");
   const webSources = (source.payload?.agent?.events
     .filter((event) => ["search_public_web", "research_company"].includes(event.tool_name))
     .flatMap((event) => Array.isArray(event.data?.sources) ? event.data.sources : [])
@@ -343,9 +367,8 @@ function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: boolean 
         {source.role === "assistant" ? (
           <>
             {isActiveAssistant ? (
-              <ThinkingProcess content={thoughtSummary || ""} currentNode={currentNode} />
+              <AgentExecutionDetails run={source.payload?.agent} active />
             ) : null}
-            <WebSourcesPanel sources={webSources} />
             <section className="message-result" aria-label="输出结果">
               <MarkdownContent>{resultContent}</MarkdownContent>
               <AgentResultNote run={source.payload?.agent} />
@@ -359,10 +382,12 @@ function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: boolean 
                 </ActionBarPrimitive.Reload>
               </ActionBarPrimitive.Root>
             </section>
+            {!isActiveAssistant ? <AgentExecutionDetails run={source.payload?.agent} /> : null}
+            <WebSourcesPanel sources={webSources} />
           </>
         ) : (
           <>
-            <p>{source.content}</p>
+            <UserMessageContent content={source.content} />
             {source.payload?.attachments?.length ? (
               <div className="message-attachments" aria-label="本轮已附加资料">
                 {source.payload.attachments.map((attachment) => (
@@ -390,10 +415,10 @@ function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: boolean 
 
 type ChatWorkspaceContentProps = ChatWorkspaceProps & {
   pendingAttachments: ChatAttachment[];
-  visionAttachmentIds: string[];
+  previewUrls: Record<string, string>;
+  uploadingPreview: { filename: string; url: string } | null;
   onUpload: (file?: File) => Promise<void>;
   onRemovePendingAttachment: (attachmentId: string) => Promise<void>;
-  onToggleVisionAttachment: (attachmentId: string) => void;
   webSearchSelected: boolean;
   onToggleWebSearch: () => void;
 };
@@ -401,6 +426,11 @@ type ChatWorkspaceContentProps = ChatWorkspaceProps & {
 function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const [isDraggingAttachment, setIsDraggingAttachment] = useState(false);
+  const [expandedPreview, setExpandedPreview] = useState<{ filename: string; url: string } | null>(null);
+
+  useEffect(() => {
+    setExpandedPreview(null);
+  }, [props.currentConversationId]);
 
   async function selectAttachment(file?: File) {
     if (!file || props.attachmentBusy) return;
@@ -436,8 +466,21 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
     void selectAttachment(event.dataTransfer.files?.[0]);
   }
 
+  function handleComposerPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const clipboardFile = Array.from(event.clipboardData.files)[0];
+    if (!clipboardFile || props.attachmentBusy) return;
+    const filename = clipboardFile.name.toLowerCase();
+    const supported = clipboardFile.type.startsWith("image/") || /\.(pdf|docx|txt|md)$/.test(filename);
+    if (!supported) return;
+    event.preventDefault();
+    const file = clipboardFile.name
+      ? clipboardFile
+      : new File([clipboardFile], `粘贴的岗位截图.${clipboardFile.type.split("/")[1] || "png"}`, { type: clipboardFile.type });
+    void selectAttachment(file);
+  }
+
   return (
-    <section className="chat-workspace">
+    <section className={`chat-workspace ${props.messages.length ? "has-history" : "is-empty"} ${props.chatBusy ? "is-running" : ""}`}>
       <ThreadPrimitive.Root className="chat-main">
         <ThreadPrimitive.Viewport className="chat-thread" role="log" aria-live="polite" aria-relevant="additions">
           {props.hiddenMessageCount > 0 ? (
@@ -448,8 +491,9 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
 
           {props.messages.length === 0 ? (
             <div className="chat-welcome">
-              <h2>今天想聊点什么？</h2>
-              <p>可以聊经历、岗位、简历，或下一步计划。</p>
+              <span className="agent-welcome-mark" aria-hidden="true">B</span>
+              <h2>你好，有什么可以帮你？</h2>
+              <p>说说你现在的求职问题。</p>
             </div>
           ) : (
             <ThreadPrimitive.Messages>
@@ -465,6 +509,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                 <div className="thinking-indicator">
                   <LoaderCircle size={14} />
                   <span>正在思考</span>
+                  <span className="thinking-dots"><i /><i /><i /></span>
                 </div>
               </div>
             </article>
@@ -522,14 +567,15 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                 rows={1}
                 maxLength={1000}
                 aria-label="输入消息"
-                placeholder="输入消息…"
+                placeholder="例如：帮我分析这个岗位，或准备下一轮面试…"
                 submitMode="enter"
+                onPaste={handleComposerPaste}
               />
               <div className="composer-bottom-row">
                 <div className="composer-shortcuts" aria-label="添加求职资料">
-                  <button type="button" onClick={() => attachmentInputRef.current?.click()} disabled={props.attachmentBusy} title="上传岗位截图或简历">
+                  <button type="button" onClick={() => attachmentInputRef.current?.click()} disabled={props.attachmentBusy} title="上传岗位截图或简历，也可直接粘贴截图">
                     {props.attachmentBusy ? <LoaderCircle className="spinning" size={15} /> : <ImagePlus size={15} />}
-                    <span>{props.attachmentBusy ? "处理中…" : "上传资料"}</span>
+                    <span>{props.attachmentBusy ? "处理中…" : "上传文件"}</span>
                   </button>
                   <button
                     type="button"
@@ -554,37 +600,32 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                 )}
               </div>
             </ComposerPrimitive.Root>
+            {props.uploadingPreview ? (
+              <div className="composer-attachments" aria-label="正在处理的附件">
+                <article className="composer-image-attachment uploading">
+                  <img className="composer-attachment-preview" src={props.uploadingPreview.url} alt={`${props.uploadingPreview.filename} 预览`} />
+                </article>
+              </div>
+            ) : null}
             {props.pendingAttachments.length ? (
               <div className="composer-attachments" aria-label="待发送附件">
                 {props.pendingAttachments.map((attachment) => (
-                  <article key={attachment.id}>
-                    <span className="composer-attachment-icon">
-                      {attachment.kind === "resume" ? <FileText size={15} /> : <ImagePlus size={15} />}
-                    </span>
-                    <span>
-                      <strong>{attachment.original_filename}</strong>
-                      <small>
-                        {attachment.kind === "resume"
-                          ? "已本地解析，将使用脱敏文本"
-                          : props.visionAttachmentIds.includes(attachment.id)
-                            ? "已授权本轮模型看图，同时使用本地 OCR"
-                            : "已本地识别，将使用识别文本"}
-                      </small>
-                    </span>
-                    {attachment.kind === "job_screenshot" ? (
-                      <button
+                  <article key={attachment.id} className={attachment.kind === "job_screenshot" ? "composer-image-attachment" : "composer-file-attachment"}>
+                    {attachment.kind === "job_screenshot" && props.previewUrls[attachment.id]
+                      ? <button
                         type="button"
-                        className={props.visionAttachmentIds.includes(attachment.id) ? "vision-toggle active" : "vision-toggle"}
-                        onClick={() => props.onToggleVisionAttachment(attachment.id)}
-                        disabled={!props.attachmentConfig?.vision_ready}
-                        aria-pressed={props.visionAttachmentIds.includes(attachment.id)}
-                        title={props.attachmentConfig?.vision_ready ? "仅本轮把这张岗位截图通过短期链接发给模型识别" : "图片直传未启用：需要 MinIO、公网 HTTPS endpoint 和 ATTACHMENT_VISION_ENABLED=true"}
-                      >
-                        {props.visionAttachmentIds.includes(attachment.id) ? <SquareCheck size={14} /> : <ShieldCheck size={14} />}
-                        <span>模型看图</span>
-                      </button>
-                    ) : null}
-                    <button type="button" onClick={() => void props.onRemovePendingAttachment(attachment.id)} aria-label={`移除 ${attachment.original_filename}`}>
+                        className="composer-attachment-preview-button"
+                        onClick={() => setExpandedPreview({ filename: attachment.original_filename, url: props.previewUrls[attachment.id] })}
+                        aria-label={`查看 ${attachment.original_filename}`}
+                      ><img className="composer-attachment-preview" src={props.previewUrls[attachment.id]} alt={`${attachment.original_filename} 预览`} /></button>
+                      : <span className="composer-attachment-icon">
+                        {attachment.kind === "resume" ? <FileText size={15} /> : <ImagePlus size={15} />}
+                      </span>}
+                    {attachment.kind === "resume" ? <span>
+                      <strong>{attachment.original_filename}</strong>
+                      <small>随本轮消息发送</small>
+                    </span> : null}
+                    <button className="composer-attachment-remove" type="button" onClick={() => void props.onRemovePendingAttachment(attachment.id)} aria-label={`移除 ${attachment.original_filename}`}>
                       <X size={14} />
                     </button>
                   </article>
@@ -593,6 +634,12 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             ) : null}
             {isDraggingAttachment ? <div className="composer-drop-hint" aria-live="polite">松开即可本地解析岗位截图或简历</div> : null}
           </div>
+          {expandedPreview ? (
+            <div className="attachment-preview-dialog" role="dialog" aria-modal="true" aria-label={`${expandedPreview.filename} 预览`} onClick={() => setExpandedPreview(null)}>
+              <img src={expandedPreview.url} alt={`${expandedPreview.filename} 大图预览`} onClick={(event) => event.stopPropagation()} />
+              <button type="button" onClick={() => setExpandedPreview(null)} aria-label="关闭图片预览"><X size={18} /></button>
+            </div>
+          ) : null}
         </div>
       </ThreadPrimitive.Root>
     </section>
@@ -601,32 +648,59 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
 
 export function ChatWorkspace(props: ChatWorkspaceProps) {
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
+  const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
+  const [uploadingPreview, setUploadingPreview] = useState<{ filename: string; url: string } | null>(null);
+  const previewUrlsRef = useRef<Record<string, string>>({});
   const [visionAttachmentIds, setVisionAttachmentIds] = useState<string[]>([]);
   const [webSearchSelected, setWebSearchSelected] = useState(false);
 
   useEffect(() => {
+    Object.values(previewUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
+    previewUrlsRef.current = {};
     setPendingAttachments([]);
+    setPreviewUrls({});
+    setUploadingPreview(null);
     setVisionAttachmentIds([]);
     setWebSearchSelected(false);
   }, [props.currentConversationId]);
 
+  useEffect(() => () => {
+    Object.values(previewUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
+  }, []);
+
   const uploadAttachment = useCallback(async (file?: File) => {
     if (!file) return;
-    const attachment = await props.onUploadAttachment(file);
-    setPendingAttachments((current) => [...current, attachment]);
+    const previewUrl = file.type.startsWith("image/") ? URL.createObjectURL(file) : null;
+    if (previewUrl) setUploadingPreview({ filename: file.name || "粘贴的岗位截图", url: previewUrl });
+    try {
+      const attachment = await props.onUploadAttachment(file);
+      if (previewUrl) {
+        previewUrlsRef.current[attachment.id] = previewUrl;
+        setPreviewUrls({ ...previewUrlsRef.current });
+      }
+      setPendingAttachments((current) => [...current, attachment]);
+      if (attachment.kind === "job_screenshot") {
+        setVisionAttachmentIds((current) => [...current, attachment.id]);
+      }
+      setUploadingPreview(null);
+    } catch (error) {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setUploadingPreview(null);
+      throw error;
+    }
   }, [props]);
 
   const removePendingAttachment = useCallback(async (attachmentId: string) => {
     await props.onRemoveAttachment(attachmentId);
+    const previewUrl = previewUrlsRef.current[attachmentId];
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      delete previewUrlsRef.current[attachmentId];
+      setPreviewUrls({ ...previewUrlsRef.current });
+    }
     setPendingAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId));
     setVisionAttachmentIds((current) => current.filter((id) => id !== attachmentId));
   }, [props]);
-
-  const toggleVisionAttachment = useCallback((attachmentId: string) => {
-    setVisionAttachmentIds((current) => current.includes(attachmentId)
-      ? current.filter((id) => id !== attachmentId)
-      : [...current, attachmentId]);
-  }, []);
 
   const convertMessage = useCallback((message: ChatMessage): ThreadMessageLike => ({
     id: String(message.id),
@@ -672,10 +746,10 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
       <ChatWorkspaceContent
         {...props}
         pendingAttachments={pendingAttachments}
-        visionAttachmentIds={visionAttachmentIds}
+        previewUrls={previewUrls}
+        uploadingPreview={uploadingPreview}
         onUpload={uploadAttachment}
         onRemovePendingAttachment={removePendingAttachment}
-        onToggleVisionAttachment={toggleVisionAttachment}
         webSearchSelected={webSearchSelected}
         onToggleWebSearch={() => setWebSearchSelected((selected) => !selected)}
       />

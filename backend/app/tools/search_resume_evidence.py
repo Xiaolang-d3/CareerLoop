@@ -22,8 +22,7 @@ class SearchResumeEvidenceTool:
         name="search_resume_evidence",
         description=(
             "读取并检索当前用户本地保存的脱敏简历片段，用于分析个人优势、"
-            "技能、经历、项目、竞争力、简历问题或证明某项能力；"
-            "不会搜索本地岗位、互联网或 BOSS 网站"
+            "技能、经历、项目、竞争力、简历问题或证明某项能力"
         ),
         input_schema=SearchResumeEvidenceArguments.model_json_schema(),
     )

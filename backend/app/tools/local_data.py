@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import functools
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
+from ..candidate_core import ProfileNotInitializedError
 from ..db import connect, row_to_dict
 from ..agent_settings import get_agent_settings
 from ..domain import ToolError, ToolResult
@@ -58,3 +62,46 @@ def invalid_arguments(message: str, error: Exception) -> ToolResult:
         message=message,
         error=ToolError(code="invalid_arguments", message=str(error)),
     )
+
+
+PROFILE_REQUIRED_GUIDANCE = (
+    "还没有候选人画像。说“开始画像访谈”，我会创建画像并一次一个问题地帮你补充信息；"
+    "你也可以在设置页直接填写。"
+)
+
+
+def profile_required(message: str) -> ToolResult:
+    """A missing precondition the user can clear in one reply, not a bad argument."""
+    return ToolResult(
+        ok=False,
+        status="failed",
+        message=message,
+        error=ToolError(
+            code="profile_required",
+            message=PROFILE_REQUIRED_GUIDANCE,
+            retryable=True,
+        ),
+    )
+
+
+def tool_error_boundary(message: str):
+    """Wrap a tool's ``execute`` so precondition and argument failures stay distinct.
+
+    Every candidate tool used to funnel both into ``invalid_arguments``, which
+    mislabeled "no profile yet" as "bad arguments". ``ProfileNotInitializedError``
+    is matched first because it subclasses ``ValueError``.
+    """
+
+    def decorator(execute):
+        @functools.wraps(execute)
+        async def wrapper(self, arguments: dict[str, Any], context) -> ToolResult:
+            try:
+                return await execute(self, arguments, context)
+            except ProfileNotInitializedError:
+                return profile_required(message)
+            except (ValidationError, ValueError) as exc:
+                return invalid_arguments(message, exc)
+
+        return wrapper
+
+    return decorator

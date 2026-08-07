@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 
 from app.agent.runtime import AgentRuntime, _recent_company_name
@@ -50,6 +51,18 @@ class BlockedTool:
             message="平台要求安全验证",
             error=ToolError(code="platform_blocked", message="平台要求安全验证"),
         )
+
+
+class SlowTool:
+    definition = ToolDefinition(
+        name="analyze_resume_against_jd",
+        description="测试慢工具",
+        input_schema={"type": "object", "properties": {}},
+    )
+
+    async def execute(self, arguments: dict, context: ToolContext) -> ToolResult:
+        await asyncio.sleep(10)
+        return ToolResult(ok=True, status="done", message="不应到达这里")
 
 
 class AgentRuntimeStatusTest(unittest.IsolatedAsyncioTestCase):
@@ -146,6 +159,22 @@ class AgentRuntimeStatusTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(route.kind, "profile_analysis")
         self.assertEqual(route.allowed_tools, ("search_resume_evidence",))
 
+    async def test_full_job_evaluation_uses_saved_project_tools(self) -> None:
+        available = {
+            "create_job_evaluation", "get_job_evaluation", "run_job_deep_research",
+            "compare_job_evaluations", "review_job_evaluation", "analyze_job_against_strategy",
+        }
+        route = route_task("为已保存的岗位生成完整评估和岗位决策报告", available)
+        self.assertEqual(route.kind, "job_evaluation")
+        self.assertEqual(route.allowed_tools, ("create_job_evaluation", "get_job_evaluation"))
+
+    async def test_deep_research_and_comparison_have_distinct_tool_surfaces(self) -> None:
+        available = {"run_job_deep_research", "compare_job_evaluations", "get_job_evaluation"}
+        deep = route_task("对这份岗位报告做深度研究", available)
+        comparison = route_task("比较岗位，看看哪个更值得申请", available)
+        self.assertEqual(deep.allowed_tools, ("run_job_deep_research", "get_job_evaluation"))
+        self.assertEqual(comparison.allowed_tools, ("compare_job_evaluations", "get_job_evaluation"))
+
     async def test_streaming_conversation_emits_text_deltas_and_final_result(self) -> None:
         class StreamingModel:
             name = "streaming"
@@ -204,6 +233,27 @@ class AgentRuntimeStatusTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(model.calls, 2)
         self.assertIn("安全验证", result.content)
         self.assertIn("重新提问", result.content)
+
+    async def test_slow_tool_times_out_as_failed(self) -> None:
+        models = ModelProviderRegistry()
+        model = SequenceModel()
+        models.register("test", model)
+        tools = ToolRegistry()
+        tools.register_handler(SlowTool())
+        runtime = AgentRuntime(
+            models=models,
+            tools=tools,
+            model_provider="test",
+            platform_name="manual",
+            max_tool_rounds=3,
+            tool_timeout_seconds=0.05,
+        )
+
+        result = await runtime.run("分析这个岗位是否适合我")
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.error.code, "tool_timeout")
+        self.assertIn("执行超时", result.content)
 
     async def test_simple_conversation_has_no_tool_surface(self) -> None:
         class DirectModel:

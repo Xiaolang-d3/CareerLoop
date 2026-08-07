@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
+from time import perf_counter
 from urllib.parse import urlsplit, urlunsplit
 
 from ..domain import (
@@ -14,7 +15,9 @@ from ..domain import (
     ToolError,
     ToolEvent,
 )
+from ..candidate_core import get_profile_interview_session
 from ..models import ModelProviderError, ModelProviderRegistry
+from ..tool_call_audit import record_tool_call_event
 from ..tools import ToolContext, ToolRegistry
 from .orchestration import parse_plan, planner_prompt, route_summary, route_task
 
@@ -30,6 +33,23 @@ COMPANY_CONTEXT_PATTERNS = (
     re.compile(rf"“([^”\n]{{2,100}}?{COMPANY_SUFFIX})”"),
     re.compile(rf"\*\*([^*\n]{{2,100}}?{COMPANY_SUFFIX})\*\*"),
 )
+
+
+def _active_profile_interview(conversation_id: int | None) -> dict | None:
+    """Return the running interview session for this conversation, if any.
+
+    Read from stored state rather than the message text, so a plain answer like
+    "AI 产品经理，上海" still keeps the interview tools available.
+    """
+    if conversation_id is None:
+        return None
+    try:
+        session = get_profile_interview_session(conversation_id)
+    except Exception:
+        return None
+    if not session or session.get("status") != "active":
+        return None
+    return session
 
 
 def _canonical_citation_url(value: str) -> str:
@@ -83,12 +103,14 @@ class AgentRuntime:
         model_provider: str,
         platform_name: str,
         max_tool_rounds: int,
+        tool_timeout_seconds: float = 60,
     ) -> None:
         self._models = models
         self._tools = tools
         self._model_provider = model_provider
         self._platform_name = platform_name
         self._max_tool_rounds = max_tool_rounds
+        self._tool_timeout_seconds = tool_timeout_seconds
 
     async def run(
         self,
@@ -103,7 +125,12 @@ class AgentRuntime:
     ) -> AgentRunResult:
         provider = self._models.get(self._model_provider)
         selected_platform = platform_name or self._platform_name
-        route = route_task(routing_content or user_content, set(self._tools.names()))
+        interview_session = _active_profile_interview(conversation_id)
+        route = route_task(
+            routing_content or user_content,
+            set(self._tools.names()),
+            profile_interview_active=interview_session is not None,
+        )
         plan = None
         events: list[ToolEvent] = [
             ToolEvent(
@@ -187,6 +214,20 @@ class AgentRuntime:
                         "当前任务已经过规划。只执行计划中允许的工具；每次根据工具结果判断下一步，"
                         "任一步骤失败或被阻止时立即停止，不要继续调用其他工具。计划："
                         + plan.model_dump_json()
+                    ),
+                )
+            )
+        if interview_session is not None:
+            messages.append(
+                AgentMessage(
+                    role="system",
+                    content=(
+                        "当前会话有一个进行中的画像访谈，正在等待用户回答："
+                        f"“{interview_session.get('question') or ''}”。"
+                        "如果用户本轮内容像是在回答这个问题，调用 "
+                        "record_profile_interview_answer 保存并推进到下一题；"
+                        "如果用户要求暂停，调用 pause_profile_interview；"
+                        "如果用户明显在问别的事情，就正常处理，不要调用访谈工具。"
                     ),
                 )
             )
@@ -425,17 +466,59 @@ class AgentRuntime:
                         ),
                     ),
                 )
+                started_at = perf_counter()
                 try:
                     handler = self._tools.get(tool_call.name)
-                    result = await handler.execute(
-                        tool_call.arguments,
-                        ToolContext(
-                            platform_name=selected_platform,
-                            conversation_id=conversation_id,
-                            task_id=task_id,
+                    result = await asyncio.wait_for(
+                        handler.execute(
+                            tool_call.arguments,
+                            ToolContext(
+                                platform_name=selected_platform,
+                                conversation_id=conversation_id,
+                                task_id=task_id,
+                                user_content=user_content,
+                            ),
                         ),
+                        timeout=self._tool_timeout_seconds,
+                    )
+                except asyncio.TimeoutError:
+                    self._record_tool_call(
+                        conversation_id, round_number, tool_call.id, tool_call.name,
+                        "failed", started_at, error_code="tool_timeout",
+                    )
+                    message = f"工具 {tool_call.name} 执行超时"
+                    round_error = ToolError(
+                        code="tool_timeout",
+                        message=message,
+                        retryable=True,
+                    )
+                    event = ToolEvent(
+                            round=round_number,
+                            tool_call_id=tool_call.id,
+                            tool_name=tool_call.name,
+                            status="failed",
+                            message=message,
+                            data={"status": "failed", "error": "timeout"},
+                        )
+                    events.append(event)
+                    await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
+                    if plan_step is not None:
+                        plan_step.status = "failed"
+                    return AgentRunResult(
+                        content=f"{message}。本次执行已终止，请处理后重新提问。",
+                        provider=self._model_provider,
+                        platform=selected_platform,
+                        rounds=round_number,
+                        status="failed",
+                        error=round_error,
+                        events=events,
+                        plan=plan,
                     )
                 except Exception as exc:
+                    self._record_tool_call(
+                        conversation_id, round_number, tool_call.id, tool_call.name,
+                        "failed", started_at, error_code="tool_execution_failed",
+                    )
                     result_data = {"status": "failed", "error": str(exc)}
                     round_error = ToolError(
                         code="tool_execution_failed",
@@ -464,6 +547,11 @@ class AgentRuntime:
                         plan=plan,
                     )
 
+                self._record_tool_call(
+                    conversation_id, round_number, tool_call.id, tool_call.name,
+                    result.status, started_at,
+                    error_code=result.error.code if result.error else "",
+                )
                 event = ToolEvent(
                         round=round_number,
                         tool_call_id=tool_call.id,
@@ -636,3 +724,28 @@ class AgentRuntime:
     ) -> None:
         if callback is not None:
             await callback(event)
+
+    @staticmethod
+    def _record_tool_call(
+        conversation_id: int | None,
+        round_number: int,
+        tool_call_id: str,
+        tool_name: str,
+        status: str,
+        started_at: float,
+        *,
+        error_code: str = "",
+    ) -> None:
+        try:
+            record_tool_call_event(
+                conversation_id=conversation_id,
+                round_number=round_number,
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                status=status,
+                latency_ms=round((perf_counter() - started_at) * 1000),
+                error_code=error_code,
+            )
+        except Exception:
+            # Auditing is best-effort and must never break a successful tool call.
+            pass

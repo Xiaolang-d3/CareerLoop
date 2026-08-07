@@ -86,23 +86,39 @@ MODEL_PROVIDER=openai
 MODEL_NAME=<模型名称>
 OPENAI_API_KEY=<本地密钥>
 # MODEL_BASE_URL=<可选的 OpenAI 兼容服务地址>
-MODEL_MAX_TOOL_ROUNDS=5
+MODEL_MAX_TOOL_ROUNDS=8
 MODEL_TIMEOUT_SECONDS=60
 ```
 
 认证失败、限流、超时、连接失败和上游异常会转换为结构化 Agent 错误并显示在界面中。禁止提交 `.env` 文件，也不得在日志中输出真实密钥。
 
-## 岗位数据边界
+## 岗位数据接入
 
-当前版本不访问或控制 BOSS 直聘及其他招聘网站。
-
-岗位只能通过以下方式进入系统：
+当前内置实现支持以下岗位输入方式：
 
 - 用户主动粘贴岗位文字。
 - 用户上传自己保存的岗位截图，由本机识别文字。
 - 用户检查标题、公司、岗位描述和来源信息后明确确认导入。
 
-聊天中出现“打开 BOSS”或“登录 BOSS”等请求时，系统只会提示用户在普通浏览器中自行操作，不会启动浏览器自动化。
+招聘网站、职位库或其他外部来源可以通过后续平台适配器和结构化工具接入。聊天中的平台操作请求会进入正常 Agent 路由，由运行时根据已注册能力处理，不再被接口层提前拦截。
+
+### 浏览器辅助岗位读取
+
+本地研究模式可以安装仓库中的 Chrome 扩展：
+
+```bash
+cd browser-extension
+npm test
+npm run build
+```
+
+在 Chrome 扩展管理页加载 `browser-extension/dist/`，并在 `backend/.env` 中设置：
+
+```dotenv
+BROWSER_JOB_IMPORT_ENABLED=true
+```
+
+扩展安装或重新构建后需要刷新 BossCopilot 和目标岗位标签页。扩展只读取用户主动请求的匹配岗位页面，不读取 Cookie、密码或浏览历史。
 
 ## 附件存储
 
@@ -134,6 +150,14 @@ cd backend
 
 ```bash
 cd frontend
+npm run build
+```
+
+浏览器扩展测试和构建：
+
+```bash
+cd browser-extension
+npm test
 npm run build
 ```
 

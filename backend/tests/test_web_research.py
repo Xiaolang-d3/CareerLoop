@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from app.config import Settings
 from app.tools import ResearchCompanyTool, SearchPublicWebTool, ToolContext
-from app.web_research import validate_backend_url
+from app.web_research import AgentSearchClient, validate_backend_url
 
 
 class FakeAgentSearchClient:
@@ -60,6 +61,31 @@ class WebResearchTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             validate_backend_url("http://127.0.0.1:3939"),
             "http://127.0.0.1:3939",
+        )
+
+    def test_browser_fetch_uses_bounded_agent_search_endpoint(self) -> None:
+        client = AgentSearchClient(base_url="http://127.0.0.1:3939")
+        with patch.object(
+            AgentSearchClient,
+            "_request",
+            return_value={"success": True, "content": "岗位描述"},
+        ) as request:
+            result = client.browser_fetch_sync(
+                "https://jobs.example.com/1",
+                max_chars=99_999,
+                max_links=999,
+                timeout_ms=99_999,
+            )
+
+        self.assertTrue(result["success"])
+        request.assert_called_once_with(
+            "/providers/browser/fetch",
+            {
+                "url": "https://jobs.example.com/1",
+                "max_chars": 50_000,
+                "max_links": 200,
+                "timeout_ms": 60_000,
+            },
         )
 
     async def test_company_research_returns_deduplicated_citable_sources(self) -> None:

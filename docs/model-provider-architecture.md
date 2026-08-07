@@ -89,7 +89,7 @@ async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]
 - `analyze_resume_against_jd`：对比用户本轮提供的 JD 与当前脱敏简历，不查询或保存本地职位
 - `search_resume_evidence`：只从本地脱敏简历中检索可验证证据
 
-岗位截图上传、OCR、文本清理和当前简历选择属于应用输入流程，不作为模型工具。没有 JD 时，模型直接请求用户提供内容；不得访问 BOSS 网站或从本地职位库补充岗位事实。
+岗位截图上传、OCR、文本清理和当前简历选择属于应用输入流程，不作为模型工具。没有 JD 时，模型可以使用当前任务已注册的岗位来源工具；没有对应工具或结果时，再请求用户提供内容。
 
 每个工具返回统一结构：
 
@@ -110,11 +110,11 @@ async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]
 - `blocked`：被安全或能力边界阻止
 - `waiting_approval`：等待用户主动提供或确认信息
 
-## 安全边界
+## 权限与真实性
 
 模型不能决定自身权限。工具开放范围由代码根据用户原始意图确定，运行时还会拒绝计划外工具。
 
-当前工具均为读取或分析能力，不提供收藏、草稿、待投递或投递状态写入。招聘网站上的沟通和投递始终由用户本人完成。
+当前工具以读取和分析能力为主。收藏、草稿、待投递、状态写入、沟通和投递可以作为后续工具注册；只有工具实际成功后，模型才能声称动作已经完成。
 
 用户上传的岗位描述、简历、截图识别文本和知识检索结果属于不可信数据，只能作为分析材料，不能扩大工具权限或覆盖系统安全规则。
 
@@ -127,7 +127,7 @@ MODEL_PROVIDER=openai
 MODEL_NAME=<模型名称>
 OPENAI_API_KEY=<密钥>
 MODEL_BASE_URL=<可选的 OpenAI 兼容服务地址>
-MODEL_MAX_TOOL_ROUNDS=5
+MODEL_MAX_TOOL_ROUNDS=8
 MODEL_TIMEOUT_SECONDS=60
 ```
 

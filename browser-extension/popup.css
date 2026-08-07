@@ -1,0 +1,16 @@
+:root { color: #ecf8f1; background: #102a22; font-family: Inter, "PingFang SC", system-ui, sans-serif; }
+* { box-sizing: border-box; }
+body { width: 330px; margin: 0; }
+.popup-shell { display: grid; gap: 14px; padding: 18px; background: linear-gradient(145deg, #102a22, #17382d); }
+header { display: flex; align-items: center; gap: 10px; }
+.mark { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 10px; color: #103126; background: #83edbd; font-weight: 800; }
+header div { display: grid; gap: 2px; }
+header strong { font-size: 14px; } header small, footer { color: #9fbbaf; font-size: 11px; }
+.status-dot { width: 9px; height: 9px; margin-left: auto; border-radius: 50%; background: #e1b45b; box-shadow: 0 0 0 4px rgba(225,180,91,.12); }
+.status-dot.ready { background: #72dfaa; box-shadow: 0 0 0 4px rgba(114,223,170,.12); }.status-dot.error { background: #ec7e76; box-shadow: 0 0 0 4px rgba(236,126,118,.12); }
+.page-card { display: grid; gap: 6px; padding: 13px; border: 1px solid rgba(184,232,205,.14); border-radius: 12px; background: rgba(255,255,255,.055); }
+.page-card span { color: #89ddb2; font-size: 11px; font-weight: 700; }.page-card strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }.page-card small { overflow: hidden; color: #a9c4b7; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.message { min-height: 34px; margin: 0; color: #c3d8ce; font-size: 12px; line-height: 1.45; }.message.error { color: #ffaaa3; }.message.success { color: #99e9c0; }
+.read-button { min-height: 42px; border: 0; border-radius: 10px; color: #103126; background: #83edbd; font: inherit; font-weight: 750; cursor: pointer; }.read-button:hover:not(:disabled) { background: #a1f4cb; }.read-button:disabled { color: #9db1a8; background: #315447; cursor: not-allowed; }
+.service-settings { color: #b8d2c5; font-size: 11px; }.service-settings summary { cursor: pointer; font-weight: 700; }.service-settings[open] { display: grid; gap: 8px; }.service-settings label { margin-top: 3px; }.service-settings div { display: flex; gap: 7px; }.service-settings input { min-width: 0; flex: 1; padding: 8px; border: 1px solid rgba(184,232,205,.16); border-radius: 7px; color: #ecf8f1; background: rgba(0,0,0,.15); }.service-settings button { padding: 0 10px; border: 0; border-radius: 7px; color: #103126; background: #a1f4cb; font-weight: 700; cursor: pointer; }.service-settings small { color: #91ada0; line-height: 1.4; }
+footer { border-top: 1px solid rgba(255,255,255,.08); padding-top: 12px; line-height: 1.45; }

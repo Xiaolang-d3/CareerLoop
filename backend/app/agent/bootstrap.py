@@ -13,6 +13,25 @@ from ..tools import (
     SearchResumeEvidenceTool,
     ResearchCompanyTool,
     SearchPublicWebTool,
+    AnalyzeJobAgainstStrategyTool,
+    CompareJobEvaluationsTool,
+    CreateJobEvaluationTool,
+    DiscoverCompaniesTool,
+    DiscoverFundedCompaniesTool,
+    GenerateCandidateMaterialTool,
+    GetCandidateContextTool,
+    GetJobEvaluationTool,
+    ProposeCandidateKnowledgeTool,
+    ProcessOpportunityPipelineTool,
+    RecordApplicationOutcomeTool,
+    RecordInterviewDebriefTool,
+    ReviewJobEvaluationTool,
+    RunJobDeepResearchTool,
+    ScanCareerSourcesTool,
+    SearchCandidateEvidenceTool,
+    StartProfileInterviewTool,
+    RecordProfileInterviewAnswerTool,
+    PauseProfileInterviewTool,
     ToolRegistry,
 )
 from .runtime import AgentRuntime
@@ -45,6 +64,25 @@ def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
     # clear configuration error instead of silently falling back to offline chat.
     tools.register_handler(ResearchCompanyTool(settings=settings))
     tools.register_handler(SearchPublicWebTool(settings=settings))
+    tools.register_handler(GetCandidateContextTool())
+    tools.register_handler(SearchCandidateEvidenceTool())
+    tools.register_handler(ProposeCandidateKnowledgeTool())
+    tools.register_handler(StartProfileInterviewTool())
+    tools.register_handler(RecordProfileInterviewAnswerTool())
+    tools.register_handler(PauseProfileInterviewTool())
+    tools.register_handler(AnalyzeJobAgainstStrategyTool())
+    tools.register_handler(GenerateCandidateMaterialTool())
+    tools.register_handler(RecordInterviewDebriefTool())
+    tools.register_handler(RecordApplicationOutcomeTool())
+    tools.register_handler(DiscoverCompaniesTool())
+    tools.register_handler(DiscoverFundedCompaniesTool())
+    tools.register_handler(ScanCareerSourcesTool())
+    tools.register_handler(ProcessOpportunityPipelineTool())
+    tools.register_handler(CreateJobEvaluationTool())
+    tools.register_handler(GetJobEvaluationTool())
+    tools.register_handler(ReviewJobEvaluationTool())
+    tools.register_handler(RunJobDeepResearchTool())
+    tools.register_handler(CompareJobEvaluationsTool())
 
     runtime = AgentRuntime(
         models=models,
@@ -52,6 +90,7 @@ def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
         model_provider=settings.model_provider,
         platform_name="manual",
         max_tool_rounds=settings.model_max_tool_rounds,
+        tool_timeout_seconds=settings.tool_execution_timeout_seconds,
     )
     capabilities = {
         "active_model_provider": settings.model_provider,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from time import perf_counter
 from typing import Any
 
 from openai import (
@@ -15,20 +16,21 @@ from openai import (
 
 from ..domain import ModelRequest, ModelResponse, ModelStreamEvent, ModelUsage, ToolCall
 from ..agent_settings import get_agent_settings, persona_prompt
+from ..model_monitor import record_model_service_event
 from .base import ModelProviderError
 
 
 SYSTEM_PROMPT = """你是 BossCopilot 的本地求职 Agent，使用中文回答。
-岗位事实只能来自用户本轮粘贴的 JD 或用户主动上传岗位截图的解析文本，禁止编造岗位、公司、招聘者或执行结果。
+不要编造岗位、公司、招聘者、候选人经历、来源或执行结果；清楚区分用户提供的信息、工具返回的信息和一般性建议。
 
-工具与安全边界：
-1. 用户本人负责在招聘平台中登录、浏览、沟通和投递。你不得访问、读取、控制招聘网站，也不得尝试自动搜索、刷新、翻页、填写、发送或提交。
-2. 对话是开放式沟通，不要求用户预先提供 JD。只有当用户明确要求岗位匹配、定制简历、面试准备等依赖具体岗位的结果，且当前上下文缺少岗位信息时，才自然询问用户粘贴 JD 或上传自己保存的岗位截图。系统不维护本地职位库，不得声称已经导入岗位。
-3. 用户要求分析岗位匹配度或简历差距时，调用 analyze_resume_against_jd。job_description 必须忠实复制用户提供的 JD，不得补写或猜测要求。
+能力与执行原则：
+1. 对话覆盖完整求职流程，不把招聘网站访问、岗位搜索、沟通、投递或文件生成视为预先禁止的产品范围。需要执行动作时，只能使用本轮实际提供并允许的工具；缺少对应工具时，直接说明当前连接或能力缺失，并给出可行的接入或手动方案。
+2. 对话不要求用户预先提供 JD。只有当用户明确要求岗位匹配、定制简历、面试准备等依赖具体岗位的结果，且当前上下文和工具结果都缺少岗位信息时，才自然询问用户补充 JD、截图、链接或其他可用来源。
+3. 用户要求分析岗位匹配度或简历差距时，调用 analyze_resume_against_jd。job_description 必须忠实使用当前上下文或可信工具提供的 JD，不得补写或猜测要求。
 4. 用户询问自己的优势、短板、竞争力、技能、经历、项目、职业方向或简历问题时，优先调用 search_resume_evidence 读取本地脱敏简历，不要重复要求用户粘贴系统中已经保存的简历。需要证明候选人具备某项能力时也调用该工具。没有检索到证据时必须明确说证据不足，不得夸大经历。
-5. 用户要求生成、改写或定制高匹配简历时，调用 generate_tailored_resume_content，并根据工具返回的简历原文和生成要求输出完整、可直接复制的简历文本；不得生成或声称生成 DOCX、PDF 或下载文件。
+5. 用户要求生成、改写或定制高匹配简历时，调用 generate_tailored_resume_content，并根据工具返回的简历原文和生成要求输出完整、可直接复制的简历文本。只有实际文件工具成功返回文件时，才能声称生成了 DOCX、PDF 或下载文件。
 6. 用户要求准备岗位面试时，调用 generate_interview_advice，并根据工具结果输出个人化建议。没有用户提供的公司公开资料或公司研究工具时，不得把模型记忆描述成实时公司研究。
-7. 当前没有岗位收藏、排序、草稿保存、投递队列、进度写入或任何外部发送工具，不得声称执行了这些操作。
+7. 只有工具成功执行后，才能声称完成收藏、排序、保存、状态更新、外部发送、沟通或投递。涉及账号、对外发送和提交的工具应遵循其确认要求；不得规避验证码、安全验证或平台风控。
 
 如果工具返回 waiting_approval、blocked 或 failed，解释阻塞原因和下一步，不要重复调用同一失败工具。
 执行过程、工具选择和“我先读取/我将检查”等过程叙述会由界面单独展示。最终回答只输出对用户有用的结论、问题或下一步，禁止在最终回答中重复执行过程。
@@ -65,44 +67,34 @@ class OpenAICompatibleProvider:
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         arguments = self._request_arguments(request)
+        started_at = perf_counter()
 
         try:
             response = await self._client.chat.completions.create(**arguments)
-        except AuthenticationError as exc:
-            raise ModelProviderError(
-                "authentication_failed",
-                "模型服务认证失败，请检查 API Key 是否有效",
-            ) from exc
-        except RateLimitError as exc:
-            raise ModelProviderError(
-                "rate_limited",
-                "模型服务触发限流，请稍后重试",
-                retryable=True,
-            ) from exc
-        except APITimeoutError as exc:
-            raise ModelProviderError(
-                "request_timeout",
-                "模型服务响应超时，请稍后重试",
-                retryable=True,
-            ) from exc
-        except APIConnectionError as exc:
-            raise ModelProviderError(
-                "service_unavailable",
-                "无法连接模型服务，请检查网关地址或网络状态",
-                retryable=True,
-            ) from exc
-        except APIStatusError as exc:
-            raise ModelProviderError(
-                "provider_error",
-                f"模型服务返回异常状态（{exc.status_code}）",
-                retryable=exc.status_code >= 500,
-            ) from exc
+        except (
+            AuthenticationError,
+            RateLimitError,
+            APITimeoutError,
+            APIConnectionError,
+            APIStatusError,
+        ) as exc:
+            error = self._provider_error(exc)
+            self._record_event("generate", started_at, error=error)
+            raise error from exc
 
-        return self._response_from_completion(response)
+        result = self._response_from_completion(response)
+        self._record_event(
+            "generate",
+            started_at,
+            total_tokens=result.usage.total_tokens if result.usage else 0,
+            response_id=result.provider_metadata.get("response_id", ""),
+        )
+        return result
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
         arguments = self._request_arguments(request)
         arguments["stream"] = True
+        started_at = perf_counter()
         content_parts: list[str] = []
         tool_parts: dict[int, dict[str, str]] = {}
         usage = None
@@ -142,35 +134,16 @@ class OpenAICompatibleProvider:
                             part["name"] += call.function.name
                         if call.function.arguments:
                             part["arguments"] += call.function.arguments
-        except AuthenticationError as exc:
-            raise ModelProviderError(
-                "authentication_failed",
-                "模型服务认证失败，请检查 API Key 是否有效",
-            ) from exc
-        except RateLimitError as exc:
-            raise ModelProviderError(
-                "rate_limited",
-                "模型服务触发限流，请稍后重试",
-                retryable=True,
-            ) from exc
-        except APITimeoutError as exc:
-            raise ModelProviderError(
-                "request_timeout",
-                "模型服务响应超时，请稍后重试",
-                retryable=True,
-            ) from exc
-        except APIConnectionError as exc:
-            raise ModelProviderError(
-                "service_unavailable",
-                "无法连接模型服务，请检查网关地址或网络状态",
-                retryable=True,
-            ) from exc
-        except APIStatusError as exc:
-            raise ModelProviderError(
-                "provider_error",
-                f"模型服务返回异常状态（{exc.status_code}）",
-                retryable=exc.status_code >= 500,
-            ) from exc
+        except (
+            AuthenticationError,
+            RateLimitError,
+            APITimeoutError,
+            APIConnectionError,
+            APIStatusError,
+        ) as exc:
+            error = self._provider_error(exc)
+            self._record_event("stream", started_at, error=error)
+            raise error from exc
         finally:
             if stream is not None:
                 close = getattr(stream, "close", None)
@@ -194,6 +167,12 @@ class OpenAICompatibleProvider:
                     arguments=parsed_arguments,
                 )
             )
+        self._record_event(
+            "stream",
+            started_at,
+            total_tokens=usage.total_tokens if usage else 0,
+            response_id=response_id,
+        )
         yield ModelStreamEvent(
             type="completed",
             response=ModelResponse(
@@ -208,6 +187,106 @@ class OpenAICompatibleProvider:
                 },
             ),
         )
+
+    async def check_connection(self) -> None:
+        """Run a small real inference so the monitor verifies more than HTTP reachability."""
+        started_at = perf_counter()
+        try:
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                messages=[{"role": "user", "content": "仅回复 OK"}],
+            )
+        except (
+            AuthenticationError,
+            RateLimitError,
+            APITimeoutError,
+            APIConnectionError,
+            APIStatusError,
+        ) as exc:
+            error = self._provider_error(exc)
+            self._record_event("health_check", started_at, error=error)
+            raise error from exc
+        usage = getattr(response, "usage", None)
+        total_tokens = usage.total_tokens if usage is not None else 0
+        self._record_event("health_check", started_at, total_tokens=total_tokens)
+
+    async def list_models(self) -> list[str]:
+        """Return model IDs exposed by an OpenAI-compatible /v1/models endpoint."""
+        try:
+            page = await self._client.models.list()
+        except (
+            AuthenticationError,
+            RateLimitError,
+            APITimeoutError,
+            APIConnectionError,
+            APIStatusError,
+        ) as exc:
+            raise self._provider_error(exc) from exc
+        return sorted(
+            {
+                str(item.id).strip()
+                for item in page.data
+                if getattr(item, "id", None) and str(item.id).strip()
+            }
+        )
+
+    @staticmethod
+    def _provider_error(exc: Exception) -> ModelProviderError:
+        if isinstance(exc, AuthenticationError):
+            return ModelProviderError(
+                "authentication_failed",
+                "模型服务认证失败，请检查 API Key 是否有效",
+            )
+        if isinstance(exc, RateLimitError):
+            return ModelProviderError(
+                "rate_limited",
+                "模型服务触发限流，请稍后重试",
+                retryable=True,
+            )
+        if isinstance(exc, APITimeoutError):
+            return ModelProviderError(
+                "request_timeout",
+                "模型服务响应超时，请稍后重试",
+                retryable=True,
+            )
+        if isinstance(exc, APIConnectionError):
+            return ModelProviderError(
+                "service_unavailable",
+                "无法连接模型服务，请检查网关地址或网络状态",
+                retryable=True,
+            )
+        if isinstance(exc, APIStatusError):
+            return ModelProviderError(
+                "provider_error",
+                f"模型服务返回异常状态（{exc.status_code}）",
+                retryable=exc.status_code >= 500,
+            )
+        return ModelProviderError("provider_error", "模型服务发生未知异常")
+
+    def _record_event(
+        self,
+        request_kind: str,
+        started_at: float,
+        *,
+        error: ModelProviderError | None = None,
+        total_tokens: int = 0,
+        response_id: str = "",
+    ) -> None:
+        try:
+            record_model_service_event(
+                request_kind=request_kind,
+                status="error" if error else "success",
+                error_code=error.code if error else "",
+                error_message=str(error) if error else "",
+                latency_ms=round((perf_counter() - started_at) * 1000),
+                total_tokens=total_tokens,
+                model_name=self._model,
+                base_url=self._base_url,
+                response_id=response_id,
+            )
+        except Exception:
+            # Monitoring is best-effort and must never break a successful model call.
+            pass
 
     def _request_arguments(self, request: ModelRequest) -> dict[str, Any]:
         settings = get_agent_settings()

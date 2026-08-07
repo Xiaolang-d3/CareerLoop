@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from typing import Any
 
 from ag_ui.core import (
@@ -39,7 +40,12 @@ from .conversations import (
     ensure_active_task,
     maybe_title_from_first_message,
 )
-from .db import connect, init_db, json_dump, row_to_dict, rows_to_dicts
+from .db import connect, json_dump, row_to_dict, rows_to_dicts
+from .database_lifecycle import (
+    database_status,
+    initialize_or_report,
+    rebuild_database_v2,
+)
 from .domain import AgentRunResult, ToolError, ToolEvent
 from .services.chat import (
     agent_history as _agent_history,
@@ -53,15 +59,28 @@ from .services.chat import (
     workflow_summary as _workflow_summary,
 )
 from .workflow.engine import refresh_workflow_status
+from .opportunity_runs import (
+    create_discovery_run,
+    execute_discovery_run,
+    interrupt_active_runs,
+    startup_scan_source_ids,
+)
+from .job_evaluations import interrupt_active_evaluations
 
 
-app = FastAPI(title="BossCopilot API", version="0.1.0")
+app = FastAPI(title="BossCopilot API", version="2.0.0")
 
 _active_chat_runs: dict[int, asyncio.Task[None]] = {}
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_origins=[
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+        "http://127.0.0.1:4173",
+        "http://localhost:4173",
+    ],
+    allow_origin_regex=r"chrome-extension://[a-z]{32}",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -72,12 +91,41 @@ app.include_router(resources_router)
 
 @app.on_event("startup")
 def startup() -> None:
-    init_db()
+    state = initialize_or_report()
+    if state["status"] != "ready":
+        return
+    interrupt_active_runs()
+    interrupt_active_evaluations()
+    # Only previously verified and explicitly followed public sources are
+    # rechecked. Startup never performs broad company discovery.
+    source_ids = startup_scan_source_ids()
+    if not source_ids:
+        return
+    run = create_discovery_run("scan", trigger="startup", config={"source_ids": source_ids})
+    threading.Thread(
+        target=execute_discovery_run,
+        args=(int(run["id"]),),
+        daemon=True,
+        name="career-source-startup-scan",
+    ).start()
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/system/database-status")
+def get_database_status() -> dict[str, Any]:
+    return database_status()
+
+
+@app.post("/system/database-rebuild")
+def rebuild_database(payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return rebuild_database_v2(str(payload.get("confirmation") or ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/chat/messages")
@@ -260,18 +308,10 @@ async def _stream_chat_message_response(
             agent_input = payload.content
             if attachment_context:
                 agent_input += f"\n\n以下为用户主动上传附件的本地解析文本，请基于此内容回答：\n{attachment_context}"
-            text = payload.content.lower()
-            if ("boss" in text or "直聘" in text) and ("打开" in text or "登录" in text):
-                workflow = refresh_workflow_status(conversation_id)
-                assistant_text = "请点击页面中的“打开 BOSS”，由你在普通浏览器标签页完成登录和搜索；系统不会自动控制或刷新 BOSS 页面。"
-                result = _local_answer_result(
-                    assistant_text,
-                    "已识别为外部平台操作请求；根据安全边界，不调用自动化工具，交由用户本人操作",
-                    "external_handoff",
-                )
-                await queue.put(("text_reset", {}))
-                await queue.put(("text_delta", {"delta": assistant_text}))
-            elif _is_workflow_status_query(payload.content):
+            # Profile interview intent is no longer keyword-matched here: the
+            # interview is exposed as tools (start/record/pause) and the model
+            # decides, with an active session admitted via stored state.
+            if _is_workflow_status_query(payload.content):
                 workflow = refresh_workflow_status(conversation_id)
                 assistant_text = _workflow_summary(workflow)
                 result = _local_answer_result(
@@ -315,8 +355,6 @@ async def _stream_chat_message_response(
                         )
                     elif stream_event.type in {"completed", "error"}:
                         result = stream_event.result
-                    elif stream_event.type == "waiting_user":
-                        await queue.put(("waiting_user", {}))
                 if result is None:
                     raise RuntimeError("Agent 流已结束，但没有返回结果")
 

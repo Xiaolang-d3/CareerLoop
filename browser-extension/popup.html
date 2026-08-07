@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BossCopilot Browser</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="popup-shell">
+      <header>
+        <span class="mark">B</span>
+        <div><strong>BossCopilot</strong><small>浏览器岗位助手</small></div>
+        <span id="status-dot" class="status-dot checking" title="正在检查" aria-label="正在检查"></span>
+      </header>
+      <section class="page-card" aria-live="polite">
+        <span id="platform">正在检查当前页面…</span>
+        <strong id="page-title">请稍候</strong>
+        <small id="page-url">仅支持当前激活标签页</small>
+      </section>
+      <p id="message" class="message">扩展只读取你当前可见的岗位内容，不会执行页面操作。</p>
+      <button id="read-button" class="read-button" type="button" disabled>读取当前岗位</button>
+      <details class="service-settings">
+        <summary>服务连接设置</summary>
+        <label for="api-base">BossCopilot API 地址</label>
+        <div><input id="api-base" type="url" inputmode="url" placeholder="http://127.0.0.1:8000" /><button id="save-api" type="button">保存</button></div>
+        <small id="api-status">默认连接本机 `127.0.0.1:8000`。</small>
+      </details>
+      <footer>读取后将进入岗位收件箱，并自动进行本地初筛。</footer>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

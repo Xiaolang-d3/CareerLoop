@@ -21,8 +21,8 @@ class AnalyzeResumeAgainstJdTool:
     definition = ToolDefinition(
         name="analyze_resume_against_jd",
         description=(
-            "将用户本轮粘贴或上传截图得到的 BOSS 岗位 JD 与当前脱敏简历进行对比，"
-            "返回技能命中、缺口、简历证据、可信度和分析限制；不会保存或查询本地职位库"
+            "将当前上下文中的岗位 JD 与当前脱敏简历进行对比，"
+            "返回技能命中、缺口、简历证据、可信度和分析限制"
         ),
         input_schema=AnalyzeResumeAgainstJdArguments.model_json_schema(),
     )
@@ -63,7 +63,7 @@ class AnalyzeResumeAgainstJdTool:
                 "job_context": {
                     "title": payload.job_title,
                     "company": payload.company,
-                    "source": "user_provided_boss_jd",
+                    "source": "conversation_job_description",
                     "character_count": len(payload.job_description),
                 },
                 "analysis": gap,
@@ -73,5 +73,5 @@ class AnalyzeResumeAgainstJdTool:
                 },
                 "persistence": "not_saved_as_job",
             },
-            message="已将用户提供的 BOSS JD 与当前脱敏简历完成对比",
+            message="已将当前岗位 JD 与当前脱敏简历完成对比",
         )
