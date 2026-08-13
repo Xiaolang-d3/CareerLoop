@@ -5,7 +5,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .db import connect, row_to_dict
-from .interview_workflow import add_job_event
+from .interview.workflow import add_job_event
 
 
 JOB_FIELDS = (

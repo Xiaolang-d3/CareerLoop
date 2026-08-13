@@ -4,7 +4,7 @@ from pathlib import Path
 
 from app.candidate_core import create_or_update_profile
 from app.db import init_db
-from app.interview_preparation import (
+from app.interview.preparation import (
     add_interview_preparation_record,
     analyze_interview_preparation_jd,
     give_interview_preparation_feedback,
@@ -14,7 +14,7 @@ from app.interview_preparation import (
     start_interview_preparation_resume_analysis,
     update_interview_preparation_node,
 )
-import app.interview_preparation as interview_preparation
+import app.interview.preparation as interview_preparation
 from app import profile_document
 
 

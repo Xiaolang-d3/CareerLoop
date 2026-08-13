@@ -3,7 +3,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from app.db import connect, init_db, json_dump
-from app.interview_workflow import (
+from app.interview.workflow import (
     add_job_event,
     create_interview_kit,
     create_interview_round,

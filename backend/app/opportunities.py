@@ -13,7 +13,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 from .config import Settings, get_settings
 from .db import connect, json_dump, row_to_dict, rows_to_dicts
 from .jobs import create_job
-from .interview_workflow import add_job_event
+from .interview.workflow import add_job_event
 from .job_browser_capture import canonical_job_url, validate_browser_job_capture
 from .research.web import AgentSearchClient, WebResearchError, is_public_source_url
 

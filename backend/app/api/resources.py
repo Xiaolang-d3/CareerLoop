@@ -123,7 +123,7 @@ from ..job_evaluations import (
 )
 from ..observability.model_monitor import get_model_monitor_snapshot, record_model_service_event
 from ..models import ModelProviderError, OpenAICompatibleProvider
-from ..interview_workflow import (
+from ..interview.workflow import (
     add_job_event,
     create_interview_kit,
     create_interview_round,
@@ -137,7 +137,7 @@ from ..interview_workflow import (
     update_interview_round,
     update_interview_task,
 )
-from ..interview_preparation import (
+from ..interview.preparation import (
     add_interview_preparation_record,
     analyze_interview_preparation_jd,
     give_interview_preparation_feedback,

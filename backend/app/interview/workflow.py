@@ -4,9 +4,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from .db import connect, json_dump, row_to_dict
-from .job_evaluations import get_latest_completed_job_evaluation
-from .candidate_core import get_candidate_context, verify_candidate_material
+from ..db import connect, json_dump, row_to_dict
+from ..job_evaluations import get_latest_completed_job_evaluation
+from ..candidate_core import get_candidate_context, verify_candidate_material
 
 
 InterviewType = Literal["general", "hr", "business", "technical", "final"]
