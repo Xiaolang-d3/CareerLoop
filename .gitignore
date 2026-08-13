@@ -35,6 +35,9 @@ frontend/playwright-report/
 # Isolated feature worktrees
 .worktrees/
 
+# Playwright CLI local session artifacts
+.playwright-cli/
+
 # Impeccable local runtime state
 .impeccable/config.local.json
 .impeccable/hook.cache.json
