@@ -318,7 +318,7 @@ flowchart TB
 - `backend/app/auth.py`：本地管理员口令认证与会话校验。
 - `backend/app/services/`：聊天和候选人画像服务。
 - `backend/app/attachments.py`：附件验证、存储、解析和删除。
-- `backend/app/knowledge.py`：简历知识分块、索引和检索。
+- `backend/app/knowledge/`：简历知识分块、索引和检索。
 - `backend/app/workflow/engine.py`：工作台状态投影。
 
 ### 6.3 数据持久化

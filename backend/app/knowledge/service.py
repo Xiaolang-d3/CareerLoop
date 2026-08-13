@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .db import connect, json_dump, row_to_dict
+from ..db import connect, json_dump, row_to_dict
 
 
 EMBEDDING_DIMENSIONS = 256
