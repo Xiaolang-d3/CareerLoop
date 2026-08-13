@@ -49,7 +49,7 @@ from .auth import (
     current_user,
     public_auth_config,
 )
-from .conversations import (
+from .chat.conversations import (
     end_active_task,
     ensure_active_task,
     maybe_title_from_first_message,
@@ -61,7 +61,7 @@ from .database_lifecycle import (
     rebuild_database_v2,
 )
 from .domain import AgentRunResult, ToolError, ToolEvent
-from .services.chat import (
+from .chat.service import (
     agent_history as _agent_history,
     attachment_context as _attachment_context,
     default_conversation_id as _default_conversation_id,

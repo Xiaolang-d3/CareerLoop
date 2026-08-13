@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app.conversations import (
+from app.chat.conversations import (
     create_conversation,
     end_active_task,
     ensure_active_task,

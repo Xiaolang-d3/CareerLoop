@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from app import db
 import app.main as main_module
 import app.api.resources as resources_module
-from app.conversations import create_conversation, ensure_active_task
+from app.chat.conversations import create_conversation, ensure_active_task
 from app.domain import AgentRunResult, AgentStreamEvent, ToolError
 from app.jobs import create_job
 from app.main import (

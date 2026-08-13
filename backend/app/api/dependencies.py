@@ -4,7 +4,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from ..conversations import get_conversation
+from ..chat.conversations import get_conversation
 
 
 def require_conversation(conversation_id: int) -> dict[str, Any]:

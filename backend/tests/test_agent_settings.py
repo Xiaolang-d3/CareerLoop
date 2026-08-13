@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from app.agent.settings import get_agent_settings, persona_prompt, save_agent_settings
-from app.conversations import create_conversation, ensure_active_task, reset_conversation_context
+from app.chat.conversations import create_conversation, ensure_active_task, reset_conversation_context
 from app.db import connect, init_db
 
 

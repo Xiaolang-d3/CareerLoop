@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .db import connect, row_to_dict, rows_to_dicts
+from ..db import connect, row_to_dict, rows_to_dicts
 
 
 def list_conversations(db_path: str | Path | None = None) -> list[dict]:

@@ -25,7 +25,7 @@ from ..attachments.service import (
     parse_attachment,
 )
 from ..config import get_settings
-from ..conversations import (
+from ..chat.conversations import (
     create_conversation,
     delete_conversation,
     list_conversations,

@@ -6,9 +6,9 @@ from pathlib import Path
 
 from app import db
 from app.agent.orchestration import ROUTE_LABELS, TOOL_POLICIES
-from app.conversations import create_conversation, ensure_active_task
+from app.chat.conversations import create_conversation, ensure_active_task
 from app.domain import AgentPlan, AgentPlanStep, AgentRunResult, ToolEvent
-from app.services.chat import save_stream_result
+from app.chat.service import save_stream_result
 from app.workflow.engine import refresh_workflow_status
 from app.workflow.stages import (
     LEGACY_COUNT_KEYS,
