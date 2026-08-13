@@ -1,0 +1,70 @@
+import type { AppRoute } from "./routing";
+
+export type RouteDataKey =
+  | "attachmentConfig"
+  | "agentOperations"
+  | "agentSettings"
+  | "candidateProfile"
+  | "capabilities"
+  | "conversations"
+  | "interviewPreparation"
+  | "jobs"
+  | "modelMonitor"
+  | "workflow";
+
+export function requiredDataForRoute(route: AppRoute): RouteDataKey[] {
+  switch (route.section) {
+    case "chat":
+      return ["conversations", "capabilities", "attachmentConfig"];
+    case "dashboard":
+      return ["conversations", "jobs", "workflow"];
+    case "workbench":
+      return ["jobs", "candidateProfile", "workflow"];
+    case "settings":
+      if (route.page === "agent") return ["agentOperations"];
+      if (route.page === "model") return ["agentSettings", "modelMonitor"];
+      return ["candidateProfile"];
+    case "interview-prep":
+      return ["interviewPreparation"];
+    case "opportunities":
+      return [];
+  }
+}
+
+type RouteDataLoader = () => Promise<unknown>;
+
+/**
+ * Coalesce route requests and retain a brief in-memory snapshot. Navigation
+ * should feel instant when a person moves between workspaces they just
+ * visited, while mutations can still refresh their own data directly.
+ */
+export function createRouteDataCache<Key>(maxAgeMs: number, now = () => Date.now()) {
+  const inFlight = new Map<Key, Promise<unknown>>();
+  const completedAt = new Map<Key, number>();
+
+  function load(key: Key, loader: RouteDataLoader): Promise<unknown> {
+    const pending = inFlight.get(key);
+    if (pending) return pending;
+
+    const loadedAt = completedAt.get(key);
+    if (loadedAt !== undefined && now() - loadedAt < maxAgeMs) {
+      return Promise.resolve();
+    }
+
+    const request = loader();
+    inFlight.set(key, request);
+    void request.then(
+      () => completedAt.set(key, now()),
+      () => completedAt.delete(key)
+    ).finally(() => {
+      if (inFlight.get(key) === request) inFlight.delete(key);
+    });
+    return request;
+  }
+
+  function invalidate(...keys: Key[]) {
+    for (const key of keys) completedAt.delete(key);
+  }
+
+  return { load, invalidate };
+}

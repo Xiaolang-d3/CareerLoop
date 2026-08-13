@@ -1,298 +1,2315 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import type { AgentSubscriber, HttpAgent as HttpAgentType } from "@ag-ui/client";
+import { createApiClient } from "./api/client";
+import { AppErrorBoundary } from "./components/AppErrorBoundary";
+import { AuthGate } from "./components/AuthGate";
+import { AppSidebar } from "./components/AppSidebar";
+import { createClientId } from "./api/clientId";
+import { ConversationDialog, type ConversationDialogState } from "./components/ConversationDialog";
+import type { AgentRunResult, AttachmentConfig, ChatAttachment, ChatMessage, ChatRetryDraft } from "./components/ChatWorkspace";
+import { SectionHeader } from "./components/ui";
 import {
-  BriefcaseBusiness,
-  RefreshCw
+  bossHomeUrl,
+  defaultAgentSettings,
+  emptyCandidateEditor,
+  pageMeta
+} from "./constants";
+import { createPagePrefetcher } from "./page-prefetch";
+import { createRouteDataCache, requiredDataForRoute, type RouteDataKey } from "./route-data";
+import { useAsyncPolling } from "./hooks/useAsyncPolling";
+import { appRouteHash, initialAppRoute, parseAppHash, routeForSection, type AppRoute, type PreparationFocus, type PreparationPage } from "./routing";
+import type {
+  AgentCapabilities,
+  AgentOperationsSnapshot,
+  AgentSettings,
+  CandidateEditor,
+  CareerProfileBundle,
+  Conversation,
+  InterviewKit,
+  InterviewKitSummary,
+  InterviewPreparation,
+  InterviewRound,
+  InterviewType,
+  JobEvaluation,
+  JobEvent,
+  JobImportActivityEvent,
+  JobImportPreview,
+  JobProject,
+  JobProjectDraft,
+  ResumeChangeDecision,
+  ResumeProfileSuggestion,
+  ResumeTemplate,
+  ResumeVersion,
+  ResumeVersionSummary,
+  QuickMatchResult,
+  ModelServiceMonitor,
+  ViewKey,
+  WorkflowStatus
+} from "./types";
+import {
+  CheckCircle2,
+  Database,
+  LoaderCircle,
+  MessageCircle,
+  TriangleAlert,
+  X
 } from "lucide-react";
-import "./styles.css";
+import "./styles/foundations.css";
+// The authenticated shell must be available immediately after login. Loading
+// these styles through a lazy component kept the entire app behind a Suspense
+// fallback while the CSS chunk was fetched, leaving users on a blank loading
+// screen after their credentials had already been accepted.
+import "./AppStyles";
 
-type Job = {
-  id: number;
-  title: string;
-  company: string;
-  city: string;
-  district: string;
-  salary_text: string;
-  experience: string;
-  education: string;
-  description: string;
-  status: string;
-};
+const loadChatWorkspace = () => import("./components/ChatWorkspace");
+const loadWorkspaceViews = () => import("./components/WorkspaceViews");
+const loadSettingsWorkspace = () => import("./features/settings/SettingsWorkspace");
+const loadProfileSettingsPage = () => import("./features/settings/ProfileSettingsPage");
+const loadInterviewPreparationPage = () => import("./features/interview/InterviewPreparationPage");
+const ChatWorkspace = lazy(() => loadChatWorkspace().then((module) => ({
+  default: module.ChatWorkspace
+})));
 
-type Application = {
-  id: number;
-  job_id: number;
-  profile_id: number;
-  status: string;
-  notes: string;
-  job_title?: string;
-  company?: string;
-};
+const WorkbenchView = lazy(() => loadWorkspaceViews().then((module) => ({
+  default: module.WorkbenchView
+})));
 
-type BrowserStatus = {
-  running: boolean;
-  url: string;
-  title: string;
-  is_boss_page: boolean;
-  profile_dir: string;
-};
+const DashboardView = lazy(() => loadWorkspaceViews().then((module) => ({
+  default: module.DashboardView
+})));
 
-type WorkflowNode = {
-  id: string;
-  title: string;
-  status: "done" | "in_progress" | "pending" | "blocked";
-  detail: string;
-};
+const AgentOperationsDashboard = lazy(() => import("./features/settings/AgentOperationsDashboard").then((module) => ({
+  default: module.AgentOperationsDashboard
+})));
 
-type WorkflowStatus = {
-  run?: {
-    id: number;
-    status: string;
-    current_node: string;
-    updated_at: string;
-  };
-  status: string;
-  counts: {
-    profiles: number;
-    jobs: number;
-    applications: number;
-  };
-  nodes: WorkflowNode[];
-  events?: Array<{
-    id: number;
-    node_id: string;
-    event_type: string;
-    message: string;
-    created_at: string;
-  }>;
-};
+const SettingsWorkspace = lazy(() => loadSettingsWorkspace().then((module) => ({
+  default: module.SettingsWorkspace
+})));
 
-type ChatMessage = {
-  id: number;
-  role: "user" | "assistant";
-  content: string;
-  created_at: string;
-  payload?: {
-    workflow?: WorkflowStatus;
-  };
-};
+const SettingsOverview = lazy(() => loadSettingsWorkspace().then((module) => ({
+  default: module.SettingsOverview
+})));
 
-type ViewKey = "chat" | "applications" | "review";
+const ProfileSettingsPage = lazy(() => loadProfileSettingsPage().then((module) => ({
+  default: module.ProfileSettingsPage
+})));
 
-function App() {
-  const apiBase = useMemo(() => `${window.location.protocol}//${window.location.hostname}:8000`, []);
-  const [activeView, setActiveView] = useState<ViewKey>("chat");
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [applications, setApplications] = useState<Application[]>([]);
-  const [workflow, setWorkflow] = useState<WorkflowStatus | null>(null);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [chatInput, setChatInput] = useState("");
-  const [chatBusy, setChatBusy] = useState(false);
+const ModelSettingsPage = lazy(() => import("./features/settings/ModelSettingsPage").then((module) => ({
+  default: module.ModelSettingsPage
+})));
 
-  const appliedCount = applications.filter((item) => item.status === "applied").length;
-  const queuedCount = applications.filter((item) => item.status === "queued").length;
+const loadOpportunityDiscoveryPage = () => import("./features/opportunities/OpportunityDiscoveryPage");
+const OpportunityDiscoveryPage = lazy(() => loadOpportunityDiscoveryPage().then((module) => ({
+  default: module.OpportunityDiscoveryPage
+})));
 
-  async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
-    const response = await fetch(`${apiBase}${path}`, options);
-    if (!response.ok) {
-      throw new Error(`${path} failed`);
+const JobEvaluationPage = lazy(() => import("./features/jobs/JobEvaluationPage").then((module) => ({
+  default: module.JobEvaluationPage
+})));
+
+const InterviewPreparationPage = lazy(() => loadInterviewPreparationPage().then((module) => ({
+  default: module.InterviewPreparationPage
+})));
+
+const pagePrefetcher = createPagePrefetcher({
+  chat: loadChatWorkspace,
+  profile: () => Promise.all([loadSettingsWorkspace(), loadProfileSettingsPage()]),
+  projects: loadInterviewPreparationPage,
+  knowledge: loadInterviewPreparationPage,
+  records: loadInterviewPreparationPage,
+  workbench: loadWorkspaceViews,
+  opportunities: loadOpportunityDiscoveryPage,
+  dashboard: loadWorkspaceViews,
+  settings: loadSettingsWorkspace
+});
+
+function PageLoading({ label }: { label: string }) {
+  return (
+    <div className="page-loading" role="status" aria-live="polite">
+      <div className="page-loading-copy">
+        <LoaderCircle className="spinning" size={18} />
+        <span>{label}</span>
+      </div>
+      <div className="page-loading-skeleton" aria-hidden="true">
+        <i /><i /><i />
+      </div>
+    </div>
+  );
+}
+
+function resolveApiBase() {
+  // Development uses Vite's /api proxy. The built SPA is served by FastAPI,
+  // so production and HTTPS-tunnel traffic use this exact same origin.
+  return import.meta.env.DEV ? "/api" : window.location.origin;
+}
+
+// One-time migration of pre-rebrand localStorage keys.
+for (const key of ["sidebar", "view"]) {
+  const legacy = window.localStorage.getItem(`bosscopilot-${key}`);
+  if (legacy !== null) {
+    if (window.localStorage.getItem(`careerloop-${key}`) === null) {
+      window.localStorage.setItem(`careerloop-${key}`, legacy);
     }
-    return response.json() as Promise<T>;
+    window.localStorage.removeItem(`bosscopilot-${key}`);
+  }
+}
+
+function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => void }) {
+  const apiBase = useMemo(() => resolveApiBase(), []);
+  const fetchJson = useMemo(() => createApiClient(apiBase, accessToken), [apiBase, accessToken]);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem("careerloop-sidebar") === "collapsed");
+  const [appRoute, setAppRoute] = useState<AppRoute>(() => initialAppRoute(
+    window.location.hash,
+    window.localStorage.getItem("careerloop-view")
+  ));
+  const activeView: ViewKey = appRoute.section;
+  const [workflow, setWorkflow] = useState<WorkflowStatus | null>(null);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [jobs, setJobs] = useState<JobProject[]>([]);
+  const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
+  const [jobBusy, setJobBusy] = useState(false);
+  const [jobImportBusy, setJobImportBusy] = useState(false);
+  const [jobImportActivity, setJobImportActivity] = useState<JobImportActivityEvent[]>([]);
+  const [jobEvaluation, setJobEvaluation] = useState<JobEvaluation | null>(null);
+  const [jobEvaluationBusy, setJobEvaluationBusy] = useState(false);
+  const [resumeVersions, setResumeVersions] = useState<ResumeVersionSummary[]>([]);
+  const [resumeVersion, setResumeVersion] = useState<ResumeVersion | null>(null);
+  const [resumeVersionBusy, setResumeVersionBusy] = useState(false);
+  const [interviewKits, setInterviewKits] = useState<InterviewKitSummary[]>([]);
+  const [interviewKit, setInterviewKit] = useState<InterviewKit | null>(null);
+  const [interviewRounds, setInterviewRounds] = useState<InterviewRound[]>([]);
+  const [interviewPreparation, setInterviewPreparation] = useState<InterviewPreparation | null>(null);
+  const [interviewPreparationBusy, setInterviewPreparationBusy] = useState(false);
+  const [autoAnalysisAttemptedRevision, setAutoAnalysisAttemptedRevision] = useState<number | null>(null);
+  const [jobTimeline, setJobTimeline] = useState<JobEvent[]>([]);
+  const [interviewBusy, setInterviewBusy] = useState(false);
+  const [currentConversationId, setCurrentConversationId] = useState<number | null>(null);
+  const currentConversationIdRef = useRef<number | null>(null);
+  const [conversationBusy, setConversationBusy] = useState(false);
+  const [conversationDialog, setConversationDialog] = useState<ConversationDialogState | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [visibleMessageCount, setVisibleMessageCount] = useState(12);
+  const [chatBusy, setChatBusy] = useState(false);
+  const [retryChatDraft, setRetryChatDraft] = useState<ChatRetryDraft | null>(null);
+  const chatAgentRef = useRef<HttpAgentType | null>(null);
+  const [taskCancelBusy, setTaskCancelBusy] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [noticeMessage, setNoticeMessage] = useState("");
+  const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
+  const [attachmentConfig, setAttachmentConfig] = useState<AttachmentConfig | null>(null);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const [candidateEditor, setCandidateEditor] = useState(emptyCandidateEditor);
+  const [confirmedCareerFactCount, setConfirmedCareerFactCount] = useState(0);
+  const [candidateProfileLoaded, setCandidateProfileLoaded] = useState(false);
+  const [candidateProfileBusy, setCandidateProfileBusy] = useState(false);
+  const [resumeParseBusy, setResumeParseBusy] = useState(false);
+  const [chatAttachmentBusy, setChatAttachmentBusy] = useState(false);
+  const [enhancedResumeParse, setEnhancedResumeParse] = useState(false);
+  const [privacyFindings, setPrivacyFindings] = useState<Array<{ entity_type: string; preview: string }>>([]);
+  const [resumeProfileSuggestion, setResumeProfileSuggestion] = useState<ResumeProfileSuggestion | null>(null);
+  const [agentSettings, setAgentSettings] = useState<AgentSettings>(defaultAgentSettings);
+  const [savedAgentSettings, setSavedAgentSettings] = useState<AgentSettings>(defaultAgentSettings);
+  const [agentSettingsBusy, setAgentSettingsBusy] = useState(false);
+  const [modelSettingsEditing, setModelSettingsEditing] = useState(false);
+  const [modelMonitor, setModelMonitor] = useState<ModelServiceMonitor | null>(null);
+  const [modelMonitorBusy, setModelMonitorBusy] = useState(false);
+  const [agentOperations, setAgentOperations] = useState<AgentOperationsSnapshot | null>(null);
+  const [agentOperationsDays, setAgentOperationsDays] = useState<7 | 30 | 90>(7);
+  const [agentOperationsBusy, setAgentOperationsBusy] = useState(false);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [modelDiscoveryBusy, setModelDiscoveryBusy] = useState(false);
+  const [modelDiscoveryError, setModelDiscoveryError] = useState("");
+  const [databaseReady, setDatabaseReady] = useState(false);
+  const databaseInitializationRef = useRef<Promise<void> | null>(null);
+  const modelDiscoveryKeyRef = useRef("");
+  const routeDataCacheRef = useRef(createRouteDataCache<RouteDataKey>(30_000));
+  const currentConversation = conversations.find((item) => item.id === currentConversationId) ?? null;
+
+  function navigateRoute(route: AppRoute, replace = false) {
+    const nextHash = appRouteHash(route);
+    setAppRoute(route);
+    if (replace) {
+      window.history.replaceState(null, "", nextHash);
+    } else if (window.location.hash !== nextHash) {
+      window.location.hash = nextHash;
+    }
   }
 
-  async function refreshData() {
-    const [nextJobs, nextApplications, nextWorkflow] = await Promise.all([
-      fetchJson<Job[]>("/jobs"),
-      fetchJson<Application[]>("/applications"),
-      fetchJson<WorkflowStatus>("/workflow/status")
-    ]);
-    setJobs(nextJobs);
-    setApplications(nextApplications);
-    setWorkflow(nextWorkflow);
+  function setActiveView(view: ViewKey) {
+    navigateRoute(routeForSection(view));
   }
 
-  async function refreshChat() {
-    const nextMessages = await fetchJson<ChatMessage[]>("/chat/messages");
-    setChatMessages(nextMessages);
-  }
+  useEffect(() => {
+    const canonicalHash = appRouteHash(initialAppRoute(
+      window.location.hash,
+      window.localStorage.getItem("careerloop-view")
+    ));
+    if (window.location.hash !== canonicalHash) {
+      window.history.replaceState(null, "", canonicalHash);
+    }
+    function syncRoute() {
+      const next = parseAppHash(window.location.hash);
+      if (next) setAppRoute(next);
+      else navigateRoute({ section: "workbench", page: "index" }, true);
+    }
+    window.addEventListener("hashchange", syncRoute);
+    return () => window.removeEventListener("hashchange", syncRoute);
+  }, []);
 
-  async function sendChatMessage() {
-    const content = chatInput.trim();
-    if (!content) {
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      pagePrefetcher.prefetchWhenIdle(
+        // Hover and keyboard focus already prefetch the destination page. On a
+        // cold mobile connection, eagerly fetching every workspace competes
+        // with the critical shell, styles, and authentication requests.
+        ["chat"],
+        (callback) => window.setTimeout(callback, 0)
+      );
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (appRoute.section !== "workbench") return;
+    if (["detail", "evaluation", "evaluation_section", "evaluation_deep"].includes(appRoute.page || "") && appRoute.jobId) {
+      setSelectedJobId(appRoute.jobId);
       return;
     }
-    setChatBusy(true);
-    setChatInput("");
+    setSelectedJobId(null);
+  }, [appRoute]);
+
+  useEffect(() => {
+    if (appRoute.section !== "chat" || !currentConversationId || !conversations.length) return;
+    const requestedConversationId = appRoute.conversationId;
+    if (requestedConversationId && conversations.some((item) => item.id === requestedConversationId)) {
+      if (requestedConversationId !== currentConversationId) setCurrentConversationId(requestedConversationId);
+      return;
+    }
+    if (requestedConversationId !== currentConversationId) {
+      navigateRoute({ section: "chat", conversationId: currentConversationId }, true);
+    }
+  }, [appRoute, conversations, currentConversationId]);
+
+  useEffect(() => {
+    currentConversationIdRef.current = currentConversationId;
+  }, [currentConversationId]);
+
+  useEffect(() => {
+    window.localStorage.setItem("careerloop-view", activeView);
+  }, [activeView]);
+
+  useEffect(() => {
+    if (!noticeMessage) return;
+    const timer = window.setTimeout(() => setNoticeMessage(""), 2600);
+    return () => window.clearTimeout(timer);
+  }, [noticeMessage]);
+
+  useEffect(() => {
+    function focusComposer(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const isTyping = target?.matches("input, textarea, select, [contenteditable='true']");
+      if (event.key === "/" && !isTyping && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        setActiveView("chat");
+        window.setTimeout(() => chatInputRef.current?.focus(), 0);
+      }
+    }
+    window.addEventListener("keydown", focusComposer);
+    return () => window.removeEventListener("keydown", focusComposer);
+  }, []);
+
+  function toggleSidebar() {
+    setSidebarCollapsed((current) => {
+      const next = !current;
+      window.localStorage.setItem("careerloop-sidebar", next ? "collapsed" : "expanded");
+      return next;
+    });
+  }
+
+  const hasProfile = (workflow?.counts.profiles ?? 0) > 0;
+  const hasSavedResume = Boolean(candidateEditor.resumeText.trim() || candidateEditor.resumeRedactedText.trim());
+  const workbenchProfileReady = hasProfile && confirmedCareerFactCount > 0;
+  const hiddenMessageCount = Math.max(0, chatMessages.length - visibleMessageCount);
+  const visibleChatMessages = chatMessages.slice(-visibleMessageCount);
+  const latestAgent = [...chatMessages]
+    .reverse()
+    .find((message) => message.role === "assistant" && message.payload?.agent)?.payload?.agent;
+  const waitingForUser = latestAgent?.status === "waiting_user";
+  const nextStep = !hasProfile
+    ? { title: "先建立职业画像", detail: "导入简历或填写关键经历，让岗位判断和面试准备真正贴合你。", action: "创建个人资料", kind: "settings" as const }
+    : !workbenchProfileReady
+      ? { title: "确认候选人事实", detail: "待确认知识不会参与岗位评分；请先在画像中心核对证据。", action: "审核画像", kind: "settings" as const }
+      : { title: "对照一份目标岗位", detail: "粘贴岗位描述、提交公开链接或上传截图，开始匹配分析。", action: "开始分析", kind: "workbench" as const };
+
+  async function refreshData(conversationId = currentConversationId) {
     try {
-      const response = await fetchJson<{
-        assistant_message: ChatMessage;
-        workflow: WorkflowStatus;
-      }>("/chat/messages", {
+      const nextWorkflow = await fetchJson<WorkflowStatus>(`/workflow/status${conversationId ? `?conversation_id=${conversationId}` : ""}`);
+      setWorkflow(nextWorkflow);
+      setErrorMessage("");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "数据刷新失败");
+    }
+  }
+
+  async function refreshChat(conversationId = currentConversationId) {
+    if (!conversationId) return;
+    setChatMessages(await fetchJson<ChatMessage[]>(`/chat/messages?conversation_id=${conversationId}`));
+  }
+
+  async function refreshConversations() {
+    const next = await fetchJson<Conversation[]>("/conversations");
+    setConversations(next);
+    return next;
+  }
+
+  async function refreshJobs() {
+    const next = await fetchJson<JobProject[]>("/jobs");
+    setJobs(next);
+    setSelectedJobId((current) => (
+      current && next.some((job) => job.id === current)
+        ? current
+        : null
+    ));
+    return next;
+  }
+
+  async function refreshInterviewPreparation() {
+    setInterviewPreparationBusy(true);
+    try {
+      const next = await fetchJson<InterviewPreparation>("/interview-preparation");
+      setInterviewPreparation(next);
+      return next;
+    } finally {
+      setInterviewPreparationBusy(false);
+    }
+  }
+
+  async function createJobComparison(evaluationIds: number[]): Promise<number> {
+    setJobEvaluationBusy(true);
+    setErrorMessage("");
+    try {
+      const comparison = await fetchJson<{ id: number }>("/job-comparisons", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ evaluation_ids: evaluationIds })
+      });
+      navigateRoute({ section: "workbench", page: "comparison", comparisonId: comparison.id });
+      return comparison.id;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "岗位比较失败");
+      throw error;
+    } finally {
+      setJobEvaluationBusy(false);
+    }
+  }
+
+  async function runQuickMatch(payload: {
+    job_description: string;
+    job_title?: string;
+    company_name?: string;
+  }): Promise<QuickMatchResult> {
+    return fetchJson<QuickMatchResult>("/quick-match", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+  }
+
+  async function refreshResumeVersions(
+    jobId: number,
+    preferredVersionId?: number
+  ): Promise<ResumeVersionSummary[]> {
+    const versions = await fetchJson<ResumeVersionSummary[]>(
+      `/jobs/${jobId}/resume-versions`
+    );
+    setResumeVersions(versions);
+    const versionId = preferredVersionId ?? versions[0]?.id;
+    if (!versionId) {
+      setResumeVersion(null);
+      return versions;
+    }
+    const version = await fetchJson<ResumeVersion>(`/resume-versions/${versionId}`);
+    setResumeVersion(version);
+    return versions;
+  }
+
+  async function createTailoredResumeVersion(job: JobProject): Promise<ResumeVersion> {
+    setResumeVersionBusy(true);
+    setErrorMessage("");
+    try {
+      const version = await fetchJson<ResumeVersion>(
+        `/jobs/${job.id}/resume-versions`,
+        { method: "POST" }
+      );
+      setResumeVersion(version);
+      await refreshResumeVersions(job.id, version.id);
+      setNoticeMessage("简历已生成");
+      return version;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "生成定制简历失败");
+      throw error;
+    } finally {
+      setResumeVersionBusy(false);
+    }
+  }
+
+  async function selectResumeVersion(versionId: number) {
+    setResumeVersionBusy(true);
+    setErrorMessage("");
+    try {
+      setResumeVersion(await fetchJson<ResumeVersion>(`/resume-versions/${versionId}`));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "读取简历版本失败");
+    } finally {
+      setResumeVersionBusy(false);
+    }
+  }
+
+  async function updateTailoredResumeChange(
+    versionId: number,
+    changeId: number,
+    patch: {
+      decision?: ResumeChangeDecision;
+      after_text?: string;
+    }
+  ) {
+    setResumeVersionBusy(true);
+    setErrorMessage("");
+    try {
+      const version = await fetchJson<ResumeVersion>(
+        `/resume-versions/${versionId}/changes/${changeId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch)
+        }
+      );
+      setResumeVersion(version);
+      const summary: ResumeVersionSummary = {
+        id: version.id,
+        job_id: version.job_id,
+        profile_id: version.profile_id,
+        evaluation_id: version.evaluation_id,
+        title: version.title,
+        status: version.status,
+        template_id: version.template_id,
+        change_count: version.change_count,
+        change_counts: version.change_counts,
+        created_at: version.created_at,
+        updated_at: version.updated_at
+      };
+      setResumeVersions((current) => current.map((item) => (
+        item.id === version.id
+          ? { ...item, ...summary }
+          : item
+      )));
+      setNoticeMessage(
+        patch.after_text !== undefined
+          ? "保存成功"
+          : patch.decision === "rejected"
+            ? "已拒绝"
+            : patch.decision === "accepted"
+              ? "已接受"
+              : "已恢复"
+      );
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "保存简历修改失败");
+    } finally {
+      setResumeVersionBusy(false);
+    }
+  }
+
+  async function updateTailoredResumeVersion(
+    versionId: number,
+    patch: { status?: "draft" | "final"; template_id?: ResumeTemplate }
+  ) {
+    setResumeVersionBusy(true);
+    setErrorMessage("");
+    try {
+      const version = await fetchJson<ResumeVersion>(`/resume-versions/${versionId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch)
+      });
+      setResumeVersion(version);
+      if (selectedJobId) await refreshResumeVersions(selectedJobId, version.id);
+      setNoticeMessage(
+        patch.template_id
+          ? "已应用模板"
+          : patch.status === "final"
+            ? "已设为最终版"
+            : "已恢复草稿"
+      );
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "更新简历版本失败");
+    } finally {
+      setResumeVersionBusy(false);
+    }
+  }
+
+  async function exportTailoredResume(versionId: number, format: "docx" | "pdf") {
+    setResumeVersionBusy(true);
+    setErrorMessage("");
+    try {
+      const response = await fetch(
+        `${apiBase}/resume-versions/${versionId}/export?format=${format}`
+      );
+      if (!response.ok) {
+        let message = `导出失败（${response.status}）`;
+        try {
+          const payload = await response.json() as { detail?: string };
+          if (payload.detail) message = payload.detail;
+        } catch {
+          // 非 JSON 错误响应保留状态码。
+        }
+        throw new Error(message);
+      }
+      const disposition = response.headers.get("Content-Disposition") || "";
+      const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/)?.[1];
+      const filename = encodedName
+        ? decodeURIComponent(encodedName)
+        : `定制简历.${format}`;
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setNoticeMessage(`已导出 ${format.toUpperCase()}`);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "导出简历失败");
+    } finally {
+      setResumeVersionBusy(false);
+    }
+  }
+
+  async function refreshInterviewWorkspace(
+    jobId: number,
+    preferredKitId?: number
+  ) {
+    const [kits, rounds, timeline] = await Promise.all([
+      fetchJson<InterviewKitSummary[]>(`/jobs/${jobId}/interview-kits`),
+      fetchJson<InterviewRound[]>(`/jobs/${jobId}/interview-rounds`),
+      fetchJson<JobEvent[]>(`/jobs/${jobId}/timeline`)
+    ]);
+    setInterviewKits(kits);
+    setInterviewRounds(rounds);
+    setJobTimeline(timeline);
+    const kitId = preferredKitId ?? kits[0]?.id;
+    if (!kitId) {
+      setInterviewKit(null);
+      return;
+    }
+    setInterviewKit(await fetchJson<InterviewKit>(`/interview-kits/${kitId}`));
+  }
+
+  async function createInterviewPreparation(
+    job: JobProject,
+    interviewType: InterviewType = "general"
+  ): Promise<InterviewKit> {
+    setInterviewBusy(true);
+    setErrorMessage("");
+    try {
+      const kit = await fetchJson<InterviewKit>(`/jobs/${job.id}/interview-kits`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content })
+        body: JSON.stringify({ interview_type: interviewType })
       });
-      setWorkflow(response.workflow);
-      await refreshChat();
-      await refreshData();
+      setInterviewKit(kit);
+      await refreshInterviewWorkspace(job.id, kit.id);
+      setNoticeMessage("面试准备已生成");
+      return kit;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "生成面试准备包失败");
+      throw error;
     } finally {
-      setChatBusy(false);
+      setInterviewBusy(false);
+    }
+  }
+
+  async function selectInterviewKit(kitId: number) {
+    setInterviewBusy(true);
+    setErrorMessage("");
+    try {
+      setInterviewKit(await fetchJson<InterviewKit>(`/interview-kits/${kitId}`));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "读取面试准备包失败");
+    } finally {
+      setInterviewBusy(false);
+    }
+  }
+
+  async function updateInterviewPreparation(
+    kitId: number,
+    patch: {
+      status?: "draft" | "ready";
+      self_intro?: string;
+      notes?: string;
+    }
+  ) {
+    setInterviewBusy(true);
+    setErrorMessage("");
+    try {
+      const kit = await fetchJson<InterviewKit>(`/interview-kits/${kitId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch)
+      });
+      setInterviewKit(kit);
+      setInterviewKits((current) => current.map((item) => (
+        item.id === kit.id
+          ? {
+              id: kit.id,
+              job_id: kit.job_id,
+              profile_id: kit.profile_id,
+              evaluation_id: kit.evaluation_id,
+              interview_type: kit.interview_type,
+              title: kit.title,
+              status: kit.status,
+              task_count: kit.task_count,
+              completed_task_count: kit.completed_task_count,
+              created_at: kit.created_at,
+              updated_at: kit.updated_at
+            }
+          : item
+      )));
+      setNoticeMessage(patch.status === "ready" ? "已标记为就绪" : "保存成功");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "保存面试准备包失败");
+    } finally {
+      setInterviewBusy(false);
+    }
+  }
+
+  async function toggleInterviewTask(kitId: number, taskId: number, completed: boolean) {
+    setInterviewBusy(true);
+    setErrorMessage("");
+    try {
+      const kit = await fetchJson<InterviewKit>(
+        `/interview-kits/${kitId}/tasks/${taskId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ completed })
+        }
+      );
+      setInterviewKit(kit);
+      setInterviewKits((current) => current.map((item) => (
+        item.id === kit.id
+          ? {
+              ...item,
+              completed_task_count: kit.completed_task_count,
+              updated_at: kit.updated_at
+            }
+          : item
+      )));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "更新准备任务失败");
+    } finally {
+      setInterviewBusy(false);
+    }
+  }
+
+  async function createInterviewSchedule(
+    jobId: number,
+    payload: {
+      kit_id?: number;
+      round_type: InterviewType;
+      scheduled_at?: string;
+      interviewer?: string;
+      location?: string;
+      notes?: string;
+    }
+  ) {
+    setInterviewBusy(true);
+    setErrorMessage("");
+    try {
+      await fetchJson<InterviewRound>(`/jobs/${jobId}/interview-rounds`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      await refreshInterviewWorkspace(jobId, interviewKit?.id);
+      setNoticeMessage("已记录");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "记录面试轮次失败");
+    } finally {
+      setInterviewBusy(false);
+    }
+  }
+
+  async function updateInterviewSchedule(
+    roundId: number,
+    patch: {
+      status?: "scheduled" | "completed" | "cancelled";
+      outcome?: "pending" | "passed" | "failed";
+      notes?: string;
+    }
+  ) {
+    setInterviewBusy(true);
+    setErrorMessage("");
+    try {
+      await fetchJson<InterviewRound>(`/interview-rounds/${roundId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch)
+      });
+      if (selectedJobId) await refreshInterviewWorkspace(selectedJobId, interviewKit?.id);
+      setNoticeMessage("已更新");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "更新面试轮次失败");
+    } finally {
+      setInterviewBusy(false);
+    }
+  }
+
+  async function addTimelineNote(jobId: number, title: string, detail: string) {
+    setInterviewBusy(true);
+    setErrorMessage("");
+    try {
+      await fetchJson<JobEvent>(`/jobs/${jobId}/timeline`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, detail })
+      });
+      await refreshInterviewWorkspace(jobId, interviewKit?.id);
+      setNoticeMessage("已添加");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "保存进展备注失败");
+    } finally {
+      setInterviewBusy(false);
+    }
+  }
+
+  async function saveJobProject(
+    draft: JobProjectDraft,
+    jobId: number | null
+  ): Promise<JobProject> {
+    setJobBusy(true);
+    setErrorMessage("");
+    try {
+      const saved = await fetchJson<JobProject>(jobId ? `/jobs/${jobId}` : "/jobs", {
+        method: jobId ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(draft)
+      });
+      await Promise.all([refreshJobs(), refreshConversations()]);
+      setSelectedJobId(saved.id);
+      if (!jobId) {
+        setJobEvaluation(null);
+        setResumeVersions([]);
+        setResumeVersion(null);
+        setInterviewKits([]);
+        setInterviewKit(null);
+        setInterviewRounds([]);
+        setJobTimeline([]);
+      }
+      setNoticeMessage("保存成功");
+      return saved;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "保存岗位项目失败");
+      throw error;
+    } finally {
+      setJobBusy(false);
+    }
+  }
+
+  async function consumeJobImportStream(
+    path: string,
+    body: Record<string, unknown>
+  ): Promise<JobImportPreview> {
+    const response = await fetch(`${apiBase}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) {
+      let message = `岗位链接解析失败（${response.status}）`;
+      try {
+        const payload = await response.json() as { detail?: string };
+        if (payload.detail) message = payload.detail;
+      } catch {
+        // 保留状态码错误。
+      }
+      throw new Error(message);
+    }
+    if (!response.body) throw new Error("浏览器不支持智能体流式响应");
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const previewResults: JobImportPreview[] = [];
+
+    const consumeLine = (line: string) => {
+      if (!line.trim()) return;
+      const event = JSON.parse(line) as (
+        JobImportActivityEvent
+        | { type: "result"; preview: JobImportPreview }
+        | { type: "error"; message: string }
+      );
+      if (event.type === "result") {
+        previewResults.push(event.preview);
+        return;
+      }
+      if (event.type === "error") throw new Error(event.message);
+      setJobImportActivity((current) => {
+        const index = current.findIndex((item) => item.id === event.id);
+        if (index < 0) return [...current, event];
+        const next = [...current];
+        next[index] = event;
+        return next;
+      });
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      lines.forEach(consumeLine);
+      if (done) break;
+    }
+    consumeLine(buffer);
+    const preview = previewResults[previewResults.length - 1];
+    if (!preview) throw new Error("岗位导入智能体没有返回最终结果");
+    return preview;
+  }
+
+  async function previewJobLink(url: string): Promise<JobImportPreview> {
+    setJobImportBusy(true);
+    setJobImportActivity([]);
+    setErrorMessage("");
+    try {
+      const preview = await consumeJobImportStream(
+        "/job-imports/preview/stream",
+        { url }
+      );
+      setNoticeMessage(
+        preview.status === "ready"
+          ? "岗位信息已读取"
+          : preview.status === "partial"
+            ? "岗位信息不完整"
+            : "已停止读取"
+      );
+      return preview;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "岗位链接解析失败");
+      throw error;
+    } finally {
+      setJobImportBusy(false);
+    }
+  }
+
+  async function previewJobText(
+    text: string,
+    sourceUrl = ""
+  ): Promise<JobImportPreview> {
+    setJobImportBusy(true);
+    setJobImportActivity([]);
+    setErrorMessage("");
+    try {
+      const preview = await fetchJson<JobImportPreview>("/job-imports/text-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, source_url: sourceUrl.trim() })
+      });
+      setNoticeMessage(
+        preview.status === "ready"
+          ? "岗位信息已读取"
+          : "岗位信息不完整"
+      );
+      return preview;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "岗位文字解析失败");
+      throw error;
+    } finally {
+      setJobImportBusy(false);
+    }
+  }
+
+  async function previewJobScreenshot(file: File, sourceUrl = ""): Promise<JobImportPreview> {
+    setJobImportBusy(true);
+    setJobImportActivity([]);
+    setErrorMessage("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      if (sourceUrl.trim()) form.append("source_url", sourceUrl.trim());
+      const preview = await fetchJson<JobImportPreview>("/job-imports/screenshot-preview", {
+        method: "POST",
+        body: form
+      });
+      setNoticeMessage(
+        preview.status === "ready"
+          ? "图片已读取"
+          : "图片内容不完整"
+      );
+      return preview;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "岗位截图解析失败");
+      throw error;
+    } finally {
+      setJobImportBusy(false);
+    }
+  }
+
+  async function removeJobProject(job: JobProject) {
+    if (!window.confirm(`确定删除岗位项目“${job.job_title || job.company_name || "未命名岗位"}”吗？\n\n关联对话会保留，可继续查看历史结果。`)) return;
+    setJobBusy(true);
+    setErrorMessage("");
+    try {
+      await fetchJson(`/jobs/${job.id}`, { method: "DELETE" });
+      await refreshJobs();
+      setJobEvaluation(null);
+      setResumeVersions([]);
+      setResumeVersion(null);
+      setInterviewKits([]);
+      setInterviewKit(null);
+      setInterviewRounds([]);
+      setJobTimeline([]);
+      setNoticeMessage("已删除");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "删除岗位项目失败");
+    } finally {
+      setJobBusy(false);
+    }
+  }
+
+  async function createNewConversation() {
+    if (conversationBusy) return;
+    setConversationBusy(true);
+    try {
+      const created = await fetchJson<Conversation>("/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: "新对话" })
+      });
+      await refreshConversations();
+      setCurrentConversationId(created.id);
+      setActiveView("chat");
+      setNoticeMessage("已新建对话");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "新建对话失败");
+    } finally {
+      setConversationBusy(false);
+    }
+  }
+
+  async function archiveConversation(conversation: Conversation) {
+    setConversationBusy(true);
+    try {
+      await fetchJson(`/conversations/${conversation.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: conversation.status === "active" ? "archived" : "active" })
+      });
+      const next = await refreshConversations();
+      if (conversation.id === currentConversationId && conversation.status === "active") {
+        setCurrentConversationId(next.find((item) => item.status === "active")?.id ?? next[0]?.id ?? null);
+      }
+      setNoticeMessage(conversation.status === "active" ? "已归档" : "已恢复");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "归档对话失败");
+    } finally {
+      setConversationBusy(false);
+    }
+  }
+
+  async function renameConversation(conversation: Conversation, title: string) {
+    try {
+      setConversationBusy(true);
+      await fetchJson(`/conversations/${conversation.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title })
+      });
+      await refreshConversations();
+      setConversationDialog(null);
+      setNoticeMessage("已重命名");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "重命名失败");
+    } finally {
+      setConversationBusy(false);
+    }
+  }
+
+  async function removeConversation(conversation: Conversation) {
+    setConversationBusy(true);
+    try {
+      const result = await fetchJson<{ next_conversation: Conversation }>(`/conversations/${conversation.id}`, { method: "DELETE" });
+      const next = await refreshConversations();
+      if (conversation.id === currentConversationId) {
+        setCurrentConversationId(result.next_conversation?.id ?? next[0]?.id ?? null);
+      }
+      setConversationDialog(null);
+      setNoticeMessage("已删除");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "删除对话失败");
+    } finally {
+      setConversationBusy(false);
+    }
+  }
+
+  async function refreshCapabilities() {
+    const next = await fetchJson<AgentCapabilities>("/agent/capabilities");
+    setCapabilities(next);
+  }
+
+  async function refreshAttachmentConfig() {
+    const next = await fetchJson<AttachmentConfig>("/attachments/config");
+    setAttachmentConfig(next);
+  }
+
+  async function refreshAgentSettings() {
+    const next = await fetchJson<AgentSettings>("/agent/settings");
+    const clean = { ...next, api_key: "" };
+    setAgentSettings(clean);
+    setSavedAgentSettings(clean);
+    setModelSettingsEditing(!next.api_key_configured);
+    if (next.api_key_configured) {
+      void discoverModels(clean, { silent: true });
+    }
+  }
+
+  async function refreshModelMonitor() {
+    const next = await fetchJson<ModelServiceMonitor>("/agent/model-monitor?hours=24");
+    setModelMonitor(next);
+    return next;
+  }
+
+  async function refreshAgentOperations(days = agentOperationsDays, showLoading = true) {
+    if (showLoading) setAgentOperationsBusy(true);
+    try {
+      const next = await fetchJson<AgentOperationsSnapshot>(`/agent/operations?days=${days}&limit=20`);
+      setAgentOperations(next);
+      return next;
+    } finally {
+      if (showLoading) setAgentOperationsBusy(false);
+    }
+  }
+
+  function changeAgentOperationsWindow(days: 7 | 30 | 90) {
+    setAgentOperationsDays(days);
+    void refreshAgentOperations(days).catch((error: unknown) => {
+      setErrorMessage(error instanceof Error ? error.message : "读取 Agent 运行记录失败");
+    });
+  }
+
+  async function checkModelService() {
+    setModelMonitorBusy(true);
+    setErrorMessage("");
+    try {
+      const next = await fetchJson<ModelServiceMonitor>("/agent/model-monitor/check", {
+        method: "POST"
+      });
+      setModelMonitor(next);
+      setNoticeMessage(
+        next.status === "healthy"
+          ? "检测成功"
+          : "检测完成"
+      );
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "模型服务检测失败");
+    } finally {
+      setModelMonitorBusy(false);
+    }
+  }
+
+  async function discoverModels(
+    settings: AgentSettings,
+    options: { silent?: boolean; force?: boolean } = {}
+  ) {
+    const discoveryKey = `${settings.model_base_url.trim()}|${settings.api_key ? "draft" : "saved"}`;
+    if (!options.force && modelDiscoveryKeyRef.current === discoveryKey) return;
+    modelDiscoveryKeyRef.current = discoveryKey;
+    setModelDiscoveryBusy(true);
+    setModelDiscoveryError("");
+    if (!options.silent) setErrorMessage("");
+    try {
+      const result = await fetchJson<{ models: string[]; count: number }>(
+        "/agent/models/discover",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model_base_url: settings.model_base_url,
+            api_key: settings.api_key
+          })
+        }
+      );
+      setAvailableModels(result.models);
+      if (!settings.model_name.trim() && result.models[0]) {
+        setAgentSettings((current) => ({ ...current, model_name: result.models[0] }));
+      }
+      if (!options.silent) {
+        setNoticeMessage(`已识别 ${result.count} 个模型`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "识别可用模型失败";
+      setAvailableModels([]);
+      setModelDiscoveryError(message);
+      if (!options.silent) setErrorMessage(message);
+    } finally {
+      setModelDiscoveryBusy(false);
+    }
+  }
+
+  function beginModelSettingsEdit() {
+    if (!window.confirm("确认编辑模型连接或切换模型吗？\n\n设置将在再次确认保存后生效，编辑期间不会影响当前连接。")) return;
+    setModelSettingsEditing(true);
+  }
+
+  function cancelModelSettingsEdit() {
+    setAgentSettings({ ...savedAgentSettings, api_key: "" });
+    setModelSettingsEditing(false);
+    setModelDiscoveryError("");
+  }
+
+  async function saveAgentPreferences() {
+    if (!window.confirm(`确认应用模型连接吗？\n\n模型：${agentSettings.model_name}\n服务：${agentSettings.model_base_url || "OpenAI 默认地址"}\n\n新的连接将从下一次模型调用开始生效。`)) return;
+    setAgentSettingsBusy(true);
+    setErrorMessage("");
+    try {
+      const saved = await fetchJson<AgentSettings>("/agent/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(agentSettings)
+      });
+      const clean = { ...saved, api_key: "" };
+      setAgentSettings(clean);
+      setSavedAgentSettings(clean);
+      setModelSettingsEditing(false);
+      modelDiscoveryKeyRef.current = "";
+      await Promise.all([refreshCapabilities(), refreshModelMonitor()]);
+      void discoverModels(clean, { silent: true, force: true });
+      setNoticeMessage("保存成功");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "保存 Agent 设置失败");
+    } finally {
+      setAgentSettingsBusy(false);
+    }
+  }
+
+  async function resetCurrentContext() {
+    if (!currentConversationId || !window.confirm("从当前位置开始新的上下文吗？\n\n历史消息仍然可见，但 Agent 后续不会再读取此前对话。人物画像不会删除。")) return;
+    setAgentSettingsBusy(true);
+    setErrorMessage("");
+    try {
+      await fetchJson(`/conversations/${currentConversationId}/context/reset`, { method: "POST" });
+      await refreshConversations();
+      setNoticeMessage("已重置上下文");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "重置上下文失败");
+    } finally {
+      setAgentSettingsBusy(false);
+    }
+  }
+
+  function splitList(value: string) {
+    return value.split(/[，,\n]/).map((item) => item.trim()).filter(Boolean);
+  }
+
+  async function refreshCandidateProfile() {
+    try {
+    const bundle = await fetchJson<CareerProfileBundle>("/career-profile");
+    setResumeProfileSuggestion(null);
+    if (!bundle.profile) {
+      setConfirmedCareerFactCount(0);
+      setCandidateEditor(emptyCandidateEditor);
+      return;
+    }
+    const profile = bundle.profile;
+    const confirmedFacts = bundle.facts.filter((fact) => fact.status === "confirmed");
+    const strategy = bundle.active_strategy;
+    const resumeSource = bundle.sources.find((source) => source.source_type === "resume");
+    const skills = confirmedFacts
+      .filter((fact) => fact.category === "skill")
+      .map((fact) => String(fact.value?.name || fact.statement.replace(/^具备\s+|\s+相关经验$/g, "")));
+    setConfirmedCareerFactCount(confirmedFacts.length);
+    setCandidateEditor((current) => ({
+      ...current,
+      name: profile.name || "",
+      targetRole: strategy?.target_roles?.join("，") || "",
+      targetCity: strategy?.locations?.join("，") || "",
+      salaryMin: strategy?.salary?.min ? String(Math.round(strategy.salary.min / 1000)) : "",
+      salaryMax: strategy?.salary?.max ? String(Math.round(strategy.salary.max / 1000)) : "",
+      skills: skills.join("，"),
+      industries: strategy?.industries?.join("，") || "",
+      blockedKeywords: [...(strategy?.hard_constraints || []), ...(strategy?.blocked_keywords || [])].join("，"),
+      blockedCompanies: strategy?.blocked_companies?.join("，") || "",
+      resumeText: profile.resume_text || "",
+      resumeRedactedText: profile.resume_redacted_text || "",
+      resumeFilename: resumeSource?.title || profile.resume_filename || "",
+      privacyMode: profile.privacy_mode || "redacted"
+    }));
+    } finally {
+      setCandidateProfileLoaded(true);
+    }
+  }
+
+  async function saveCandidateProfile(): Promise<boolean> {
+    if (!candidateEditor.name.trim()) {
+      setErrorMessage("请填写称呼");
+      return false;
+    }
+    setCandidateProfileBusy(true);
+    setErrorMessage("");
+    try {
+      await fetchJson("/career-profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: candidateEditor.name.trim(),
+          locale: "zh-CN",
+          privacy_mode: candidateEditor.privacyMode
+        })
+      });
+      let resumeSourceId: number | null = null;
+      if (candidateEditor.resumeText.trim()) {
+        const sourceResult = await fetchJson<{ source: { id: number } }>("/career-profile/sources", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            source_type: "resume",
+            title: candidateEditor.resumeFilename || "候选人简历",
+            content: candidateEditor.resumeText,
+            privacy_mode: candidateEditor.privacyMode,
+            allow_model_original: candidateEditor.privacyMode === "original",
+            extract_knowledge: true
+          })
+        });
+        resumeSourceId = sourceResult.source.id;
+        await fetchJson(`/career-profile/sources/${resumeSourceId}/access`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            allow_model_original: candidateEditor.privacyMode === "original",
+            privacy_mode: candidateEditor.privacyMode
+          })
+        });
+      }
+      await Promise.all(splitList(candidateEditor.skills).map((skill) => fetchJson("/career-profile/facts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          category: "skill",
+          canonical_key: `skill:${skill.toLowerCase()}`,
+          statement: `具备 ${skill} 相关经验`,
+          value: { name: skill },
+          source_id: resumeSourceId,
+          excerpt: resumeSourceId ? skill : "",
+          sensitivity: "private"
+        })
+      })));
+      const strategies = await fetchJson<Array<{ id: number; is_active: boolean }>>("/career-profile/strategies");
+      const strategyPayload = {
+        name: candidateEditor.targetRole.trim() || "主要求职方向",
+        target_roles: splitList(candidateEditor.targetRole),
+        regions: splitList(candidateEditor.targetCity),
+        salary_min: candidateEditor.salaryMin ? Number(candidateEditor.salaryMin) * 1000 : null,
+        salary_max: candidateEditor.salaryMax ? Number(candidateEditor.salaryMax) * 1000 : null,
+        salary_currency: "CNY",
+        industries: splitList(candidateEditor.industries),
+        blocked_companies: splitList(candidateEditor.blockedCompanies),
+        hard_constraints: splitList(candidateEditor.blockedKeywords),
+        is_active: true,
+        priority: 100
+      };
+      const activeStrategy = strategies.find((item) => item.is_active) || strategies[0];
+      await fetchJson(activeStrategy ? `/career-profile/strategies/${activeStrategy.id}` : "/career-profile/strategies", {
+        method: activeStrategy ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(strategyPayload)
+      });
+      setInterviewPreparation(null);
+      setAutoAnalysisAttemptedRevision(null);
+      await Promise.all([refreshCandidateProfile(), refreshData()]);
+      setNoticeMessage("保存成功");
+      return true;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "保存个人资料失败");
+      return false;
+    } finally {
+      setCandidateProfileBusy(false);
+    }
+  }
+
+  async function parseResumeFiles(files: File[]) {
+    if (!files.length) return;
+    setResumeParseBusy(true);
+    setResumeProfileSuggestion(null);
+    setErrorMessage("");
+    try {
+      type ParsedResume = { filename: string; text: string; redacted_text: string; privacy_findings: Array<{ entity_type: string; preview: string }>; suggested_skills: string[]; suggested_profile: ResumeProfileSuggestion; character_count: number; parser: string; warnings: string[] };
+      const results: ParsedResume[] = [];
+      for (const file of files) {
+        const form = new FormData();
+        form.append("file", file);
+        form.append("mode", enhancedResumeParse ? "enhanced" : "fast");
+        results.push(await fetchJson<ParsedResume>("/career-profile/resume/parse", {
+          method: "POST",
+          body: form
+        }));
+      }
+      const text = results.map((result) => result.text.trim()).filter(Boolean).join("\n\n");
+      const redactedText = results.map((result) => result.redacted_text.trim()).filter(Boolean).join("\n\n");
+      const suggestions = results.map((result) => result.suggested_profile);
+      const resultSuggestion: ResumeProfileSuggestion = {
+        name: suggestions.find((item) => item.name)?.name || "",
+        target_roles: Array.from(new Set(suggestions.flatMap((item) => item.target_roles))),
+        target_cities: Array.from(new Set(suggestions.flatMap((item) => item.target_cities))),
+        skills: Array.from(new Set(suggestions.flatMap((item) => item.skills)))
+      };
+      setCandidateEditor((current) => ({
+        ...current,
+        resumeText: text,
+        resumeFilename: results.map((result) => result.filename).join("、").slice(0, 255),
+        resumeRedactedText: redactedText
+      }));
+      setPrivacyFindings(results.flatMap((result) => result.privacy_findings));
+      setResumeProfileSuggestion(resultSuggestion);
+      setNoticeMessage("简历导入成功");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "简历解析失败");
+    } finally {
+      setResumeParseBusy(false);
+    }
+  }
+
+  function fillProfileFromResume() {
+    if (!resumeProfileSuggestion) return;
+    setCandidateEditor((current) => {
+      const currentSkills = splitList(current.skills);
+      const mergedSkills = Array.from(new Set([...currentSkills, ...resumeProfileSuggestion.skills]));
+      return {
+        ...current,
+        name: current.name.trim() || resumeProfileSuggestion.name,
+        targetRole: current.targetRole.trim() || resumeProfileSuggestion.target_roles.join("，"),
+        targetCity: current.targetCity.trim() || resumeProfileSuggestion.target_cities.join("，"),
+        skills: mergedSkills.join("，")
+      };
+    });
+    setResumeProfileSuggestion(null);
+    setNoticeMessage("已补充个人信息");
+  }
+
+  async function scanResumePrivacy() {
+    if (!candidateEditor.resumeText.trim()) return;
+    setResumeParseBusy(true);
+    setErrorMessage("");
+    try {
+      const result = await fetchJson<{ findings: Array<{ entity_type: string; preview: string }>; redacted_text: string }>("/career-profile/privacy/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: candidateEditor.resumeText })
+      });
+      setPrivacyFindings(result.findings);
+      setCandidateEditor((current) => ({ ...current, resumeRedactedText: result.redacted_text }));
+      setNoticeMessage(result.findings.length ? `发现 ${result.findings.length} 处敏感信息` : "未发现敏感信息");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "隐私检查失败");
+    } finally {
+      setResumeParseBusy(false);
+    }
+  }
+
+  async function uploadChatAttachment(file: File): Promise<ChatAttachment> {
+    if (!currentConversationId) throw new Error("请先选择一个对话");
+    const filename = file.name.toLowerCase();
+    const kind = /\.(png|jpe?g|webp)$/.test(filename) ? "job_screenshot" : /\.(pdf|docx|txt|md)$/.test(filename) ? "resume" : null;
+    if (!kind) throw new Error("仅支持岗位截图（PNG、JPG、WEBP）或简历（PDF、DOCX、TXT、MD）");
+    setChatAttachmentBusy(true);
+    setErrorMessage("");
+    let uploadedAttachmentId = "";
+    try {
+      const uploadForm = new FormData();
+      uploadForm.append("conversation_id", String(currentConversationId));
+      uploadForm.append("kind", kind);
+      uploadForm.append("file", file);
+      const attachment = await fetchJson<ChatAttachment>("/attachments", { method: "POST", body: uploadForm });
+      uploadedAttachmentId = attachment.id;
+      const parseForm = new FormData();
+      parseForm.append("mode", "fast");
+      const parsed = await fetchJson<ChatAttachment>(`/attachments/${attachment.id}/parse`, { method: "POST", body: parseForm });
+      setNoticeMessage(kind === "resume" ? "简历已添加" : "图片已添加");
+      return parsed;
+    } catch (error) {
+      if (uploadedAttachmentId) {
+        void fetchJson(`/attachments/${uploadedAttachmentId}`, { method: "DELETE" }).catch(() => undefined);
+      }
+      const message = error instanceof Error ? error.message : "附件上传或解析失败";
+      setErrorMessage(message);
+      throw new Error(message);
+    } finally {
+      setChatAttachmentBusy(false);
+    }
+  }
+
+  async function removeChatAttachment(attachmentId: string) {
+    await fetchJson(`/attachments/${attachmentId}`, { method: "DELETE" });
+    setNoticeMessage("附件已移除");
+  }
+
+  async function sendChatMessage(
+    contentOverride: string,
+    attachmentIds: string[] = [],
+    visionAttachmentIds: string[] = [],
+    webSearch = false,
+    conversationIdOverride?: number,
+  ) {
+    const content = contentOverride.trim();
+    const targetConversationId = conversationIdOverride ?? currentConversationId;
+    if (!content || chatBusy || !targetConversationId) return;
+    const { HttpAgent } = await import("@ag-ui/client");
+    const conversationId = targetConversationId;
+    chatAgentRef.current?.abortRun();
+    const optimisticId = -Date.now();
+    const optimisticAssistantId = optimisticId - 1;
+    const optimisticMessage: ChatMessage = {
+      id: optimisticId,
+      role: "user",
+      content,
+      created_at: new Date().toISOString()
+    };
+    setChatBusy(true);
+    setRetryChatDraft(null);
+    setErrorMessage("");
+    setNoticeMessage("");
+    setChatMessages((current) => [...current, optimisticMessage]);
+    let terminalReceived = false;
+
+    const ensureStreamingAssistant = () => {
+      setChatMessages((current) => current.some((message) => message.id === optimisticAssistantId)
+        ? current
+        : [...current, {
+            id: optimisticAssistantId,
+            role: "assistant",
+            content: "",
+            created_at: new Date().toISOString(),
+            payload: {
+              agent: {
+                provider: "openai",
+                platform: "manual",
+                rounds: 0,
+                status: "done",
+                events: []
+              }
+            }
+          }]);
+    };
+
+    const updateAgentEvent = (agentEvent: AgentRunResult["events"][number]) => {
+      ensureStreamingAssistant();
+      setChatMessages((current) => current.map((message) => {
+        if (message.id !== optimisticAssistantId) return message;
+        const agent = message.payload?.agent ?? {
+          provider: "openai",
+          platform: "manual",
+          rounds: 0,
+          status: "done" as const,
+          events: []
+        };
+        const events = [
+          ...agent.events.filter((item) => item.tool_call_id !== agentEvent.tool_call_id),
+          agentEvent
+        ];
+        return { ...message, payload: { ...message.payload, agent: { ...agent, events } } };
+      }));
+    };
+
+    const handleTerminal = (snapshot: {
+      workflow: WorkflowStatus;
+      careerLoop: {
+        status: "done" | "failed" | "cancelled" | "waiting_user";
+        userMessage: ChatMessage;
+        assistantMessage: ChatMessage;
+      };
+    }) => {
+      terminalReceived = true;
+      setWorkflow(snapshot.workflow);
+      const { userMessage, assistantMessage, status } = snapshot.careerLoop;
+      if (currentConversationIdRef.current === conversationId) {
+        setChatMessages((current) => [
+          ...current.filter((message) => ![
+            optimisticId,
+            optimisticAssistantId,
+            userMessage.id,
+            assistantMessage.id
+          ].includes(message.id)),
+          userMessage,
+          assistantMessage
+        ]);
+      }
+      if (status === "cancelled") setNoticeMessage("已停止生成");
+    };
+
+    const agent = new HttpAgent({
+      url: `${apiBase}/ag-ui`,
+      headers: { Authorization: `Bearer ${accessToken}` },
+      agentId: "careerloop",
+      threadId: String(conversationId),
+      initialMessages: [
+        ...chatMessages.map((message) => ({
+          id: String(message.id),
+          role: message.role,
+          content: message.content
+        })),
+        { id: String(optimisticId), role: "user" as const, content }
+      ],
+      initialState: { conversationId }
+    });
+    chatAgentRef.current = agent;
+
+    const subscriber: AgentSubscriber = {
+      onCustomEvent: ({ event }) => {
+        if (event.name === "careerloop.user_message") {
+          const userMessage = event.value as ChatMessage;
+          if (currentConversationIdRef.current === conversationId) {
+            setChatMessages((current) => [
+              ...current.filter((message) => ![optimisticId, userMessage.id].includes(message.id)),
+              userMessage
+            ]);
+          }
+        }
+      },
+      onTextMessageStartEvent: () => {
+        ensureStreamingAssistant();
+        setChatMessages((current) => current.map((message) =>
+          message.id === optimisticAssistantId ? { ...message, content: "" } : message
+        ));
+      },
+      onTextMessageContentEvent: ({ event }) => {
+        ensureStreamingAssistant();
+        setChatMessages((current) => current.map((message) =>
+          message.id === optimisticAssistantId
+            ? { ...message, content: message.content + event.delta }
+            : message
+        ));
+      },
+      onReasoningMessageStartEvent: ({ event }) => {
+        updateAgentEvent({
+          round: 0,
+          tool_call_id: event.messageId,
+          tool_name: "agent_thinking",
+          status: "running",
+          message: ""
+        });
+      },
+      onReasoningMessageContentEvent: ({ event, reasoningMessageBuffer }) => {
+        updateAgentEvent({
+          round: 0,
+          tool_call_id: event.messageId,
+          tool_name: "agent_thinking",
+          status: "running",
+          message: reasoningMessageBuffer + event.delta
+        });
+      },
+      onReasoningMessageEndEvent: ({ event, reasoningMessageBuffer }) => {
+        updateAgentEvent({
+          round: 0,
+          tool_call_id: event.messageId,
+          tool_name: "agent_thinking",
+          status: "done",
+          message: reasoningMessageBuffer
+        });
+      },
+      onToolCallStartEvent: ({ event }) => {
+        updateAgentEvent({
+          round: 0,
+          tool_call_id: event.toolCallId,
+          tool_name: event.toolCallName,
+          status: "running",
+          message: `正在执行 ${event.toolCallName}`
+        });
+      },
+      onToolCallResultEvent: ({ event }) => {
+        try {
+          updateAgentEvent(JSON.parse(event.content) as AgentRunResult["events"][number]);
+        } catch {
+          updateAgentEvent({
+            round: 0,
+            tool_call_id: event.toolCallId,
+            tool_name: "agent_tool",
+            status: "done",
+            message: event.content
+          });
+        }
+      },
+      onStateSnapshotEvent: ({ event }) => {
+        handleTerminal(event.snapshot as Parameters<typeof handleTerminal>[0]);
+      },
+      onRunErrorEvent: ({ event }) => {
+        setErrorMessage(event.message || "流式执行失败");
+      }
+    };
+
+    try {
+      await agent.runAgent(
+        {
+          runId: createClientId(),
+          tools: [],
+          context: [],
+          forwardedProps: { conversationId, client: "careerloop-web", attachmentIds, visionAttachmentIds, webSearch }
+        },
+        subscriber
+      );
+      if (!terminalReceived) throw new Error("AG-UI 消息流意外中断，请重试");
+
+      void Promise.all([refreshData(), refreshConversations()]).catch((error: unknown) => {
+        setErrorMessage(error instanceof Error ? error.message : "后台数据刷新失败");
+      });
+    } catch (error) {
+      if (currentConversationIdRef.current === conversationId) {
+        setChatMessages((current) => current.filter((message) => ![optimisticId, optimisticAssistantId].includes(message.id)));
+      }
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setErrorMessage(error instanceof Error ? error.message : "消息发送失败");
+      setRetryChatDraft({ content, attachmentIds, visionAttachmentIds, webSearch });
+    } finally {
+      if (chatAgentRef.current === agent) {
+        chatAgentRef.current = null;
+        setChatBusy(false);
+      }
+    }
+  }
+
+  async function stopChatGeneration() {
+    if (!currentConversationId || !chatBusy || taskCancelBusy) return;
+    setTaskCancelBusy(true);
+    setErrorMessage("");
+    try {
+      const result = await fetchJson<{ cancelled: boolean }>(
+        `/agent/tasks/current/cancel?conversation_id=${currentConversationId}`,
+        { method: "POST" }
+      );
+      if (!result.cancelled) setNoticeMessage("没有可停止的任务");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "停止生成失败");
+    } finally {
+      setTaskCancelBusy(false);
+    }
+  }
+
+  async function rewindChatToUserMessage(userMessageId: number) {
+    if (!currentConversationId) throw new Error("请先选择一个对话");
+    await fetchJson(
+      `/chat/messages/${userMessageId}/tail?conversation_id=${currentConversationId}`,
+      { method: "DELETE" }
+    );
+    await Promise.all([
+      refreshChat(currentConversationId),
+      refreshConversations(),
+      refreshData(currentConversationId)
+    ]);
+  }
+
+  async function editChatMessage(userMessageId: number, content: string) {
+    await rewindChatToUserMessage(userMessageId);
+    await sendChatMessage(content);
+  }
+
+  async function regenerateChatMessage(userMessageId: number) {
+    const sourceMessage = chatMessages.find(
+      (message) => message.id === userMessageId && message.role === "user"
+    );
+    if (!sourceMessage) throw new Error("找不到要重新生成的用户消息");
+    await rewindChatToUserMessage(userMessageId);
+    await sendChatMessage(sourceMessage.content);
+  }
+
+  function openBoss() {
+    setErrorMessage("");
+    const bossWindow = window.open(bossHomeUrl, "_blank");
+    if (!bossWindow) {
+      setErrorMessage("浏览器阻止了新窗口，请允许本站打开弹窗，或手动访问 BOSS 官网");
+      return;
+    }
+    bossWindow.opener = null;
+    setNoticeMessage("已打开 BOSS 官网");
+  }
+
+  function handleNextStep() {
+    if (nextStep.kind === "settings") {
+      navigateRoute({ section: "settings", page: "profile", returnTo: "workbench" });
+    } else {
+      navigateRoute({ section: "workbench", page: "new" });
+    }
+  }
+
+  function handleSuggestedAction() {
+    if (!waitingForUser) {
+      handleNextStep();
+      return;
+    }
+    void sendChatMessage("检查刚才的失败原因，告诉我最简单的恢复步骤");
+  }
+
+  async function cancelCurrentTask() {
+    setTaskCancelBusy(true);
+    setErrorMessage("");
+    try {
+      await fetchJson(`/agent/tasks/current/cancel?conversation_id=${currentConversationId}`, { method: "POST" });
+      await Promise.all([refreshChat(), refreshData(), refreshConversations()]);
+      setNoticeMessage("任务已结束");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "结束当前任务失败");
+    } finally {
+      setTaskCancelBusy(false);
     }
   }
 
   useEffect(() => {
-    refreshData().catch(() => undefined);
-    refreshChat().catch(() => undefined);
+    async function initializeDatabase() {
+      const database = await fetchJson<{
+          status: "uninitialized" | "requires_rebuild" | "ready";
+          reason?: string;
+        }>("/system/database-status");
+        if (database.status === "requires_rebuild") {
+          const confirmed = window.confirm(
+            "CareerLoop 2.0 需要重建本地数据库。\n\n继续前会自动生成带时间戳的完整备份；旧数据不会自动导入新画像。是否现在备份并重建？"
+          );
+          if (!confirmed) {
+            throw new Error("已取消数据库重建。当前旧数据库保持不变，确认后才能进入 CareerLoop 2.0。");
+          }
+          await fetchJson("/system/database-rebuild", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ confirmation: "确认重建 CareerLoop 2.0 数据库" })
+          });
+        }
+        setDatabaseReady(true);
+    }
+    const initialization = databaseInitializationRef.current ?? initializeDatabase();
+    databaseInitializationRef.current = initialization;
+    initialization.catch((error: unknown) => {
+      databaseInitializationRef.current = null;
+      setErrorMessage(error instanceof Error ? error.message : "系统连接失败");
+    });
   }, []);
 
-  const viewTitle = {
-    chat: "求职助手",
-    applications: "投递记录",
-    review: "复盘"
-  }[activeView];
+  useEffect(() => {
+    if (!databaseReady) return;
+    const loaders: Record<RouteDataKey, () => Promise<unknown>> = {
+      attachmentConfig: refreshAttachmentConfig,
+      agentOperations: () => refreshAgentOperations(7, false),
+      agentSettings: refreshAgentSettings,
+      candidateProfile: refreshCandidateProfile,
+      capabilities: refreshCapabilities,
+      conversations: async () => {
+        const next = await refreshConversations();
+        setCurrentConversationId((current) => current ?? next.find((item) => item.status === "active")?.id ?? next[0]?.id ?? null);
+      },
+      interviewPreparation: refreshInterviewPreparation,
+      jobs: refreshJobs,
+      modelMonitor: refreshModelMonitor,
+      workflow: () => refreshData(currentConversationId)
+    };
+    void Promise.all(requiredDataForRoute(appRoute).map((key) => (
+      routeDataCacheRef.current.load(key, loaders[key])
+    ))).catch((error: unknown) => {
+      setErrorMessage(error instanceof Error ? error.message : "读取页面数据失败");
+    });
+  }, [appRoute, databaseReady]);
 
-  const viewSubtitle = {
-    chat: "直接描述你的求职目标，Agent 会分析需求并调用工具执行。",
-    applications: "只展示后端 applications 表中的真实投递记录。",
-    review: "基于真实 jobs/applications 数据做统计。"
-  }[activeView];
-
-  function renderToolStatus(message: ChatMessage) {
-    const messageWorkflow = message.payload?.workflow;
-    if (!messageWorkflow) {
-      return null;
+  useAsyncPolling({
+    enabled: databaseReady && appRoute.section === "settings" && ["model", "agent"].includes(appRoute.page),
+    intervalMs: 15_000,
+    poll: () => appRoute.section === "settings" && appRoute.page === "model"
+      ? refreshModelMonitor()
+      : refreshAgentOperations(agentOperationsDays, false),
+    onError: (_reason, failures) => {
+      if (failures >= 3) setErrorMessage("设置状态连续刷新失败，当前仍显示上一次数据。");
     }
-    const latestEvents = messageWorkflow.events?.slice(0, 3) ?? [];
-    const doneCount = messageWorkflow.nodes.filter((node) => node.status === "done").length;
-    return (
-      <div className="inline-tool-status">
-        <strong>工具状态：{messageWorkflow.status}</strong>
-        <span>{doneCount}/{messageWorkflow.nodes.length} 个节点完成</span>
-        {latestEvents.map((event) => (
-          <div className="inline-tool-event" key={event.id}>
-            <em>{event.event_type}</em>
-            <span>{event.message}</span>
-          </div>
-        ))}
-      </div>
-    );
-  }
+  });
+
+  useEffect(() => {
+    if (!currentConversationId) return;
+    chatAgentRef.current?.abortRun();
+    chatAgentRef.current = null;
+    setChatBusy(false);
+    setRetryChatDraft(null);
+    setVisibleMessageCount(12);
+    setChatMessages([]);
+    Promise.all([
+      refreshChat(currentConversationId),
+      refreshData(currentConversationId)
+    ]).catch((error: unknown) => {
+      setErrorMessage(error instanceof Error ? error.message : "切换对话失败");
+    });
+  }, [currentConversationId]);
+
+  useEffect(() => {
+    if (!selectedJobId) {
+      setJobEvaluation(null);
+      return;
+    }
+    let active = true;
+    setJobEvaluationBusy(true);
+    fetchJson<JobEvaluation[]>(`/jobs/${selectedJobId}/evaluations?limit=1`)
+      .then((evaluations) => {
+        const evaluation = evaluations[0];
+        if (active) setJobEvaluation(evaluation && ["completed", "partial_failed"].includes(evaluation.status) ? evaluation : null);
+      })
+      .catch((error: unknown) => {
+        if (active) setErrorMessage(error instanceof Error ? error.message : "读取岗位分析失败");
+      })
+      .finally(() => {
+        if (active) setJobEvaluationBusy(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedJobId, fetchJson]);
+
+  useEffect(() => {
+    if (!selectedJobId) {
+      setInterviewKits([]);
+      setInterviewKit(null);
+      setInterviewRounds([]);
+      setJobTimeline([]);
+      return;
+    }
+    let active = true;
+    setInterviewBusy(true);
+    Promise.all([
+      fetchJson<InterviewKitSummary[]>(`/jobs/${selectedJobId}/interview-kits`),
+      fetchJson<InterviewRound[]>(`/jobs/${selectedJobId}/interview-rounds`),
+      fetchJson<JobEvent[]>(`/jobs/${selectedJobId}/timeline`)
+    ])
+      .then(async ([kits, rounds, timeline]) => {
+        if (!active) return;
+        setInterviewKits(kits);
+        setInterviewRounds(rounds);
+        setJobTimeline(timeline);
+        if (!kits.length) {
+          setInterviewKit(null);
+          return;
+        }
+        const kit = await fetchJson<InterviewKit>(`/interview-kits/${kits[0].id}`);
+        if (active) setInterviewKit(kit);
+      })
+      .catch((error: unknown) => {
+        if (active) setErrorMessage(error instanceof Error ? error.message : "读取面试工作区失败");
+      })
+      .finally(() => {
+        if (active) setInterviewBusy(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedJobId, fetchJson]);
+
+  useEffect(() => {
+    if (!selectedJobId) {
+      setResumeVersions([]);
+      setResumeVersion(null);
+      return;
+    }
+    let active = true;
+    setResumeVersionBusy(true);
+    fetchJson<ResumeVersionSummary[]>(`/jobs/${selectedJobId}/resume-versions`)
+      .then(async (versions) => {
+        if (!active) return;
+        setResumeVersions(versions);
+        if (!versions.length) {
+          setResumeVersion(null);
+          return;
+        }
+        const version = await fetchJson<ResumeVersion>(
+          `/resume-versions/${versions[0].id}`
+        );
+        if (active) setResumeVersion(version);
+      })
+      .catch((error: unknown) => {
+        if (active) setErrorMessage(error instanceof Error ? error.message : "读取简历版本失败");
+      })
+      .finally(() => {
+        if (active) setResumeVersionBusy(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedJobId, fetchJson]);
+
+  useEffect(() => () => chatAgentRef.current?.abortRun(), []);
+
+  useEffect(() => {
+    if (chatMessages.length > 0 || chatBusy) {
+      chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+  }, [chatMessages, chatBusy]);
+
+  const routePageMeta = appRoute.section === "settings"
+    ? {
+        overview: pageMeta.settings,
+        profile: { title: "我的求职资料", description: "完善经历、简历和求职偏好，让推荐和准备更贴合你" },
+        model: { title: "Agent 推理模型", description: "配置 Agent 使用的模型服务，并检查连接质量" },
+        agent: { title: "Agent 执行记录", description: "查看 Agent 已完成的任务、工具使用和异常原因" }
+      }[appRoute.page]
+    : appRoute.section === "opportunities"
+      ? appRoute.page === "new"
+        ? { title: "新建发现任务", description: "选择扫描来源、识别招聘页或评估已收集岗位" }
+        : appRoute.page === "pipeline"
+          ? { title: "岗位队列", description: "查看已读取岗位并决定哪些值得继续推进" }
+          : appRoute.page === "sources"
+            ? { title: "岗位来源记录", description: "查看岗位来源与需要补充核验的信息" }
+            : appRoute.page === "run"
+              ? { title: "分析任务记录", description: "查看岗位读取和初步匹配分析的处理状态" }
+              : appRoute.page === "job"
+                ? { title: "岗位要求与初步分析", description: "核对岗位要求，查看初步匹配结论并决定是否推进" }
+                : pageMeta.opportunities
+    : appRoute.section === "workbench"
+      ? appRoute.page === "new"
+        ? { title: "新的分析", description: "输入岗位描述和任职要求，对照简历开始分析" }
+        : appRoute.page === "evaluation_section"
+          ? { title: "匹配分析依据", description: "查看 Agent 的分析依据、不确定项和你需要确认的内容" }
+          : appRoute.page === "evaluation_deep"
+          ? { title: "补充岗位研究", description: "让 Agent 在明确范围内补充公开信息和匹配依据" }
+            : appRoute.page === "evaluation"
+              ? { title: "简历分析", description: "查看匹配、缺口、证据和下一步建议" }
+              : appRoute.page === "comparison"
+                ? { title: "选择优先岗位", description: "在同一求职目标下比较岗位匹配与下一步行动" }
+        : appRoute.page === "detail"
+          ? { title: "简历分析", description: "对照这份岗位查看匹配、缺口和证据" }
+          : pageMeta.workbench
+      : appRoute.section === "interview-prep"
+        ? appRoute.page === "knowledge"
+          ? { title: "知识点回顾", description: "从真实项目出发，回顾技术概念、实际用法与选型边界" }
+          : appRoute.page === "records"
+            ? { title: "面试记录", description: "记录真实问题、原回答与复盘，把反馈变成下一次准备" }
+            : { title: "项目解析", description: "把真实项目拆成可讲证据，并通过文字追问反复练习" }
+      : pageMeta[appRoute.section];
+
+  useEffect(() => {
+    document.title = `${routePageMeta.title}｜CareerLoop`;
+  }, [routePageMeta.title]);
+
+  const showTopbar = !(
+    (appRoute.section === "settings" && appRoute.page === "profile")
+    || appRoute.section === "interview-prep"
+    || appRoute.section === "chat"
+  );
 
   return (
     <main className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <BriefcaseBusiness size={22} />
-          <span>BossCopilot</span>
-        </div>
-        <nav className="nav">
-          <button className={`nav-item ${activeView === "chat" ? "active" : ""}`} onClick={() => setActiveView("chat")}>聊天</button>
-          <button className={`nav-item ${activeView === "applications" ? "active" : ""}`} onClick={() => setActiveView("applications")}>投递记录</button>
-          <button className={`nav-item ${activeView === "review" ? "active" : ""}`} onClick={() => setActiveView("review")}>复盘</button>
-        </nav>
-      </aside>
+      <AppSidebar
+        collapsed={sidebarCollapsed}
+        activeView={activeView}
+        onToggle={toggleSidebar}
+        onLogout={onLogout}
+        onGoHome={() => navigateRoute({ section: "workbench", page: "index" })}
+        onPrefetchPage={(page) => void pagePrefetcher.prefetch(page)}
+        preparationPage={appRoute.section === "interview-prep" ? appRoute.page || "projects" : undefined}
+        settingsPage={appRoute.section === "settings" ? appRoute.page : undefined}
+        onSelectView={setActiveView}
+        onSelectPreparationPage={(page: PreparationPage) => navigateRoute({ section: "interview-prep", page })}
+        onOpenProfile={() => navigateRoute({ section: "settings", page: "profile" })}
+      />
 
-      <section className="content">
-        <header className="topbar">
-          <div>
-            <h1>{viewTitle}</h1>
-            <p>{viewSubtitle}</p>
-          </div>
-          {activeView !== "chat" ? (
-            <button className="secondary-button" onClick={() => refreshData()}>
-              <RefreshCw size={18} />
-              刷新
-            </button>
-          ) : null}
-        </header>
+      <section className={`content ${activeView === "chat" ? "chat-content" : ""}`}>
+        {showTopbar ? <SectionHeader
+          className="topbar"
+          level={1}
+          title={activeView === "chat" && currentConversation ? currentConversation.title : routePageMeta.title}
+        /> : null}
+
+        {errorMessage ? (
+          <div className="feedback-banner error-banner"><TriangleAlert size={16} /><span>{errorMessage}</span><button onClick={() => setErrorMessage("")} aria-label="关闭错误提示"><X size={15} /></button></div>
+        ) : null}
+
+        {conversationDialog ? (
+          <ConversationDialog
+            dialog={conversationDialog}
+            busy={conversationBusy}
+            onClose={() => setConversationDialog(null)}
+            onRename={(conversation, title) => void renameConversation(conversation, title)}
+            onDelete={(conversation) => void removeConversation(conversation)}
+          />
+        ) : null}
+        {noticeMessage ? (
+          <div className="feedback-banner notice-banner global-notice-toast" role="status" aria-live="polite"><CheckCircle2 size={16} /><span>{noticeMessage}</span></div>
+        ) : null}
+
+        {activeView === "dashboard" ? (
+          <Suspense fallback={<PageLoading label="正在加载数据看板…" />}>
+            <DashboardView
+              workflow={workflow}
+              conversations={conversations}
+              jobs={jobs}
+              nextStep={nextStep}
+              onNextStep={handleNextStep}
+              onOpenConversation={(conversationId) => {
+                setCurrentConversationId(conversationId);
+                setActiveView("chat");
+              }}
+            />
+          </Suspense>
+        ) : null}
 
         {activeView === "chat" ? (
-          <section className="chat-layout">
-            <div className="chat-thread">
-              {chatMessages.length === 0 ? (
-                <div className="empty-state">还没有对话。你可以直接说“我想找 AI Agent 相关工作”或“打开 BOSS 登录”。</div>
-              ) : (
-                chatMessages.map((message) => (
-                  <div className={`chat-bubble ${message.role}`} key={message.id}>
-                    <span>{message.role === "user" ? "你" : "BossCopilot"}</span>
-                    <p>{message.content}</p>
-                    <em>{message.created_at}</em>
-                    {message.role === "assistant" ? renderToolStatus(message) : null}
-                  </div>
-                ))
-              )}
-            </div>
-            <div className="chat-composer">
-              <textarea
-                value={chatInput}
-                onChange={(event) => setChatInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    sendChatMessage();
-                  }
+          <Suspense fallback={<PageLoading label="正在加载对话…" />}>
+            <ChatWorkspace
+              conversationTitle={currentConversation?.title}
+              messages={visibleChatMessages}
+              hiddenMessageCount={hiddenMessageCount}
+              chatBusy={chatBusy}
+              currentConversationId={currentConversationId}
+              conversations={conversations}
+              conversationBusy={conversationBusy}
+              waitingForUser={waitingForUser}
+              latestAgent={latestAgent}
+              taskCancelBusy={taskCancelBusy}
+              retryDraft={retryChatDraft}
+              chatEndRef={chatEndRef}
+              chatInputRef={chatInputRef}
+              sessionContext={{
+                resumeLabel: hasSavedResume ? (candidateEditor.resumeFilename || "已保存简历") : null,
+                analysisLabel: jobEvaluation
+                  ? [jobEvaluation.job?.company_name, jobEvaluation.job?.job_title].filter(Boolean).join(" · ") || "最近一次分析"
+                  : null
+              }}
+              onLoadMore={() => setVisibleMessageCount((count) => count + 12)}
+              onSelectConversation={(conversationId) => {
+                setCurrentConversationId(conversationId);
+                setActiveView("chat");
+              }}
+              onCreateConversation={() => void createNewConversation()}
+              onRenameConversation={(conversation) => setConversationDialog({ kind: "rename", conversation })}
+              onArchiveConversation={(conversation) => void archiveConversation(conversation)}
+              onRemoveConversation={(conversation) => setConversationDialog({ kind: "delete", conversation })}
+              attachmentBusy={chatAttachmentBusy}
+              attachmentConfig={attachmentConfig}
+              webSearchAvailable={Boolean(capabilities?.web_research?.enabled)}
+              onUploadAttachment={uploadChatAttachment}
+              onRemoveAttachment={removeChatAttachment}
+              onAttachmentInvalid={setErrorMessage}
+              onSuggestedAction={handleSuggestedAction}
+              onCancelTask={() => void cancelCurrentTask()}
+              onSend={sendChatMessage}
+              onStop={stopChatGeneration}
+              onEdit={editChatMessage}
+              onRegenerate={regenerateChatMessage}
+            />
+          </Suspense>
+        ) : null}
+
+        {activeView === "opportunities" ? (
+          <Suspense fallback={<PageLoading label="正在加载岗位发现…" />}>
+            <OpportunityDiscoveryPage
+              apiBase={apiBase}
+              accessToken={accessToken}
+              page={appRoute.section === "opportunities" ? appRoute.page || "index" : "index"}
+              runId={appRoute.section === "opportunities" ? appRoute.runId : undefined}
+              discoveredJobId={appRoute.section === "opportunities" ? appRoute.discoveredJobId : undefined}
+              onNavigateHome={() => navigateRoute({ section: "opportunities", page: "index" })}
+              onNavigateNew={() => navigateRoute({ section: "opportunities", page: "new" })}
+              onNavigatePipeline={() => navigateRoute({ section: "opportunities", page: "pipeline" })}
+              onNavigateSources={() => navigateRoute({ section: "opportunities", page: "sources" })}
+              onNavigateRun={(runId) => navigateRoute({ section: "opportunities", page: "run", runId })}
+              onNavigateJob={(discoveredJobId) => navigateRoute({ section: "opportunities", page: "job", discoveredJobId })}
+              onJobsChanged={async () => { await refreshJobs(); }}
+            />
+          </Suspense>
+        ) : null}
+
+        {activeView === "workbench" ? (
+          <Suspense fallback={<PageLoading label="正在加载简历分析…" />}>
+            {appRoute.section === "workbench" && ["evaluation", "evaluation_section", "evaluation_deep", "comparison"].includes(appRoute.page || "") ? (
+              <JobEvaluationPage
+                apiBase={apiBase}
+                page={appRoute.page as "evaluation" | "evaluation_section" | "evaluation_deep" | "comparison"}
+                jobId={appRoute.jobId}
+                job={jobs.find((item) => item.id === appRoute.jobId)}
+                sectionKey={appRoute.sectionKey}
+                comparisonId={appRoute.comparisonId}
+                onBack={() => navigateRoute({ section: "workbench", page: "index" })}
+                onOpenOverview={() => appRoute.jobId && navigateRoute({ section: "workbench", page: "evaluation", jobId: appRoute.jobId })}
+                onOpenSection={(sectionKey) => appRoute.jobId && navigateRoute({ section: "workbench", page: "evaluation_section", jobId: appRoute.jobId, sectionKey })}
+                onOpenDeep={() => appRoute.jobId && navigateRoute({ section: "workbench", page: "evaluation_deep", jobId: appRoute.jobId })}
+                interviewKit={interviewKit}
+                interviewBusy={interviewBusy}
+                onCreateInterviewKit={async () => {
+                  const job = jobs.find((item) => item.id === appRoute.jobId);
+                  if (job) await createInterviewPreparation(job, "general");
                 }}
               />
-              <button className="primary-button" onClick={sendChatMessage} disabled={chatBusy}>
-                {chatBusy ? "执行中" : "发送"}
-              </button>
-            </div>
-          </section>
-        ) : null}
-
-        {activeView === "applications" ? (
-          <section className="panel">
-            <div className="panel-header">
-              <h2>投递记录</h2>
-              <span>{applications.length} 条</span>
-            </div>
-            {applications.length === 0 ? (
-              <div className="empty-state">暂无真实投递记录。</div>
             ) : (
-              <div className="application-list">
-                {applications.map((item) => (
-                  <div className="application-row" key={item.id}>
-                    <div>
-                      <strong>{item.job_title || `岗位 #${item.job_id}`}</strong>
-                      <span>{item.company || "公司未记录"}</span>
-                    </div>
-                    <em>{item.status}</em>
-                  </div>
-                ))}
-              </div>
+            <WorkbenchView
+              viewMode={appRoute.section === "workbench" && ["index", "new", "detail"].includes(appRoute.page || "index") ? (appRoute.page || "index") as "index" | "new" | "detail" : "index"}
+              hasProfile={hasSavedResume}
+              resumeFilename={candidateEditor.resumeFilename}
+              resumeText={candidateEditor.resumeText}
+              profileName={candidateEditor.name}
+              resumeLoading={!candidateProfileLoaded}
+              chatBusy={chatBusy}
+              jobBusy={jobBusy}
+              jobImportBusy={jobImportBusy}
+              jobImportActivity={jobImportActivity}
+              analysis={jobEvaluation}
+              analysisBusy={jobEvaluationBusy}
+              resumeVersions={resumeVersions}
+              resumeVersion={resumeVersion}
+              resumeBusy={resumeVersionBusy}
+              interviewKits={interviewKits}
+              interviewKit={interviewKit}
+              interviewRounds={interviewRounds}
+              jobTimeline={jobTimeline}
+              interviewBusy={interviewBusy}
+              jobs={jobs}
+              selectedJobId={selectedJobId}
+              onSelectJob={setSelectedJobId}
+              onNavigateIndex={() => navigateRoute({ section: "workbench", page: "index" })}
+              onNavigateNew={() => navigateRoute({ section: "workbench", page: "new" })}
+              onNavigateDetail={(jobId) => navigateRoute({ section: "workbench", page: "detail", jobId })}
+              onNavigateEvaluation={(jobId) => navigateRoute({ section: "workbench", page: "evaluation", jobId })}
+              onCreateComparison={createJobComparison}
+              onQuickMatch={runQuickMatch}
+              onSaveJob={saveJobProject}
+              onPreviewJobUrl={previewJobLink}
+              onPreviewJobText={previewJobText}
+              onPreviewJobScreenshot={previewJobScreenshot}
+              onDeleteJob={removeJobProject}
+              onCreateResumeVersion={createTailoredResumeVersion}
+              onSelectResumeVersion={selectResumeVersion}
+              onUpdateResumeChange={updateTailoredResumeChange}
+              onUpdateResumeVersion={updateTailoredResumeVersion}
+              onExportResume={exportTailoredResume}
+              onCreateInterviewKit={createInterviewPreparation}
+              onSelectInterviewKit={selectInterviewKit}
+              onUpdateInterviewKit={updateInterviewPreparation}
+              onToggleInterviewTask={toggleInterviewTask}
+              onCreateInterviewRound={createInterviewSchedule}
+              onUpdateInterviewRound={updateInterviewSchedule}
+              onAddTimelineNote={addTimelineNote}
+              onOpenProfile={() => navigateRoute({ section: "settings", page: "profile" })}
+            />
             )}
-          </section>
+          </Suspense>
         ) : null}
 
-        {activeView === "review" ? (
-          <div className="review-grid">
-            <section className="metric-panel">
-              <span>真实岗位</span>
-              <strong>{jobs.length}</strong>
-            </section>
-            <section className="metric-panel">
-              <span>待投递</span>
-              <strong>{queuedCount}</strong>
-            </section>
-            <section className="metric-panel">
-              <span>已投递</span>
-              <strong>{appliedCount}</strong>
-            </section>
-            <section className="panel review-notes">
-              <div className="panel-header">
-                <h2>数据来源</h2>
-              </div>
-              <p>这些数字来自本地 SQLite 的 jobs 和 applications 表。当前没有真实岗位采集时，统计会保持为 0。</p>
-            </section>
-          </div>
+        {appRoute.section === "interview-prep" ? (
+          <Suspense fallback={<PageLoading label="正在加载面试准备…" />}>
+            <InterviewPreparationPage
+              apiBase={apiBase}
+              accessToken={accessToken}
+              initialData={interviewPreparation}
+              initialDataLoading={!databaseReady || interviewPreparationBusy}
+              dataManagedByShell
+              area={appRoute.page || "projects"}
+              experienceId={appRoute.experienceId}
+              focus={appRoute.focus as PreparationFocus | undefined}
+              nodeId={appRoute.nodeId}
+              onNavigate={({ area, experienceId, focus, nodeId }) => navigateRoute({ section: "interview-prep", page: area, experienceId, focus, nodeId })}
+              onOpenProfile={() => navigateRoute({ section: "settings", page: "profile" })}
+              onDataChange={setInterviewPreparation}
+              autoAnalysisAttemptedRevision={autoAnalysisAttemptedRevision}
+              onAutoAnalysisStarted={setAutoAnalysisAttemptedRevision}
+            />
+          </Suspense>
         ) : null}
+
+        {appRoute.section === "settings" ? (
+          <Suspense fallback={<PageLoading label="正在加载设置…" />}>
+            <SettingsWorkspace
+              page={appRoute.page}
+              onBack={() => navigateRoute({ section: "settings", page: "overview" })}
+            >
+              {appRoute.page === "overview" ? (
+                <SettingsOverview
+                  profile={candidateEditor}
+                  profileReady={workbenchProfileReady}
+                  onOpen={(page) => navigateRoute({ section: "settings", page })}
+                />
+              ) : null}
+              {appRoute.page === "profile" ? (
+                <ProfileSettingsPage
+                  apiBase={apiBase}
+                  editor={candidateEditor}
+                  busy={candidateProfileBusy}
+                  resumeBusy={resumeParseBusy}
+                  enhancedParse={enhancedResumeParse}
+                  privacyFindings={privacyFindings}
+                  suggestion={resumeProfileSuggestion}
+                  returnToWorkbench={appRoute.returnTo === "workbench"}
+                  onChange={(editor: CandidateEditor) => {
+                    setCandidateEditor(editor);
+                    if (editor.resumeText !== candidateEditor.resumeText) {
+                      setPrivacyFindings([]);
+                      setResumeProfileSuggestion(null);
+                    }
+                  }}
+                  onEnhancedParseChange={setEnhancedResumeParse}
+                  onParseFiles={(files) => void parseResumeFiles(files)}
+                  onScanPrivacy={() => void scanResumePrivacy()}
+                  onFillSuggestion={fillProfileFromResume}
+                  onCareerChange={refreshCandidateProfile}
+                  onClearResume={() => {
+                    setCandidateEditor({ ...candidateEditor, resumeText: "", resumeFilename: "", resumeRedactedText: "" });
+                    setPrivacyFindings([]);
+                    setResumeProfileSuggestion(null);
+                    setInterviewPreparation(null);
+                    setAutoAnalysisAttemptedRevision(null);
+                  }}
+                  onSave={async () => {
+                    const saved = await saveCandidateProfile();
+                    if (saved && appRoute.returnTo === "workbench") navigateRoute({ section: "workbench" });
+                  }}
+                  onReturnToWorkbench={() => navigateRoute({ section: "workbench" })}
+                />
+              ) : null}
+              {appRoute.page === "model" ? (
+                <ModelSettingsPage
+                  settings={agentSettings}
+                  savedSettings={savedAgentSettings}
+                  editing={modelSettingsEditing}
+                  busy={agentSettingsBusy}
+                  monitor={modelMonitor}
+                  monitorBusy={modelMonitorBusy}
+                  availableModels={availableModels}
+                  discoveryBusy={modelDiscoveryBusy}
+                  discoveryError={modelDiscoveryError}
+                  onSettingsChange={setAgentSettings}
+                  onDiscoverModels={(force) => void discoverModels(agentSettings, { force, silent: !force })}
+                  onCheckService={() => void checkModelService()}
+                  onBeginEdit={beginModelSettingsEdit}
+                  onCancelEdit={cancelModelSettingsEdit}
+                  onSave={() => void saveAgentPreferences()}
+                />
+              ) : null}
+              {appRoute.page === "agent" ? (
+                <Suspense fallback={<PageLoading label="正在加载 Agent 运行记录…" />}>
+                  <AgentOperationsDashboard
+                    snapshot={agentOperations}
+                    days={agentOperationsDays}
+                    loading={agentOperationsBusy}
+                    onDaysChange={changeAgentOperationsWindow}
+                  />
+                </Suspense>
+              ) : null}
+            </SettingsWorkspace>
+          </Suspense>
+        ) : null}
+
       </section>
     </main>
   );
 }
 
-createRoot(document.getElementById("root")!).render(
+const root = createRoot(document.getElementById("root")!);
+
+root.render(
   <React.StrictMode>
-    <App />
+    <AppErrorBoundary>
+      <AuthGate apiBase={resolveApiBase()}>
+        {(accessToken, onLogout) => <App accessToken={accessToken} onLogout={onLogout} />}
+      </AuthGate>
+    </AppErrorBoundary>
   </React.StrictMode>
 );
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => root.unmount());
+}
