@@ -50,6 +50,155 @@ def suggest_profile_fields(text: str) -> dict[str, Any]:
     }
 
 
+_RESUME_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("教育经历", ("教育经历", "教育背景", "education")),
+    ("工作经历", ("工作经历", "工作经验", "实习经历", "experience")),
+    ("项目经历", ("项目经历", "项目经验", "项目实践", "projects")),
+    ("专业技能", ("专业技能", "技能", "skills")),
+    ("自我评价", ("自我评价", "个人简介", "summary")),
+)
+_PROJECT_HEADINGS = {"项目经历", "项目经验", "项目实践", "projects"}
+_METRIC_RE = re.compile(
+    r"\d+(?:\.\d+)?\s*%|\d[\d,.]*\s*(?:万|亿|人|用户|小时)|降低|提升|增长|完成"
+)
+
+
+def analyze_resume(profile: dict[str, Any], job: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Resume-first analysis. Job/JD is optional and only adds a match layer."""
+    resume_text = str(profile.get("resume_text") or "").strip()
+    if not resume_text:
+        raise ValueError("请先在个人资料中上传并保存简历")
+
+    skills = list(dict.fromkeys([*profile.get("skills", []), *extract_skills(resume_text)]))
+    lines = [re.sub(r"\s+", " ", line).strip() for line in resume_text.splitlines() if line.strip()]
+    strengths = []
+    for skill in skills:
+        evidence = next((line for line in lines if skill.lower() in line.lower()), "")
+        strengths.append({"label": skill, "evidence": evidence[:240]})
+
+    found: list[str] = []
+    missing: list[str] = []
+    lowered = resume_text.casefold()
+    for title, aliases in _RESUME_SECTIONS:
+        if any(alias.casefold() in lowered for alias in aliases):
+            found.append(title)
+        else:
+            missing.append(title)
+
+    projects = _resume_projects(resume_text)
+    talking_points = []
+    for item in projects[:6]:
+        has_metric = bool(_METRIC_RE.search(item["evidence"]))
+        talking_points.append({
+            "title": item["title"],
+            "evidence": item["evidence"][:240],
+            "weak": not has_metric or len(item["evidence"]) < 80,
+            "how_to_talk": (
+                "按背景、你做了什么、结果来讲，并补上可核对的数字。"
+                if not has_metric
+                else "用这段经历讲清你负责的部分、决策和结果，避免只报项目名。"
+            ),
+        })
+
+    gaps: list[str] = []
+    if len(resume_text) < 400:
+        gaps.append("简历偏短，经历和结果写得不够具体，面试时很难展开。")
+    if not any(re.search(r"\d", line) for line in lines):
+        gaps.append("几乎没有可核对的数字结果，贡献不容易被量化。")
+    if "项目经历" in missing and not projects:
+        gaps.append("没有清楚的项目段落，面试官不容易抓住可深挖的经历。")
+    if "专业技能" in missing and not skills:
+        gaps.append("技能写得不集中，对照岗位时缺少可引用的关键词。")
+    short_bullets = [line for line in lines if line.startswith(("-", "•", "·")) and len(line) < 18]
+    if len(short_bullets) >= 3:
+        gaps.append("有多条经历只有一句话，缺少你具体做了什么、做成了什么。")
+    if missing:
+        gaps.append(f"结构上缺少：{'、'.join(missing)}。")
+    if not gaps:
+        gaps.append("简历已有可引用的经历。补充每段经历里你的职责边界和结果，会更稳。")
+
+    job_match = None
+    job_text = ""
+    if job:
+        job_text = "\n".join(str(job.get(key) or "") for key in ("title", "description", "experience", "education")).strip()
+    if len(job_text) >= 20:
+        job_match = analyze_gap(job or {}, profile)
+
+    evidence = [
+        {"skills": [item["label"]], "text": item["evidence"]}
+        for item in strengths if item["evidence"]
+    ][:5]
+    return {
+        "mode": "job_match" if job_match else "resume_only",
+        "required_skills": (job_match or {}).get("required_skills", []),
+        "matched_skills": (job_match or {}).get("matched_skills", skills),
+        "missing_skills": (job_match or {}).get("missing_skills", []),
+        "evidence": (job_match or {}).get("evidence", evidence),
+        "skill_coverage": None if job_match is None else job_match.get("skill_coverage"),
+        "confidence": (job_match or {}).get("confidence", "limited"),
+        "limitations": (
+            job_match.get("limitations", []) if job_match
+            else ["未提供具体岗位，以下是对已保存简历本身的分析"]
+        ),
+        "resume": {
+            "character_count": len(resume_text),
+            "skills": skills,
+            "strengths": strengths[:8],
+            "structure": {"found": found, "missing": missing},
+            "projects": talking_points,
+            "gaps": gaps[:6],
+        },
+    }
+
+
+def _resume_projects(resume_text: str) -> list[dict[str, str]]:
+    lines = [re.sub(r"\s+", " ", line).strip() for line in resume_text.splitlines() if line.strip()]
+    blocks: list[dict[str, str]] = []
+    in_projects = False
+    title = ""
+    body: list[str] = []
+
+    def flush() -> None:
+        nonlocal title, body
+        if not title:
+            return
+        evidence = "\n".join([title, *body]).strip()
+        blocks.append({"title": title[:200], "evidence": evidence[:2_000]})
+        title = ""
+        body = []
+
+    for line in lines:
+        normalized = line.casefold().rstrip(":：")
+        if normalized in _PROJECT_HEADINGS:
+            flush()
+            in_projects = True
+            continue
+        if normalized in {alias.casefold() for _, aliases in _RESUME_SECTIONS for alias in aliases}:
+            flush()
+            in_projects = False
+            continue
+        if not in_projects:
+            continue
+        if line.startswith(("-", "•", "·")):
+            if title:
+                body.append(line)
+            continue
+        flush()
+        title = line
+    flush()
+    if blocks:
+        return blocks
+    fallback: list[dict[str, str]] = []
+    for index, line in enumerate(lines):
+        if "项目" not in line or len(line) < 6:
+            continue
+        following = [item for item in lines[index + 1:index + 4] if item.startswith(("-", "•", "·"))]
+        fallback.append({"title": line[:200], "evidence": "\n".join([line, *following])[:2_000]})
+        if len(fallback) >= 4:
+            break
+    return fallback
+
+
 def analyze_gap(job: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
     job_text = "\n".join(str(job.get(key) or "") for key in ("title", "description", "experience", "education"))
     resume_text = str(profile.get("resume_text") or "")

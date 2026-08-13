@@ -305,7 +305,7 @@ flowchart TB
 - Python 3.11+、FastAPI、Pydantic。
 - OpenAI Python SDK 作为 OpenAI 兼容模型客户端。
 - AG-UI Protocol 负责流式协议。
-- LangGraph 用于工作流状态读取、节点同步和最终状态投影。
+- 自研工作流引擎（`backend/app/workflow/`）基于 SQLite 做状态读取、节点同步和最终状态投影。
 - SQLite 保存业务状态，`sqlite-vec` 提供本地向量检索。
 - Docling、pypdf、python-docx、Presidio 处理文档、OCR 和隐私。
 
@@ -313,12 +313,10 @@ flowchart TB
 
 - `backend/app/main.py`：应用入口、健康检查、消息读取、取消和 `/ag-ui`。
 - `backend/app/api/resources.py`：对话、附件、画像、设置和工作流资源接口。
-- `backend/app/agent/`：任务路由、计划、工具注册和模型-工具循环。
+- `backend/app/agent/`：任务路由、计划、工具注册、模型-工具循环与 Agent 设置。
 - `backend/app/tools/`：结构化 Agent 工具实现。
 - `backend/app/auth.py`：本地管理员口令认证与会话校验。
-- `backend/app/services/`：聊天和候选人画像服务。
-- `backend/app/attachments.py`：附件验证、存储、解析和删除。
-- `backend/app/knowledge/`：简历知识分块、索引和检索。
+- 领域包（package-by-feature）：`profile/`（画像、记忆与文档）、`jobs/`（岗位、导入、评估与速配）、`opportunities/`（机会发现）、`interview/`（面试准备与流程）、`resume/`（简历解析与版本）、`chat/`（会话与聊天服务）、`attachments/`（附件）、`research/`（公开网络调研）、`knowledge/`（本地知识检索）、`privacy/`（隐私脱敏）、`observability/`（模型与工具调用监控）。
 - `backend/app/workflow/engine.py`：工作台状态投影。
 
 ### 6.3 数据持久化

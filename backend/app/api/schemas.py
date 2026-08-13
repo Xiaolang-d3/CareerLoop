@@ -123,7 +123,7 @@ class ResumeVersionUpdate(BaseModel):
 
 
 class QuickMatchIn(BaseModel):
-    job_description: str = Field(min_length=20, max_length=50_000)
+    job_description: str = Field(default="", max_length=50_000)
     job_title: str = Field(default="", max_length=200)
     company_name: str = Field(default="", max_length=200)
 

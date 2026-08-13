@@ -3,7 +3,7 @@
 ## 技术栈
 
 - 前端：React 19、TypeScript、Vite、Vitest、Playwright、assistant-ui、AG-UI。
-- 后端：Python 3.11+、FastAPI、Pydantic、LangGraph、OpenAI Python SDK。
+- 后端：Python 3.11+、FastAPI、Pydantic、OpenAI Python SDK。
 - 数据与文件：SQLite、sqlite-vec、本地附件存储；可选 MinIO。
 - 文档处理：Docling、python-docx、pypdf、ReportLab、Presidio。
 - 可选联网研究：自托管 AgentSearch。

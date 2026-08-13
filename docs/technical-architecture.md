@@ -266,7 +266,7 @@ class ToolResult(BaseModel):
 
 重置上下文不会删除历史消息，只会移动上下文读取起点。
 
-当前 LangGraph 用于根据数据库状态计算和同步工作台节点，尚未承担完整的 Agent 工具编排。后续可以选择：
+当前自研工作流引擎（`backend/app/workflow/engine.py`）用于根据数据库状态计算和同步工作台节点，尚未承担完整的 Agent 工具编排。后续可以选择：
 
 - 扩展为真正的可恢复任务状态机；或
 - 保持轻量状态投影，把业务编排留在 Agent Runtime 和服务层。
