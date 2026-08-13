@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from ..agent.settings import get_agent_settings
-from ..attachments import get_attachment, prepare_attachment_vision_url
+from ..attachments.service import get_attachment, prepare_attachment_vision_url
 from ..conversations import create_conversation, list_conversations
 from ..db import connect, json_dump, row_to_dict
 from ..domain import AgentMessage, AgentRunResult, ToolEvent

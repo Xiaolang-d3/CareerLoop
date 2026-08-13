@@ -17,7 +17,7 @@ from ..agent.settings import (
     save_agent_settings,
 )
 from ..agent.operations import get_agent_operations_snapshot
-from ..attachments import (
+from ..attachments.service import (
     create_attachment,
     delete_attachment,
     delete_conversation_attachments,

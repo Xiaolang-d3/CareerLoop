@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import app.attachments as attachments_module
-from app.attachments import (
+import app.attachments.service as attachments_module
+from app.attachments.service import (
     AttachmentStore,
     create_attachment,
     delete_attachment,

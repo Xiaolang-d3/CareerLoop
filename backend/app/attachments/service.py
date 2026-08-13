@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
 
-from .config import get_settings
-from .db import DATA_DIR, connect, json_dump, row_to_dict, rows_to_dicts
+from ..config import get_settings
+from ..db import DATA_DIR, connect, json_dump, row_to_dict, rows_to_dicts
 
 AttachmentKind = Literal["job_screenshot", "resume"]
 
@@ -251,9 +251,9 @@ def parse_attachment(
             }
         else:
             content = attachment_store.get(attachment["object_key"])
-            from .privacy import scan_and_redact
-            from .profile_intelligence import extract_skills
-            from .resume.parser import parse_resume_result
+            from ..privacy import scan_and_redact
+            from ..profile_intelligence import extract_skills
+            from ..resume.parser import parse_resume_result
 
             parsed = parse_resume_result(attachment["original_filename"], content, mode)
             findings, redacted_text = scan_and_redact(parsed.text)
