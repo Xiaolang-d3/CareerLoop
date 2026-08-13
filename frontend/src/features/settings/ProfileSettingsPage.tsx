@@ -140,13 +140,10 @@ export function ProfileSettingsPage({
   return (
     <section className="profile-settings-page profile-simplified-page">
       <header className="profile-page-heading">
-        <div>
-          <h2>个人信息</h2>
-          <p>作为岗位匹配、项目解析和面试准备的基础。</p>
-        </div>
+        <h2>个人信息</h2>
         <div className="profile-heading-actions">
           <span className={`profile-status ${hasResume ? "ready" : "pending"}`}><i />{hasResume ? "简历已导入" : "待导入简历"}</span>
-          {returnToWorkbench ? <button className="secondary-button" type="button" onClick={onReturnToWorkbench}><ArrowLeft size={15} />返回求职工坊</button> : null}
+          {returnToWorkbench ? <button className="secondary-button" type="button" onClick={onReturnToWorkbench}><ArrowLeft size={15} />返回简历分析</button> : null}
         </div>
       </header>
 

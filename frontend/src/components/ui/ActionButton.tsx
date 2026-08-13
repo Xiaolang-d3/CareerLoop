@@ -26,22 +26,3 @@ export function ActionButton({
     </button>
   );
 }
-
-type IconButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
-  label: string;
-  children: ReactNode;
-};
-
-export function IconButton({ label, className = "", children, type = "button", ...props }: IconButtonProps) {
-  return (
-    <button
-      type={type}
-      className={`ui-icon-button ${className}`.trim()}
-      aria-label={label}
-      title={props.title || label}
-      {...props}
-    >
-      {children}
-    </button>
-  );
-}

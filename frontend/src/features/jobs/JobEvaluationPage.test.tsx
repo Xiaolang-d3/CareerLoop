@@ -29,7 +29,7 @@ function props(page: "evaluation" | "evaluation_section" = "evaluation") {
     job: { id: 4, job_title: "AI 产品经理", company_name: "示例科技" } as never,
     sectionKey: page === "evaluation_section" ? "g" as const : undefined,
     onBack: vi.fn(), onOpenSection: vi.fn(), onOpenOverview: vi.fn(), onOpenDeep: vi.fn(),
-    onCreateResume: vi.fn(), onCreateInterviewKit: vi.fn()
+    onCreateInterviewKit: vi.fn()
   };
 }
 
@@ -50,8 +50,7 @@ describe("JobEvaluationPage", () => {
   it("keeps the report home concise and opens an A-G child page", async () => {
     const value = props();
     render(<JobEvaluationPage {...value} />);
-    expect(await screen.findByRole("heading", { name: "可以考虑" })).toBeInTheDocument();
-    expect(screen.getByText("岗位风险提示")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "AI 产品经理" })).toBeInTheDocument();
     expect(screen.getByText("匹配情况")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /真实性风险/ }));
     expect(value.onOpenSection).toHaveBeenCalledWith("g");
@@ -66,9 +65,8 @@ describe("JobEvaluationPage", () => {
     }));
 
     render(<JobEvaluationPage {...props()} />);
-    expect(await screen.findByText("这份报告已过期")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /创建版本/ })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /创建重点问答/ })).toBeDisabled();
+    expect(await screen.findByText("这份分析已过期")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /生成面试提纲/ })).toBeDisabled();
   });
 
   it("shows system risk judgment separately and persists the user's review", async () => {

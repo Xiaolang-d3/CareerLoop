@@ -45,7 +45,7 @@ describe("AppSidebar", () => {
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "求职" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "账户" })).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "求职工坊" })).not.toHaveLength(0);
+    expect(screen.getAllByRole("button", { name: "简历分析" })).not.toHaveLength(0);
     expect(screen.getAllByRole("button", { name: "对话" })).not.toHaveLength(0);
     expect(screen.getAllByRole("button", { name: "设置" })).not.toHaveLength(0);
     expect(screen.queryByRole("button", { name: "机会中心" })).not.toBeInTheDocument();
@@ -56,7 +56,7 @@ describe("AppSidebar", () => {
   it("opens a core workspace directly from the sidebar", () => {
     const props = renderSidebar();
 
-    fireEvent.click(screen.getAllByRole("button", { name: "求职工坊" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "简历分析" })[0]);
 
     expect(props.onSelectView).toHaveBeenCalledWith("workbench");
   });
@@ -64,7 +64,7 @@ describe("AppSidebar", () => {
   it("prefetches a module when its navigation item is hovered", () => {
     const props = renderSidebar();
 
-    fireEvent.mouseEnter(screen.getAllByRole("button", { name: "求职工坊" })[0]);
+    fireEvent.mouseEnter(screen.getAllByRole("button", { name: "简历分析" })[0]);
 
     expect(props.onPrefetchPage).toHaveBeenCalledWith("workbench");
   });

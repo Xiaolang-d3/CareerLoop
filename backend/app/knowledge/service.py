@@ -95,6 +95,28 @@ def search_knowledge(
     ]
 
 
+def list_knowledge_chunks(
+    source_types: list[str] | None = None,
+    limit: int = 10,
+    db_path: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """按写入顺序读取分块原文，供检索未命中时兜底返回。"""
+    with connect(db_path) as conn:
+        if source_types:
+            placeholders = ", ".join("?" for _ in source_types)
+            rows = conn.execute(
+                "SELECT * FROM knowledge_chunks WHERE source_type IN "
+                f"({placeholders}) ORDER BY id LIMIT ?",
+                (*source_types, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM knowledge_chunks ORDER BY id LIMIT ?",
+                (limit,),
+            ).fetchall()
+    return [row_to_dict(row) for row in rows]
+
+
 def delete_document(
     source_type: str,
     source_id: str | int,

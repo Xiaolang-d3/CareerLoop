@@ -25,6 +25,23 @@ def test_quick_match_analyzes_jd_without_creating_a_job() -> None:
     assert result["analysis"]["missing_skills"] == ["SQL", "Docker"]
 
 
-def test_quick_match_requires_a_substantial_job_description() -> None:
-    with pytest.raises(ValueError, match="至少需要 20 个字符"):
-        analyze_job_description("Python 岗位")
+def test_quick_match_analyzes_saved_resume_without_a_job_description() -> None:
+    profile = {
+        "privacy_mode": "redacted",
+        "resume_text": "技能：Python、FastAPI\n项目经历\n内部网关\n- 使用 FastAPI 交付内部服务。",
+        "resume_redacted_text": "技能：Python、FastAPI\n项目经历\n内部网关\n- 使用 FastAPI 交付内部服务。",
+        "skills": ["Python", "FastAPI"],
+    }
+    with patch("app.jobs.quick_match.resolve_profile", return_value=(profile, None)):
+        result = analyze_job_description("")
+
+    assert result["persistence"] == "not_saved_as_job"
+    assert result["analysis"]["mode"] == "resume_only"
+    assert "Python" in result["analysis"]["resume"]["skills"]
+    assert result["analysis"]["resume"]["projects"]
+
+
+def test_quick_match_requires_a_saved_resume() -> None:
+    with patch("app.jobs.quick_match.resolve_profile", return_value=(None, None)):
+        with pytest.raises(ValueError, match="上传并保存简历"):
+            analyze_job_description("")

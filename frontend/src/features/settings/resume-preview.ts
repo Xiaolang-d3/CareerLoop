@@ -1,4 +1,4 @@
-export type ResumePreviewKind = "summary" | "experience" | "projects" | "skills" | "education" | "other";
+type ResumePreviewKind = "summary" | "experience" | "projects" | "skills" | "education" | "other";
 type ResumeSourceKind = ResumePreviewKind | "combined";
 
 export type ResumePreviewSection = {

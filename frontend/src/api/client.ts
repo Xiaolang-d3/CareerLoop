@@ -1,4 +1,4 @@
-export const DEFAULT_API_TIMEOUT_MS = 30_000;
+const DEFAULT_API_TIMEOUT_MS = 30_000;
 
 export async function fetchWithTimeout(
   input: RequestInfo | URL,
@@ -25,6 +25,19 @@ export async function fetchWithTimeout(
   }
 }
 
+type ValidationErrorItem = { loc?: unknown[]; msg?: string };
+
+function formatValidationErrors(items: ValidationErrorItem[]): string {
+  const lines = items
+    .map((item) => {
+      const field = (item.loc ?? []).filter((part) => part !== "body").join(".");
+      if (!item.msg) return "";
+      return field ? `${field}：${item.msg}` : item.msg;
+    })
+    .filter(Boolean);
+  return lines.join("；");
+}
+
 export function createApiClient(apiBase: string, accessToken?: string) {
   return async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
     const headers = new Headers(options?.headers);
@@ -33,9 +46,14 @@ export function createApiClient(apiBase: string, accessToken?: string) {
     if (!response.ok) {
       let message = `${path} 请求失败（${response.status}）`;
       try {
-        const payload = await response.json() as { detail?: string | { message?: string } };
+        const payload = await response.json() as {
+          detail?: string | { message?: string } | ValidationErrorItem[];
+        };
         if (typeof payload.detail === "string") message = payload.detail;
-        if (payload.detail && typeof payload.detail === "object" && payload.detail.message) {
+        else if (Array.isArray(payload.detail)) {
+          // FastAPI 参数校验错误返回 detail 数组，拼出字段级提示。
+          message = formatValidationErrors(payload.detail) || message;
+        } else if (payload.detail && typeof payload.detail === "object" && payload.detail.message) {
           message = payload.detail.message;
         }
       } catch {

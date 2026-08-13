@@ -80,6 +80,7 @@ from .opportunities.runs import (
     startup_scan_source_ids,
 )
 from .jobs.evaluations import interrupt_active_evaluations
+from .profile.candidate_core import ensure_resume_knowledge_indexed
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -193,6 +194,12 @@ def startup() -> None:
         return
     interrupt_active_runs()
     interrupt_active_evaluations()
+    # 索引逻辑上线前保存的简历没有证据索引，启动时补一次。
+    # 画像文档可手改，解析失败不应阻断启动，坏文档交由画像页面处理。
+    try:
+        ensure_resume_knowledge_indexed()
+    except Exception:
+        pass
     # Only previously verified and explicitly followed public sources are
     # rechecked. Startup never performs broad company discovery.
     source_ids = startup_scan_source_ids()

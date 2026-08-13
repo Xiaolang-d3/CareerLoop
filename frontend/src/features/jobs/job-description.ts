@@ -1,4 +1,4 @@
-export const REQUIREMENTS_HEADING = "任职要求";
+const REQUIREMENTS_HEADING = "任职要求";
 
 export function composeJobDescription(description: string, requirements: string): string {
   const desc = description.trim();
