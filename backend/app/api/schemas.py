@@ -58,45 +58,11 @@ class JobUpdate(BaseModel):
 
 class JobImportPreviewIn(BaseModel):
     url: str = Field(min_length=1, max_length=2_000)
-    browser_capture_available: bool = False
 
 
 class JobImportTextPreviewIn(BaseModel):
     text: str = Field(min_length=1, max_length=50_000)
     source_url: str = Field(default="", max_length=2_000)
-
-
-class BrowserJobCaptureHints(BaseModel):
-    job_title: str = Field(default="", max_length=500)
-    company_name: str = Field(default="", max_length=500)
-    location: str = Field(default="", max_length=500)
-    salary_text: str = Field(default="", max_length=200)
-    description: str = Field(default="", max_length=50_000)
-
-
-class BrowserJobCaptureIn(BaseModel):
-    schema_version: Literal["browser-job-capture-v1"]
-    capture_id: str = Field(min_length=16, max_length=100)
-    requested_url: str = Field(min_length=1, max_length=2_000)
-    final_url: str = Field(min_length=1, max_length=2_000)
-    platform: Literal["boss", "generic"]
-    page_type: Literal[
-        "job_detail",
-        "login_required",
-        "captcha",
-        "job_expired",
-        "empty_page",
-        "unknown",
-    ]
-    title: str = Field(default="", max_length=500)
-    visible_text: str = Field(default="", max_length=50_000)
-    hints: BrowserJobCaptureHints = Field(default_factory=BrowserJobCaptureHints)
-    captured_at: str = Field(min_length=1, max_length=50)
-    truncated: bool = False
-
-
-class BrowserDetailImportIn(BrowserJobCaptureIn):
-    user_initiated: Literal[True]
 
 
 class JobEvaluationCreateIn(BaseModel):
@@ -200,7 +166,7 @@ class JobEventCreate(BaseModel):
 
 
 class AgentSettingsIn(BaseModel):
-    display_name: str = Field(default="BossCopilot", min_length=1, max_length=40)
+    display_name: str = Field(default="CareerLoop", min_length=1, max_length=40)
     persona_role: str = Field(min_length=1, max_length=300)
     response_style: Literal["concise", "balanced", "detailed"] = "concise"
     custom_instructions: str = Field(default="", max_length=1000)
@@ -219,7 +185,7 @@ class ModelDiscoveryIn(BaseModel):
     api_key: str = Field(default="", max_length=500)
 
 
-# BossCopilot 2.0 career operating system
+# CareerLoop 2.0 career operating system
 class CareerProfileInitIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     locale: str = Field(default="zh-CN", max_length=20)
@@ -423,15 +389,6 @@ class DiscoveryRunIn(BaseModel):
     funding_window_days: Literal[30, 90, 180] = 90
     limit: int = Field(default=12, ge=1, le=30)
     deep_analysis: Literal["none", "top", "selected"] = "top"
-
-
-class VisibleJobsImportIn(BaseModel):
-    platform: Literal["boss"]
-    page_url: str = Field(min_length=1, max_length=2_000)
-    page_title: str = Field(default="", max_length=500)
-    captured_at: str = Field(min_length=1, max_length=50)
-    jobs: list[dict[str, Any]] = Field(min_length=1, max_length=100)
-    user_initiated: Literal[True]
 
 
 class DiscoveredJobUpdateIn(BaseModel):

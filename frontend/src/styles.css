@@ -4057,11 +4057,6 @@ button:active:not(:disabled) { transform: translateY(0) scale(.98); }
   background: linear-gradient(145deg, #fffaf4, #fff 70%);
 }
 
-.job-import-preview.browser_required {
-  border-color: #cfded7;
-  background: linear-gradient(145deg, #f3f9f6, #fff 70%);
-}
-
 .job-import-preview.unsupported,
 .job-import-preview.blocked,
 .job-import-preview.invalid {
@@ -4093,10 +4088,6 @@ button:active:not(:disabled) { transform: translateY(0) scale(.98); }
 
 .job-import-preview.partial .eyebrow {
   color: #9a6d43;
-}
-
-.job-import-preview.browser_required .eyebrow {
-  color: #287254;
 }
 
 .job-import-preview.unsupported .eyebrow,
@@ -5527,7 +5518,7 @@ button:active:not(:disabled) { transform: translateY(0) scale(.98); }
   .agent-execution-details > summary em { max-width: 100%; }
 }
 
-/* BossCopilot 2.0 career profile governance */
+/* CareerLoop 2.0 career profile governance */
 .job-project-index { display: grid; width: min(1180px, 100%); gap: 18px; margin: 0 auto; }
 .job-index-hero { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 26px 28px; border: 1px solid #dce7e2; border-radius: 18px; background: linear-gradient(135deg, #edf8f3, #fff 70%); box-shadow: 0 12px 36px rgb(28 61 47 / 5%); }
 .job-index-hero h2 { margin: 5px 0 0; color: #21382f; font-size: 25px; letter-spacing: -.035em; }

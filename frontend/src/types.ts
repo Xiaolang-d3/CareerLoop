@@ -116,7 +116,6 @@ export type JobImportPreview = {
   status:
     | "ready"
     | "partial"
-    | "browser_required"
     | "unsupported"
     | "blocked"
     | "invalid";
@@ -178,36 +177,9 @@ export type JobImportActivityEvent = {
     | "blocked"
     | "failed"
     | "ready"
-    | "browser_required"
     | "unsupported"
     | "invalid";
   message: string;
-};
-
-export type BrowserJobCapture = {
-  schema_version: "browser-job-capture-v1";
-  capture_id: string;
-  requested_url: string;
-  final_url: string;
-  platform: "boss" | "generic";
-  page_type:
-    | "job_detail"
-    | "login_required"
-    | "captcha"
-    | "job_expired"
-    | "empty_page"
-    | "unknown";
-  title: string;
-  visible_text: string;
-  hints: {
-    job_title: string;
-    company_name: string;
-    location: string;
-    salary_text: string;
-    description: string;
-  };
-  captured_at: string;
-  truncated: boolean;
 };
 
 type JobRequirementStatus = "matched" | "partial" | "no_evidence";

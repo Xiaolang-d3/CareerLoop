@@ -13,8 +13,6 @@ from urllib.request import ProxyHandler, Request, build_opener
 from ..config import Settings, get_settings
 from ..db import connect, json_dump, row_to_dict, rows_to_dicts
 from ..jobs.service import create_job
-from ..interview.workflow import add_job_event
-from ..jobs.browser_capture import canonical_job_url, validate_browser_job_capture
 from ..research.web import AgentSearchClient, WebResearchError, is_public_source_url
 
 
@@ -354,7 +352,7 @@ def _fetch_json(url: str) -> Any:
         raise OpportunityScanError("职位接口地址不安全")
     request = Request(
         url,
-        headers={"Accept": "application/json", "User-Agent": "BossCopilot/2.0"},
+        headers={"Accept": "application/json", "User-Agent": "CareerLoop/2.0"},
     )
     with build_opener(ProxyHandler({})).open(request, timeout=20) as response:
         body = response.read(5_000_001)
@@ -368,7 +366,7 @@ def _fetch_html(url: str) -> str:
         raise OpportunityScanError("招聘页面地址不安全")
     request = Request(
         url,
-        headers={"Accept": "text/html", "User-Agent": "BossCopilot/2.0"},
+        headers={"Accept": "text/html", "User-Agent": "CareerLoop/2.0"},
     )
     with build_opener(ProxyHandler({})).open(request, timeout=20) as response:
         body = response.read(2_000_001)
@@ -743,60 +741,6 @@ def import_visible_jobs(
         "imported": imported,
         "boundary": "仅处理用户主动触发时当前页面已经可见的岗位；未执行登录、翻页、滚动或验证码处理",
     }
-
-
-def import_browser_job_detail(
-    capture: dict[str, Any], *, db_path: str | Path | None = None,
-) -> dict[str, Any]:
-    """Store one user-initiated extension capture and refresh its inbox item."""
-    if capture.get("user_initiated") is not True:
-        raise ValueError("岗位读取必须由用户在当前页面主动触发")
-    normalized = validate_browser_job_capture(capture)
-    hints = normalized["hints"]
-    job = {
-        "canonical_url": canonical_job_url(normalized["final_url"]),
-        "company_name": hints["company_name"],
-        "job_title": hints["job_title"] or normalized["title"],
-        "location": hints["location"],
-        "salary_text": hints["salary_text"],
-        "description": hints["description"] or normalized["visible_text"],
-    }
-    discovered, outcome = _upsert_discovered_job(
-        job, source_id=None, scan_run_id=None, db_path=db_path
-    )
-    fields = {key: job[key] for key in (
-        "company_name", "job_title", "location", "salary_text", "description",
-    )}
-    with connect(db_path) as conn:
-        conn.execute(
-            """
-            INSERT INTO job_capture_snapshots (
-                discovered_job_id, canonical_url, platform, schema_version, captured_at,
-                content_hash, fields_json, visible_text
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (discovered["id"], job["canonical_url"], normalized["platform"],
-             str(capture.get("schema_version") or "browser-job-capture-v1"),
-             normalized["captured_at"], discovered["content_hash"], json_dump(fields),
-             normalized["visible_text"]),
-        )
-        projects = conn.execute(
-            "SELECT id FROM jobs WHERE discovered_job_id = ?", (discovered["id"],)
-        ).fetchall()
-        for project in projects:
-            conn.execute(
-                """
-                UPDATE jobs SET job_title = ?, company_name = ?, location = ?, salary_text = ?,
-                    source_url = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-                """,
-                (job["job_title"], job["company_name"], job["location"], job["salary_text"],
-                 job["canonical_url"], job["description"], project["id"]),
-            )
-    for project in projects:
-        add_job_event(int(project["id"]), "browser_source_refreshed", "已从浏览器刷新岗位信息",
-                      f"来源页面：{job['canonical_url']}", db_path=db_path)
-    discovered["import_outcome"] = outcome
-    return {"job": discovered, "import_outcome": outcome}
 
 
 def list_discovered_jobs(

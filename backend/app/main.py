@@ -96,7 +96,7 @@ async def lifespan(_: FastAPI):
 
 # API docs describe every route, so they stay closed unless explicitly enabled.
 app = FastAPI(
-    title="BossCopilot API",
+    title="CareerLoop API",
     version="2.0.0",
     docs_url="/docs" if _settings.api_docs_enabled else None,
     redoc_url="/redoc" if _settings.api_docs_enabled else None,
@@ -138,7 +138,6 @@ async def require_login(request: Request, call_next: Any) -> Any:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_settings.allowed_origins,
-    allow_origin_regex=r"chrome-extension://[a-z]{32}",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -533,7 +532,7 @@ async def _stream_chat_message_response(
                 event_name, data = item
                 if event_name == "run_started":
                     yield encode(RunStartedEvent(threadId=thread_id, runId=run_id))
-                    yield encode(CustomEvent(name="bosscopilot.user_message", value=data["user_message"]))
+                    yield encode(CustomEvent(name="careerloop.user_message", value=data["user_message"]))
                     continue
                 if event_name == "text_reset":
                     if text_started:
@@ -604,7 +603,7 @@ async def _stream_chat_message_response(
                     )
                     snapshot = {
                         "workflow": data["workflow"],
-                        "bossCopilot": {
+                        "careerLoop": {
                             "status": status,
                             "userMessage": data["user_message"],
                             "assistantMessage": data["assistant_message"],
@@ -612,7 +611,7 @@ async def _stream_chat_message_response(
                     }
                     yield encode(StateSnapshotEvent(snapshot=snapshot))
                     if event_name == "cancelled":
-                        yield encode(CustomEvent(name="bosscopilot.cancelled", value={"status": status}))
+                        yield encode(CustomEvent(name="careerloop.cancelled", value={"status": status}))
                     if status == "failed":
                         agent_error = agent_payload.get("error") or {}
                         yield encode(RunErrorEvent(

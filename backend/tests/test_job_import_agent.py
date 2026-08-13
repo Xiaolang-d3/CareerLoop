@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import unittest
-from datetime import UTC, datetime
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -175,7 +173,7 @@ class JobImportAgentTest(unittest.TestCase):
         self.assertEqual(result["page_type"], "job_list")
         self.assertEqual(fetch_calls, [])
 
-    def test_agent_requests_browser_capture_before_extension_handshake(
+    def test_agent_stops_when_public_page_needs_verification(
         self,
     ) -> None:
         model = FakeModel(
@@ -215,12 +213,12 @@ class JobImportAgentTest(unittest.TestCase):
         with patch("app.jobs.imports.is_public_source_url", return_value=True):
             result = agent.run("https://www.zhipin.com/job_detail/abc.html")
 
-        self.assertEqual(result["status"], "browser_required")
+        self.assertEqual(result["status"], "blocked")
         self.assertEqual(result["page_type"], "captcha")
-        self.assertIn("需要连接 Chrome 浏览器助手", result["stop_reason"])
-        self.assertEqual(result["agent_trace"][-1]["tool"], "request_browser_capture")
+        self.assertIn("请改用粘贴岗位描述或上传截图", result["stop_reason"])
+        self.assertEqual(result["agent_trace"][-1]["tool"], "stop_job_import")
 
-    def test_model_timeout_after_blocked_static_page_requests_browser(self) -> None:
+    def test_model_timeout_after_blocked_static_page_stops_honestly(self) -> None:
         class TimeoutAfterStaticModel(FakeModel):
             def next_action(self, *, messages, tools):
                 if self.calls >= 2:
@@ -248,11 +246,12 @@ class JobImportAgentTest(unittest.TestCase):
         with patch("app.jobs.imports.is_public_source_url", return_value=True):
             result = agent.run("https://www.zhipin.com/job_detail/abc.html")
 
-        self.assertEqual(result["status"], "browser_required")
+        self.assertEqual(result["status"], "blocked")
         self.assertEqual(result["decision_source"], "agent_fallback")
         self.assertEqual(result["page_type"], "captcha")
-        self.assertEqual(result["agent_trace"][-1]["tool"], "request_browser_capture")
+        self.assertEqual(result["agent_trace"][-1]["tool"], "stop_job_import")
         self.assertNotIn("响应超时", result["stop_reason"])
+        self.assertIn("请改用粘贴岗位描述或上传截图", result["stop_reason"])
 
     def test_first_model_timeout_on_boss_job_uses_safe_fallback(self) -> None:
         security_html = (
@@ -270,54 +269,12 @@ class JobImportAgentTest(unittest.TestCase):
         with patch("app.jobs.imports.is_public_source_url", return_value=True):
             result = agent.run("https://www.zhipin.com/job_detail/abc.html")
 
-        self.assertEqual(result["status"], "browser_required")
+        self.assertEqual(result["status"], "blocked")
         self.assertEqual(result["platform"], "boss")
         self.assertEqual(result["requested_page_type"], "job_detail")
         self.assertEqual(result["page_type"], "captcha")
         self.assertEqual(result["decision_source"], "agent_fallback")
-        self.assertEqual(result["agent_trace"][-1]["tool"], "request_browser_capture")
-
-    def test_agent_extracts_fields_from_valid_browser_capture(self) -> None:
-        model = FakeModel(
-            [
-                ("extract_job_fields", {}),
-                ("finish_job_import", {}),
-            ]
-        )
-        capture = {
-            "schema_version": "browser-job-capture-v1",
-            "capture_id": "capture-1234567890",
-            "requested_url": "https://www.zhipin.com/job_detail/abc.html",
-            "final_url": "https://www.zhipin.com/job_detail/abc.html",
-            "platform": "boss",
-            "page_type": "job_detail",
-            "title": "AI 智能体应用开发工程师",
-            "visible_text": "职位描述\n负责智能体平台开发与系统集成。",
-            "hints": {
-                "job_title": "AI 智能体应用开发工程师",
-                "company_name": "示例科技",
-                "location": "上海",
-                "salary_text": "15-30K",
-                "description": (
-                    "负责端云智能体系统的架构设计与开发；"
-                    "负责大模型 Agent 的模型选择、数据准备、决策逻辑和系统集成。"
-                ),
-            },
-            "captured_at": datetime.now(UTC).isoformat(),
-            "truncated": False,
-        }
-        agent = JobImportAgent(model=model)
-
-        with patch("app.jobs.imports.is_public_source_url", return_value=True):
-            result = agent.run_browser_capture(capture)
-
-        self.assertEqual(result["status"], "ready")
-        self.assertEqual(result["job_title"], "AI 智能体应用开发工程师")
-        self.assertEqual(result["company_name"], "示例科技")
-        self.assertEqual(result["fetch_page_type"], "job_detail")
-        self.assertEqual(result["agent_trace"][0]["tool"], "inspect_browser_capture")
-        self.assertEqual(result["agent_rounds"], 1)
-        self.assertEqual(model.calls, 0)
+        self.assertEqual(result["agent_trace"][-1]["tool"], "stop_job_import")
 
     def test_quality_gate_rejects_login_page_even_if_model_tries_to_finish(self) -> None:
         model = FakeModel(
@@ -353,7 +310,7 @@ class JobImportAgentTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "blocked")
         self.assertEqual(result["page_type"], "login_required")
-        self.assertEqual(result["stop_reason"], "页面需要登录，未能读取岗位内容。")
+        self.assertEqual(result["stop_reason"], "页面需要登录，未能读取岗位内容。请改用粘贴岗位描述或上传截图。")
 
     def test_fetch_and_browser_failures_remain_observations_for_the_agent(self) -> None:
         model = FakeModel(
@@ -446,66 +403,6 @@ class JobImportAgentTest(unittest.TestCase):
         self.assertEqual(events[0]["type"], "thinking")
         self.assertEqual(events[-1]["type"], "result")
         self.assertEqual(events[-1]["preview"]["stop_reason"], "测试停止")
-
-    def test_browser_capture_stream_endpoint_runs_second_agent_stage(self) -> None:
-        class FakeBrowserAgent:
-            def __init__(self, *, event_callback):
-                self.event_callback = event_callback
-
-            def run_browser_capture(self, payload):
-                self.event_callback(
-                    {
-                        "type": "task",
-                        "id": "browser-validate",
-                        "round": 1,
-                        "tool": "inspect_browser_capture",
-                        "status": "done",
-                        "message": "浏览器页面验证完成",
-                    }
-                )
-                return {
-                    "status": "ready",
-                    "source_url": payload["requested_url"],
-                    "stop_reason": "",
-                }
-
-        payload = {
-            "schema_version": "browser-job-capture-v1",
-            "capture_id": "capture-1234567890",
-            "requested_url": "https://www.zhipin.com/job_detail/abc.html",
-            "final_url": "https://www.zhipin.com/job_detail/abc.html",
-            "platform": "boss",
-            "page_type": "job_detail",
-            "title": "AI 智能体应用开发工程师",
-            "visible_text": "职位描述\n负责大模型智能体系统架构设计、开发、测试和系统集成。",
-            "hints": {
-                "job_title": "AI 智能体应用开发工程师",
-                "company_name": "示例科技",
-                "location": "上海",
-                "salary_text": "15-30K",
-                "description": "负责大模型智能体系统架构设计、开发、测试和系统集成。",
-            },
-            "captured_at": datetime.now(UTC).isoformat(),
-            "truncated": False,
-        }
-        with (
-            patch("app.api.resources.JobImportAgent", FakeBrowserAgent),
-            patch(
-                "app.api.resources.get_settings",
-                return_value=SimpleNamespace(browser_job_import_enabled=True),
-            ),
-            patch("app.main.current_user", return_value={"id": 1, "email": "test@example.com"}),
-        ):
-            response = TestClient(app).post(
-                "/job-imports/browser-preview/stream",
-                json=payload,
-            )
-
-        self.assertEqual(response.status_code, 200)
-        events = [json.loads(line) for line in response.text.splitlines() if line]
-        self.assertEqual(events[0]["tool"], "inspect_browser_capture")
-        self.assertEqual(events[-1]["type"], "result")
-        self.assertEqual(events[-1]["preview"]["status"], "ready")
 
 
 if __name__ == "__main__":
