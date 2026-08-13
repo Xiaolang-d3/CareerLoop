@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from ..candidate_core import ProfileNotInitializedError
+from ..profile.candidate_core import ProfileNotInitializedError
 from ..db import connect, row_to_dict
 from ..agent.settings import get_agent_settings
 from ..domain import ToolError, ToolResult

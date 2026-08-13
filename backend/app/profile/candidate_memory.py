@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 from typing import Any, Literal
 
-from .db import connect, json_dump, row_to_dict
+from ..db import connect, json_dump, row_to_dict
 
 
 MEMORY_STATUSES = {"proposed", "confirmed", "rejected", "retracted", "superseded"}

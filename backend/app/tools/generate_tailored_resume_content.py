@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, ValidationError
 
 from ..domain import ToolDefinition, ToolError, ToolResult
-from ..profile_intelligence import analyze_gap
+from ..profile.intelligence import analyze_gap
 from .base import ToolContext
 from .local_data import invalid_arguments, profile_for_agent, resolve_profile
 

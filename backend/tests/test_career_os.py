@@ -10,7 +10,7 @@ from unittest.mock import patch
 from app import db as db_module
 from app.main import app
 
-from app.candidate_core import (
+from app.profile.candidate_core import (
     RESUME_SOURCE_ID,
     create_candidate_source,
     create_or_update_profile,
@@ -25,7 +25,7 @@ from app.candidate_core import (
     verify_candidate_material,
 )
 from app.agent.orchestration import TOOL_POLICIES, route_task
-from app.career_feedback import career_patterns, record_application_stage
+from app.profile.career_feedback import career_patterns, record_application_stage
 from app.db import connect, init_db
 from app.tools import (
     PauseProfileInterviewTool,

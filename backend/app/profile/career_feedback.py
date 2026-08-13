@@ -11,7 +11,7 @@ from .candidate_core import (
     create_story,
     propose_fact,
 )
-from .db import connect, json_dump, row_to_dict, rows_to_dicts
+from ..db import connect, json_dump, row_to_dict, rows_to_dicts
 
 
 APPLICATION_STAGES = {
@@ -343,8 +343,8 @@ def skill_growth_map(db_path: str | Path | None = None) -> dict[str, Any]:
             WHERE status IN ('gap', 'weak', 'red')
             """
         ).fetchall()
-    from .jobs.evaluations import get_job_evaluation
-    from .profile_intelligence import extract_skills
+    from ..jobs.evaluations import get_job_evaluation
+    from .intelligence import extract_skills
 
     for row in evaluation_rows:
         evaluation = get_job_evaluation(int(row["id"]), db_path=db_path)

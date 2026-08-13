@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.candidate_core import create_strategy, propose_fact, review_fact
+from app.profile.candidate_core import create_strategy, propose_fact, review_fact
 from app.db import connect
 from app.jobs.evaluations import create_job_evaluation, execute_job_evaluation
 

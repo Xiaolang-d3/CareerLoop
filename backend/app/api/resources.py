@@ -33,7 +33,7 @@ from ..chat.conversations import (
     update_conversation,
 )
 from ..db import connect
-from ..candidate_core import (
+from ..profile.candidate_core import (
     create_candidate_source,
     add_writing_sample,
     create_or_update_profile,
@@ -65,7 +65,7 @@ from ..candidate_core import (
     update_strategy,
     verify_candidate_material,
 )
-from ..career_feedback import (
+from ..profile.career_feedback import (
     career_patterns,
     record_interview_debrief,
     skill_growth_map,
@@ -156,7 +156,7 @@ from ..resume.versions import (
     update_resume_change,
     update_resume_version,
 )
-from ..services import profile as profile_service
+from ..profile import service as profile_service
 from ..workflow.engine import refresh_workflow_status
 from .dependencies import require_conversation
 from .schemas import (

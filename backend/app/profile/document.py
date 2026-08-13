@@ -22,7 +22,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
-from . import db as db_module
+from .. import db as db_module
 
 
 DOCUMENT_NAME = "career-profile.md"

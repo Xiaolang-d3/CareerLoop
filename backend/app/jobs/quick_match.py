@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..profile_intelligence import analyze_gap
+from ..profile.intelligence import analyze_gap
 from ..tools.local_data import profile_for_agent, resolve_profile
 
 

@@ -1,6 +1,6 @@
 import unittest
 
-from app.profile_intelligence import analyze_gap, extract_skills, suggest_profile_fields
+from app.profile.intelligence import analyze_gap, extract_skills, suggest_profile_fields
 
 
 class ProfileIntelligenceTest(unittest.TestCase):

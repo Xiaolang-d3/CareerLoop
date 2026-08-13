@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from ..privacy import scan_and_redact
-from ..profile_intelligence import extract_skills, suggest_profile_fields
+from .intelligence import extract_skills, suggest_profile_fields
 from ..resume.parser import parse_resume_result
 
 

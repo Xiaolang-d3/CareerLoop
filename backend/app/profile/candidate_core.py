@@ -7,7 +7,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal
 
-from . import profile_document
+from . import document as profile_document
 from .candidate_memory import (
     get_memory_item,
     is_memory_id,
@@ -16,11 +16,11 @@ from .candidate_memory import (
     propose_memory,
     review_memory,
 )
-from .db import connect, json_dump, row_to_dict, rows_to_dicts
-from .knowledge import delete_document, index_document
-from .privacy import scan_and_redact
-from .profile_intelligence import extract_skills, suggest_profile_fields
-from .resume.parser import normalize_resume_text
+from ..db import connect, json_dump, row_to_dict, rows_to_dicts
+from ..knowledge import delete_document, index_document
+from ..privacy import scan_and_redact
+from .intelligence import extract_skills, suggest_profile_fields
+from ..resume.parser import normalize_resume_text
 
 
 class ProfileNotInitializedError(ValueError):

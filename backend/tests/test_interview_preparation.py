@@ -2,7 +2,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from app.candidate_core import create_or_update_profile
+from app.profile.candidate_core import create_or_update_profile
 from app.db import init_db
 from app.interview.preparation import (
     add_interview_preparation_record,
@@ -15,7 +15,7 @@ from app.interview.preparation import (
     update_interview_preparation_node,
 )
 import app.interview.preparation as interview_preparation
-from app import profile_document
+from app.profile import document as profile_document
 
 
 def _profile(tmp_path: Path) -> Path:

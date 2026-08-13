@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
-from ..candidate_core import (
+from ..profile.candidate_core import (
     ensure_profile,
     get_candidate_context,
     list_facts,
@@ -15,7 +15,7 @@ from ..candidate_core import (
 
     verify_candidate_material,
 )
-from ..career_feedback import record_interview_debrief
+from ..profile.career_feedback import record_interview_debrief
 from ..domain import ToolDefinition, ToolError, ToolResult
 from ..jobs.evaluations import (
     create_job_comparison,
@@ -27,7 +27,7 @@ from ..jobs.evaluations import (
 )
 from ..opportunities.service import OpportunityScanError
 from ..opportunities.runs import create_discovery_run, execute_discovery_run
-from ..profile_intelligence import extract_skills
+from ..profile.intelligence import extract_skills
 from .base import ToolContext
 from .local_data import invalid_arguments, tool_error_boundary
 

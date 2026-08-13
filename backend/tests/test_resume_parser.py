@@ -6,7 +6,7 @@ from io import BytesIO
 from docx import Document
 
 from app.resume.parser import parse_resume
-from app.services.profile import parse_candidate_resume
+from app.profile.service import parse_candidate_resume
 
 
 class ResumeParserTest(unittest.TestCase):

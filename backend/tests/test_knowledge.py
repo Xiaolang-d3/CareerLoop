@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app.candidate_core import (
+from app.profile.candidate_core import (
     PROFILE_ID,
     create_candidate_source,
     create_or_update_profile,

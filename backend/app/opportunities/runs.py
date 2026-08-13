@@ -7,7 +7,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
-from ..candidate_core import get_candidate_context
+from ..profile.candidate_core import get_candidate_context
 from ..config import get_settings
 from ..db import connect, json_dump, row_to_dict, rows_to_dicts
 from .service import (
@@ -17,7 +17,7 @@ from .service import (
     list_discovered_jobs,
     scan_opportunity_source,
 )
-from ..profile_intelligence import extract_skills
+from ..profile.intelligence import extract_skills
 from ..research.web import AgentSearchClient, WebResearchError, is_public_source_url
 
 

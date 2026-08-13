@@ -2,7 +2,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from app.candidate_core import create_strategy, propose_fact, review_fact
+from app.profile.candidate_core import create_strategy, propose_fact, review_fact
 from app.db import connect, init_db
 from app.jobs.evaluations import (
     create_job_comparison,

@@ -15,7 +15,7 @@ from ..domain import (
     ToolError,
     ToolEvent,
 )
-from ..candidate_core import get_profile_interview_session
+from ..profile.candidate_core import get_profile_interview_session
 from ..models import ModelProviderError, ModelProviderRegistry
 from ..observability.tool_call_audit import record_tool_call_event
 from ..tools import ToolContext, ToolRegistry

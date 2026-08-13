@@ -252,7 +252,7 @@ def parse_attachment(
         else:
             content = attachment_store.get(attachment["object_key"])
             from ..privacy import scan_and_redact
-            from ..profile_intelligence import extract_skills
+            from ..profile.intelligence import extract_skills
             from ..resume.parser import parse_resume_result
 
             parsed = parse_resume_result(attachment["original_filename"], content, mode)

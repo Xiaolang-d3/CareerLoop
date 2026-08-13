@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ..candidate_core import (
+from ..profile.candidate_core import (
     ensure_profile,
     get_or_start_profile_interview,
     get_profile_interview_session,

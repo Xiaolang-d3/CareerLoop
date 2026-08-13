@@ -1,7 +1,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from app.candidate_core import (
+from app.profile.candidate_core import (
     create_or_update_profile,
     get_candidate_context,
     list_facts,
