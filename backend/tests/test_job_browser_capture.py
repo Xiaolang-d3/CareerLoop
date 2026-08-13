@@ -4,7 +4,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
-from app.job_browser_capture import (
+from app.jobs.browser_capture import (
     BrowserCaptureError,
     canonical_job_url,
     validate_browser_job_capture,
@@ -64,7 +64,7 @@ class BrowserJobCaptureTest(unittest.TestCase):
         self.assertEqual(left, "https://www.zhipin.com/job_detail/abc.html")
 
     def test_valid_capture_builds_scoped_html(self) -> None:
-        with patch("app.job_imports.is_public_source_url", return_value=True):
+        with patch("app.jobs.imports.is_public_source_url", return_value=True):
             result = validate_browser_job_capture(capture_payload())
 
         self.assertEqual(result["platform"], "boss")
@@ -73,7 +73,7 @@ class BrowserJobCaptureTest(unittest.TestCase):
         self.assertIn("职位描述", result["html"])
 
     def test_rejects_different_job_page(self) -> None:
-        with patch("app.job_imports.is_public_source_url", return_value=True):
+        with patch("app.jobs.imports.is_public_source_url", return_value=True):
             with self.assertRaises(BrowserCaptureError) as raised:
                 validate_browser_job_capture(
                     capture_payload(
@@ -84,7 +84,7 @@ class BrowserJobCaptureTest(unittest.TestCase):
         self.assertEqual(raised.exception.code, "page_mismatch")
 
     def test_rejects_non_boss_page(self) -> None:
-        with patch("app.job_imports.is_public_source_url", return_value=True):
+        with patch("app.jobs.imports.is_public_source_url", return_value=True):
             with self.assertRaises(BrowserCaptureError) as raised:
                 validate_browser_job_capture(capture_payload(
                     requested_url="https://example.com/jobs/1",
@@ -94,7 +94,7 @@ class BrowserJobCaptureTest(unittest.TestCase):
         self.assertEqual(raised.exception.code, "platform_unsupported")
 
     def test_rejects_security_challenge(self) -> None:
-        with patch("app.job_imports.is_public_source_url", return_value=True):
+        with patch("app.jobs.imports.is_public_source_url", return_value=True):
             with self.assertRaises(BrowserCaptureError) as raised:
                 validate_browser_job_capture(capture_payload(page_type="captcha"))
 
@@ -103,14 +103,14 @@ class BrowserJobCaptureTest(unittest.TestCase):
 
     def test_rejects_expired_capture(self) -> None:
         captured_at = (datetime.now(UTC) - timedelta(minutes=6)).isoformat()
-        with patch("app.job_imports.is_public_source_url", return_value=True):
+        with patch("app.jobs.imports.is_public_source_url", return_value=True):
             with self.assertRaises(BrowserCaptureError) as raised:
                 validate_browser_job_capture(capture_payload(captured_at=captured_at))
 
         self.assertEqual(raised.exception.code, "capture_expired")
 
     def test_detail_import_creates_snapshot_and_reuses_inbox_item(self) -> None:
-        with patch("app.job_imports.is_public_source_url", return_value=True):
+        with patch("app.jobs.imports.is_public_source_url", return_value=True):
             first = import_browser_job_detail(
                 {**capture_payload(), "user_initiated": True}, db_path=self.db_path
             )
@@ -124,7 +124,7 @@ class BrowserJobCaptureTest(unittest.TestCase):
         self.assertEqual(snapshots["count"], 2)
 
     def test_refresh_updates_promoted_project_and_timeline(self) -> None:
-        with patch("app.job_imports.is_public_source_url", return_value=True):
+        with patch("app.jobs.imports.is_public_source_url", return_value=True):
             imported = import_browser_job_detail(
                 {**capture_payload(), "user_initiated": True}, db_path=self.db_path
             )

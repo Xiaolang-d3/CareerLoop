@@ -79,7 +79,7 @@ from .opportunities.runs import (
     interrupt_active_runs,
     startup_scan_source_ids,
 )
-from .job_evaluations import interrupt_active_evaluations
+from .jobs.evaluations import interrupt_active_evaluations
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]

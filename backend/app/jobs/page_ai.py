@@ -13,8 +13,8 @@ from openai import (
     RateLimitError,
 )
 
-from .agent.settings import get_model_connection
-from .config import get_settings
+from ..agent.settings import get_model_connection
+from ..config import get_settings
 
 
 class JobImportAIError(RuntimeError):

@@ -9,9 +9,9 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.job_import_agent import JobImportAgent
-from app.job_imports import JobImportError, preview_job_url
-from app.job_page_ai import JobImportAIError, JobImportModelAction
+from app.jobs.import_agent import JobImportAgent
+from app.jobs.imports import JobImportError, preview_job_url
+from app.jobs.page_ai import JobImportAIError, JobImportModelAction
 from app.research.web import WebResearchError
 
 
@@ -84,7 +84,7 @@ class JobImportAgentTest(unittest.TestCase):
             event_callback=events.append,
         )
 
-        with patch("app.job_imports.is_public_source_url", return_value=True):
+        with patch("app.jobs.imports.is_public_source_url", return_value=True):
             result = agent.run("https://jobs.example.com/job/123")
 
         self.assertEqual(result["status"], "ready")
@@ -138,7 +138,7 @@ class JobImportAgentTest(unittest.TestCase):
             renderer=lambda url: rendered,
         )
 
-        with patch("app.job_imports.is_public_source_url", return_value=True):
+        with patch("app.jobs.imports.is_public_source_url", return_value=True):
             result = agent.run("https://www.zhipin.com/job_detail/abc.html")
 
         self.assertEqual(result["status"], "ready")
@@ -168,7 +168,7 @@ class JobImportAgentTest(unittest.TestCase):
             renderer=lambda url: {},
         )
 
-        with patch("app.job_imports.is_public_source_url", return_value=True):
+        with patch("app.jobs.imports.is_public_source_url", return_value=True):
             result = agent.run("https://www.zhipin.com/web/geek/job")
 
         self.assertEqual(result["status"], "unsupported")
@@ -212,7 +212,7 @@ class JobImportAgentTest(unittest.TestCase):
             },
         )
 
-        with patch("app.job_imports.is_public_source_url", return_value=True):
+        with patch("app.jobs.imports.is_public_source_url", return_value=True):
             result = agent.run("https://www.zhipin.com/job_detail/abc.html")
 
         self.assertEqual(result["status"], "browser_required")
@@ -245,7 +245,7 @@ class JobImportAgentTest(unittest.TestCase):
             ),
         )
 
-        with patch("app.job_imports.is_public_source_url", return_value=True):
+        with patch("app.jobs.imports.is_public_source_url", return_value=True):
             result = agent.run("https://www.zhipin.com/job_detail/abc.html")
 
         self.assertEqual(result["status"], "browser_required")
@@ -267,7 +267,7 @@ class JobImportAgentTest(unittest.TestCase):
             ),
         )
 
-        with patch("app.job_imports.is_public_source_url", return_value=True):
+        with patch("app.jobs.imports.is_public_source_url", return_value=True):
             result = agent.run("https://www.zhipin.com/job_detail/abc.html")
 
         self.assertEqual(result["status"], "browser_required")
@@ -308,7 +308,7 @@ class JobImportAgentTest(unittest.TestCase):
         }
         agent = JobImportAgent(model=model)
 
-        with patch("app.job_imports.is_public_source_url", return_value=True):
+        with patch("app.jobs.imports.is_public_source_url", return_value=True):
             result = agent.run_browser_capture(capture)
 
         self.assertEqual(result["status"], "ready")
@@ -348,7 +348,7 @@ class JobImportAgentTest(unittest.TestCase):
             renderer=lambda url: {},
         )
 
-        with patch("app.job_imports.is_public_source_url", return_value=True):
+        with patch("app.jobs.imports.is_public_source_url", return_value=True):
             result = agent.run("https://jobs.example.com/job/123")
 
         self.assertEqual(result["status"], "blocked")
@@ -384,7 +384,7 @@ class JobImportAgentTest(unittest.TestCase):
             renderer=fail_render,
         )
 
-        with patch("app.job_imports.is_public_source_url", return_value=True):
+        with patch("app.jobs.imports.is_public_source_url", return_value=True):
             result = agent.run("https://jobs.example.com/job/123")
 
         self.assertEqual(result["status"], "unsupported")

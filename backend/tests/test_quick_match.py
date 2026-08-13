@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.quick_match import analyze_job_description
+from app.jobs.quick_match import analyze_job_description
 
 
 def test_quick_match_analyzes_jd_without_creating_a_job() -> None:
@@ -12,7 +12,7 @@ def test_quick_match_analyzes_jd_without_creating_a_job() -> None:
         "resume_redacted_text": "负责使用 Python 和 FastAPI 交付内部服务。",
         "skills": ["Python", "FastAPI"],
     }
-    with patch("app.quick_match.resolve_profile", return_value=(profile, None)):
+    with patch("app.jobs.quick_match.resolve_profile", return_value=(profile, None)):
         result = analyze_job_description(
             "负责开发 Python 服务，要求熟悉 FastAPI、Docker 和 SQL。",
             job_title="后端工程师",

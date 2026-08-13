@@ -7,7 +7,7 @@ from docx import Document
 from pypdf import PdfReader
 
 from app.db import connect, init_db, json_dump
-from app.jobs import create_job, update_job
+from app.jobs.service import create_job, update_job
 from evaluation_helpers import seed_confirmed_facts_and_evaluation
 from app.resume.versions import (
     create_resume_version,

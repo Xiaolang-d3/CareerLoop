@@ -17,7 +17,7 @@ from ..candidate_core import (
 )
 from ..career_feedback import record_interview_debrief
 from ..domain import ToolDefinition, ToolError, ToolResult
-from ..job_evaluations import (
+from ..jobs.evaluations import (
     create_job_comparison,
     create_job_evaluation,
     execute_job_evaluation,

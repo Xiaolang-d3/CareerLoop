@@ -15,7 +15,7 @@ def parse_candidate_resume(
 ) -> dict[str, Any]:
     suffix = Path(filename).suffix.lower()
     if suffix in {".png", ".jpg", ".jpeg", ".webp"}:
-        from ..screenshot_ocr import extract_screenshot_text
+        from ..jobs.screenshot_ocr import extract_screenshot_text
 
         text = extract_screenshot_text(filename, content)
         parser = "local_ocr"

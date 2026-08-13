@@ -6,7 +6,7 @@ from html import escape
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-from .job_imports import JobImportError, validate_job_import_url
+from .imports import JobImportError, validate_job_import_url
 
 
 CAPTURE_MAX_AGE = timedelta(minutes=5)

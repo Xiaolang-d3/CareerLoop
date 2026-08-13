@@ -97,17 +97,17 @@ from ..opportunities.runs import (
     list_discovery_runs,
     retry_discovery_run,
 )
-from ..jobs import create_job, delete_job, get_job, list_jobs, update_job
-from ..job_import_agent import JobImportAgent
-from ..job_imports import (
+from ..jobs.service import create_job, delete_job, get_job, list_jobs, update_job
+from ..jobs.import_agent import JobImportAgent
+from ..jobs.imports import (
     JobImportError,
     preview_job_screenshot,
     preview_job_text,
     preview_job_url,
 )
-from ..quick_match import analyze_job_description
-from ..job_browser_capture import BrowserCaptureError
-from ..job_evaluations import (
+from ..jobs.quick_match import analyze_job_description
+from ..jobs.browser_capture import BrowserCaptureError
+from ..jobs.evaluations import (
     cancel_job_evaluation,
     create_job_comparison,
     create_job_evaluation,

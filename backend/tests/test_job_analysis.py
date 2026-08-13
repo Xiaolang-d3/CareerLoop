@@ -4,7 +4,7 @@ import unittest
 
 from app.candidate_core import create_strategy, propose_fact, review_fact
 from app.db import connect, init_db
-from app.job_evaluations import (
+from app.jobs.evaluations import (
     create_job_comparison,
     create_job_evaluation,
     execute_job_evaluation,
@@ -13,7 +13,7 @@ from app.job_evaluations import (
     retry_job_evaluation,
     validate_evaluation_weights,
 )
-from app.jobs import create_job
+from app.jobs.service import create_job
 from app.research.web import WebResearchError
 
 

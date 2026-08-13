@@ -8,17 +8,17 @@ from html import escape
 from typing import Any, Callable, Protocol
 from urllib.parse import parse_qsl, urlparse, urlunparse
 
-from .config import get_settings
-from .job_browser_capture import BrowserCaptureError, validate_browser_job_capture
-from .job_imports import (
+from ..config import get_settings
+from .browser_capture import BrowserCaptureError, validate_browser_job_capture
+from .imports import (
     JobImportError,
     _fetch_public_page,
     page_context,
     parse_job_page,
     validate_job_import_url,
 )
-from .job_page_ai import JobImportAIError, JobImportAgentModel, JobImportModelAction
-from .research.web import AgentSearchClient, WebResearchError
+from .page_ai import JobImportAIError, JobImportAgentModel, JobImportModelAction
+from ..research.web import AgentSearchClient, WebResearchError
 
 
 MAX_AGENT_ROUNDS = 8

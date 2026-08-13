@@ -34,7 +34,7 @@ from app.tools import (
     StartProfileInterviewTool,
     ToolContext,
 )
-from app.jobs import create_job
+from app.jobs.service import create_job
 from app.opportunities.service import (
     add_opportunity_source,
     create_or_update_company,

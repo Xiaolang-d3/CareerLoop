@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from .db import connect, row_to_dict
-from .interview.workflow import add_job_event
+from ..db import connect, row_to_dict
+from ..interview.workflow import add_job_event
 
 
 JOB_FIELDS = (

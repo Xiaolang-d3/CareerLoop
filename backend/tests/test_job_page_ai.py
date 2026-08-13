@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 
-from app.job_page_ai import JobImportAgentModel, JobImportAIError
+from app.jobs.page_ai import JobImportAgentModel, JobImportAIError
 
 
 class FakeCompletions:

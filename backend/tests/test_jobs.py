@@ -3,7 +3,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from app.db import init_db
-from app.jobs import create_job, delete_job, get_job, list_jobs, update_job
+from app.jobs.service import create_job, delete_job, get_job, list_jobs, update_job
 
 
 class JobProjectTest(unittest.TestCase):

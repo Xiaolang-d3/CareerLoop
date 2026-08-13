@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from app.job_imports import (
+from app.jobs.imports import (
     JobImportError,
     parse_job_page,
     preview_job_screenshot,
@@ -96,7 +96,7 @@ class JobImportTest(unittest.TestCase):
             "负责企业级 AI 产品规划、客户研究、需求分析以及商业化落地；"
             "任职要求：五年以上产品经验，能够独立推进复杂项目交付。"
         )
-        with patch("app.job_imports.is_public_source_url", return_value=True):
+        with patch("app.jobs.imports.is_public_source_url", return_value=True):
             result = preview_job_text(
                 text,
                 source_url=(
@@ -124,7 +124,7 @@ class JobImportTest(unittest.TestCase):
             "负责企业级 AI 产品规划、客户研究、需求分析以及商业化落地；"
             "任职要求：五年以上产品经验，能够独立推进复杂项目交付。"
         )
-        with patch("app.screenshot_ocr.extract_screenshot_text", return_value=ocr_text):
+        with patch("app.jobs.screenshot_ocr.extract_screenshot_text", return_value=ocr_text):
             result = preview_job_screenshot(
                 "job.png",
                 b"image-bytes",

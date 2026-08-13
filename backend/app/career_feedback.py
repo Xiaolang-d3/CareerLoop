@@ -343,7 +343,7 @@ def skill_growth_map(db_path: str | Path | None = None) -> dict[str, Any]:
             WHERE status IN ('gap', 'weak', 'red')
             """
         ).fetchall()
-    from .job_evaluations import get_job_evaluation
+    from .jobs.evaluations import get_job_evaluation
     from .profile_intelligence import extract_skills
 
     for row in evaluation_rows:

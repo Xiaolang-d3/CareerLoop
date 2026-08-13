@@ -11,7 +11,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse, urlunparse
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
-from .research.web import is_public_source_url
+from ..research.web import is_public_source_url
 
 
 MAX_PAGE_BYTES = 2_000_000
@@ -115,7 +115,7 @@ def preview_job_url(
     agent: Any | None = None,
 ) -> dict[str, Any]:
     if agent is None:
-        from .job_import_agent import JobImportAgent
+        from .import_agent import JobImportAgent
 
         agent = JobImportAgent()
     return agent.run(url)

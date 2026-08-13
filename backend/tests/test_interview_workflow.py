@@ -14,7 +14,7 @@ from app.interview.workflow import (
     update_interview_round,
     update_interview_task,
 )
-from app.jobs import create_job, get_job, update_job
+from app.jobs.service import create_job, get_job, update_job
 from evaluation_helpers import seed_confirmed_facts_and_evaluation
 
 
