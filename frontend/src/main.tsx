@@ -10,11 +10,6 @@ import { ConversationDialog, type ConversationDialogState } from "./components/C
 import type { AgentRunResult, AttachmentConfig, ChatAttachment, ChatMessage, ChatRetryDraft } from "./components/ChatWorkspace";
 import { SectionHeader } from "./components/ui";
 import {
-  captureBrowserJobPage,
-  detectBrowserBridge,
-  openBrowserJobPage
-} from "./features/browser/browserBridge";
-import {
   bossHomeUrl,
   defaultAgentSettings,
   emptyCandidateEditor,
@@ -149,13 +144,24 @@ function resolveApiBase() {
   return import.meta.env.DEV ? "/api" : window.location.origin;
 }
 
+// One-time migration of pre-rebrand localStorage keys.
+for (const key of ["sidebar", "view"]) {
+  const legacy = window.localStorage.getItem(`bosscopilot-${key}`);
+  if (legacy !== null) {
+    if (window.localStorage.getItem(`careerloop-${key}`) === null) {
+      window.localStorage.setItem(`careerloop-${key}`, legacy);
+    }
+    window.localStorage.removeItem(`bosscopilot-${key}`);
+  }
+}
+
 function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => void }) {
   const apiBase = useMemo(() => resolveApiBase(), []);
   const fetchJson = useMemo(() => createApiClient(apiBase, accessToken), [apiBase, accessToken]);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem("bosscopilot-sidebar") === "collapsed");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem("careerloop-sidebar") === "collapsed");
   const [appRoute, setAppRoute] = useState<AppRoute>(() => initialAppRoute(
     window.location.hash,
-    window.localStorage.getItem("bosscopilot-view")
+    window.localStorage.getItem("careerloop-view")
   ));
   const activeView: ViewKey = appRoute.section;
   const [workflow, setWorkflow] = useState<WorkflowStatus | null>(null);
@@ -165,9 +171,6 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
   const [jobBusy, setJobBusy] = useState(false);
   const [jobImportBusy, setJobImportBusy] = useState(false);
   const [jobImportActivity, setJobImportActivity] = useState<JobImportActivityEvent[]>([]);
-  const [browserJobImportAvailable, setBrowserJobImportAvailable] = useState(false);
-  const [browserJobTabId, setBrowserJobTabId] = useState<number | null>(null);
-  const [browserJobOpened, setBrowserJobOpened] = useState(false);
   const [jobEvaluation, setJobEvaluation] = useState<JobEvaluation | null>(null);
   const [jobEvaluationBusy, setJobEvaluationBusy] = useState(false);
   const [resumeVersions, setResumeVersions] = useState<ResumeVersionSummary[]>([]);
@@ -241,7 +244,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
   useEffect(() => {
     const canonicalHash = appRouteHash(initialAppRoute(
       window.location.hash,
-      window.localStorage.getItem("bosscopilot-view")
+      window.localStorage.getItem("careerloop-view")
     ));
     if (window.location.hash !== canonicalHash) {
       window.history.replaceState(null, "", canonicalHash);
@@ -294,34 +297,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
   }, [currentConversationId]);
 
   useEffect(() => {
-    if (appRoute.section !== "workbench") return;
-    let cancelled = false;
-    void Promise.all([
-      fetchJson<{
-        enabled: boolean;
-        capabilities: string[];
-      }>("/browser/capabilities"),
-      detectBrowserBridge()
-    ])
-      .then(([backend, extension]) => {
-        if (cancelled) return;
-        setBrowserJobImportAvailable(
-          backend.enabled
-          && backend.capabilities.includes("job_page_capture")
-          && extension.available
-          && extension.capabilities.includes("job_page_capture")
-        );
-      })
-      .catch(() => {
-        if (!cancelled) setBrowserJobImportAvailable(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [fetchJson]);
-
-  useEffect(() => {
-    window.localStorage.setItem("bosscopilot-view", activeView);
+    window.localStorage.setItem("careerloop-view", activeView);
   }, [activeView]);
 
   useEffect(() => {
@@ -347,7 +323,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
   function toggleSidebar() {
     setSidebarCollapsed((current) => {
       const next = !current;
-      window.localStorage.setItem("bosscopilot-sidebar", next ? "collapsed" : "expanded");
+      window.localStorage.setItem("careerloop-sidebar", next ? "collapsed" : "expanded");
       return next;
     });
   }
@@ -365,7 +341,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
     ? { title: "先建立职业画像", detail: "导入简历或填写关键经历，让岗位判断和面试准备真正贴合你。", action: "创建个人资料", kind: "settings" as const }
     : !workbenchProfileReady
       ? { title: "确认候选人事实", detail: "待确认知识不会参与岗位评分；请先在画像中心核对证据。", action: "审核画像", kind: "settings" as const }
-      : { title: "读取一个目标岗位", detail: "在招聘平台打开岗位详情页，用浏览器助手读取并开始匹配分析。", action: "读取岗位", kind: "workbench" as const };
+      : { title: "对照一份目标岗位", detail: "粘贴岗位描述、提交公开链接或上传截图，开始匹配分析。", action: "开始分析", kind: "workbench" as const };
 
   async function refreshData(conversationId = currentConversationId) {
     try {
@@ -904,153 +880,23 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
 
   async function previewJobLink(url: string): Promise<JobImportPreview> {
     setJobImportBusy(true);
-    setBrowserJobOpened(false);
-    setBrowserJobTabId(null);
     setJobImportActivity([]);
     setErrorMessage("");
     try {
       const preview = await consumeJobImportStream(
         "/job-imports/preview/stream",
-        {
-          url,
-          browser_capture_available: browserJobImportAvailable
-        }
+        { url }
       );
       setNoticeMessage(
         preview.status === "ready"
           ? "岗位信息已读取"
           : preview.status === "partial"
             ? "岗位信息不完整"
-            : preview.status === "browser_required"
-              ? "需要在浏览器中读取"
-              : "已停止读取"
+            : "已停止读取"
       );
       return preview;
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "岗位链接解析失败");
-      throw error;
-    } finally {
-      setJobImportBusy(false);
-    }
-  }
-
-  async function openJobInBrowser(url: string): Promise<{ tabId: number; opened: boolean; reused: boolean }> {
-    setJobImportBusy(true);
-    setErrorMessage("");
-    setJobImportActivity((current) => [
-      ...current,
-      {
-        type: "task",
-        id: "browser-extension-open",
-        round: 0,
-        tool: "browser_open_page",
-        status: "running",
-        message: "正在打开 Chrome 岗位页面"
-      }
-    ]);
-    try {
-      const extension = await detectBrowserBridge();
-      const extensionReady = (
-        extension.available
-        && extension.capabilities.includes("job_page_open")
-      );
-      setBrowserJobImportAvailable(extensionReady);
-      if (!extensionReady) {
-        throw new Error("未检测到浏览器助手，请先在 Chrome 中加载扩展并刷新工作台");
-      }
-      const result = await openBrowserJobPage(url);
-      setBrowserJobTabId(result.tabId);
-      setBrowserJobOpened(true);
-      setJobImportActivity((current) => current.map((event) => (
-        event.id === "browser-extension-open"
-          ? {
-              ...event,
-              status: "done",
-              message: result.reused
-                ? "已切换到之前打开的岗位标签页"
-                : "已打开 Chrome 岗位标签页"
-            }
-          : event
-      )));
-      setNoticeMessage(
-        "已打开浏览器"
-      );
-      return result;
-    } catch (error) {
-      setJobImportActivity((current) => current.map((event) => (
-        event.id === "browser-extension-open"
-          ? {
-              ...event,
-              status: "failed",
-              message: error instanceof Error ? error.message : "打开 Chrome 岗位页失败"
-            }
-          : event
-      )));
-      setErrorMessage(error instanceof Error ? error.message : "打开 Chrome 岗位页失败");
-      throw error;
-    } finally {
-      setJobImportBusy(false);
-    }
-  }
-
-  async function previewJobFromBrowser(
-    url: string,
-    tabId?: number
-  ): Promise<JobImportPreview> {
-    setJobImportBusy(true);
-    setErrorMessage("");
-    setJobImportActivity((current) => [
-      ...current,
-      {
-        type: "task",
-        id: "browser-extension-capture",
-        round: 0,
-        tool: "browser_read_page",
-        status: "running",
-        message: "正在从 Chrome 读取当前岗位页面"
-      }
-    ]);
-    try {
-      const extension = await detectBrowserBridge();
-      const extensionReady = (
-        extension.available
-        && extension.capabilities.includes("job_page_capture")
-      );
-      setBrowserJobImportAvailable(extensionReady);
-      if (!extensionReady) {
-        throw new Error("未检测到浏览器助手，请先在 Chrome 中加载扩展并刷新岗位页面");
-      }
-      const capture = await captureBrowserJobPage(url, tabId ?? browserJobTabId ?? undefined);
-      setJobImportActivity((current) => current.map((event) => (
-        event.id === "browser-extension-capture"
-          ? {
-              ...event,
-              status: "done",
-              message: "已读取 Chrome 中的岗位页面"
-            }
-          : event
-      )));
-      const preview = await consumeJobImportStream(
-        "/job-imports/browser-preview/stream",
-        capture
-      );
-      setNoticeMessage(
-        preview.status === "ready"
-          ? "岗位信息已读取"
-          : "未读取到岗位信息"
-      );
-      return preview;
-    } catch (error) {
-      setJobImportActivity((current) => current.map((event) => (
-        event.id === "browser-extension-capture"
-          ? {
-              ...event,
-              status: "failed",
-              message: error instanceof Error ? error.message : "浏览器岗位读取失败"
-            }
-          : event
-      )));
-      setErrorMessage(error instanceof Error ? error.message : "浏览器岗位读取失败");
       throw error;
     } finally {
       setJobImportBusy(false);
@@ -1676,7 +1522,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
 
     const handleTerminal = (snapshot: {
       workflow: WorkflowStatus;
-      bossCopilot: {
+      careerLoop: {
         status: "done" | "failed" | "cancelled" | "waiting_user";
         userMessage: ChatMessage;
         assistantMessage: ChatMessage;
@@ -1684,7 +1530,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
     }) => {
       terminalReceived = true;
       setWorkflow(snapshot.workflow);
-      const { userMessage, assistantMessage, status } = snapshot.bossCopilot;
+      const { userMessage, assistantMessage, status } = snapshot.careerLoop;
       if (currentConversationIdRef.current === conversationId) {
         setChatMessages((current) => [
           ...current.filter((message) => ![
@@ -1703,7 +1549,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
     const agent = new HttpAgent({
       url: `${apiBase}/ag-ui`,
       headers: { Authorization: `Bearer ${accessToken}` },
-      agentId: "bosscopilot",
+      agentId: "careerloop",
       threadId: String(conversationId),
       initialMessages: [
         ...chatMessages.map((message) => ({
@@ -1719,7 +1565,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
 
     const subscriber: AgentSubscriber = {
       onCustomEvent: ({ event }) => {
-        if (event.name === "bosscopilot.user_message") {
+        if (event.name === "careerloop.user_message") {
           const userMessage = event.value as ChatMessage;
           if (currentConversationIdRef.current === conversationId) {
             setChatMessages((current) => [
@@ -1806,7 +1652,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
           runId: createClientId(),
           tools: [],
           context: [],
-          forwardedProps: { conversationId, client: "bosscopilot-web", attachmentIds, visionAttachmentIds, webSearch }
+          forwardedProps: { conversationId, client: "careerloop-web", attachmentIds, visionAttachmentIds, webSearch }
         },
         subscriber
       );
@@ -1923,15 +1769,15 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
         }>("/system/database-status");
         if (database.status === "requires_rebuild") {
           const confirmed = window.confirm(
-            "BossCopilot 2.0 需要重建本地数据库。\n\n继续前会自动生成带时间戳的完整备份；旧数据不会自动导入新画像。是否现在备份并重建？"
+            "CareerLoop 2.0 需要重建本地数据库。\n\n继续前会自动生成带时间戳的完整备份；旧数据不会自动导入新画像。是否现在备份并重建？"
           );
           if (!confirmed) {
-            throw new Error("已取消数据库重建。当前旧数据库保持不变，确认后才能进入 BossCopilot 2.0。");
+            throw new Error("已取消数据库重建。当前旧数据库保持不变，确认后才能进入 CareerLoop 2.0。");
           }
           await fetchJson("/system/database-rebuild", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ confirmation: "确认重建 BossCopilot 2.0 数据库" })
+            body: JSON.stringify({ confirmation: "确认重建 CareerLoop 2.0 数据库" })
           });
         }
         setDatabaseReady(true);
@@ -2105,7 +1951,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
       }[appRoute.page]
     : appRoute.section === "opportunities"
       ? appRoute.page === "new"
-        ? { title: "岗位读取", description: "岗位只能通过浏览器助手从当前招聘详情页读取" }
+        ? { title: "新建发现任务", description: "选择扫描来源、识别招聘页或评估已收集岗位" }
         : appRoute.page === "pipeline"
           ? { title: "岗位队列", description: "查看已读取岗位并决定哪些值得继续推进" }
           : appRoute.page === "sources"
@@ -2302,9 +2148,6 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
               jobBusy={jobBusy}
               jobImportBusy={jobImportBusy}
               jobImportActivity={jobImportActivity}
-              browserJobImportAvailable={browserJobImportAvailable}
-              browserJobOpened={browserJobOpened}
-              browserJobTabId={browserJobTabId}
               analysis={jobEvaluation}
               analysisBusy={jobEvaluationBusy}
               resumeVersions={resumeVersions}
@@ -2326,8 +2169,6 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
               onQuickMatch={runQuickMatch}
               onSaveJob={saveJobProject}
               onPreviewJobUrl={previewJobLink}
-              onOpenJobInBrowser={openJobInBrowser}
-              onPreviewJobFromBrowser={previewJobFromBrowser}
               onPreviewJobText={previewJobText}
               onPreviewJobScreenshot={previewJobScreenshot}
               onDeleteJob={removeJobProject}

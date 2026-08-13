@@ -46,7 +46,7 @@ class Settings(BaseModel):
     minio_endpoint: str | None = None
     minio_access_key: str | None = None
     minio_secret_key: str | None = None
-    minio_bucket: str = "bosscopilot-attachments"
+    minio_bucket: str = "careerloop-attachments"
     minio_secure: bool = False
     minio_public_endpoint: str | None = None
     attachment_vision_enabled: bool = False
@@ -56,7 +56,6 @@ class Settings(BaseModel):
     agent_search_token: str | None = None
     web_research_timeout_seconds: float = Field(default=25, gt=0, le=120)
     web_research_max_sources: int = Field(default=10, ge=3, le=20)
-    browser_job_import_enabled: bool = True
 
     @property
     def is_loopback_only(self) -> bool:
@@ -102,7 +101,7 @@ def get_settings() -> Settings:
         minio_endpoint=os.getenv("MINIO_ENDPOINT") or None,
         minio_access_key=os.getenv("MINIO_ACCESS_KEY") or None,
         minio_secret_key=os.getenv("MINIO_SECRET_KEY") or None,
-        minio_bucket=os.getenv("MINIO_BUCKET", "bosscopilot-attachments"),
+        minio_bucket=os.getenv("MINIO_BUCKET", "careerloop-attachments"),
         minio_secure=os.getenv("MINIO_SECURE", "false").lower() == "true",
         minio_public_endpoint=os.getenv("MINIO_PUBLIC_ENDPOINT") or None,
         attachment_vision_enabled=os.getenv("ATTACHMENT_VISION_ENABLED", "false").lower() == "true",
@@ -112,8 +111,4 @@ def get_settings() -> Settings:
         agent_search_token=os.getenv("AGENT_SEARCH_TOKEN") or None,
         web_research_timeout_seconds=os.getenv("WEB_RESEARCH_TIMEOUT_SECONDS", "25"),
         web_research_max_sources=os.getenv("WEB_RESEARCH_MAX_SOURCES", "10"),
-        browser_job_import_enabled=os.getenv(
-            "BROWSER_JOB_IMPORT_ENABLED",
-            "true",
-        ).lower() == "true",
     )

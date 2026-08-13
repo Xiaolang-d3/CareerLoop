@@ -71,9 +71,6 @@ type WorkbenchViewProps = {
   jobBusy: boolean;
   jobImportBusy: boolean;
   jobImportActivity: JobImportActivityEvent[];
-  browserJobImportAvailable: boolean;
-  browserJobOpened: boolean;
-  browserJobTabId: number | null;
   analysis: JobEvaluation | null;
   analysisBusy: boolean;
   resumeVersions: ResumeVersionSummary[];
@@ -99,8 +96,6 @@ type WorkbenchViewProps = {
   }) => Promise<QuickMatchResult>;
   onSaveJob: (draft: JobProjectDraft, jobId: number | null) => Promise<JobProject>;
   onPreviewJobUrl: (url: string) => Promise<JobImportPreview>;
-  onOpenJobInBrowser: (url: string) => Promise<{ tabId: number; opened: boolean; reused: boolean }>;
-  onPreviewJobFromBrowser: (url: string, tabId?: number) => Promise<JobImportPreview>;
   onPreviewJobText: (text: string, sourceUrl?: string) => Promise<JobImportPreview>;
   onPreviewJobScreenshot: (file: File, sourceUrl?: string) => Promise<JobImportPreview>;
   onDeleteJob: (job: JobProject) => Promise<void>;
@@ -231,9 +226,6 @@ export function WorkbenchView({
   jobBusy,
   jobImportBusy,
   jobImportActivity,
-  browserJobImportAvailable,
-  browserJobOpened,
-  browserJobTabId,
   analysis,
   analysisBusy,
   resumeVersions,
@@ -255,8 +247,6 @@ export function WorkbenchView({
   onQuickMatch,
   onSaveJob,
   onPreviewJobUrl,
-  onOpenJobInBrowser,
-  onPreviewJobFromBrowser,
   onPreviewJobText,
   onPreviewJobScreenshot,
   onDeleteJob,
@@ -290,8 +280,6 @@ export function WorkbenchView({
   const [comparisonJobs, setComparisonJobs] = useState<number[]>([]);
   const [quickMatchInput, setQuickMatchInput] = useState("");
   const [quickMatchPreview, setQuickMatchPreview] = useState<JobImportPreview | null>(null);
-  const [quickMatchBrowserUrl, setQuickMatchBrowserUrl] = useState("");
-  const [quickMatchBrowserTabId, setQuickMatchBrowserTabId] = useState<number | null>(null);
   const [quickMatchResult, setQuickMatchResult] = useState<QuickMatchResult | null>(null);
   const [quickMatchError, setQuickMatchError] = useState("");
   const [quickMatchBusy, setQuickMatchBusy] = useState(false);
@@ -309,7 +297,6 @@ export function WorkbenchView({
   const importStopped = Boolean(
     importPreview && stoppedImportStatuses.has(importPreview.status)
   );
-  const importBrowserRequired = importPreview?.status === "browser_required";
 
   useEffect(() => {
     setActiveStage("analysis");
@@ -414,7 +401,7 @@ export function WorkbenchView({
       setBrowserImportUrl(url);
       const preview = await onPreviewJobUrl(url);
       const stopped = ["unsupported", "blocked", "invalid"].includes(preview.status);
-      if (stopped || preview.status === "browser_required") {
+      if (stopped) {
         setImportUrl(preview.final_url || preview.source_url);
         setImportWarnings(preview.warnings);
         setImportPreview(preview);
@@ -442,15 +429,6 @@ export function WorkbenchView({
     }
   }
 
-  async function openJobForImport() {
-    if (!importPreview || jobImportBusy) return;
-    try {
-      await onOpenJobInBrowser(browserImportUrl || importPreview.final_url || importPreview.source_url);
-    } catch {
-      return;
-    }
-  }
-
   async function importJobFromText() {
     if (!pastedJobText.trim() || jobImportBusy) return;
     try {
@@ -473,51 +451,6 @@ export function WorkbenchView({
       setPasteJobTextOpen(false);
       setImportDescriptionExpanded(false);
       setJobDetailsExpanded(false);
-      setDirty(true);
-    } catch {
-      return;
-    }
-  }
-
-  async function importJobFromBrowser() {
-    if (!importPreview || jobImportBusy) return;
-    try {
-      const previousTrace = importPreview.agent_trace || [];
-      const preview = await onPreviewJobFromBrowser(
-        browserImportUrl || importPreview.final_url || importPreview.source_url,
-        browserJobOpened ? browserJobTabId ?? undefined : undefined
-      );
-      const traceOffset = previousTrace.length;
-      const mergedPreview: JobImportPreview = {
-        ...preview,
-        agent_rounds: importPreview.agent_rounds + preview.agent_rounds,
-        agent_trace: [
-          ...previousTrace,
-          ...preview.agent_trace.map((event) => ({
-            ...event,
-            step: event.step + traceOffset
-          }))
-        ]
-      };
-      if (stoppedImportStatuses.has(preview.status)) {
-        setImportWarnings(preview.warnings);
-        setImportPreview(mergedPreview);
-        setImportDescriptionExpanded(false);
-        return;
-      }
-      setDraft((current) => ({
-        ...current,
-        job_title: preview.job_title || current.job_title,
-        company_name: preview.company_name || current.company_name,
-        location: preview.location || current.location,
-        salary_text: preview.salary_text || current.salary_text,
-        source_url: preview.final_url || preview.source_url,
-        description: preview.description || current.description
-      }));
-      setImportUrl(preview.final_url || preview.source_url);
-      setImportWarnings(preview.warnings);
-      setImportPreview(mergedPreview);
-      setImportDescriptionExpanded(false);
       setDirty(true);
     } catch {
       return;
@@ -674,12 +607,12 @@ export function WorkbenchView({
 
   async function analyzeQuickMatchPreview(preview: JobImportPreview) {
     setQuickMatchPreview(preview);
-    if (preview.status === "browser_required") {
-      setQuickMatchError("该岗位页需要在 Chrome 中登录或完成验证后读取。");
-      return;
-    }
     if (stoppedImportStatuses.has(preview.status)) {
-      setQuickMatchError(preview.stop_reason || preview.warnings[0] || "未能读取到可用于分析的岗位内容。");
+      setQuickMatchError(
+        preview.stop_reason
+        || preview.warnings[0]
+        || "未能读取到可用于分析的岗位内容，请改用粘贴描述或上传截图。"
+      );
       return;
     }
     if (preview.description.trim().length < 20) {
@@ -700,8 +633,6 @@ export function WorkbenchView({
     setQuickMatchError("");
     setQuickMatchResult(null);
     setQuickMatchPreview(null);
-    setQuickMatchBrowserTabId(null);
-    setQuickMatchBrowserUrl(isWebUrl(input) ? input : "");
     try {
       const preview = isWebUrl(input)
         ? await onPreviewJobUrl(input)
@@ -714,37 +645,12 @@ export function WorkbenchView({
     }
   }
 
-  async function continueQuickMatchInBrowser() {
-    if (!quickMatchPreview || quickMatchBusy || jobImportBusy) return;
-    setQuickMatchBusy(true);
-    setQuickMatchError("");
-    try {
-      if (quickMatchBrowserTabId == null) {
-        const browserPage = await onOpenJobInBrowser(
-          quickMatchBrowserUrl || quickMatchPreview.final_url || quickMatchPreview.source_url
-        );
-        setQuickMatchBrowserTabId(browserPage.tabId);
-        return;
-      }
-      const preview = await onPreviewJobFromBrowser(
-        quickMatchBrowserUrl || quickMatchPreview.final_url || quickMatchPreview.source_url,
-        quickMatchBrowserTabId
-      );
-      await analyzeQuickMatchPreview(preview);
-    } catch (error) {
-      setQuickMatchError(error instanceof Error ? error.message : "无法从 Chrome 读取岗位页面。");
-    } finally {
-      setQuickMatchBusy(false);
-    }
-  }
-
   async function quickMatchFromScreenshot(file: File) {
     if (quickMatchBusy || jobImportBusy) return;
     setQuickMatchBusy(true);
     setQuickMatchError("");
     setQuickMatchResult(null);
-    setQuickMatchBrowserTabId(null);
-    setQuickMatchBrowserUrl("");
+    setQuickMatchPreview(null);
     try {
       const preview = await onPreviewJobScreenshot(file);
       await analyzeQuickMatchPreview(preview);

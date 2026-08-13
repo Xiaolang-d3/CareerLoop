@@ -28,7 +28,6 @@ import type {
   OpportunityRunMode,
   OpportunitySource
 } from "../../types";
-import { captureBrowserJobPage, detectBrowserBridge } from "../browser/browserBridge";
 
 type Page = "index" | "new" | "pipeline" | "sources" | "run" | "job";
 
@@ -48,7 +47,7 @@ type Props = {
 };
 
 const modeMeta: Record<OpportunityRunMode, { title: string; summary: string; icon: typeof Radar }> = {
-  scan: { title: "扫描来源", summary: "刷新关注的公司官网与公开招聘源；国内平台等待你读取当前页。", icon: Radar },
+  scan: { title: "扫描来源", summary: "刷新关注的公司官网与公开招聘源。", icon: Radar },
   discover: { title: "识别公司 ATS", summary: "根据公司名单找到官网、招聘页和所使用的招聘系统。", icon: Building2 },
   company_funded: { title: "近期融资公司", summary: "从公开证据发现近期融资公司，再确认是否值得关注。", icon: CircleDollarSign },
   pipeline: { title: "评估待处理岗位", summary: "按当前职业策略完成归一化、硬条件检查与本地匹配。", icon: ListFilter },
@@ -176,27 +175,6 @@ export function OpportunityDiscoveryPage({
       .finally(() => setBusy(false));
   }, [discoveredJobId, fetchJson, page]);
 
-  async function readVisiblePage() {
-    setBusy(true);
-    setError("");
-    try {
-      const bridge = await detectBrowserBridge();
-      if (!bridge.available) throw new Error("未检测到浏览器助手。请安装或刷新浏览器助手后重试。");
-      const capture = await captureBrowserJobPage();
-      const result = await fetchJson<{ job: DiscoveredOpportunity; run: OpportunityRun }>("/opportunities/browser-detail-import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...capture, user_initiated: true })
-      });
-      setNotice("已读取");
-      onNavigateRun(result.run.id);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "读取当前招聘页失败");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function createRun(payload: Record<string, unknown>) {
     setBusy(true);
     setError("");
@@ -287,7 +265,6 @@ export function OpportunityDiscoveryPage({
           const next = await fetchJson<OpportunityRun>(`/opportunity-runs/${run.id}/retry`, { method: "POST" });
           onNavigateRun(next.id);
         }}
-        onReadVisible={() => void readVisiblePage()}
       /> : null}
       {page === "job" ? <JobDetailPage
         job={job} assessments={assessments} busy={busy} onBack={onNavigatePipeline}
@@ -336,7 +313,7 @@ function NewRunPage({ busy, strategyId, onBack, onCreate }: { busy: boolean; str
       <h3>{modeMeta[mode].title}</h3>
       {mode === "discover" ? <><label><span>发现条件</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="例如：上海 AI 企业" /></label><label><span>指定公司（每行一个，可选）</span><textarea value={companyNames} onChange={(event) => setCompanyNames(event.target.value)} placeholder="字节跳动\n小红书" /></label></> : null}
       {mode === "company_funded" ? <><div className="form-row"><label><span>地区</span><input value={regions} onChange={(event) => setRegions(event.target.value)} /></label><label><span>行业</span><input value={industries} onChange={(event) => setIndustries(event.target.value)} placeholder="人工智能，企业服务" /></label></div><label><span>融资时间窗口</span><select value={windowDays} onChange={(event) => setWindowDays(Number(event.target.value))}><option value={30}>近 30 天</option><option value={90}>近 90 天</option><option value={180}>近 180 天</option></select></label><p className="form-note">融资是公司发现信号，不代表公司一定正在扩招。</p></> : null}
-      {mode === "scan" ? <div className="boundary-note"><Radar size={18} /><p><strong>公开来源自动扫描</strong><span>BOSS、猎聘、智联和前程无忧会等待你打开页面并主动读取当前可见内容。</span></p></div> : null}
+      {mode === "scan" ? <div className="boundary-note"><Radar size={18} /><p><strong>公开来源自动扫描</strong><span>只扫描可公开访问的公司招聘页；需要登录的招聘平台请改用粘贴 JD 或上传截图。</span></p></div> : null}
       {mode === "pipeline" || mode === "batch" ? <div className="boundary-note"><ListFilter size={18} /><p><strong>{mode === "batch" ? "分层批量评估" : "处理待评估队列"}</strong><span>只使用已确认事实计分，结果不会自动改变岗位决策状态。</span></p></div> : null}
       <footer><button onClick={onBack}>取消</button><button className="primary-action" disabled={busy || (mode === "discover" && !query.trim() && !companyNames.trim())} onClick={() => onCreate({ mode, strategy_id: strategyId, query: query.trim(), company_names: splitList(companyNames), regions: splitList(regions), industries: splitList(industries), funding_window_days: windowDays, deep_analysis: "none" })}><Play size={15} />开始运行</button></footer>
     </div>
@@ -347,7 +324,7 @@ function PipelinePage({ jobs, selected, busy, onBack, onOpen, onToggle, onRun, o
   jobs: DiscoveredOpportunity[]; selected: number[]; busy: boolean; onBack: () => void; onOpen: (id: number) => void; onToggle: (id: number) => void; onRun: () => void; onDecide: (job: DiscoveredOpportunity, status: "shortlisted" | "dismissed") => void;
 }) {
   const visible = jobs.filter((item) => item.lifecycle_status !== "saved");
-  return <section className="opportunity-subpage"><button className="back-link" onClick={onBack}><ArrowLeft size={15} />返回岗位工作台</button><header className="pipeline-header"><div><span className="eyebrow">JOB QUEUE</span><h2>决定哪些岗位值得推进</h2><p>先查看初步匹配结论，再由你决定暂不推进、值得推进或开始求职准备。</p></div><button className="primary-action" disabled={busy || (!selected.length && !visible.length)} onClick={onRun}><Sparkles size={15} />{selected.length ? `分析选中 ${selected.length} 项` : "分析全部待处理岗位"}</button></header><div className="pipeline-table"><div className="pipeline-table-head"><span>选择</span><span>岗位</span><span>匹配</span><span>状态</span><span>操作</span></div>{visible.map((item) => <article key={item.id}><label aria-label={`选择 ${item.company_name} ${item.job_title}`}><input type="checkbox" checked={selected.includes(item.id)} onChange={() => onToggle(item.id)} /></label><button className="pipeline-job" onClick={() => onOpen(item.id)}><strong>{item.company_name} · {item.job_title}</strong><small>{item.location || "地点未注明"} · {item.salary_text || "薪资未注明"}</small></button><button className="score-chip" onClick={() => onOpen(item.id)}>{scoreLabel(item.assessment?.score)}</button><span>{decisionLabel[item.lifecycle_status]}</span><div>{item.lifecycle_status === "discovered" ? <><button onClick={() => onDecide(item, "shortlisted")}>值得推进</button><button onClick={() => onDecide(item, "dismissed")}>暂不推进</button></> : <button onClick={() => onOpen(item.id)}>查看</button>}</div></article>)}{!visible.length ? <div className="opportunity-empty">队列为空。请先通过浏览器扩展读取岗位详情页。</div> : null}</div></section>;
+  return <section className="opportunity-subpage"><button className="back-link" onClick={onBack}><ArrowLeft size={15} />返回岗位工作台</button><header className="pipeline-header"><div><span className="eyebrow">JOB QUEUE</span><h2>决定哪些岗位值得推进</h2><p>先查看初步匹配结论，再由你决定暂不推进、值得推进或开始求职准备。</p></div><button className="primary-action" disabled={busy || (!selected.length && !visible.length)} onClick={onRun}><Sparkles size={15} />{selected.length ? `分析选中 ${selected.length} 项` : "分析全部待处理岗位"}</button></header><div className="pipeline-table"><div className="pipeline-table-head"><span>选择</span><span>岗位</span><span>匹配</span><span>状态</span><span>操作</span></div>{visible.map((item) => <article key={item.id}><label aria-label={`选择 ${item.company_name} ${item.job_title}`}><input type="checkbox" checked={selected.includes(item.id)} onChange={() => onToggle(item.id)} /></label><button className="pipeline-job" onClick={() => onOpen(item.id)}><strong>{item.company_name} · {item.job_title}</strong><small>{item.location || "地点未注明"} · {item.salary_text || "薪资未注明"}</small></button><button className="score-chip" onClick={() => onOpen(item.id)}>{scoreLabel(item.assessment?.score)}</button><span>{decisionLabel[item.lifecycle_status]}</span><div>{item.lifecycle_status === "discovered" ? <><button onClick={() => onDecide(item, "shortlisted")}>值得推进</button><button onClick={() => onDecide(item, "dismissed")}>暂不推进</button></> : <button onClick={() => onOpen(item.id)}>查看</button>}</div></article>)}{!visible.length ? <div className="opportunity-empty">队列为空。请先通过公开链接、粘贴 JD 或上传截图导入岗位。</div> : null}</div></section>;
 }
 
 function SourcesPage({ apiBase, sources, busy, onBack, onRefresh, onRun }: { apiBase: string; sources: OpportunitySource[]; busy: boolean; onBack: () => void; onRefresh: () => Promise<void>; onRun: (ids: number[]) => void }) {
@@ -359,14 +336,14 @@ function SourcesPage({ apiBase, sources, busy, onBack, onRefresh, onRun }: { api
     await fetchJson("/opportunity-sources", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "自定义来源", source_url: url, platform, access_mode: platform ? "browser_visible_only" : null }) });
     setAdding(false); setUrl(""); setPlatform(""); await onRefresh();
   }
-  return <section className="opportunity-subpage"><button className="back-link" onClick={onBack}><ArrowLeft size={15} />返回岗位发现</button><header className="pipeline-header"><div><span className="eyebrow">来源管理</span><h2>公司与招聘来源</h2><p>公开来源可以自动扫描，国内招聘平台只读取你当前可见的页面。</p></div><div><button onClick={() => setAdding((value) => !value)}><Plus size={15} />添加来源</button><button className="primary-action" disabled={busy || !sources.length} onClick={() => onRun(sources.map((item) => item.id))}><RefreshCw size={15} />刷新全部</button></div></header>{adding ? <div className="opportunity-form-card compact"><div className="form-row"><label><span>公开招聘页或已保存搜索页</span><input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://..." /></label><label><span>国内平台（可选）</span><select value={platform} onChange={(event) => setPlatform(event.target.value)}><option value="">自动识别官网 / ATS</option><option value="boss">BOSS 直聘</option><option value="liepin">猎聘</option><option value="zhaopin">智联招聘</option><option value="51job">前程无忧</option></select></label></div><footer><button onClick={() => setAdding(false)}>取消</button><button className="primary-action" disabled={!url.trim()} onClick={() => void addSource()}>保存来源</button></footer></div> : null}<div className="source-card-grid">{sources.map((source) => <article key={source.id}><div className={`source-icon ${source.access_mode}`}><Building2 size={18} /></div><div><small>{source.access_mode === "browser_visible_only" ? "需主动读取" : source.access_mode === "public_api" ? "公开 API" : "公开招聘页"}</small><h3>{source.company_name || source.platform || source.provider}</h3><p>{source.source_url}</p><span>{source.last_status === "failed" ? "上次扫描失败" : source.last_scanned_at ? `上次扫描 ${source.last_scanned_at}` : "尚未扫描"}</span></div><div><button onClick={() => onRun([source.id])}>{source.access_mode === "browser_visible_only" ? "查看读取步骤" : "扫描"}</button><a href={source.source_url} target="_blank" rel="noreferrer" aria-label="打开来源"><ExternalLink size={15} /></a></div></article>)}{!sources.length ? <div className="opportunity-empty">还没有配置来源。可以添加公司招聘官网或国内平台搜索页。</div> : null}</div></section>;
+  return <section className="opportunity-subpage"><button className="back-link" onClick={onBack}><ArrowLeft size={15} />返回岗位发现</button><header className="pipeline-header"><div><span className="eyebrow">来源管理</span><h2>公司与招聘来源</h2><p>公开招聘页可以自动扫描；需要登录的平台请改用粘贴 JD 或上传截图。</p></div><div><button onClick={() => setAdding((value) => !value)}><Plus size={15} />添加来源</button><button className="primary-action" disabled={busy || !sources.length} onClick={() => onRun(sources.map((item) => item.id))}><RefreshCw size={15} />刷新全部</button></div></header>{adding ? <div className="opportunity-form-card compact"><div className="form-row"><label><span>公开招聘页或已保存搜索页</span><input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://..." /></label><label><span>国内平台（可选）</span><select value={platform} onChange={(event) => setPlatform(event.target.value)}><option value="">自动识别官网 / ATS</option><option value="boss">BOSS 直聘</option><option value="liepin">猎聘</option><option value="zhaopin">智联招聘</option><option value="51job">前程无忧</option></select></label></div><footer><button onClick={() => setAdding(false)}>取消</button><button className="primary-action" disabled={!url.trim()} onClick={() => void addSource()}>保存来源</button></footer></div> : null}<div className="source-card-grid">{sources.map((source) => <article key={source.id}><div className={`source-icon ${source.access_mode}`}><Building2 size={18} /></div><div><small>{source.access_mode === "browser_visible_only" ? "需登录，暂不自动扫描" : source.access_mode === "public_api" ? "公开 API" : "公开招聘页"}</small><h3>{source.company_name || source.platform || source.provider}</h3><p>{source.source_url}</p><span>{source.last_status === "failed" ? "上次扫描失败" : source.last_scanned_at ? `上次扫描 ${source.last_scanned_at}` : "尚未扫描"}</span></div><div><button onClick={() => onRun([source.id])}>{source.access_mode === "browser_visible_only" ? "打开来源" : "扫描"}</button><a href={source.source_url} target="_blank" rel="noreferrer" aria-label="打开来源"><ExternalLink size={15} /></a></div></article>)}{!sources.length ? <div className="opportunity-empty">还没有配置来源。可以添加公司招聘官网或国内平台搜索页。</div> : null}</div></section>;
 }
 
-function RunDetailPage({ run, busy, onBack, onJob, onCancel, onRetry, onReadVisible }: { run: OpportunityRun | null; busy: boolean; onBack: () => void; onJob: (id: number) => void; onCancel: () => Promise<void>; onRetry: () => Promise<void>; onReadVisible: () => void }) {
+function RunDetailPage({ run, busy, onBack, onJob, onCancel, onRetry }: { run: OpportunityRun | null; busy: boolean; onBack: () => void; onJob: (id: number) => void; onCancel: () => Promise<void>; onRetry: () => Promise<void> }) {
   if (!run) return <div className="page-loading"><LoaderCircle className="spinning" size={18} />正在读取运行详情…</div>;
   const active = ["queued", "running"].includes(run.status);
   const progress = run.total_count ? Math.round(run.completed_count / run.total_count * 100) : active ? 8 : 100;
-  return <section className="opportunity-subpage"><button className="back-link" onClick={onBack}><ArrowLeft size={15} />返回岗位发现</button><header className="run-detail-header"><div><span className="eyebrow">运行 #{run.id}</span><h2>{modeMeta[run.mode].title}</h2><p>{runStatusLabel[run.status]} · {run.created_at}</p></div><div>{active ? <button disabled={busy} onClick={() => void onCancel()}><XCircle size={15} />取消</button> : run.status !== "completed" ? <button onClick={() => void onRetry()}><RotateCcw size={15} />重试</button> : null}</div></header><div className="run-progress-card"><div><strong>{progress}%</strong><span>{run.succeeded_count} 成功 · {run.failed_count} 失败 · {run.waiting_count} 等待操作</span></div><div className="run-progress-track"><i style={{ width: `${progress}%` }} /></div></div>{run.error_message ? <div className="boundary-note error"><AlertTriangle size={18} /><p><strong>运行失败</strong><span>{run.error_message}</span></p></div> : null}<div className="run-item-list">{run.items?.map((item) => <article key={item.id}><span className={`run-item-state ${item.status}`}>{item.status === "completed" ? <CheckCircle2 size={16} /> : item.status === "failed" ? <AlertTriangle size={16} /> : item.status === "waiting_for_user" ? <Clock3 size={16} /> : <LoaderCircle className={item.status === "running" ? "spinning" : ""} size={16} />}</span><div><strong>{item.label}</strong><small>{item.stage}{item.error_message ? ` · ${item.error_message}` : ""}</small></div>{item.status === "waiting_for_user" ? <button onClick={onReadVisible}>读取当前页</button> : item.entity_type === "job" && item.entity_id ? <button onClick={() => onJob(item.entity_id!)}>查看岗位</button> : null}</article>)}{!run.items?.length ? <div className="opportunity-empty">任务尚未产生处理项。</div> : null}</div></section>;
+  return <section className="opportunity-subpage"><button className="back-link" onClick={onBack}><ArrowLeft size={15} />返回岗位发现</button><header className="run-detail-header"><div><span className="eyebrow">运行 #{run.id}</span><h2>{modeMeta[run.mode].title}</h2><p>{runStatusLabel[run.status]} · {run.created_at}</p></div><div>{active ? <button disabled={busy} onClick={() => void onCancel()}><XCircle size={15} />取消</button> : run.status !== "completed" ? <button onClick={() => void onRetry()}><RotateCcw size={15} />重试</button> : null}</div></header><div className="run-progress-card"><div><strong>{progress}%</strong><span>{run.succeeded_count} 成功 · {run.failed_count} 失败 · {run.waiting_count} 等待操作</span></div><div className="run-progress-track"><i style={{ width: `${progress}%` }} /></div></div>{run.error_message ? <div className="boundary-note error"><AlertTriangle size={18} /><p><strong>运行失败</strong><span>{run.error_message}</span></p></div> : null}<div className="run-item-list">{run.items?.map((item) => <article key={item.id}><span className={`run-item-state ${item.status}`}>{item.status === "completed" ? <CheckCircle2 size={16} /> : item.status === "failed" ? <AlertTriangle size={16} /> : item.status === "waiting_for_user" ? <Clock3 size={16} /> : <LoaderCircle className={item.status === "running" ? "spinning" : ""} size={16} />}</span><div><strong>{item.label}</strong><small>{item.stage}{item.error_message ? ` · ${item.error_message}` : ""}</small></div>{item.status === "waiting_for_user" ? <span>请改用粘贴 JD 或上传截图</span> : item.entity_type === "job" && item.entity_id ? <button onClick={() => onJob(item.entity_id!)}>查看岗位</button> : null}</article>)}{!run.items?.length ? <div className="opportunity-empty">任务尚未产生处理项。</div> : null}</div></section>;
 }
 
 function JobDetailPage({ job, assessments, busy, onBack, onDecide, onPromote }: { job: DiscoveredOpportunity | null; assessments: DiscoveredJobAssessment[]; busy: boolean; onBack: () => void; onDecide: (status: "shortlisted" | "dismissed") => void; onPromote: () => void }) {

@@ -75,8 +75,6 @@ from ..opportunities.service import (
     add_opportunity_source,
     create_or_update_company,
     discover_companies,
-    import_visible_jobs,
-    import_browser_job_detail,
     get_discovered_job,
     list_companies,
     list_discovered_jobs,
@@ -106,7 +104,6 @@ from ..jobs.imports import (
     preview_job_url,
 )
 from ..jobs.quick_match import analyze_job_description
-from ..jobs.browser_capture import BrowserCaptureError
 from ..jobs.evaluations import (
     cancel_job_evaluation,
     create_job_comparison,
@@ -161,8 +158,6 @@ from ..workflow.engine import refresh_workflow_status
 from .dependencies import require_conversation
 from .schemas import (
     AgentSettingsIn,
-    BrowserJobCaptureIn,
-    BrowserDetailImportIn,
     CandidateFactIn,
     CandidateFactMergeIn,
     CandidateFactReviewIn,
@@ -212,7 +207,6 @@ from .schemas import (
     ResumeChangeUpdate,
     QuickMatchIn,
     ResumeVersionUpdate,
-    VisibleJobsImportIn,
     VoiceProfileIn,
     StrategyEvidenceIn,
     WritingSampleIn,
@@ -434,77 +428,13 @@ def job_import_preview_stream(payload: JobImportPreviewIn) -> StreamingResponse:
 
         def execute() -> None:
             try:
-                agent_kwargs: dict[str, Any] = {"event_callback": publish}
-                if (
-                    payload.browser_capture_available
-                    and get_settings().browser_job_import_enabled
-                ):
-                    agent_kwargs["browser_capture_available"] = True
-                preview = JobImportAgent(**agent_kwargs).run(payload.url)
+                preview = JobImportAgent(event_callback=publish).run(payload.url)
                 event_queue.put({"type": "result", "preview": preview})
             except Exception as exc:
                 event_queue.put(
                     {
                         "type": "error",
                         "message": f"岗位导入智能体执行异常：{type(exc).__name__}",
-                    }
-                )
-            finally:
-                event_queue.put(None)
-
-        threading.Thread(target=execute, daemon=True).start()
-        while True:
-            event = event_queue.get()
-            if event is None:
-                break
-            yield json.dumps(event, ensure_ascii=False) + "\n"
-
-    return StreamingResponse(
-        stream(),
-        media_type="application/x-ndjson",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-@router.get("/browser/capabilities")
-def browser_capabilities() -> dict[str, Any]:
-    settings = get_settings()
-    return {
-        "enabled": settings.browser_job_import_enabled,
-        "protocol_version": "browser-job-capture-v1",
-        "capabilities": ["job_page_open", "job_page_capture"]
-        if settings.browser_job_import_enabled
-        else [],
-    }
-
-
-@router.post("/job-imports/browser-preview/stream")
-def browser_job_import_preview_stream(
-    payload: BrowserJobCaptureIn,
-) -> StreamingResponse:
-    if not get_settings().browser_job_import_enabled:
-        raise HTTPException(status_code=503, detail="浏览器岗位读取功能未启用")
-
-    def stream():
-        event_queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
-
-        def publish(event: dict[str, Any]) -> None:
-            event_queue.put(event)
-
-        def execute() -> None:
-            try:
-                preview = JobImportAgent(event_callback=publish).run_browser_capture(
-                    payload.model_dump()
-                )
-                event_queue.put({"type": "result", "preview": preview})
-            except Exception as exc:
-                event_queue.put(
-                    {
-                        "type": "error",
-                        "message": f"浏览器岗位读取异常：{type(exc).__name__}",
                     }
                 )
             finally:
@@ -1622,57 +1552,6 @@ def opportunity_source_scan(source_id: int) -> dict[str, Any]:
 @router.post("/opportunities/sources/scan")
 def opportunity_sources_scan() -> list[dict[str, Any]]:
     return scan_followed_sources(trigger="manual")
-
-
-@router.post("/opportunities/visible-page-import")
-def opportunity_visible_import(
-    payload: VisibleJobsImportIn,
-    background_tasks: BackgroundTasks,
-) -> dict[str, Any]:
-    try:
-        imported = import_visible_jobs(
-            platform=payload.platform,
-            page_url=payload.page_url,
-            jobs=payload.jobs,
-            user_initiated=payload.user_initiated,
-            captured_at=payload.captured_at,
-        )
-        job_ids = [int(item["id"]) for item in imported["imported"]]
-        if not job_ids:
-            raise ValueError("当前页面没有可导入的有效岗位")
-        run = create_discovery_run(
-            "pipeline",
-            config={
-                "job_ids": job_ids,
-                "deep_analysis": "none",
-            },
-            trigger="browser_visible",
-        )
-        background_tasks.add_task(execute_discovery_run, int(run["id"]))
-        imported["run"] = run
-        return imported
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-@router.post("/opportunities/browser-detail-import")
-def opportunity_browser_detail_import(
-    payload: BrowserDetailImportIn,
-    background_tasks: BackgroundTasks,
-) -> dict[str, Any]:
-    if not get_settings().browser_job_import_enabled:
-        raise HTTPException(status_code=503, detail="浏览器岗位读取功能未启用")
-    try:
-        imported = import_browser_job_detail(payload.model_dump())
-        run = create_discovery_run(
-            "pipeline",
-            config={"job_ids": [imported["job"]["id"]], "deep_analysis": "none"},
-            trigger="browser_detail",
-        )
-        background_tasks.add_task(execute_discovery_run, int(run["id"]))
-        return {**imported, "run": run}
-    except (ValueError, BrowserCaptureError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/discovered-jobs")

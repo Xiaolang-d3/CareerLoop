@@ -9,7 +9,6 @@ from typing import Any, Callable, Protocol
 from urllib.parse import parse_qsl, urlparse, urlunparse
 
 from ..config import get_settings
-from .browser_capture import BrowserCaptureError, validate_browser_job_capture
 from .imports import (
     JobImportError,
     _fetch_public_page,
@@ -36,7 +35,7 @@ PAGE_TYPES = {
 }
 
 
-SYSTEM_PROMPT = """你是 BossCopilot 的岗位导入智能体。你必须根据每轮工具观察，自主选择唯一的下一步工具。
+SYSTEM_PROMPT = """你是 CareerLoop 的岗位导入智能体。你必须根据每轮工具观察，自主选择唯一的下一步工具。
 
 目标：只在获得单个、仍有效岗位的可靠标题和岗位描述后完成导入；否则诚实停止。
 
@@ -101,14 +100,12 @@ class JobImportAgent:
         fetcher: Callable[[str], tuple[str, str]] | None = None,
         renderer: Callable[[str], dict[str, Any]] | None = None,
         event_callback: Callable[[dict[str, Any]], None] | None = None,
-        browser_capture_available: bool = False,
         max_rounds: int = MAX_AGENT_ROUNDS,
     ) -> None:
         self._model = model
         self._fetcher = fetcher or _fetch_public_page
         self._renderer = renderer or self._render_with_agent_search
         self._event_callback = event_callback
-        self._browser_capture_available = browser_capture_available
         self._event_prefix = ""
         self._max_rounds = max(2, min(max_rounds, MAX_AGENT_ROUNDS))
 
@@ -136,116 +133,6 @@ class JobImportAgent:
             model=model,
             started_at=started_at,
         )
-
-    def run_browser_capture(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self._event_prefix = "browser-"
-        self._publish(
-            {
-                "type": "started",
-                "id": "agent-started",
-                "round": 0,
-                "status": "running",
-                "message": "浏览器岗位读取已启动",
-            }
-        )
-        source_url = str(payload.get("requested_url") or "")
-        try:
-            capture = validate_browser_job_capture(payload)
-        except BrowserCaptureError as exc:
-            state = JobImportState(source_url=source_url)
-            state.platform = "boss" if "zhipin.com" in source_url.lower() else "generic"
-            state.current_round = 1
-            self._trace(state, "inspect_browser_capture", "blocked", str(exc))
-            result = self._empty_preview(
-                state,
-                status="blocked" if exc.page_type != "job_expired" else "invalid",
-                page_type=exc.page_type,
-                confidence=1,
-                reason=str(exc),
-                fetch_page_type=exc.page_type,
-                decision_source="agent",
-            )
-            result["agent_rounds"] = 1
-            result["agent_trace"] = state.trace
-            return result
-
-        state = JobImportState(
-            source_url=capture["requested_url"],
-            normalized_url=capture["requested_url"],
-            inspected=True,
-            url_valid=True,
-            platform=capture["platform"],
-            requested_page_type="job_detail",
-            link_confidence=0.99,
-            static_attempted=True,
-            browser_attempted=True,
-            browser_artifact=PageArtifact(
-                strategy="user_browser",
-                final_url=capture["final_url"],
-                title=capture["title"],
-                content=capture["visible_text"],
-                html=capture["html"],
-                page_type="job_detail",
-                reason="用户浏览器已显示岗位详情",
-            ),
-        )
-        state.current_round = 0
-        self._trace(
-            state,
-            "inspect_browser_capture",
-            "done",
-            "已验证浏览器页面与岗位链接一致",
-        )
-        state.current_round = 1
-        self._publish(
-            {
-                "type": "thinking",
-                "id": "thinking-1",
-                "round": 1,
-                "status": "thinking",
-                "message": "正在验证浏览器页面证据与岗位字段",
-            }
-        )
-        self._publish(
-            {
-                "type": "task",
-                "id": "1:extract_job_fields",
-                "round": 1,
-                "tool": "extract_job_fields",
-                "status": "running",
-                "message": _tool_running_message("extract_job_fields"),
-            }
-        )
-        self._extract_fields(state, {})
-        self._publish(
-            {
-                "type": "task",
-                "id": "1:finish_job_import",
-                "round": 1,
-                "tool": "finish_job_import",
-                "status": "running",
-                "message": _tool_running_message("finish_job_import"),
-            }
-        )
-        self._finish(state, {})
-        if state.result is None:
-            return self._agent_failure_preview(
-                state,
-                "浏览器页面证据没有通过岗位质量门",
-                rounds=1,
-            )
-        state.result["agent_rounds"] = 1
-        state.result["agent_trace"] = state.trace
-        self._publish(
-            {
-                "type": "completed",
-                "id": "agent-completed",
-                "round": 1,
-                "status": state.result["status"],
-                "message": "浏览器岗位读取已完成",
-            }
-        )
-        return state.result
 
     def _run_state(
         self,
@@ -672,17 +559,18 @@ class JobImportAgent:
         status = _stop_status(page_type)
         artifact = self._best_artifact(state)
         observed_page_type = artifact.page_type if artifact is not None else page_type
-        browser_required_page_type = self._browser_required_page_type(state)
-        if browser_required_page_type is not None:
-            observed_page_type = browser_required_page_type
-            reason = (
-                "公开读取受到页面限制，可从当前 Chrome 页面读取"
-                if self._browser_capture_available
-                else "公开读取受到页面限制，需要连接 Chrome 浏览器助手"
+        restricted_page_type = self._restricted_public_page_type(state)
+        if restricted_page_type is not None:
+            observed_page_type = restricted_page_type
+            reason = _user_stop_reason(
+                page_type=observed_page_type,
+                requested_page_type=state.requested_page_type,
+                fallback=reason,
             )
+            status = _stop_status(observed_page_type)
             state.result = self._empty_preview(
                 state,
-                status="browser_required",
+                status=status,
                 page_type=observed_page_type,
                 confidence=max(confidence, state.link_confidence),
                 reason=reason,
@@ -690,15 +578,10 @@ class JobImportAgent:
                 decision_source="agent",
             )
             state.result["warnings"] = []
-            self._trace(
-                state,
-                "request_browser_capture",
-                "observed",
-                "公开读取受限，等待从 Chrome 读取当前岗位",
-            )
+            self._trace(state, "stop_job_import", "blocked", reason)
             return {
                 "success": True,
-                "status": "browser_required",
+                "status": status,
                 "reason": reason,
             }
         reason = _user_stop_reason(
@@ -761,26 +644,26 @@ class JobImportAgent:
                 state.result["agent_trace"] = state.trace
                 return state.result
 
-        browser_required_page_type = self._browser_required_page_type(state)
-        if browser_required_page_type is not None:
-            message = (
-                "公开读取受到页面限制，可从当前 Chrome 页面读取"
-                if self._browser_capture_available
-                else "公开读取受到页面限制，需要连接 Chrome 浏览器助手"
+        restricted_page_type = self._restricted_public_page_type(state)
+        if restricted_page_type is not None:
+            message = _user_stop_reason(
+                page_type=restricted_page_type,
+                requested_page_type=state.requested_page_type,
+                fallback=reason,
             )
             self._trace(
                 state,
-                "request_browser_capture",
-                "observed",
-                "模型决策超时，已根据页面信号切换到 Chrome 读取",
+                "stop_job_import",
+                "blocked",
+                "公开读取受限，请改用粘贴岗位描述或上传截图",
             )
             result = self._empty_preview(
                 state,
-                status="browser_required",
-                page_type=browser_required_page_type,
+                status=_stop_status(restricted_page_type),
+                page_type=restricted_page_type,
                 confidence=max(state.link_confidence, 0.9),
                 reason=message,
-                fetch_page_type=browser_required_page_type,
+                fetch_page_type=restricted_page_type,
                 decision_source="agent_fallback",
             )
             result["warnings"] = []
@@ -802,7 +685,7 @@ class JobImportAgent:
         result["agent_trace"] = state.trace
         return result
 
-    def _browser_required_page_type(
+    def _restricted_public_page_type(
         self,
         state: JobImportState,
     ) -> str | None:
@@ -1095,11 +978,11 @@ def _user_stop_reason(
     fallback: str,
 ) -> str:
     reasons = {
-        "login_required": "页面需要登录，未能读取岗位内容。",
-        "captcha": "页面需要完成验证，未能读取岗位内容。",
-        "access_denied": "页面限制访问，未能读取岗位内容。",
+        "login_required": "页面需要登录，未能读取岗位内容。请改用粘贴岗位描述或上传截图。",
+        "captcha": "页面需要完成验证，未能读取岗位内容。请改用粘贴岗位描述或上传截图。",
+        "access_denied": "页面限制访问，未能读取岗位内容。请改用粘贴岗位描述或上传截图。",
         "job_expired": "岗位已下架或链接已失效。",
-        "empty_page": "页面中没有可读取的岗位内容。",
+        "empty_page": "页面中没有可读取的岗位内容。请改用粘贴岗位描述或上传截图。",
         "job_list": "该链接是岗位列表，不是单个岗位详情页。",
         "company_page": "该链接是公司页面，不是单个岗位详情页。",
     }
