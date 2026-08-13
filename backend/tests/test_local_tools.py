@@ -6,6 +6,7 @@ from pathlib import Path
 
 from app.db import connect, init_db, json_dump
 from app.knowledge import index_document
+from app.profile import document as profile_document
 from app.tools import (
     AnalyzeResumeAgainstJdTool,
     SearchResumeEvidenceTool,
@@ -106,6 +107,59 @@ class MinimalAgentToolTest(unittest.IsolatedAsyncioTestCase):
             {item["source_type"] for item in result.data["evidence"]},
             {"resume"},
         )
+
+    async def test_resume_evidence_backfills_unindexed_saved_resume(self) -> None:
+        legacy_dir = Path(self._temp_dir.name) / "legacy"
+        legacy_dir.mkdir()
+        legacy_db = legacy_dir / "legacy.db"
+        init_db(legacy_db)
+        # 只写画像文档、不建索引：等价于索引逻辑上线前保存的简历。
+        profile_document.update(
+            legacy_db,
+            resume_text="八年 Python 服务端经验，主导订单中台重构，QPS 提升 3 倍。",
+        )
+
+        result = await SearchResumeEvidenceTool(legacy_db).execute(
+            {"query": "订单中台", "limit": 5},
+            self.context,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertGreaterEqual(len(result.data["evidence"]), 1)
+        self.assertIn("订单中台", result.data["evidence"][0]["excerpt"])
+        with connect(legacy_db) as conn:
+            chunk_count = conn.execute(
+                "SELECT COUNT(*) AS count FROM knowledge_chunks WHERE source_type = 'resume'"
+            ).fetchone()["count"]
+        self.assertGreaterEqual(chunk_count, 1)
+
+    async def test_resume_evidence_returns_resume_chunks_when_query_misses(self) -> None:
+        result = await SearchResumeEvidenceTool(self.db_path).execute(
+            {"query": "冷门查询完全无关词组", "limit": 5},
+            self.context,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertGreaterEqual(len(result.data["evidence"]), 1)
+        self.assertEqual(
+            {item["source_type"] for item in result.data["evidence"]},
+            {"resume"},
+        )
+
+    async def test_resume_evidence_reports_missing_resume(self) -> None:
+        empty_dir = Path(self._temp_dir.name) / "empty"
+        empty_dir.mkdir()
+        empty_db = empty_dir / "empty.db"
+        init_db(empty_db)
+
+        result = await SearchResumeEvidenceTool(empty_db).execute(
+            {"query": "个人优势", "limit": 5},
+            self.context,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.data["evidence"], [])
+        self.assertIn("没有已保存的简历", result.message)
 
     async def test_analysis_rejects_missing_or_too_short_jd(self) -> None:
         result = await AnalyzeResumeAgainstJdTool(self.db_path).execute(

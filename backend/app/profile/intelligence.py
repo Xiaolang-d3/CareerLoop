@@ -75,6 +75,9 @@ def analyze_resume(profile: dict[str, Any], job: dict[str, Any] | None = None) -
     for skill in skills:
         evidence = next((line for line in lines if skill.lower() in line.lower()), "")
         strengths.append({"label": skill, "evidence": evidence[:240]})
+    proven = [item for item in strengths if item["evidence"]]
+    unproven = [item for item in strengths if not item["evidence"]]
+    strengths = (proven + unproven)[:6]
 
     found: list[str] = []
     missing: list[str] = []
@@ -100,8 +103,10 @@ def analyze_resume(profile: dict[str, Any], job: dict[str, Any] | None = None) -
             ),
         })
 
+    short_resume = len(resume_text) < 400
+    short_bullets = [line for line in lines if line.startswith(("-", "•", "·")) and len(line) < 18]
     gaps: list[str] = []
-    if len(resume_text) < 400:
+    if short_resume:
         gaps.append("简历偏短，经历和结果写得不够具体，面试时很难展开。")
     if not any(re.search(r"\d", line) for line in lines):
         gaps.append("几乎没有可核对的数字结果，贡献不容易被量化。")
@@ -109,7 +114,6 @@ def analyze_resume(profile: dict[str, Any], job: dict[str, Any] | None = None) -
         gaps.append("没有清楚的项目段落，面试官不容易抓住可深挖的经历。")
     if "专业技能" in missing and not skills:
         gaps.append("技能写得不集中，对照岗位时缺少可引用的关键词。")
-    short_bullets = [line for line in lines if line.startswith(("-", "•", "·")) and len(line) < 18]
     if len(short_bullets) >= 3:
         gaps.append("有多条经历只有一句话，缺少你具体做了什么、做成了什么。")
     if missing:
@@ -124,16 +128,30 @@ def analyze_resume(profile: dict[str, Any], job: dict[str, Any] | None = None) -
     if len(job_text) >= 20:
         job_match = analyze_gap(job or {}, profile)
 
-    evidence = [
+    evidence = (job_match or {}).get("evidence") or [
         {"skills": [item["label"]], "text": item["evidence"]}
-        for item in strengths if item["evidence"]
+        for item in proven
     ][:5]
+    headline = _resume_headline(
+        resume_text=resume_text,
+        proven=proven,
+        projects=talking_points,
+        job_match=job_match,
+    )
+    next_actions = _resume_next_actions(
+        unproven=unproven,
+        projects=talking_points,
+        missing_sections=missing,
+        short_resume=short_resume,
+        short_bullets=short_bullets,
+        job_match=job_match,
+    )
     return {
         "mode": "job_match" if job_match else "resume_only",
         "required_skills": (job_match or {}).get("required_skills", []),
         "matched_skills": (job_match or {}).get("matched_skills", skills),
         "missing_skills": (job_match or {}).get("missing_skills", []),
-        "evidence": (job_match or {}).get("evidence", evidence),
+        "evidence": evidence[:5],
         "skill_coverage": None if job_match is None else job_match.get("skill_coverage"),
         "confidence": (job_match or {}).get("confidence", "limited"),
         "limitations": (
@@ -143,12 +161,117 @@ def analyze_resume(profile: dict[str, Any], job: dict[str, Any] | None = None) -
         "resume": {
             "character_count": len(resume_text),
             "skills": skills,
-            "strengths": strengths[:8],
+            "headline": headline,
+            "strengths": strengths,
             "structure": {"found": found, "missing": missing},
             "projects": talking_points,
             "gaps": gaps[:6],
+            "next_actions": next_actions,
         },
     }
+
+
+def _resume_headline(
+    *,
+    resume_text: str,
+    proven: list[dict[str, str]],
+    projects: list[dict[str, Any]],
+    job_match: dict[str, Any] | None,
+) -> dict[str, str]:
+    labels = [item["label"] for item in proven[:3]]
+    evidence = ""
+    if job_match and job_match.get("evidence"):
+        evidence = str(job_match["evidence"][0].get("text") or "")
+    elif proven:
+        evidence = proven[0]["evidence"]
+    elif projects:
+        evidence = str(projects[0].get("evidence") or "").split("\n")[0]
+    evidence = evidence.strip()[:240]
+
+    if job_match:
+        matched = list(job_match.get("matched_skills") or [])
+        missing = list(job_match.get("missing_skills") or [])
+        if matched and missing:
+            verdict = f"对照这份岗位，简历能用原句证明{'、'.join(matched[:3])}；还缺{'、'.join(missing[:3])}的证据。"
+        elif matched:
+            verdict = f"对照这份岗位，简历里已有可引用的{'、'.join(matched[:3])}证据。"
+        elif missing:
+            verdict = f"对照这份岗位，任职要求在简历里还缺少可引用的原句，例如{'、'.join(missing[:3])}。"
+        else:
+            verdict = "对照了岗位，但没有识别出可对照的技能关键词。把任职要求写具体会更准。"
+        return {"verdict": verdict, "evidence": evidence}
+
+    if len(resume_text) < 400 and not projects:
+        verdict = "这份简历目前更像技能清单，还不够支撑一次面试追问。"
+    elif labels and projects:
+        if any(item.get("weak") for item in projects):
+            verdict = f"能看出你会{'、'.join(labels)}，项目也能展开，但结果和职责边界还偏薄。"
+        else:
+            verdict = f"简历已经能用项目经历支撑{'、'.join(labels)}。"
+    elif labels:
+        verdict = f"能看出你会{'、'.join(labels)}，但缺少可展开的项目段落。"
+    else:
+        verdict = "还没有识别出可引用的技能原句。把项目里用过的工具写成完整句子会更有力。"
+    return {"verdict": verdict, "evidence": evidence}
+
+
+def _resume_next_actions(
+    *,
+    unproven: list[dict[str, str]],
+    projects: list[dict[str, Any]],
+    missing_sections: list[str],
+    short_resume: bool,
+    short_bullets: list[str],
+    job_match: dict[str, Any] | None,
+) -> list[dict[str, str]]:
+    actions: list[dict[str, str]] = []
+    missing_skills = list((job_match or {}).get("missing_skills") or [])
+    if missing_skills:
+        actions.append({
+            "title": f"补上岗位还缺的原句：{'、'.join(missing_skills[:3])}",
+            "detail": "有做过就在个人资料里写成一句可核对的经历；没做过不要编。",
+            "evidence": "",
+        })
+    unproven_labels = [item["label"] for item in unproven[:2]]
+    if unproven_labels:
+        actions.append({
+            "title": f"给{'、'.join(unproven_labels)}补一句你做过什么",
+            "detail": "现在只有关键词，面试官没法追问。写成「用 X 做了 Y」。",
+            "evidence": "",
+        })
+    weak_project = next((item for item in projects if item.get("weak")), None)
+    if weak_project:
+        actions.append({
+            "title": f"给「{weak_project['title']}」补结果或职责",
+            "detail": "补一个可核对的数字，或写清你负责哪一块。",
+            "evidence": str(weak_project.get("evidence") or "")[:240],
+        })
+    important_missing = [item for item in missing_sections if item in {"教育经历", "工作经历", "项目经历"}]
+    if important_missing:
+        actions.append({
+            "title": f"补上简历模块：{'、'.join(important_missing)}",
+            "detail": "去个人资料把缺失模块写进去，分析才能引用原句。",
+            "evidence": "",
+        })
+    if short_resume:
+        actions.append({
+            "title": "把经历写具体",
+            "detail": "每条写你做了什么、做成了什么，而不是只报技能名。",
+            "evidence": "",
+        })
+    if len(short_bullets) >= 3:
+        actions.append({
+            "title": "把过短的条目写成完整经历",
+            "detail": "一句话条目很难被引用。补上动作和结果。",
+            "evidence": short_bullets[0][:240],
+        })
+    if not actions:
+        actions.append({
+            "title": "补充每段经历里你的职责边界和结果",
+            "detail": "简历已经能引用。再写清你负责什么、做成了什么，面试会更稳。",
+            "evidence": "",
+        })
+    return actions[:3]
 
 
 def _resume_projects(resume_text: str) -> list[dict[str, str]]:

@@ -60,7 +60,7 @@ describe("ProfileSettingsPage 2.0", () => {
     const onReturnToWorkbench = vi.fn();
     render(<ProfileSettingsPage {...props()} returnToWorkbench onReturnToWorkbench={onReturnToWorkbench} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "返回求职工坊" }));
+    fireEvent.click(screen.getByRole("button", { name: "返回简历分析" }));
 
     expect(onReturnToWorkbench).toHaveBeenCalledOnce();
   });

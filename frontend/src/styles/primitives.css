@@ -129,7 +129,7 @@
 .ui-section-copy { display: grid; gap: 4px; min-width: 0; }
 .ui-section-copy h1,
 .ui-section-copy h2,
-.ui-section-copy h3 { margin: 0; color: var(--color-text); line-height: 1.25; letter-spacing: -.02em; }
+.ui-section-copy h3 { margin: 0; color: var(--color-text); font-family: var(--font-display); font-weight: 400; line-height: 1.25; letter-spacing: -.02em; }
 .ui-section-copy h1 { font-size: 26px; }
 .ui-section-copy h2 { font-size: 18px; }
 .ui-section-copy h3 { font-size: 14px; }

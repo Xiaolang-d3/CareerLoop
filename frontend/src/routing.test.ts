@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { appRouteHash, initialAppRoute, parseAppHash } from "./routing";
+import { appRouteHash, initialAppRoute, parseAppHash, routeForSection } from "./routing";
 
 describe("home route", () => {
   it("opens the job workbench when no route is specified", () => {
     expect(initialAppRoute("", null)).toEqual({ section: "workbench", page: "index" });
     expect(initialAppRoute("#", "dashboard")).toEqual({ section: "workbench", page: "index" });
+    expect(routeForSection("workbench")).toEqual({ section: "workbench", page: "index" });
   });
 });
 

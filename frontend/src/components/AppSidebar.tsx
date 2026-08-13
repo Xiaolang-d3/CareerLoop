@@ -1,7 +1,7 @@
 import {
-  BriefcaseBusiness,
   ChevronLeft,
   ChevronRight,
+  FileSearch,
   LogOut,
   MessageCircle,
   MoreHorizontal,
@@ -50,7 +50,7 @@ export function AppSidebar({
 }: AppSidebarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const navItems: SidebarItem[] = [
-    { key: "workbench", label: "求职工坊", icon: <BriefcaseBusiness size={18} />, active: activeView === "workbench", prefetch: "workbench", onClick: () => onSelectView("workbench") },
+    { key: "workbench", label: "简历分析", icon: <FileSearch size={18} />, active: activeView === "workbench", prefetch: "workbench", onClick: () => onSelectView("workbench") },
     { key: "chat", label: "对话", icon: <MessageCircle size={18} />, active: activeView === "chat", prefetch: "chat", onClick: () => onSelectView("chat") },
     { key: "profile", label: "个人资料", icon: <UserRound size={18} />, active: activeView === "settings" && settingsPage === "profile", prefetch: "profile", onClick: onOpenProfile },
     { key: "settings", label: "设置", icon: <Settings size={18} />, active: activeView === "settings" && settingsPage !== "profile", prefetch: "settings", onClick: () => onSelectView("settings") }

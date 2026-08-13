@@ -199,6 +199,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const [candidateEditor, setCandidateEditor] = useState(emptyCandidateEditor);
   const [confirmedCareerFactCount, setConfirmedCareerFactCount] = useState(0);
+  const [candidateProfileLoaded, setCandidateProfileLoaded] = useState(false);
   const [candidateProfileBusy, setCandidateProfileBusy] = useState(false);
   const [resumeParseBusy, setResumeParseBusy] = useState(false);
   const [chatAttachmentBusy, setChatAttachmentBusy] = useState(false);
@@ -248,7 +249,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
     function syncRoute() {
       const next = parseAppHash(window.location.hash);
       if (next) setAppRoute(next);
-      else navigateRoute({ section: "workbench" }, true);
+      else navigateRoute({ section: "workbench", page: "index" }, true);
     }
     window.addEventListener("hashchange", syncRoute);
     return () => window.removeEventListener("hashchange", syncRoute);
@@ -352,6 +353,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
   }
 
   const hasProfile = (workflow?.counts.profiles ?? 0) > 0;
+  const hasSavedResume = Boolean(candidateEditor.resumeText.trim() || candidateEditor.resumeRedactedText.trim());
   const workbenchProfileReady = hasProfile && confirmedCareerFactCount > 0;
   const hiddenMessageCount = Math.max(0, chatMessages.length - visibleMessageCount);
   const visibleChatMessages = chatMessages.slice(-visibleMessageCount);
@@ -1365,6 +1367,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
   }
 
   async function refreshCandidateProfile() {
+    try {
     const bundle = await fetchJson<CareerProfileBundle>("/career-profile");
     setResumeProfileSuggestion(null);
     if (!bundle.profile) {
@@ -1396,6 +1399,9 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
       resumeFilename: resumeSource?.title || profile.resume_filename || "",
       privacyMode: profile.privacy_mode || "redacted"
     }));
+    } finally {
+      setCandidateProfileLoaded(true);
+    }
   }
 
   async function saveCandidateProfile(): Promise<boolean> {
@@ -2111,17 +2117,17 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
                 : pageMeta.opportunities
     : appRoute.section === "workbench"
       ? appRoute.page === "new"
-        ? { title: "填写岗位", description: "手动输入岗位描述和任职要求，不读取招聘网站" }
+        ? { title: "新的分析", description: "输入岗位描述和任职要求，对照简历开始分析" }
         : appRoute.page === "evaluation_section"
           ? { title: "匹配分析依据", description: "查看 Agent 的分析依据、不确定项和你需要确认的内容" }
           : appRoute.page === "evaluation_deep"
           ? { title: "补充岗位研究", description: "让 Agent 在明确范围内补充公开信息和匹配依据" }
             : appRoute.page === "evaluation"
-              ? { title: "岗位匹配分析", description: "查看岗位要求、个人经历证据、匹配结论与下一步建议" }
+              ? { title: "简历分析", description: "查看匹配、缺口、证据和下一步建议" }
               : appRoute.page === "comparison"
                 ? { title: "选择优先岗位", description: "在同一求职目标下比较岗位匹配与下一步行动" }
         : appRoute.page === "detail"
-          ? { title: "求职准备", description: "依次完成匹配分析、定制简历、重点问答和面试记录复盘" }
+          ? { title: "简历分析", description: "对照这份岗位查看匹配、缺口和证据" }
           : pageMeta.workbench
       : appRoute.section === "interview-prep"
         ? appRoute.page === "knowledge"
@@ -2148,7 +2154,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
         activeView={activeView}
         onToggle={toggleSidebar}
         onLogout={onLogout}
-        onGoHome={() => setActiveView("workbench")}
+        onGoHome={() => navigateRoute({ section: "workbench", page: "index" })}
         onPrefetchPage={(page) => void pagePrefetcher.prefetch(page)}
         preparationPage={appRoute.section === "interview-prep" ? appRoute.page || "projects" : undefined}
         settingsPage={appRoute.section === "settings" ? appRoute.page : undefined}
@@ -2162,7 +2168,6 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
           className="topbar"
           level={1}
           title={activeView === "chat" && currentConversation ? currentConversation.title : routePageMeta.title}
-          description={activeView === "chat" ? undefined : routePageMeta.description}
         /> : null}
 
         {errorMessage ? (
@@ -2214,6 +2219,12 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
               retryDraft={retryChatDraft}
               chatEndRef={chatEndRef}
               chatInputRef={chatInputRef}
+              sessionContext={{
+                resumeLabel: hasSavedResume ? (candidateEditor.resumeFilename || "已保存简历") : null,
+                analysisLabel: jobEvaluation
+                  ? [jobEvaluation.job?.company_name, jobEvaluation.job?.job_title].filter(Boolean).join(" · ") || "最近一次分析"
+                  : null
+              }}
               onLoadMore={() => setVisibleMessageCount((count) => count + 12)}
               onSelectConversation={(conversationId) => {
                 setCurrentConversationId(conversationId);
@@ -2259,7 +2270,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
         ) : null}
 
         {activeView === "workbench" ? (
-          <Suspense fallback={<PageLoading label="正在加载岗位工作台…" />}>
+          <Suspense fallback={<PageLoading label="正在加载简历分析…" />}>
             {appRoute.section === "workbench" && ["evaluation", "evaluation_section", "evaluation_deep", "comparison"].includes(appRoute.page || "") ? (
               <JobEvaluationPage
                 apiBase={apiBase}
@@ -2268,25 +2279,25 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
                 job={jobs.find((item) => item.id === appRoute.jobId)}
                 sectionKey={appRoute.sectionKey}
                 comparisonId={appRoute.comparisonId}
-                onBack={() => appRoute.jobId
-                  ? navigateRoute({ section: "workbench", page: "detail", jobId: appRoute.jobId })
-                  : navigateRoute({ section: "workbench", page: "index" })}
+                onBack={() => navigateRoute({ section: "workbench", page: "index" })}
                 onOpenOverview={() => appRoute.jobId && navigateRoute({ section: "workbench", page: "evaluation", jobId: appRoute.jobId })}
                 onOpenSection={(sectionKey) => appRoute.jobId && navigateRoute({ section: "workbench", page: "evaluation_section", jobId: appRoute.jobId, sectionKey })}
                 onOpenDeep={() => appRoute.jobId && navigateRoute({ section: "workbench", page: "evaluation_deep", jobId: appRoute.jobId })}
-                onCreateResume={async () => {
-                  const job = jobs.find((item) => item.id === appRoute.jobId);
-                  if (job) { await createTailoredResumeVersion(job); navigateRoute({ section: "workbench", page: "detail", jobId: job.id }); }
-                }}
+                interviewKit={interviewKit}
+                interviewBusy={interviewBusy}
                 onCreateInterviewKit={async () => {
                   const job = jobs.find((item) => item.id === appRoute.jobId);
-                  if (job) { await createInterviewPreparation(job, "general"); navigateRoute({ section: "workbench", page: "detail", jobId: job.id }); }
+                  if (job) await createInterviewPreparation(job, "general");
                 }}
               />
             ) : (
             <WorkbenchView
-              viewMode={appRoute.section === "workbench" && ["index", "new", "detail"].includes(appRoute.page || "index") ? appRoute.page as "index" | "new" | "detail" : "index"}
-              hasProfile={workbenchProfileReady}
+              viewMode={appRoute.section === "workbench" && ["index", "new", "detail"].includes(appRoute.page || "index") ? (appRoute.page || "index") as "index" | "new" | "detail" : "index"}
+              hasProfile={hasSavedResume}
+              resumeFilename={candidateEditor.resumeFilename}
+              resumeText={candidateEditor.resumeText}
+              profileName={candidateEditor.name}
+              resumeLoading={!candidateProfileLoaded}
               chatBusy={chatBusy}
               jobBusy={jobBusy}
               jobImportBusy={jobImportBusy}
@@ -2332,6 +2343,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
               onCreateInterviewRound={createInterviewSchedule}
               onUpdateInterviewRound={updateInterviewSchedule}
               onAddTimelineNote={addTimelineNote}
+              onOpenProfile={() => navigateRoute({ section: "settings", page: "profile" })}
             />
             )}
           </Suspense>

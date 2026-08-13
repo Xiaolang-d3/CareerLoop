@@ -1,7 +1,7 @@
 import type { ViewKey } from "./types";
 
 export type SettingsPage = "overview" | "profile" | "model" | "agent";
-export type OpportunitiesPage = "index" | "new" | "pipeline" | "sources" | "run" | "job";
+type OpportunitiesPage = "index" | "new" | "pipeline" | "sources" | "run" | "job";
 export type PreparationPage = "projects" | "knowledge" | "records";
 export type PreparationFocus = "questions" | "knowledge" | "gaps";
 
@@ -27,6 +27,7 @@ const legacyViewMap: Record<string, ViewKey> = {
 
 export function routeForSection(section: ViewKey): AppRoute {
   if (section === "opportunities") return { section, page: "index" };
+  if (section === "workbench") return { section, page: "index" };
   if (section === "interview-prep") return { section, page: "projects" };
   return section === "settings" ? { section, page: "overview" } : { section };
 }

@@ -53,16 +53,20 @@ import type {
   WorkflowStatus
 } from "../types";
 import {
-  JobStageNav,
   priorityLabels,
   type WorkbenchStage
 } from "../features/jobs/JobWorkspaceChrome";
 import { ActionButton } from "./ui/ActionButton";
 import { composeJobDescription, splitJobDescription } from "../features/jobs/job-description";
+import { RESUME_ANALYSIS_OUTLINE, ResumeAnalysisResult } from "../features/jobs/ResumeAnalysisResult";
 
 type WorkbenchViewProps = {
   viewMode: "index" | "new" | "detail";
   hasProfile: boolean;
+  resumeFilename?: string;
+  resumeText?: string;
+  profileName?: string;
+  resumeLoading?: boolean;
   chatBusy: boolean;
   jobBusy: boolean;
   jobImportBusy: boolean;
@@ -139,6 +143,7 @@ type WorkbenchViewProps = {
     }
   ) => Promise<void>;
   onAddTimelineNote: (jobId: number, title: string, detail: string) => Promise<void>;
+  onOpenProfile?: () => void;
 };
 
 const emptyJobDraft: JobProjectDraft = {
@@ -193,6 +198,19 @@ function importPlatformLabel(platform: string) {
   }[platform] || platform;
 }
 
+function firstResumeLine(text?: string): string {
+  const line = (text || "")
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .find(Boolean) || "";
+  return line.length > 160 ? `${line.slice(0, 157)}…` : line;
+}
+
+function isJobMatchResult(result: QuickMatchResult | null): boolean {
+  if (!result) return false;
+  return result.analysis.mode === "job_match" || result.job.description_character_count >= 20;
+}
+
 function isWebUrl(value: string) {
   try {
     const url = new URL(value);
@@ -205,6 +223,10 @@ function isWebUrl(value: string) {
 export function WorkbenchView({
   viewMode,
   hasProfile,
+  resumeFilename,
+  resumeText,
+  profileName,
+  resumeLoading,
   chatBusy,
   jobBusy,
   jobImportBusy,
@@ -249,7 +271,8 @@ export function WorkbenchView({
   onToggleInterviewTask,
   onCreateInterviewRound,
   onUpdateInterviewRound,
-  onAddTimelineNote
+  onAddTimelineNote,
+  onOpenProfile
 }: WorkbenchViewProps) {
   const [draft, setDraft] = useState<JobProjectDraft>(emptyJobDraft);
   const [dirty, setDirty] = useState(false);
@@ -273,6 +296,7 @@ export function WorkbenchView({
   const [quickMatchError, setQuickMatchError] = useState("");
   const [quickMatchBusy, setQuickMatchBusy] = useState(false);
   const [requirementsText, setRequirementsText] = useState("");
+  const [jobMatchOpen, setJobMatchOpen] = useState(false);
   const selectedJob = viewMode === "detail"
     ? jobs.find((job) => job.id === selectedJobId) ?? null
     : null;
@@ -569,7 +593,27 @@ export function WorkbenchView({
   const hasProjectContent = Boolean(
     draft.job_title.trim() && draft.description.trim() && requirementsText.trim()
   );
-  const ready = hasProfile && Boolean(draft.description.trim()) && !chatBusy && !jobBusy && !analysisBusy;
+  const analyzing = jobBusy || analysisBusy || quickMatchBusy;
+  const ready = hasProfile && !chatBusy && !analyzing;
+
+  async function runResumeAnalysis() {
+    if (!ready) return;
+    setQuickMatchBusy(true);
+    setQuickMatchError("");
+    try {
+      const result = await onQuickMatch({
+        job_description: composeJobDescription(draft.description, requirementsText),
+        job_title: draft.job_title.trim(),
+        company_name: draft.company_name.trim()
+      });
+      setQuickMatchResult(result);
+      if (isJobMatchResult(result)) setJobMatchOpen(false);
+    } catch (error) {
+      setQuickMatchError(error instanceof Error ? error.message : "分析失败，请稍后重试。");
+    } finally {
+      setQuickMatchBusy(false);
+    }
+  }
   const nextAction: WorkbenchStage = !analysisReady
     ? "analysis"
     : !resumeVersions.length
@@ -712,58 +756,190 @@ export function WorkbenchView({
   }
 
   if (viewMode === "index") {
+    const resumeTitle = resumeFilename || profileName || "已保存的简历";
+    const resumeChars = (resumeText || "").trim().length;
+    const resumePreview = firstResumeLine(resumeText);
+    const analyzeLabel = analyzing ? "分析中…" : quickMatchResult ? "重新分析" : "开始分析";
+    const hasJobInput = Boolean(
+      draft.job_title.trim() || draft.description.trim() || requirementsText.trim()
+    );
+    const showJobPrompt = Boolean(quickMatchResult && !isJobMatchResult(quickMatchResult));
     return (
-      <section className="job-project-index">
-        <header className="job-index-hero">
-          <div>
-            <span className="analysis-kicker">JOB MATCH</span>
-            <h2>填写岗位，对照简历分析</h2>
-            <p>手动输入岗位描述和任职要求，再做匹配分析和面试准备。不读取招聘网站。</p>
-          </div>
-          <button type="button" className="primary-button" onClick={startNewJob}>
-            <Plus size={15} />填写岗位
-          </button>
-        </header>
-
-        {!hasProfile ? (
+      <section className="job-project-index resume-analysis-workspace">
+        {resumeLoading ? (
+          <article className="resume-source-card" aria-busy="true">
+            <header>
+              <span className="resume-source-icon"><LoaderCircle className="spinning" size={20} /></span>
+              <div>
+                <p className="resume-analysis-kicker">分析对象</p>
+                <h2>正在读取已保存的简历</h2>
+                <p>分析会使用个人资料里的简历，不需要在这里再上传。</p>
+              </div>
+              <button className="primary-button" type="button" disabled>
+                <Target size={15} />开始分析
+              </button>
+            </header>
+          </article>
+        ) : hasProfile ? (
+          <article className="resume-source-card">
+            <header>
+              <span className="resume-source-icon"><FileCheck2 size={20} /></span>
+              <div>
+                <p className="resume-analysis-kicker">分析对象</p>
+                <h2>{resumeTitle}</h2>
+                <p>
+                  {[
+                    profileName && profileName !== resumeTitle ? profileName : null,
+                    resumeChars ? `${resumeChars.toLocaleString("zh-CN")} 字` : null,
+                    "已保存，可分析"
+                  ].filter(Boolean).join(" · ")}
+                </p>
+              </div>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => void runResumeAnalysis()}
+                disabled={!ready}
+              >
+                {analyzing ? <LoaderCircle className="spinning" size={15} /> : <Target size={15} />}
+                {analyzeLabel}
+              </button>
+            </header>
+            {resumePreview ? (
+              <blockquote className="resume-source-preview">{resumePreview}</blockquote>
+            ) : (
+              <p className="resume-source-empty-preview">已保存简历，开始分析后会引用其中的原句。</p>
+            )}
+            {onOpenProfile ? (
+              <button className="resume-source-open" type="button" onClick={onOpenProfile}>
+                <FileText size={14} />查看简历
+              </button>
+            ) : null}
+          </article>
+        ) : (
           <div className="job-index-profile-warning">
             <AlertTriangle size={16} />
-            <div><strong>还没有可用简历</strong><span>请先在个人资料中上传并保存简历，分析只会使用本机脱敏文本。</span></div>
+            <div><strong>还没有可用简历</strong><span>请先在个人资料中上传并保存简历，再回来分析。</span></div>
+            {onOpenProfile ? <button type="button" onClick={onOpenProfile}>去个人资料</button> : null}
           </div>
+        )}
+
+        {quickMatchError ? <p className="inline-error">{quickMatchError}</p> : null}
+        {quickMatchResult ? (
+          <ResumeAnalysisResult result={quickMatchResult} onEditProfile={onOpenProfile} />
+        ) : (
+          <section
+            className={`resume-analysis-outline${analyzing ? " is-analyzing" : ""}`}
+            aria-label="将分析"
+          >
+            <header>
+              <p className="resume-analysis-kicker">{analyzing ? "正在分析" : "将分析"}</p>
+              <h3>四段报告</h3>
+            </header>
+            <ol>
+              {RESUME_ANALYSIS_OUTLINE.map((section) => (
+                <li key={section.number}>
+                  <span aria-hidden="true">{section.number}</span>
+                  <div>
+                    <strong>{section.title}</strong>
+                    <small>{section.question}</small>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </section>
+        )}
+
+        {showJobPrompt ? (
+          <aside className={`resume-job-prompt${jobMatchOpen ? " open" : ""}`}>
+            {jobMatchOpen ? (
+              <>
+                <header>
+                  <div>
+                    <p className="resume-analysis-kicker">需要时再填</p>
+                    <h3>对照这份岗位</h3>
+                  </div>
+                  <button type="button" onClick={() => setJobMatchOpen(false)}>收起</button>
+                </header>
+                <div className="job-project-fields">
+                  <label>
+                    <span>岗位名称</span>
+                    <input value={draft.job_title} maxLength={200} placeholder="例如：AI 产品经理" onChange={(event) => updateDraft({ job_title: event.target.value })} />
+                  </label>
+                  <label>
+                    <span>公司名称</span>
+                    <input value={draft.company_name} maxLength={200} placeholder="选填" onChange={(event) => updateDraft({ company_name: event.target.value })} />
+                  </label>
+                </div>
+                <label className="job-description-field">
+                  <span>岗位描述</span>
+                  <textarea
+                    value={draft.description}
+                    maxLength={50_000}
+                    placeholder="岗位职责、团队背景、工作内容…"
+                    onChange={(event) => updateDraft({ description: event.target.value })}
+                  />
+                </label>
+                <label className="job-description-field">
+                  <span>任职要求</span>
+                  <textarea
+                    value={requirementsText}
+                    maxLength={50_000}
+                    placeholder="技能、经验、学历或其他硬性要求…"
+                    onChange={(event) => {
+                      setRequirementsText(event.target.value);
+                      setDirty(true);
+                    }}
+                  />
+                </label>
+                <footer>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={() => void runResumeAnalysis()}
+                    disabled={!ready || !hasJobInput}
+                  >
+                    {analyzing ? <LoaderCircle className="spinning" size={15} /> : <Target size={15} />}
+                    {analyzing ? "分析中…" : "对照分析"}
+                  </button>
+                </footer>
+              </>
+            ) : (
+              <>
+                <p>要对照某份岗位吗？</p>
+                <button type="button" onClick={() => setJobMatchOpen(true)}>填写岗位</button>
+              </>
+            )}
+          </aside>
         ) : null}
 
-        <section className="job-index-list-section">
-          <header>
-            <div><h3>已保存的岗位</h3><span>{visibleJobs.length} 个岗位</span></div>
-            <div className="job-index-controls">
-              <label className="job-index-search"><Search size={15} /><input value={jobSearch} onChange={(event) => setJobSearch(event.target.value)} placeholder="搜索岗位、公司或城市" /></label>
-            </div>
-          </header>
-
-          {visibleJobs.length ? (
+        {visibleJobs.length ? (
+          <section className="job-index-list-section">
+            <header>
+              <div><h3>最近分析</h3><span>{visibleJobs.length} 份</span></div>
+              <div className="job-index-controls">
+                <label className="job-index-search"><Search size={15} /><input value={jobSearch} onChange={(event) => setJobSearch(event.target.value)} placeholder="搜索岗位或公司" /></label>
+              </div>
+            </header>
             <div className="job-index-grid">
               {visibleJobs.map((job) => (
                 <article className="job-index-card-wrap" key={job.id}>
-                <button type="button" className="job-index-card" onClick={() => openJob(job.id)}>
-                  <div className="job-index-card-top"><span className={`job-priority ${job.priority}`} /><small>{priorityLabels[job.priority]}优先级</small></div>
-                  <div><h3>{job.job_title || "未命名岗位"}</h3><p>{job.company_name || "公司待补充"}</p></div>
-                  <div className="job-index-card-meta">{job.location ? <span><MapPin size={13} />{job.location}</span> : null}{job.salary_text ? <span>{job.salary_text}</span> : null}</div>
-                  <footer><span>{job.latest_evaluation_id ? "匹配分析已完成" : "等待匹配分析"}</span><em>继续准备<ArrowRight size={14} /></em></footer>
-                </button>
+                  <button
+                    type="button"
+                    className="job-index-card"
+                    onClick={() => job.latest_evaluation_id ? onNavigateEvaluation(job.id) : openJob(job.id)}
+                  >
+                    <div><h3>{job.job_title || "未命名岗位"}</h3><p>{job.company_name || "未填写公司"}</p></div>
+                    <footer>
+                      <span>{job.latest_evaluation_id ? "分析已完成" : "尚未分析"}</span>
+                      <em>{job.latest_evaluation_id ? "查看结果" : "继续分析"}<ArrowRight size={14} /></em>
+                    </footer>
+                  </button>
                 </article>
               ))}
             </div>
-          ) : (
-            <div className="job-index-empty">
-              <span><Building2 size={24} /></span>
-              <strong>{jobs.length ? "没有符合筛选条件的岗位" : "还没有需要推进的岗位"}</strong>
-              <p>{jobs.length ? "调整搜索词或状态筛选。" : "填写岗位描述和任职要求后，就可以开始匹配分析。"}</p>
-              {!jobs.length ? (
-                <button type="button" className="primary-button" onClick={startNewJob}>填写岗位</button>
-              ) : null}
-            </div>
-          )}
-        </section>
+          </section>
+        ) : null}
       </section>
     );
   }
@@ -772,8 +948,8 @@ export function WorkbenchView({
     return (
       <section className="workbench-page job-project-subpage">
         <header className="job-subpage-nav">
-          <button type="button" onClick={onNavigateIndex}><ArrowLeft size={15} />返回求职准备</button>
-          <span>/</span><strong>岗位详情</strong>
+          <button type="button" onClick={onNavigateIndex}><ArrowLeft size={15} />返回简历分析</button>
+          <span>/</span><strong>分析结果</strong>
         </header>
         <div className="job-detail-unavailable">
           <LoaderCircle className={jobBusy ? "spinning" : ""} size={22} />
@@ -789,42 +965,35 @@ export function WorkbenchView({
     return (
       <section className="workbench-page job-project-subpage">
         <header className="job-subpage-nav">
-          <button type="button" onClick={onNavigateIndex}><ArrowLeft size={15} />返回求职准备</button>
-          <span>/</span><strong>填写岗位</strong>
+          <button type="button" onClick={onNavigateIndex}><ArrowLeft size={15} />返回简历分析</button>
+          <span>/</span><strong>新的分析</strong>
         </header>
         <section className="flow-step jd-entry-card">
-          <header className="flow-step-heading">
-            <span className="flow-step-number"><PencilLine size={15} /></span>
-            <div>
-              <h2>手动填写岗位</h2>
-              <p>输入岗位描述和任职要求。分析只使用你写下的内容，不会去招聘网站读取页面。</p>
-            </div>
-          </header>
           <div className="job-project-fields">
             <label>
-              <span>岗位名称</span>
-              <input value={draft.job_title} maxLength={200} placeholder="例如：AI 产品经理" onChange={(event) => updateDraft({ job_title: event.target.value })} />
+              <span>岗位名称 <em>选填</em></span>
+              <input value={draft.job_title} maxLength={200} placeholder="选填，有具体岗位再对照" onChange={(event) => updateDraft({ job_title: event.target.value })} />
             </label>
             <label>
-              <span>公司名称</span>
+              <span>公司名称 <em>选填</em></span>
               <input value={draft.company_name} maxLength={200} placeholder="选填" onChange={(event) => updateDraft({ company_name: event.target.value })} />
             </label>
           </div>
           <label className="job-description-field">
-            <span>岗位描述 <em>必填</em></span>
+            <span>岗位描述 <em>选填</em></span>
             <textarea
               value={draft.description}
               maxLength={50_000}
-              placeholder="岗位职责、团队背景、工作内容…"
+              placeholder="选填，有具体岗位再对照"
               onChange={(event) => updateDraft({ description: event.target.value })}
             />
           </label>
           <label className="job-description-field">
-            <span>任职要求 <em>必填</em></span>
+            <span>任职要求 <em>选填</em></span>
             <textarea
               value={requirementsText}
               maxLength={50_000}
-              placeholder="技能、经验、学历或其他硬性要求…"
+              placeholder="选填，有具体岗位再对照"
               onChange={(event) => {
                 setRequirementsText(event.target.value);
                 setDirty(true);
@@ -832,16 +1001,19 @@ export function WorkbenchView({
             />
           </label>
           <footer className="job-project-actions">
-            <span>{!hasProfile ? "保存前请先上传简历" : "保存后进入该岗位的分析和面试准备"}</span>
+            <span>{!hasProfile ? "分析前请先上传简历" : "没有岗位也可以先分析已保存的简历"}</span>
             <button
-              className="secondary-button"
-              onClick={() => void persistJob()}
-              disabled={!hasProjectContent || jobBusy}
+              className="primary-button"
+              onClick={() => void runResumeAnalysis()}
+              disabled={!ready}
             >
-              <Save size={14} />{jobBusy ? "保存中…" : "保存岗位"}
+              {analyzing ? <LoaderCircle className="spinning" size={14} /> : <Target size={14} />}
+              {analyzing ? "分析中…" : "开始分析"}
             </button>
           </footer>
         </section>
+        {quickMatchError ? <p className="inline-error">{quickMatchError}</p> : null}
+        {quickMatchResult ? <ResumeAnalysisResult result={quickMatchResult} onEditProfile={onOpenProfile} /> : null}
       </section>
     );
   }
@@ -849,7 +1021,7 @@ export function WorkbenchView({
   return (
     <section className="workbench-page job-project-subpage">
       <header className="job-subpage-nav">
-        <button type="button" onClick={onNavigateIndex}><ArrowLeft size={15} />返回求职准备</button>
+        <button type="button" onClick={onNavigateIndex}><ArrowLeft size={15} />返回简历分析</button>
         <span>/</span>
         <strong>{selectedJob?.job_title || "岗位详情"}</strong>
       </header>
@@ -957,92 +1129,33 @@ export function WorkbenchView({
             </section>
           ) : null}
 
-          {selectedJob ? (
-            <>
-              <JobStageNav
-                activeStage={activeStage}
-                analysis={analysisReady ? currentAnalysis : null}
-                resumeVersions={resumeVersions}
-                interviewKits={interviewKits}
-                interviewRounds={interviewRounds}
-                timeline={jobTimeline}
-                onSelect={setActiveStage}
-              />
-            </>
-          ) : null}
-
-          {selectedJob && activeStage === "analysis" && !analysisReady ? (
+          {selectedJob && !analysisReady ? (
             <section className="job-stage-empty">
               <span><Target size={24} /></span>
               <div>
-                <h2>{currentAnalysis ? "岗位资料有更新，需要重新分析" : "先开始匹配分析"}</h2>
+                <h2>{currentAnalysis ? "岗位或简历有更新，需要重新分析" : "还没有这份岗位的简历分析"}</h2>
                 <p>{currentAnalysis
-                  ? currentAnalysis.stale_reasons.join("；") || "岗位或候选人证据已变化，请先更新匹配分析。"
-                  : "分析会逐项拆解岗位要求，并只引用已确认的候选人事实和来源。"}</p>
+                  ? currentAnalysis.stale_reasons.join("；") || "岗位或简历已变化，请先更新分析。"
+                  : "分析会对照岗位要求与已保存的简历，标出匹配、缺口和证据。"}</p>
               </div>
               <button
                 disabled={!ready}
-                title={!hasProfile ? "请先完成人物资料并保存简历" : !draft.description.trim() ? "请先补充岗位 JD" : undefined}
+                title={!hasProfile ? "请先完成个人资料并保存简历" : !draft.description.trim() ? "请先补充岗位描述" : undefined}
                 onClick={() => void runTask("match")}
               >
-                {analysisBusy ? "分析中…" : currentAnalysis ? "更新匹配分析" : "开始匹配分析"}<ArrowRight size={14} />
+                {analysisBusy ? "分析中…" : currentAnalysis ? "更新分析" : "开始分析"}<ArrowRight size={14} />
               </button>
             </section>
           ) : null}
 
-      {selectedJob && activeStage === "analysis" && analysisReady ? (
+      {selectedJob && analysisReady ? (
         <section className="job-stage-empty">
           <span><Target size={24} /></span>
-          <div><h2>匹配分析已就绪</h2><p>可查看岗位要求、匹配依据、风险和下一步建议。</p></div>
-          <button onClick={() => onNavigateEvaluation(selectedJob.id)}>查看匹配分析<ArrowRight size={14} /></button>
+          <div><h2>简历分析已完成</h2><p>查看匹配、缺口、证据和下一步建议。</p></div>
+          <button onClick={() => onNavigateEvaluation(selectedJob.id)}>查看分析结果<ArrowRight size={14} /></button>
         </section>
       ) : null}
 
-      {selectedJob && (activeStage === "resume" || activeStage === "interview") && !analysisReady ? (
-        <section className="job-stage-empty">
-          <span>{activeStage === "resume" ? <FileText size={24} /> : <UsersRound size={24} />}</span>
-          <div>
-            <h2>需要先完成匹配分析</h2>
-            <p>简历和面试内容必须建立在岗位要求与真实经历证据之上。</p>
-          </div>
-          <button onClick={() => onNavigateEvaluation(selectedJob.id)}>
-            前往匹配分析<ArrowRight size={14} />
-          </button>
-        </section>
-      ) : null}
-
-      {selectedJob && activeStage === "resume" && analysisReady ? (
-        <ResumeVersionPanel
-          job={selectedJob}
-          versions={resumeVersions}
-          version={resumeVersion}
-          busy={resumeBusy}
-          onCreate={onCreateResumeVersion}
-          onSelect={onSelectResumeVersion}
-          onUpdateChange={onUpdateResumeChange}
-          onUpdateVersion={onUpdateResumeVersion}
-          onExport={onExportResume}
-        />
-      ) : null}
-
-      {selectedJob && activeStage === "interview" && analysisReady ? (
-        <InterviewWorkflowPanel
-          section="preparation"
-          job={selectedJob}
-          kits={interviewKits}
-          kit={interviewKit}
-          rounds={interviewRounds}
-          timeline={jobTimeline}
-          busy={interviewBusy}
-          onCreateKit={onCreateInterviewKit}
-          onSelectKit={onSelectInterviewKit}
-          onUpdateKit={onUpdateInterviewKit}
-          onToggleTask={onToggleInterviewTask}
-          onCreateRound={onCreateInterviewRound}
-          onUpdateRound={onUpdateInterviewRound}
-          onAddNote={onAddTimelineNote}
-        />
-      ) : null}
         </div>
       </section>
     </section>

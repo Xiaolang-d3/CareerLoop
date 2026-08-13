@@ -210,11 +210,11 @@ export type BrowserJobCapture = {
   truncated: boolean;
 };
 
-export type JobRequirementStatus = "matched" | "partial" | "no_evidence";
+type JobRequirementStatus = "matched" | "partial" | "no_evidence";
 
-export type JobEvaluationStatus = "queued" | "running" | "completed" | "partial_failed" | "failed" | "cancelled" | "interrupted";
-export type JobDecision = "apply" | "consider" | "research_first" | "skip";
-export type JobRiskTier = "high_confidence" | "caution" | "suspicious" | "unknown";
+type JobEvaluationStatus = "queued" | "running" | "completed" | "partial_failed" | "failed" | "cancelled" | "interrupted";
+type JobDecision = "apply" | "consider" | "research_first" | "skip";
+type JobRiskTier = "high_confidence" | "caution" | "suspicious" | "unknown";
 
 export type JobEvaluationSection = {
   id: number;
@@ -227,7 +227,7 @@ export type JobEvaluationSection = {
   evidence_refs: string[];
 };
 
-export type JobEvaluationDimension = {
+type JobEvaluationDimension = {
   id: number;
   dimension_key: string;
   title: string;
@@ -242,7 +242,7 @@ export type JobEvaluationDimension = {
   evidence_refs: string[];
 };
 
-export type JobEvaluationRequirement = {
+type JobEvaluationRequirement = {
   id: number;
   requirement_key: string;
   text: string;
@@ -256,7 +256,7 @@ export type JobEvaluationRequirement = {
   confidence: string;
 };
 
-export type JobEvaluationRisk = {
+type JobEvaluationRisk = {
   id: number;
   risk_key: string;
   category: string;
@@ -311,9 +311,21 @@ export type JobEvaluation = {
 export type ResumeChangeDecision = "pending" | "accepted" | "rejected";
 export type ResumeTemplate = "classic" | "compact" | "minimal";
 
+export type ResumeSelfAnalysis = {
+  character_count: number;
+  skills: string[];
+  headline?: { verdict: string; evidence: string };
+  strengths: Array<{ label: string; evidence: string }>;
+  structure: { found: string[]; missing: string[] };
+  projects: Array<{ title: string; evidence: string; how_to_talk: string; weak: boolean }>;
+  gaps: string[];
+  next_actions?: Array<{ title: string; detail: string; evidence: string }>;
+};
+
 export type QuickMatchResult = {
   job: { title: string; company_name: string; description_character_count: number };
   analysis: {
+    mode?: "resume_only" | "job_match";
     required_skills: string[];
     matched_skills: string[];
     missing_skills: string[];
@@ -321,11 +333,12 @@ export type QuickMatchResult = {
     skill_coverage: number | null;
     confidence: "high" | "limited";
     limitations: string[];
+    resume?: ResumeSelfAnalysis;
   };
   persistence: "not_saved_as_job";
 };
 
-export type ResumeEvidence = {
+type ResumeEvidence = {
   source: "job" | "resume" | "user_edit";
   requirement_id: string;
   requirement: string;
@@ -370,7 +383,7 @@ export type ResumeVersion = ResumeVersionSummary & {
 
 export type InterviewType = "general" | "hr" | "business" | "technical" | "final";
 
-export type InterviewTask = {
+type InterviewTask = {
   id: number;
   kit_id: number;
   category: string;
@@ -381,7 +394,7 @@ export type InterviewTask = {
   updated_at: string;
 };
 
-export type InterviewKitContent = {
+type InterviewKitContent = {
   method: string;
   interview_type: InterviewType;
   positioning: {
@@ -465,7 +478,7 @@ export type InterviewPreparationExperience = {
   gaps: InterviewPreparationNode[];
 };
 
-export type InterviewPreparationRecord = {
+type InterviewPreparationRecord = {
   id: string;
   title: string;
   summary: string;
@@ -563,9 +576,9 @@ export type ViewKey =
   | "settings";
 
 export type OpportunityRunMode = "scan" | "discover" | "company_funded" | "pipeline" | "batch";
-export type OpportunityRunStatus = "queued" | "running" | "waiting_for_user" | "completed" | "partial_failed" | "failed" | "cancelled" | "interrupted";
+type OpportunityRunStatus = "queued" | "running" | "waiting_for_user" | "completed" | "partial_failed" | "failed" | "cancelled" | "interrupted";
 
-export type OpportunityRunItem = {
+type OpportunityRunItem = {
   id: number;
   run_id: number;
   entity_type: string;
@@ -663,7 +676,7 @@ export type AgentSettings = {
   api_key_configured: boolean;
 };
 
-export type ModelServiceEvent = {
+type ModelServiceEvent = {
   id: number;
   request_kind: "generate" | "stream" | "health_check";
   status: "success" | "error";
@@ -771,11 +784,3 @@ export type AgentOperationsSnapshot = {
   };
 };
 
-export type ToolProfile = {
-  name: string;
-  category: "读取资料" | "分析判断" | "准备行动" | "进展记录" | "画像维护" | "画像治理" | "结果回流" | "外部读取";
-  description: string;
-  dataScope: string;
-  control: "自动读取" | "用户确认" | "明确指令" | "明确维护意图" | "用户明确确认" | "明确记录意图";
-  local: boolean;
-};

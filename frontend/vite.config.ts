@@ -33,7 +33,6 @@ export default defineConfig({
           }
           if (id.includes("@assistant-ui")) return "assistant-ui";
           if (id.includes("@ag-ui")) return "ag-ui";
-          if (id.includes("@ant-design/x-markdown")) return "x-markdown";
           if (
             id.includes("react-markdown")
             || id.includes("remark-gfm")

@@ -48,11 +48,6 @@ type OverviewProps = {
 export function SettingsOverview({ profile, profileReady, onOpen }: OverviewProps) {
   return (
     <div className="settings-overview">
-      <div className="settings-overview-heading">
-        <span className="settings-eyebrow">CAREER SETTINGS</span>
-        <h2>让求职准备更贴合你</h2>
-        <p>完善你的经历、简历和求职偏好；每次推荐和准备都会基于你确认过的资料。</p>
-      </div>
       <div className="settings-overview-grid">
         <button className="settings-entry-card profile" type="button" onClick={() => onOpen("profile")}>
           <span className="settings-entry-icon"><UserRound size={21} /></span>

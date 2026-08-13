@@ -12,6 +12,7 @@ import {
   type ThreadMessageLike,
   useExternalStoreRuntime
 } from "@assistant-ui/react";
+import { useAui } from "@assistant-ui/store";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -31,7 +32,6 @@ import {
   Sparkles,
   Square,
   TriangleAlert,
-  UserRound,
   X
 } from "lucide-react";
 
@@ -103,6 +103,17 @@ export type ChatRetryDraft = {
   webSearch: boolean;
 };
 
+export type ChatSessionContext = {
+  resumeLabel?: string | null;
+  analysisLabel?: string | null;
+};
+
+const STARTER_PROMPTS = [
+  { draft: "帮我梳理这个项目的亮点。项目是：", title: "梳理项目表达", description: "把经历变成可讲的亮点" },
+  { draft: "围绕这个项目追问我。项目是：", title: "练习项目追问", description: "从细节到取舍反复演练" },
+  { draft: "帮我复盘刚结束的这场面试。岗位和主要问题是：", title: "复盘一次面试", description: "把反馈变成下一步准备" }
+];
+
 type ChatWorkspaceProps = {
   conversationTitle?: string;
   messages: ChatMessage[];
@@ -135,19 +146,8 @@ type ChatWorkspaceProps = {
   onStop: () => Promise<void>;
   onEdit: (userMessageId: number, content: string) => Promise<void>;
   onRegenerate: (userMessageId: number) => Promise<void>;
+  sessionContext?: ChatSessionContext;
 };
-
-function formatDate(value: string) {
-  const normalized = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
-  const date = new Date(normalized);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit"
-  }).format(date);
-}
 
 function resultOnlyContent(content: string, hasThoughtSummary: boolean): string {
   if (!hasThoughtSummary) return content;
@@ -215,7 +215,6 @@ function MarkdownContent({ children }: { children: string }) {
 function EditMessageComposer() {
   return (
     <MessagePrimitive.Root className="message user message-editing">
-      <span className="avatar"><UserRound size={17} /></span>
       <div className="message-content">
         <div className="message-meta"><strong>编辑消息</strong><span>保存后将从这里重新生成</span></div>
         <ComposerPrimitive.Root className="message-edit-composer">
@@ -227,6 +226,58 @@ function EditMessageComposer() {
         </ComposerPrimitive.Root>
       </div>
     </MessagePrimitive.Root>
+  );
+}
+
+function ThoughtProcess({ summary, streaming }: { summary?: string; streaming: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!summary && !streaming) return null;
+  return (
+    <section className={`thinking-process ${expanded ? "expanded" : ""} ${streaming ? "streaming" : "complete"}`} aria-label="思考过程">
+      <button
+        type="button"
+        className="thinking-process-header"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <span className="thinking-process-icon"><Sparkles size={12} /></span>
+        <strong>{streaming ? "正在思考" : "思考过程"}</strong>
+        <ChevronDown className="thinking-process-chevron" size={14} />
+      </button>
+      {summary ? (
+        <div className="thinking-process-collapse">
+          <div className="thinking-process-scroll"><p>{summary}</p></div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function ChatContextChips({
+  context,
+  onFill
+}: {
+  context?: ChatSessionContext;
+  onFill: (draft: string) => void;
+}) {
+  const resumeLabel = context?.resumeLabel?.trim();
+  const analysisLabel = context?.analysisLabel?.trim();
+  if (!resumeLabel && !analysisLabel) return null;
+  return (
+    <div className="chat-context-strip" aria-label="当前可用上下文">
+      {resumeLabel ? (
+        <button type="button" className="chat-context-chip" onClick={() => onFill(`结合我已经保存的简历（${resumeLabel}），`)}>
+          <FileText size={12} />
+          <span>简历 · {resumeLabel}</span>
+        </button>
+      ) : null}
+      {analysisLabel ? (
+        <button type="button" className="chat-context-chip" onClick={() => onFill(`结合刚才对「${analysisLabel}」的分析，继续帮我准备面试。我想先练：`)}>
+          <Search size={12} />
+          <span>分析 · {analysisLabel}</span>
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -320,15 +371,10 @@ function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: boolean 
 
   return (
     <MessagePrimitive.Root className={`message ${source.role}`}>
-      <span className="avatar">{source.role === "user" ? <UserRound size={17} /> : <Sparkles size={17} />}</span>
       <div className="message-content">
-        <div className="message-meta">
-          <strong>{source.role === "user" ? "你" : "CareerLoop"}</strong>
-          <time>{formatDate(source.created_at)}</time>
-        </div>
         {source.role === "assistant" ? (
           <>
-            {isActiveAssistant ? <div className="agent-result-note waiting" role="status">正在为你整理结果…</div> : null}
+            <ThoughtProcess summary={thoughtSummary} streaming={isActiveAssistant} />
             <section className="message-result" aria-label="输出结果">
               <MarkdownContent>{resultContent}</MarkdownContent>
               <AgentResultNote run={source.payload?.agent} />
@@ -384,14 +430,34 @@ type ChatWorkspaceContentProps = ChatWorkspaceProps & {
 
 function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const aui = useAui();
   const [isDraggingAttachment, setIsDraggingAttachment] = useState(false);
   const [expandedPreview, setExpandedPreview] = useState<{ filename: string; url: string } | null>(null);
   const [conversationListOpen, setConversationListOpen] = useState(false);
+
+  function fillComposer(draft: string) {
+    aui.composer().setText(draft);
+    window.requestAnimationFrame(() => {
+      const input = props.chatInputRef.current;
+      input?.focus();
+      const cursor = draft.length;
+      input?.setSelectionRange(cursor, cursor);
+    });
+  }
 
   useEffect(() => {
     setExpandedPreview(null);
     setConversationListOpen(false);
   }, [props.currentConversationId]);
+
+  useEffect(() => {
+    if (!conversationListOpen) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setConversationListOpen(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [conversationListOpen]);
 
   async function selectAttachment(file?: File) {
     if (!file || props.attachmentBusy) return;
@@ -444,14 +510,18 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
     <section className={`chat-workspace ${props.messages.length ? "has-history" : "is-empty"} ${props.chatBusy ? "is-running" : ""}`}>
       <ThreadPrimitive.Root className="chat-main">
         <header className="chat-session-header">
-          <div>
-            <span>CareerLoop · 面试准备</span>
-            <h1>{props.conversationTitle || "新对话"}</h1>
-          </div>
-          <small>准备中</small>
-          <button className="chat-history-toggle" type="button" onClick={() => setConversationListOpen(true)} aria-label="打开对话记录">
+          <h1>{props.conversationTitle || "新对话"}</h1>
+          <button
+            className="chat-history-toggle"
+            type="button"
+            onClick={() => setConversationListOpen((open) => !open)}
+            aria-label="对话记录"
+            aria-expanded={conversationListOpen}
+            aria-controls="conversation-history-drawer"
+          >
             <History size={16} />
           </button>
+          {props.messages.length ? <ChatContextChips context={props.sessionContext} onFill={fillComposer} /> : null}
         </header>
         <ThreadPrimitive.Viewport className="chat-thread" role="log" aria-live="polite" aria-relevant="additions">
           {props.hiddenMessageCount > 0 ? (
@@ -464,13 +534,10 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             <div className="chat-welcome">
               <h2>从一个具体问题开始。</h2>
               <p>围绕真实经历练表达、补知识点，或复盘一次面试。</p>
+              <ChatContextChips context={props.sessionContext} onFill={fillComposer} />
               <div className="starter-prompt-list" aria-label="快捷开始">
-                {[
-                  { prompt: "帮我梳理项目亮点", title: "梳理项目表达", description: "把经历变成可讲的亮点" },
-                  { prompt: "围绕一个项目追问我", title: "练习项目追问", description: "从细节到取舍反复演练" },
-                  { prompt: "复盘刚结束的面试", title: "复盘一次面试", description: "把反馈变成下一步准备" }
-                ].map(({ prompt, title, description }) => (
-                  <button key={prompt} type="button" onClick={() => void props.onSend(prompt)}>
+                {STARTER_PROMPTS.map(({ draft, title, description }) => (
+                  <button key={draft} type="button" onClick={() => fillComposer(draft)}>
                     <strong>{title}</strong><small>{description}</small>
                   </button>
                 ))}
@@ -556,7 +623,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
               <div className="composer-shortcuts" aria-label="添加资料">
                   <button type="button" onClick={() => attachmentInputRef.current?.click()} disabled={props.attachmentBusy} title="上传图片或文档，也可直接粘贴图片">
                     {props.attachmentBusy ? <LoaderCircle className="spinning" size={15} /> : <ImagePlus size={15} />}
-                    <span>{props.attachmentBusy ? "处理中…" : "添加资料"}</span>
+                    <span>{props.attachmentBusy ? "处理中…" : "资料"}</span>
                   </button>
                   <button
                     type="button"
@@ -628,8 +695,8 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
         conversations={props.conversations}
         currentConversationId={props.currentConversationId}
         busy={props.conversationBusy}
-        mobileOpen={conversationListOpen}
-        onCloseMobile={() => setConversationListOpen(false)}
+        open={conversationListOpen}
+        onClose={() => setConversationListOpen(false)}
         onSelect={props.onSelectConversation}
         onCreate={props.onCreateConversation}
         onRename={props.onRenameConversation}

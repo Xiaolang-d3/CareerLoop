@@ -209,6 +209,26 @@ def _sync_resume_knowledge(
         delete_document("resume", PROFILE_ID, db_path=db_path)
 
 
+def ensure_resume_knowledge_indexed(db_path: str | Path | None = None) -> bool:
+    """给「已保存但没有索引」的简历补建证据索引。返回是否真的补建了。
+
+    索引只在画像写入路径上同步；索引逻辑上线之前保存的简历（或知识表被清空后）
+    不会自动补上，表现为「简历明明已保存，证据检索却一条都查不到」。
+    检索入口和应用启动时调用这里兜底。
+    """
+    document = profile_document.load(db_path)
+    if document is None or not document.resume_text.strip():
+        return False
+    with connect(db_path) as conn:
+        indexed = conn.execute(
+            "SELECT 1 FROM knowledge_chunks WHERE source_type = 'resume' LIMIT 1"
+        ).fetchone()
+    if indexed is not None:
+        return False
+    _sync_resume_knowledge(scan_and_redact(document.resume_text)[1], db_path)
+    return True
+
+
 def _touch_profile_revision(
     db_path: str | Path | None = None,
 ) -> profile_document.ProfileDocument:

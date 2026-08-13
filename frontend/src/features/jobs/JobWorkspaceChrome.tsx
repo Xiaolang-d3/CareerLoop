@@ -1,20 +1,10 @@
-import {
-  ArrowRight,
-  Check,
-  CheckCircle2,
-  FileText,
-  PencilLine,
-  Target,
-  UsersRound
-} from "lucide-react";
-import { ActionButton, SectionHeader } from "../../components/ui";
+import { CheckCircle2, FileText, Target, UsersRound } from "lucide-react";
 import type {
   InterviewKitSummary,
   InterviewRound,
   JobEvaluation,
   JobEvent,
   JobProject,
-  JobProjectDraft,
   ResumeVersionSummary
 } from "../../types";
 
@@ -76,147 +66,5 @@ export function JobStageNav({
         );
       })}
     </nav>
-  );
-}
-
-type JobOverviewProps = {
-  draft: JobProjectDraft;
-  analysis: JobEvaluation | null;
-  resumeVersions: ResumeVersionSummary[];
-  interviewKits: InterviewKitSummary[];
-  interviewRounds: InterviewRound[];
-  timeline: JobEvent[];
-  nextActionCopy: { title: string; description: string; action: string };
-  nextActionDisabled: boolean;
-  nextActionTitle?: string;
-  onNextAction: () => void;
-  onSelectStage: (stage: WorkbenchStage) => void;
-  onEdit: () => void;
-};
-
-function formatEventDate(value: string) {
-  const date = new Date(value.includes("T") ? value : `${value.replace(" ", "T")}Z`);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit"
-  }).format(date);
-}
-
-export function JobOverview({
-  draft,
-  analysis,
-  resumeVersions,
-  interviewKits,
-  interviewRounds,
-  timeline,
-  nextActionCopy,
-  nextActionDisabled,
-  nextActionTitle,
-  onNextAction,
-  onSelectStage,
-  onEdit
-}: JobOverviewProps) {
-  const progressItems = [
-    {
-      stage: "analysis" as const,
-      label: "匹配分析",
-      value: analysis ? ({ apply: "值得申请", consider: "可以考虑", research_first: "先研究", skip: "暂不建议" }[analysis.effective_final_decision]) : "尚未评估",
-      complete: Boolean(analysis),
-      icon: Target
-    },
-    {
-      stage: "resume" as const,
-      label: "定制简历",
-      value: resumeVersions.length ? `${resumeVersions.length} 个版本` : "尚未创建",
-      complete: resumeVersions.length > 0,
-      icon: FileText
-    },
-    {
-      stage: "interview" as const,
-      label: "面试准备",
-      value: interviewKits.length ? `${interviewKits.length} 个准备包` : "尚未准备",
-      complete: interviewKits.length > 0,
-      icon: UsersRound
-    }
-  ];
-
-  return (
-    <section className="job-overview-panel">
-      <section className="job-next-action ui-panel-emphasis">
-        <SectionHeader
-          eyebrow="建议下一步"
-          title={nextActionCopy.title}
-          description={nextActionCopy.description}
-          actions={(
-            <div className="next-action-buttons">
-              <ActionButton
-                variant="primary"
-                disabled={nextActionDisabled}
-                title={nextActionTitle}
-                aria-label={nextActionCopy.action}
-                onClick={onNextAction}
-              >
-                {nextActionCopy.action}<ArrowRight size={15} />
-              </ActionButton>
-            </div>
-          )}
-        />
-      </section>
-
-      <div className="job-overview-grid">
-        <section className="job-stage-summary ui-panel">
-          <SectionHeader title="Agent 工作流" description="每一步都有可查看的依据和可继续使用的产物。" level={3} />
-          <div>
-            {progressItems.map((item) => {
-              const Icon = item.icon;
-              return (
-                <button key={item.stage} onClick={() => onSelectStage(item.stage)}>
-                  <span className={item.complete ? "complete" : ""}>
-                    {item.complete ? <Check size={14} /> : <Icon size={14} />}
-                  </span>
-                  <div><strong>{item.label}</strong><small>{item.value}</small></div>
-                  <ArrowRight size={14} />
-                </button>
-              );
-            })}
-          </div>
-        </section>
-
-        <section className="job-overview-details ui-panel">
-          <SectionHeader
-            title="岗位要求"
-            level={3}
-            actions={<ActionButton variant="ghost" size="sm" icon={<PencilLine size={13} />} onClick={onEdit}>编辑</ActionButton>}
-          />
-          <dl>
-            <div><dt>公司</dt><dd>{draft.company_name || "待补充"}</dd></div>
-            <div><dt>地点</dt><dd>{draft.location || "待补充"}</dd></div>
-            <div><dt>薪资</dt><dd>{draft.salary_text || "待补充"}</dd></div>
-            <div><dt>岗位 JD</dt><dd>{draft.description.trim() ? `${draft.description.trim().length} 字` : "待补充"}</dd></div>
-          </dl>
-          {draft.notes.trim() ? <p className="job-overview-note">{draft.notes}</p> : null}
-        </section>
-
-        <section className="job-overview-timeline ui-panel">
-          <SectionHeader
-            title="最近动态"
-            level={3}
-            actions={<ActionButton variant="ghost" size="sm" onClick={() => onSelectStage("interview")}>查看面试</ActionButton>}
-          />
-          <div>
-            {timeline.slice(0, 3).map((event) => (
-              <article key={event.id}>
-                <span />
-                <div><strong>{event.title}</strong><small>{formatEventDate(event.occurred_at)}</small></div>
-              </article>
-            ))}
-            {!timeline.length ? <p>保存进展后会显示在这里。</p> : null}
-          </div>
-        </section>
-      </div>
-    </section>
   );
 }
