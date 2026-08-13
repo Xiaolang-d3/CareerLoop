@@ -32,6 +32,7 @@ ROUTE_STAGES: dict[str, str | None] = {
     "jd_analysis": "job_evaluation",
     "resume_evidence": "candidate_knowledge",
     "profile_analysis": "candidate_knowledge",
+    "project_story": "interview_preparation",
     "tailored_resume": "material_preparation",
     "interview_preparation": "interview_preparation",
     "career_package": "material_preparation",
@@ -41,7 +42,6 @@ ROUTE_STAGES: dict[str, str | None] = {
     "profile_enrichment": "candidate_knowledge",
     "career_strategy": "candidate_knowledge",
     "interview_debrief": "outcome_tracking",
-    "application_outcome": "outcome_tracking",
     "opportunity_discovery": "opportunity_discovery",
     "skill_growth": "candidate_knowledge",
     "job_evaluation": "job_evaluation",
@@ -82,7 +82,6 @@ TOOL_STAGES: dict[str, str] = {
     "generate_interview_advice": "interview_preparation",
     # 结果与复盘
     "record_interview_debrief": "outcome_tracking",
-    "record_application_outcome": "outcome_tracking",
 }
 
 

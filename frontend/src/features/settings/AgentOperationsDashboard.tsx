@@ -4,12 +4,11 @@ import {
   CheckCircle2,
   CircleAlert,
   Clock3,
-  RefreshCw,
   Route,
   Sparkles,
   Wrench
 } from "lucide-react";
-import { ActionButton, StatusBadge } from "../../components/ui";
+import { StatusBadge } from "../../components/ui";
 import type { AgentOperationsSnapshot } from "../../types";
 import "./agent-operations-dashboard.css";
 
@@ -19,7 +18,6 @@ type Props = {
   days: 7 | 30 | 90;
   loading: boolean;
   onDaysChange: (days: 7 | 30 | 90) => void;
-  onRefresh: () => void;
 };
 
 const statusMeta = {
@@ -112,7 +110,7 @@ function ToolBars({ data }: { data: AgentOperationsSnapshot["tool_breakdown"] })
   );
 }
 
-export function AgentOperationsDashboard({ snapshot, days, loading, onDaysChange, onRefresh }: Props) {
+export function AgentOperationsDashboard({ snapshot, days, loading, onDaysChange }: Props) {
   const summary = snapshot?.summary;
   return (
     <section className="settings-card agent-operations-card">
@@ -136,15 +134,6 @@ export function AgentOperationsDashboard({ snapshot, days, loading, onDaysChange
               </button>
             ))}
           </div>
-          <ActionButton
-            size="sm"
-            variant="secondary"
-            icon={<RefreshCw className={loading ? "spinning" : ""} size={14} />}
-            disabled={loading}
-            onClick={onRefresh}
-          >
-            刷新
-          </ActionButton>
         </div>
       </header>
 

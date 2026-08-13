@@ -2,9 +2,13 @@ import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from "rea
 import { createRoot } from "react-dom/client";
 import type { AgentSubscriber, HttpAgent as HttpAgentType } from "@ag-ui/client";
 import { createApiClient } from "./api/client";
+import { AppErrorBoundary } from "./components/AppErrorBoundary";
+import { AuthGate } from "./components/AuthGate";
 import { AppSidebar } from "./components/AppSidebar";
+import { createClientId } from "./api/clientId";
+import { ConversationDialog, type ConversationDialogState } from "./components/ConversationDialog";
 import type { AgentRunResult, AttachmentConfig, ChatAttachment, ChatMessage, ChatRetryDraft } from "./components/ChatWorkspace";
-import { IconButton, SectionHeader } from "./components/ui";
+import { SectionHeader } from "./components/ui";
 import {
   captureBrowserJobPage,
   detectBrowserBridge,
@@ -16,7 +20,10 @@ import {
   emptyCandidateEditor,
   pageMeta
 } from "./constants";
-import { appRouteHash, initialAppRoute, parseAppHash, routeForSection, type AppRoute } from "./routing";
+import { createPagePrefetcher } from "./page-prefetch";
+import { createRouteDataCache, requiredDataForRoute, type RouteDataKey } from "./route-data";
+import { useAsyncPolling } from "./hooks/useAsyncPolling";
+import { appRouteHash, initialAppRoute, parseAppHash, routeForSection, type AppRoute, type PreparationFocus, type PreparationPage } from "./routing";
 import type {
   AgentCapabilities,
   AgentOperationsSnapshot,
@@ -26,6 +33,7 @@ import type {
   Conversation,
   InterviewKit,
   InterviewKitSummary,
+  InterviewPreparation,
   InterviewRound,
   InterviewType,
   JobEvaluation,
@@ -36,8 +44,10 @@ import type {
   JobProjectDraft,
   ResumeChangeDecision,
   ResumeProfileSuggestion,
+  ResumeTemplate,
   ResumeVersion,
   ResumeVersionSummary,
+  QuickMatchResult,
   ModelServiceMonitor,
   ViewKey,
   WorkflowStatus
@@ -47,23 +57,30 @@ import {
   Database,
   LoaderCircle,
   MessageCircle,
-  RefreshCw,
   TriangleAlert,
   X
 } from "lucide-react";
 import "./styles/foundations.css";
-import "./styles.css";
-import "./styles/primitives.css";
+// The authenticated shell must be available immediately after login. Loading
+// these styles through a lazy component kept the entire app behind a Suspense
+// fallback while the CSS chunk was fetched, leaving users on a blank loading
+// screen after their credentials had already been accepted.
+import "./AppStyles";
 
-const ChatWorkspace = lazy(() => import("./components/ChatWorkspace").then((module) => ({
+const loadChatWorkspace = () => import("./components/ChatWorkspace");
+const loadWorkspaceViews = () => import("./components/WorkspaceViews");
+const loadSettingsWorkspace = () => import("./features/settings/SettingsWorkspace");
+const loadProfileSettingsPage = () => import("./features/settings/ProfileSettingsPage");
+const loadInterviewPreparationPage = () => import("./features/interview/InterviewPreparationPage");
+const ChatWorkspace = lazy(() => loadChatWorkspace().then((module) => ({
   default: module.ChatWorkspace
 })));
 
-const WorkbenchView = lazy(() => import("./components/WorkspaceViews").then((module) => ({
+const WorkbenchView = lazy(() => loadWorkspaceViews().then((module) => ({
   default: module.WorkbenchView
 })));
 
-const DashboardView = lazy(() => import("./components/WorkspaceViews").then((module) => ({
+const DashboardView = lazy(() => loadWorkspaceViews().then((module) => ({
   default: module.DashboardView
 })));
 
@@ -71,15 +88,15 @@ const AgentOperationsDashboard = lazy(() => import("./features/settings/AgentOpe
   default: module.AgentOperationsDashboard
 })));
 
-const SettingsWorkspace = lazy(() => import("./features/settings/SettingsWorkspace").then((module) => ({
+const SettingsWorkspace = lazy(() => loadSettingsWorkspace().then((module) => ({
   default: module.SettingsWorkspace
 })));
 
-const SettingsOverview = lazy(() => import("./features/settings/SettingsWorkspace").then((module) => ({
+const SettingsOverview = lazy(() => loadSettingsWorkspace().then((module) => ({
   default: module.SettingsOverview
 })));
 
-const ProfileSettingsPage = lazy(() => import("./features/settings/ProfileSettingsPage").then((module) => ({
+const ProfileSettingsPage = lazy(() => loadProfileSettingsPage().then((module) => ({
   default: module.ProfileSettingsPage
 })));
 
@@ -87,7 +104,8 @@ const ModelSettingsPage = lazy(() => import("./features/settings/ModelSettingsPa
   default: module.ModelSettingsPage
 })));
 
-const OpportunityDiscoveryPage = lazy(() => import("./features/opportunities/OpportunityDiscoveryPage").then((module) => ({
+const loadOpportunityDiscoveryPage = () => import("./features/opportunities/OpportunityDiscoveryPage");
+const OpportunityDiscoveryPage = lazy(() => loadOpportunityDiscoveryPage().then((module) => ({
   default: module.OpportunityDiscoveryPage
 })));
 
@@ -95,18 +113,45 @@ const JobEvaluationPage = lazy(() => import("./features/jobs/JobEvaluationPage")
   default: module.JobEvaluationPage
 })));
 
+const InterviewPreparationPage = lazy(() => loadInterviewPreparationPage().then((module) => ({
+  default: module.InterviewPreparationPage
+})));
+
+const pagePrefetcher = createPagePrefetcher({
+  chat: loadChatWorkspace,
+  profile: () => Promise.all([loadSettingsWorkspace(), loadProfileSettingsPage()]),
+  projects: loadInterviewPreparationPage,
+  knowledge: loadInterviewPreparationPage,
+  records: loadInterviewPreparationPage,
+  workbench: loadWorkspaceViews,
+  opportunities: loadOpportunityDiscoveryPage,
+  dashboard: loadWorkspaceViews,
+  settings: loadSettingsWorkspace
+});
+
 function PageLoading({ label }: { label: string }) {
   return (
-    <div className="page-loading" role="status">
-      <LoaderCircle className="spinning" size={18} />
-      <span>{label}</span>
+    <div className="page-loading" role="status" aria-live="polite">
+      <div className="page-loading-copy">
+        <LoaderCircle className="spinning" size={18} />
+        <span>{label}</span>
+      </div>
+      <div className="page-loading-skeleton" aria-hidden="true">
+        <i /><i /><i />
+      </div>
     </div>
   );
 }
 
-function App() {
-  const apiBase = useMemo(() => `${window.location.protocol}//${window.location.hostname}:8000`, []);
-  const fetchJson = useMemo(() => createApiClient(apiBase), [apiBase]);
+function resolveApiBase() {
+  // Development uses Vite's /api proxy. The built SPA is served by FastAPI,
+  // so production and HTTPS-tunnel traffic use this exact same origin.
+  return import.meta.env.DEV ? "/api" : window.location.origin;
+}
+
+function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => void }) {
+  const apiBase = useMemo(() => resolveApiBase(), []);
+  const fetchJson = useMemo(() => createApiClient(apiBase, accessToken), [apiBase, accessToken]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem("bosscopilot-sidebar") === "collapsed");
   const [appRoute, setAppRoute] = useState<AppRoute>(() => initialAppRoute(
     window.location.hash,
@@ -131,21 +176,23 @@ function App() {
   const [interviewKits, setInterviewKits] = useState<InterviewKitSummary[]>([]);
   const [interviewKit, setInterviewKit] = useState<InterviewKit | null>(null);
   const [interviewRounds, setInterviewRounds] = useState<InterviewRound[]>([]);
+  const [interviewPreparation, setInterviewPreparation] = useState<InterviewPreparation | null>(null);
+  const [interviewPreparationBusy, setInterviewPreparationBusy] = useState(false);
+  const [autoAnalysisAttemptedRevision, setAutoAnalysisAttemptedRevision] = useState<number | null>(null);
   const [jobTimeline, setJobTimeline] = useState<JobEvent[]>([]);
   const [interviewBusy, setInterviewBusy] = useState(false);
   const [currentConversationId, setCurrentConversationId] = useState<number | null>(null);
   const currentConversationIdRef = useRef<number | null>(null);
   const [conversationBusy, setConversationBusy] = useState(false);
+  const [conversationDialog, setConversationDialog] = useState<ConversationDialogState | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [visibleMessageCount, setVisibleMessageCount] = useState(12);
   const [chatBusy, setChatBusy] = useState(false);
   const [retryChatDraft, setRetryChatDraft] = useState<ChatRetryDraft | null>(null);
   const chatAgentRef = useRef<HttpAgentType | null>(null);
   const [taskCancelBusy, setTaskCancelBusy] = useState(false);
-  const [refreshBusy, setRefreshBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [noticeMessage, setNoticeMessage] = useState("");
-  const [opportunityRefreshKey, setOpportunityRefreshKey] = useState(0);
   const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
   const [attachmentConfig, setAttachmentConfig] = useState<AttachmentConfig | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -170,7 +217,10 @@ function App() {
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [modelDiscoveryBusy, setModelDiscoveryBusy] = useState(false);
   const [modelDiscoveryError, setModelDiscoveryError] = useState("");
+  const [databaseReady, setDatabaseReady] = useState(false);
+  const databaseInitializationRef = useRef<Promise<void> | null>(null);
   const modelDiscoveryKeyRef = useRef("");
+  const routeDataCacheRef = useRef(createRouteDataCache<RouteDataKey>(30_000));
   const currentConversation = conversations.find((item) => item.id === currentConversationId) ?? null;
 
   function navigateRoute(route: AppRoute, replace = false) {
@@ -205,6 +255,19 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const timer = window.setTimeout(() => {
+      pagePrefetcher.prefetchWhenIdle(
+        // Hover and keyboard focus already prefetch the destination page. On a
+        // cold mobile connection, eagerly fetching every workspace competes
+        // with the critical shell, styles, and authentication requests.
+        ["chat"],
+        (callback) => window.setTimeout(callback, 0)
+      );
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
     if (appRoute.section !== "workbench") return;
     if (["detail", "evaluation", "evaluation_section", "evaluation_deep"].includes(appRoute.page || "") && appRoute.jobId) {
       setSelectedJobId(appRoute.jobId);
@@ -214,10 +277,23 @@ function App() {
   }, [appRoute]);
 
   useEffect(() => {
+    if (appRoute.section !== "chat" || !currentConversationId || !conversations.length) return;
+    const requestedConversationId = appRoute.conversationId;
+    if (requestedConversationId && conversations.some((item) => item.id === requestedConversationId)) {
+      if (requestedConversationId !== currentConversationId) setCurrentConversationId(requestedConversationId);
+      return;
+    }
+    if (requestedConversationId !== currentConversationId) {
+      navigateRoute({ section: "chat", conversationId: currentConversationId }, true);
+    }
+  }, [appRoute, conversations, currentConversationId]);
+
+  useEffect(() => {
     currentConversationIdRef.current = currentConversationId;
   }, [currentConversationId]);
 
   useEffect(() => {
+    if (appRoute.section !== "workbench") return;
     let cancelled = false;
     void Promise.all([
       fetchJson<{
@@ -249,7 +325,7 @@ function App() {
 
   useEffect(() => {
     if (!noticeMessage) return;
-    const timer = window.setTimeout(() => setNoticeMessage(""), 4200);
+    const timer = window.setTimeout(() => setNoticeMessage(""), 2600);
     return () => window.clearTimeout(timer);
   }, [noticeMessage]);
 
@@ -284,54 +360,18 @@ function App() {
     .find((message) => message.role === "assistant" && message.payload?.agent)?.payload?.agent;
   const waitingForUser = latestAgent?.status === "waiting_user";
   const nextStep = !hasProfile
-    ? { title: "先建立职业画像", detail: "可以在主聊天完成访谈，也可以在画像中心导入简历。", action: "打开设置", kind: "settings" as const }
+    ? { title: "先建立职业画像", detail: "导入简历或填写关键经历，让岗位判断和面试准备真正贴合你。", action: "创建个人资料", kind: "settings" as const }
     : !workbenchProfileReady
       ? { title: "确认候选人事实", detail: "待确认知识不会参与岗位评分；请先在画像中心核对证据。", action: "审核画像", kind: "settings" as const }
-      : { title: "分析一个岗位 JD", detail: "把 BOSS 岗位 JD 粘贴到输入框，或上传你自己保存的岗位截图。", action: "开始分析", kind: "chat" as const };
+      : { title: "读取一个目标岗位", detail: "在招聘平台打开岗位详情页，用浏览器助手读取并开始匹配分析。", action: "读取岗位", kind: "workbench" as const };
 
-  async function refreshData(showFeedback = false, conversationId = currentConversationId) {
-    if (showFeedback) setRefreshBusy(true);
+  async function refreshData(conversationId = currentConversationId) {
     try {
       const nextWorkflow = await fetchJson<WorkflowStatus>(`/workflow/status${conversationId ? `?conversation_id=${conversationId}` : ""}`);
       setWorkflow(nextWorkflow);
       setErrorMessage("");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "数据刷新失败");
-    } finally {
-      if (showFeedback) setRefreshBusy(false);
-    }
-  }
-
-  async function refreshCurrentRoute() {
-    setRefreshBusy(true);
-    setErrorMessage("");
-    try {
-      if (appRoute.section === "opportunities") {
-        setOpportunityRefreshKey((value) => value + 1);
-      } else if (appRoute.section === "workbench") {
-        await Promise.all([refreshJobs(), refreshCandidateProfile(), refreshData()]);
-      } else if (appRoute.section === "dashboard") {
-        await Promise.all([refreshData(), refreshConversations(), refreshJobs()]);
-      } else if (appRoute.section === "settings") {
-        if (appRoute.page === "profile") {
-          await refreshCandidateProfile();
-        } else if (appRoute.page === "model") {
-          await Promise.all([refreshAgentSettings(), refreshModelMonitor()]);
-        } else if (appRoute.page === "agent") {
-          await refreshAgentOperations(agentOperationsDays, false);
-        } else {
-          await Promise.all([
-            refreshCandidateProfile(),
-            refreshAgentSettings(),
-            refreshModelMonitor(),
-            refreshAgentOperations(7, false)
-          ]);
-        }
-      }
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "刷新当前页面失败");
-    } finally {
-      setRefreshBusy(false);
     }
   }
 
@@ -357,6 +397,17 @@ function App() {
     return next;
   }
 
+  async function refreshInterviewPreparation() {
+    setInterviewPreparationBusy(true);
+    try {
+      const next = await fetchJson<InterviewPreparation>("/interview-preparation");
+      setInterviewPreparation(next);
+      return next;
+    } finally {
+      setInterviewPreparationBusy(false);
+    }
+  }
+
   async function createJobComparison(evaluationIds: number[]): Promise<number> {
     setJobEvaluationBusy(true);
     setErrorMessage("");
@@ -373,6 +424,18 @@ function App() {
     } finally {
       setJobEvaluationBusy(false);
     }
+  }
+
+  async function runQuickMatch(payload: {
+    job_description: string;
+    job_title?: string;
+    company_name?: string;
+  }): Promise<QuickMatchResult> {
+    return fetchJson<QuickMatchResult>("/quick-match", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
   }
 
   async function refreshResumeVersions(
@@ -403,7 +466,7 @@ function App() {
       );
       setResumeVersion(version);
       await refreshResumeVersions(job.id, version.id);
-      setNoticeMessage("定制简历版本已生成。每项修改都可以单独确认或编辑。");
+      setNoticeMessage("简历已生成");
       return version;
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "生成定制简历失败");
@@ -452,6 +515,7 @@ function App() {
         evaluation_id: version.evaluation_id,
         title: version.title,
         status: version.status,
+        template_id: version.template_id,
         change_count: version.change_count,
         change_counts: version.change_counts,
         created_at: version.created_at,
@@ -464,12 +528,12 @@ function App() {
       )));
       setNoticeMessage(
         patch.after_text !== undefined
-          ? "修改已保存，并标记为用户编辑内容。"
+          ? "保存成功"
           : patch.decision === "rejected"
-            ? "已拒绝这项修改。"
+            ? "已拒绝"
             : patch.decision === "accepted"
-              ? "已接受这项修改。"
-              : "已恢复为待确认状态。"
+              ? "已接受"
+              : "已恢复"
       );
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "保存简历修改失败");
@@ -480,19 +544,25 @@ function App() {
 
   async function updateTailoredResumeVersion(
     versionId: number,
-    status: "draft" | "final"
+    patch: { status?: "draft" | "final"; template_id?: ResumeTemplate }
   ) {
     setResumeVersionBusy(true);
     setErrorMessage("");
     try {
       const version = await fetchJson<ResumeVersion>(`/resume-versions/${versionId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status })
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch)
       });
       setResumeVersion(version);
       if (selectedJobId) await refreshResumeVersions(selectedJobId, version.id);
-      setNoticeMessage(status === "final" ? "该简历版本已标记为最终版。" : "已恢复为草稿。");
+      setNoticeMessage(
+        patch.template_id
+          ? "已应用模板"
+          : patch.status === "final"
+            ? "已设为最终版"
+            : "已恢复草稿"
+      );
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "更新简历版本失败");
     } finally {
@@ -530,7 +600,7 @@ function App() {
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
-      setNoticeMessage(`${format.toUpperCase()} 文件已生成。`);
+      setNoticeMessage(`已导出 ${format.toUpperCase()}`);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "导出简历失败");
     } finally {
@@ -572,7 +642,7 @@ function App() {
       });
       setInterviewKit(kit);
       await refreshInterviewWorkspace(job.id, kit.id);
-      setNoticeMessage("面试准备包已生成，问题、证据和行动清单已保存在本地。");
+      setNoticeMessage("面试准备已生成");
       return kit;
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "生成面试准备包失败");
@@ -628,7 +698,7 @@ function App() {
             }
           : item
       )));
-      setNoticeMessage(patch.status === "ready" ? "准备包已标记为就绪。" : "面试准备内容已保存。");
+      setNoticeMessage(patch.status === "ready" ? "已标记为就绪" : "保存成功");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "保存面试准备包失败");
     } finally {
@@ -684,8 +754,8 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
-      await Promise.all([refreshInterviewWorkspace(jobId, interviewKit?.id), refreshJobs()]);
-      setNoticeMessage("面试轮次已记录，岗位状态已同步更新。");
+      await refreshInterviewWorkspace(jobId, interviewKit?.id);
+      setNoticeMessage("已记录");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "记录面试轮次失败");
     } finally {
@@ -710,7 +780,7 @@ function App() {
         body: JSON.stringify(patch)
       });
       if (selectedJobId) await refreshInterviewWorkspace(selectedJobId, interviewKit?.id);
-      setNoticeMessage("面试结果已更新并写入岗位时间线。");
+      setNoticeMessage("已更新");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "更新面试轮次失败");
     } finally {
@@ -728,7 +798,7 @@ function App() {
         body: JSON.stringify({ title, detail })
       });
       await refreshInterviewWorkspace(jobId, interviewKit?.id);
-      setNoticeMessage("进展备注已加入岗位时间线。");
+      setNoticeMessage("已添加");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "保存进展备注失败");
     } finally {
@@ -749,8 +819,8 @@ function App() {
         body: JSON.stringify(draft)
       });
       await Promise.all([refreshJobs(), refreshConversations()]);
-      setSelectedJobId(saved.status === "archived" ? null : saved.id);
-      if (!jobId || saved.status === "archived") {
+      setSelectedJobId(saved.id);
+      if (!jobId) {
         setJobEvaluation(null);
         setResumeVersions([]);
         setResumeVersion(null);
@@ -759,7 +829,7 @@ function App() {
         setInterviewRounds([]);
         setJobTimeline([]);
       }
-      setNoticeMessage(jobId ? "岗位项目已更新。" : "岗位项目已保存，并创建了独立对话。");
+      setNoticeMessage("保存成功");
       return saved;
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "保存岗位项目失败");
@@ -846,12 +916,12 @@ function App() {
       );
       setNoticeMessage(
         preview.status === "ready"
-          ? "岗位链接已解析，请确认内容后保存。"
+          ? "岗位信息已读取"
           : preview.status === "partial"
-            ? "已读取部分岗位信息，请补充缺失内容后保存。"
+            ? "岗位信息不完整"
             : preview.status === "browser_required"
-              ? "公开读取受限，可以从 Chrome 读取当前岗位。"
-            : preview.stop_reason || "该页面不适合继续解析，已停止读取。"
+              ? "需要在浏览器中读取"
+              : "已停止读取"
       );
       return preview;
     } catch (error) {
@@ -901,7 +971,7 @@ function App() {
           : event
       )));
       setNoticeMessage(
-        "请在 Chrome 岗位页完成登录或安全验证，完成后回到这里点击“确认已登录，继续读取”。"
+        "已打开浏览器"
       );
       return result;
     } catch (error) {
@@ -964,8 +1034,8 @@ function App() {
       );
       setNoticeMessage(
         preview.status === "ready"
-          ? "浏览器岗位页面已读取，请确认内容后保存。"
-          : preview.stop_reason || "浏览器页面没有可导入的岗位内容。"
+          ? "岗位信息已读取"
+          : "未读取到岗位信息"
       );
       return preview;
     } catch (error) {
@@ -1000,8 +1070,8 @@ function App() {
       });
       setNoticeMessage(
         preview.status === "ready"
-          ? "岗位文字已完成字段识别，请确认内容后保存。"
-          : "已读取部分岗位文字，请补充完整 JD 后保存。"
+          ? "岗位信息已读取"
+          : "岗位信息不完整"
       );
       return preview;
     } catch (error) {
@@ -1026,8 +1096,8 @@ function App() {
       });
       setNoticeMessage(
         preview.status === "ready"
-          ? "岗位截图已完成本地 OCR，请确认内容后保存。"
-          : "截图已读取部分内容，请补充完整 JD 后保存。"
+          ? "图片已读取"
+          : "图片内容不完整"
       );
       return preview;
     } catch (error) {
@@ -1052,7 +1122,7 @@ function App() {
       setInterviewKit(null);
       setInterviewRounds([]);
       setJobTimeline([]);
-      setNoticeMessage("岗位项目已删除，关联对话历史仍然保留。");
+      setNoticeMessage("已删除");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "删除岗位项目失败");
     } finally {
@@ -1072,7 +1142,7 @@ function App() {
       await refreshConversations();
       setCurrentConversationId(created.id);
       setActiveView("chat");
-      setNoticeMessage("已新建独立对话。求职画像仍会共享。");
+      setNoticeMessage("已新建对话");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "新建对话失败");
     } finally {
@@ -1092,6 +1162,7 @@ function App() {
       if (conversation.id === currentConversationId && conversation.status === "active") {
         setCurrentConversationId(next.find((item) => item.status === "active")?.id ?? next[0]?.id ?? null);
       }
+      setNoticeMessage(conversation.status === "active" ? "已归档" : "已恢复");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "归档对话失败");
     } finally {
@@ -1099,23 +1170,25 @@ function App() {
     }
   }
 
-  async function renameConversation(conversation: Conversation) {
-    const title = window.prompt("修改对话名称", conversation.title)?.trim();
-    if (!title || title === conversation.title) return;
+  async function renameConversation(conversation: Conversation, title: string) {
     try {
+      setConversationBusy(true);
       await fetchJson(`/conversations/${conversation.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title })
       });
       await refreshConversations();
+      setConversationDialog(null);
+      setNoticeMessage("已重命名");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "重命名失败");
+    } finally {
+      setConversationBusy(false);
     }
   }
 
   async function removeConversation(conversation: Conversation) {
-    if (!window.confirm(`确定删除对话“${conversation.title}”吗？\n\n只删除该对话和任务记录，不会删除求职画像。`)) return;
     setConversationBusy(true);
     try {
       const result = await fetchJson<{ next_conversation: Conversation }>(`/conversations/${conversation.id}`, { method: "DELETE" });
@@ -1123,6 +1196,8 @@ function App() {
       if (conversation.id === currentConversationId) {
         setCurrentConversationId(result.next_conversation?.id ?? next[0]?.id ?? null);
       }
+      setConversationDialog(null);
+      setNoticeMessage("已删除");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "删除对话失败");
     } finally {
@@ -1185,8 +1260,8 @@ function App() {
       setModelMonitor(next);
       setNoticeMessage(
         next.status === "healthy"
-          ? "模型服务检测成功，连接与推理响应正常。"
-          : `模型服务检测完成：${next.status_message}`
+          ? "检测成功"
+          : "检测完成"
       );
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "模型服务检测失败");
@@ -1222,7 +1297,7 @@ function App() {
         setAgentSettings((current) => ({ ...current, model_name: result.models[0] }));
       }
       if (!options.silent) {
-        setNoticeMessage(`已识别 ${result.count} 个可用模型。`);
+        setNoticeMessage(`已识别 ${result.count} 个模型`);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "识别可用模型失败";
@@ -1262,7 +1337,7 @@ function App() {
       modelDiscoveryKeyRef.current = "";
       await Promise.all([refreshCapabilities(), refreshModelMonitor()]);
       void discoverModels(clean, { silent: true, force: true });
-      setNoticeMessage("模型设置已保存，将从下一条消息开始生效。");
+      setNoticeMessage("保存成功");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "保存 Agent 设置失败");
     } finally {
@@ -1277,7 +1352,7 @@ function App() {
     try {
       await fetchJson(`/conversations/${currentConversationId}/context/reset`, { method: "POST" });
       await refreshConversations();
-      setNoticeMessage("当前对话上下文已在此处截断，下一条消息将作为新的任务起点。");
+      setNoticeMessage("已重置上下文");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "重置上下文失败");
     } finally {
@@ -1297,15 +1372,17 @@ function App() {
       setCandidateEditor(emptyCandidateEditor);
       return;
     }
+    const profile = bundle.profile;
     const confirmedFacts = bundle.facts.filter((fact) => fact.status === "confirmed");
     const strategy = bundle.active_strategy;
+    const resumeSource = bundle.sources.find((source) => source.source_type === "resume");
     const skills = confirmedFacts
       .filter((fact) => fact.category === "skill")
       .map((fact) => String(fact.value?.name || fact.statement.replace(/^具备\s+|\s+相关经验$/g, "")));
     setConfirmedCareerFactCount(confirmedFacts.length);
     setCandidateEditor((current) => ({
       ...current,
-      name: bundle.profile?.name || "",
+      name: profile.name || "",
       targetRole: strategy?.target_roles?.join("，") || "",
       targetCity: strategy?.locations?.join("，") || "",
       salaryMin: strategy?.salary?.min ? String(Math.round(strategy.salary.min / 1000)) : "",
@@ -1314,8 +1391,10 @@ function App() {
       industries: strategy?.industries?.join("，") || "",
       blockedKeywords: [...(strategy?.hard_constraints || []), ...(strategy?.blocked_keywords || [])].join("，"),
       blockedCompanies: strategy?.blocked_companies?.join("，") || "",
-      resumeFilename: current.resumeFilename || bundle.sources.find((source) => source.source_type === "resume")?.title || "",
-      privacyMode: bundle.profile?.privacy_mode || "redacted"
+      resumeText: profile.resume_text || "",
+      resumeRedactedText: profile.resume_redacted_text || "",
+      resumeFilename: resumeSource?.title || profile.resume_filename || "",
+      privacyMode: profile.privacy_mode || "redacted"
     }));
   }
 
@@ -1393,8 +1472,10 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(strategyPayload)
       });
+      setInterviewPreparation(null);
+      setAutoAnalysisAttemptedRevision(null);
       await Promise.all([refreshCandidateProfile(), refreshData()]);
-      setNoticeMessage("个人资料已保存在本地，Agent 后续分析会读取这些信息。");
+      setNoticeMessage("保存成功");
       return true;
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "保存个人资料失败");
@@ -1438,10 +1519,7 @@ function App() {
       }));
       setPrivacyFindings(results.flatMap((result) => result.privacy_findings));
       setResumeProfileSuggestion(resultSuggestion);
-      const warnings = results.flatMap((result) => result.warnings);
-      const fallback = warnings.length ? ` ${warnings.join("；")}。` : "";
-      const characterCount = results.reduce((total, result) => total + result.character_count, 0);
-      setNoticeMessage(`已按选择顺序解析 ${results.length} 份简历材料，提取 ${characterCount} 个字符。${fallback}`);
+      setNoticeMessage("简历导入成功");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "简历解析失败");
     } finally {
@@ -1463,7 +1541,7 @@ function App() {
       };
     });
     setResumeProfileSuggestion(null);
-    setNoticeMessage("已从简历补充人物画像，原有内容未被覆盖；保存前仍可继续修改。");
+    setNoticeMessage("已补充个人信息");
   }
 
   async function scanResumePrivacy() {
@@ -1478,7 +1556,7 @@ function App() {
       });
       setPrivacyFindings(result.findings);
       setCandidateEditor((current) => ({ ...current, resumeRedactedText: result.redacted_text }));
-      setNoticeMessage(result.findings.length ? `本地检测到 ${result.findings.length} 处敏感信息，默认仅向 Agent 提供脱敏文本。` : "未检测到常见手机号、邮箱或身份证号。此结果不能代替人工检查。");
+      setNoticeMessage(result.findings.length ? `发现 ${result.findings.length} 处敏感信息` : "未发现敏感信息");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "隐私检查失败");
     } finally {
@@ -1504,13 +1582,7 @@ function App() {
       const parseForm = new FormData();
       parseForm.append("mode", "fast");
       const parsed = await fetchJson<ChatAttachment>(`/attachments/${attachment.id}/parse`, { method: "POST", body: parseForm });
-      setNoticeMessage(
-        kind === "resume"
-          ? "简历已在本地解析并脱敏，可随下一条消息一同使用。"
-          : attachmentConfig?.vision_ready
-            ? "岗位截图已准备好，会随下一条消息一同发送给模型。"
-            : "岗位截图已保存；当前图片直传未启用，发送时会提示配置问题。"
-      );
+      setNoticeMessage(kind === "resume" ? "简历已添加" : "图片已添加");
       return parsed;
     } catch (error) {
       if (uploadedAttachmentId) {
@@ -1526,7 +1598,7 @@ function App() {
 
   async function removeChatAttachment(attachmentId: string) {
     await fetchJson(`/attachments/${attachmentId}`, { method: "DELETE" });
-    setNoticeMessage("附件已从本地临时存储中删除。");
+    setNoticeMessage("附件已移除");
   }
 
   async function sendChatMessage(
@@ -1619,11 +1691,12 @@ function App() {
           assistantMessage
         ]);
       }
-      if (status === "cancelled") setNoticeMessage("已停止生成，当前已生成内容已保留。");
+      if (status === "cancelled") setNoticeMessage("已停止生成");
     };
 
     const agent = new HttpAgent({
       url: `${apiBase}/ag-ui`,
+      headers: { Authorization: `Bearer ${accessToken}` },
       agentId: "bosscopilot",
       threadId: String(conversationId),
       initialMessages: [
@@ -1724,7 +1797,7 @@ function App() {
     try {
       await agent.runAgent(
         {
-          runId: crypto.randomUUID(),
+          runId: createClientId(),
           tools: [],
           context: [],
           forwardedProps: { conversationId, client: "bosscopilot-web", attachmentIds, visionAttachmentIds, webSearch }
@@ -1760,7 +1833,7 @@ function App() {
         `/agent/tasks/current/cancel?conversation_id=${currentConversationId}`,
         { method: "POST" }
       );
-      if (!result.cancelled) setNoticeMessage("当前没有可停止的生成任务。");
+      if (!result.cancelled) setNoticeMessage("没有可停止的任务");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "停止生成失败");
     } finally {
@@ -1777,7 +1850,7 @@ function App() {
     await Promise.all([
       refreshChat(currentConversationId),
       refreshConversations(),
-      refreshData(false, currentConversationId)
+      refreshData(currentConversationId)
     ]);
   }
 
@@ -1803,15 +1876,14 @@ function App() {
       return;
     }
     bossWindow.opener = null;
-    setNoticeMessage("已打开 BOSS 官网。当前页面可继续浏览；需要 Agent 处理时，可在对话中直接提出任务或提供岗位内容。 ");
+    setNoticeMessage("已打开 BOSS 官网");
   }
 
   function handleNextStep() {
     if (nextStep.kind === "settings") {
       navigateRoute({ section: "settings", page: "profile", returnTo: "workbench" });
     } else {
-      setActiveView("chat");
-      window.setTimeout(() => chatInputRef.current?.focus(), 0);
+      navigateRoute({ section: "workbench", page: "new" });
     }
   }
 
@@ -1829,7 +1901,7 @@ function App() {
     try {
       await fetchJson(`/agent/tasks/current/cancel?conversation_id=${currentConversationId}`, { method: "POST" });
       await Promise.all([refreshChat(), refreshData(), refreshConversations()]);
-      setNoticeMessage("当前任务已结束，你可以直接开始新的求职任务。");
+      setNoticeMessage("任务已结束");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "结束当前任务失败");
     } finally {
@@ -1838,7 +1910,7 @@ function App() {
   }
 
   useEffect(() => {
-    async function initialize() {
+    async function initializeDatabase() {
       const database = await fetchJson<{
           status: "uninitialized" | "requires_rebuild" | "ready";
           reason?: string;
@@ -1856,43 +1928,50 @@ function App() {
             body: JSON.stringify({ confirmation: "确认重建 BossCopilot 2.0 数据库" })
           });
         }
-        const next = await refreshConversations();
-        const initialId = next.find((item) => item.status === "active")?.id ?? next[0]?.id ?? null;
-        setCurrentConversationId(initialId);
-      await Promise.all([refreshCapabilities(), refreshAttachmentConfig(), refreshAgentSettings(), refreshModelMonitor(), refreshAgentOperations(7, false), refreshCandidateProfile(), refreshJobs(), refreshData(false, initialId)]);
+        setDatabaseReady(true);
     }
-    initialize().catch((error: unknown) => {
+    const initialization = databaseInitializationRef.current ?? initializeDatabase();
+    databaseInitializationRef.current = initialization;
+    initialization.catch((error: unknown) => {
+      databaseInitializationRef.current = null;
       setErrorMessage(error instanceof Error ? error.message : "系统连接失败");
     });
   }, []);
 
   useEffect(() => {
-    if (appRoute.section !== "settings") return;
-    if (appRoute.page === "overview") {
-      void Promise.all([
-        refreshCandidateProfile(),
-        refreshAgentSettings(),
-        refreshModelMonitor(),
-        refreshAgentOperations(7, false)
-      ]).catch(() => {
-        // 概览保留上一次可用状态，主动刷新时再展示错误。
-      });
-      return;
-    }
-    if (appRoute.page !== "model" && appRoute.page !== "agent") return;
-    const refreshActiveDetail = () => appRoute.page === "model"
-      ? refreshModelMonitor()
-      : refreshAgentOperations(agentOperationsDays, false);
-    void refreshActiveDetail().catch(() => {
-      // 详情页轮询失败不覆盖已有快照。
+    if (!databaseReady) return;
+    const loaders: Record<RouteDataKey, () => Promise<unknown>> = {
+      attachmentConfig: refreshAttachmentConfig,
+      agentOperations: () => refreshAgentOperations(7, false),
+      agentSettings: refreshAgentSettings,
+      candidateProfile: refreshCandidateProfile,
+      capabilities: refreshCapabilities,
+      conversations: async () => {
+        const next = await refreshConversations();
+        setCurrentConversationId((current) => current ?? next.find((item) => item.status === "active")?.id ?? next[0]?.id ?? null);
+      },
+      interviewPreparation: refreshInterviewPreparation,
+      jobs: refreshJobs,
+      modelMonitor: refreshModelMonitor,
+      workflow: () => refreshData(currentConversationId)
+    };
+    void Promise.all(requiredDataForRoute(appRoute).map((key) => (
+      routeDataCacheRef.current.load(key, loaders[key])
+    ))).catch((error: unknown) => {
+      setErrorMessage(error instanceof Error ? error.message : "读取页面数据失败");
     });
-    const timer = window.setInterval(() => {
-      void refreshActiveDetail().catch(() => {
-        // 保留上一次快照，下一轮继续尝试。
-      });
-    }, 15000);
-    return () => window.clearInterval(timer);
-  }, [appRoute.section, appRoute.section === "settings" ? appRoute.page : "", fetchJson, agentOperationsDays]);
+  }, [appRoute, databaseReady]);
+
+  useAsyncPolling({
+    enabled: databaseReady && appRoute.section === "settings" && ["model", "agent"].includes(appRoute.page),
+    intervalMs: 15_000,
+    poll: () => appRoute.section === "settings" && appRoute.page === "model"
+      ? refreshModelMonitor()
+      : refreshAgentOperations(agentOperationsDays, false),
+    onError: (_reason, failures) => {
+      if (failures >= 3) setErrorMessage("设置状态连续刷新失败，当前仍显示上一次数据。");
+    }
+  });
 
   useEffect(() => {
     if (!currentConversationId) return;
@@ -1904,7 +1983,7 @@ function App() {
     setChatMessages([]);
     Promise.all([
       refreshChat(currentConversationId),
-      refreshData(false, currentConversationId)
+      refreshData(currentConversationId)
     ]).catch((error: unknown) => {
       setErrorMessage(error instanceof Error ? error.message : "切换对话失败");
     });
@@ -2014,7 +2093,7 @@ function App() {
   const routePageMeta = appRoute.section === "settings"
     ? {
         overview: pageMeta.settings,
-        profile: { title: "Agent 求职资料库", description: "维护 Agent 可以使用的经历、简历和信息授权范围" },
+        profile: { title: "我的求职资料", description: "完善经历、简历和求职偏好，让推荐和准备更贴合你" },
         model: { title: "Agent 推理模型", description: "配置 Agent 使用的模型服务，并检查连接质量" },
         agent: { title: "Agent 执行记录", description: "查看 Agent 已完成的任务、工具使用和异常原因" }
       }[appRoute.page]
@@ -2032,7 +2111,7 @@ function App() {
                 : pageMeta.opportunities
     : appRoute.section === "workbench"
       ? appRoute.page === "new"
-        ? { title: "浏览器读取", description: "岗位只能通过浏览器助手从当前详情页读取" }
+        ? { title: "填写岗位", description: "手动输入岗位描述和任职要求，不读取招聘网站" }
         : appRoute.page === "evaluation_section"
           ? { title: "匹配分析依据", description: "查看 Agent 的分析依据、不确定项和你需要确认的内容" }
           : appRoute.page === "evaluation_deep"
@@ -2044,57 +2123,63 @@ function App() {
         : appRoute.page === "detail"
           ? { title: "求职准备", description: "依次完成匹配分析、定制简历、重点问答和面试记录复盘" }
           : pageMeta.workbench
+      : appRoute.section === "interview-prep"
+        ? appRoute.page === "knowledge"
+          ? { title: "知识点回顾", description: "从真实项目出发，回顾技术概念、实际用法与选型边界" }
+          : appRoute.page === "records"
+            ? { title: "面试记录", description: "记录真实问题、原回答与复盘，把反馈变成下一次准备" }
+            : { title: "项目解析", description: "把真实项目拆成可讲证据，并通过文字追问反复练习" }
       : pageMeta[appRoute.section];
 
   useEffect(() => {
-    document.title = `${routePageMeta.title} · BossCopilot`;
+    document.title = `${routePageMeta.title}｜CareerLoop`;
   }, [routePageMeta.title]);
+
+  const showTopbar = !(
+    (appRoute.section === "settings" && appRoute.page === "profile")
+    || appRoute.section === "interview-prep"
+    || appRoute.section === "chat"
+  );
 
   return (
     <main className="app-shell">
       <AppSidebar
         collapsed={sidebarCollapsed}
         activeView={activeView}
-        conversations={conversations}
-        currentConversationId={currentConversationId}
-        conversationBusy={conversationBusy}
-        capabilities={capabilities}
-        contextMode={activeView === "chat" ? "conversations" : "navigation"}
         onToggle={toggleSidebar}
-        onGoHome={() => setActiveView("chat")}
+        onLogout={onLogout}
+        onGoHome={() => setActiveView("workbench")}
+        onPrefetchPage={(page) => void pagePrefetcher.prefetch(page)}
+        preparationPage={appRoute.section === "interview-prep" ? appRoute.page || "projects" : undefined}
+        settingsPage={appRoute.section === "settings" ? appRoute.page : undefined}
         onSelectView={setActiveView}
-        onSelectConversation={(conversationId) => {
-          setCurrentConversationId(conversationId);
-          setActiveView("chat");
-        }}
-        onCreateConversation={() => void createNewConversation()}
-        onRenameConversation={(conversation) => void renameConversation(conversation)}
-        onArchiveConversation={(conversation) => void archiveConversation(conversation)}
-        onRemoveConversation={(conversation) => void removeConversation(conversation)}
+        onSelectPreparationPage={(page: PreparationPage) => navigateRoute({ section: "interview-prep", page })}
+        onOpenProfile={() => navigateRoute({ section: "settings", page: "profile" })}
       />
 
       <section className={`content ${activeView === "chat" ? "chat-content" : ""}`}>
-        <SectionHeader
+        {showTopbar ? <SectionHeader
           className="topbar"
           level={1}
           title={activeView === "chat" && currentConversation ? currentConversation.title : routePageMeta.title}
           description={activeView === "chat" ? undefined : routePageMeta.description}
-          actions={activeView !== "chat" ? (
-            <IconButton
-              label="刷新当前页面数据"
-              onClick={() => void refreshCurrentRoute()}
-              disabled={refreshBusy}
-            >
-              <RefreshCw className={refreshBusy ? "spinning" : ""} size={18} />
-            </IconButton>
-          ) : null}
-        />
+        /> : null}
 
         {errorMessage ? (
           <div className="feedback-banner error-banner"><TriangleAlert size={16} /><span>{errorMessage}</span><button onClick={() => setErrorMessage("")} aria-label="关闭错误提示"><X size={15} /></button></div>
         ) : null}
+
+        {conversationDialog ? (
+          <ConversationDialog
+            dialog={conversationDialog}
+            busy={conversationBusy}
+            onClose={() => setConversationDialog(null)}
+            onRename={(conversation, title) => void renameConversation(conversation, title)}
+            onDelete={(conversation) => void removeConversation(conversation)}
+          />
+        ) : null}
         {noticeMessage ? (
-          <div className="feedback-banner notice-banner"><CheckCircle2 size={16} /><span>{noticeMessage}</span><button onClick={() => setNoticeMessage("")} aria-label="关闭成功提示"><X size={15} /></button></div>
+          <div className="feedback-banner notice-banner global-notice-toast" role="status" aria-live="polite"><CheckCircle2 size={16} /><span>{noticeMessage}</span></div>
         ) : null}
 
         {activeView === "dashboard" ? (
@@ -2103,6 +2188,8 @@ function App() {
               workflow={workflow}
               conversations={conversations}
               jobs={jobs}
+              nextStep={nextStep}
+              onNextStep={handleNextStep}
               onOpenConversation={(conversationId) => {
                 setCurrentConversationId(conversationId);
                 setActiveView("chat");
@@ -2114,10 +2201,13 @@ function App() {
         {activeView === "chat" ? (
           <Suspense fallback={<PageLoading label="正在加载对话…" />}>
             <ChatWorkspace
+              conversationTitle={currentConversation?.title}
               messages={visibleChatMessages}
               hiddenMessageCount={hiddenMessageCount}
               chatBusy={chatBusy}
               currentConversationId={currentConversationId}
+              conversations={conversations}
+              conversationBusy={conversationBusy}
               waitingForUser={waitingForUser}
               latestAgent={latestAgent}
               taskCancelBusy={taskCancelBusy}
@@ -2125,6 +2215,14 @@ function App() {
               chatEndRef={chatEndRef}
               chatInputRef={chatInputRef}
               onLoadMore={() => setVisibleMessageCount((count) => count + 12)}
+              onSelectConversation={(conversationId) => {
+                setCurrentConversationId(conversationId);
+                setActiveView("chat");
+              }}
+              onCreateConversation={() => void createNewConversation()}
+              onRenameConversation={(conversation) => setConversationDialog({ kind: "rename", conversation })}
+              onArchiveConversation={(conversation) => void archiveConversation(conversation)}
+              onRemoveConversation={(conversation) => setConversationDialog({ kind: "delete", conversation })}
               attachmentBusy={chatAttachmentBusy}
               attachmentConfig={attachmentConfig}
               webSearchAvailable={Boolean(capabilities?.web_research?.enabled)}
@@ -2144,8 +2242,8 @@ function App() {
         {activeView === "opportunities" ? (
           <Suspense fallback={<PageLoading label="正在加载岗位发现…" />}>
             <OpportunityDiscoveryPage
-              key={`${opportunityRefreshKey}-${appRoute.section === "opportunities" ? appRoute.page : "index"}`}
               apiBase={apiBase}
+              accessToken={accessToken}
               page={appRoute.section === "opportunities" ? appRoute.page || "index" : "index"}
               runId={appRoute.section === "opportunities" ? appRoute.runId : undefined}
               discoveredJobId={appRoute.section === "opportunities" ? appRoute.discoveredJobId : undefined}
@@ -2214,6 +2312,7 @@ function App() {
               onNavigateDetail={(jobId) => navigateRoute({ section: "workbench", page: "detail", jobId })}
               onNavigateEvaluation={(jobId) => navigateRoute({ section: "workbench", page: "evaluation", jobId })}
               onCreateComparison={createJobComparison}
+              onQuickMatch={runQuickMatch}
               onSaveJob={saveJobProject}
               onPreviewJobUrl={previewJobLink}
               onOpenJobInBrowser={openJobInBrowser}
@@ -2238,6 +2337,27 @@ function App() {
           </Suspense>
         ) : null}
 
+        {appRoute.section === "interview-prep" ? (
+          <Suspense fallback={<PageLoading label="正在加载面试准备…" />}>
+            <InterviewPreparationPage
+              apiBase={apiBase}
+              accessToken={accessToken}
+              initialData={interviewPreparation}
+              initialDataLoading={!databaseReady || interviewPreparationBusy}
+              dataManagedByShell
+              area={appRoute.page || "projects"}
+              experienceId={appRoute.experienceId}
+              focus={appRoute.focus as PreparationFocus | undefined}
+              nodeId={appRoute.nodeId}
+              onNavigate={({ area, experienceId, focus, nodeId }) => navigateRoute({ section: "interview-prep", page: area, experienceId, focus, nodeId })}
+              onOpenProfile={() => navigateRoute({ section: "settings", page: "profile" })}
+              onDataChange={setInterviewPreparation}
+              autoAnalysisAttemptedRevision={autoAnalysisAttemptedRevision}
+              onAutoAnalysisStarted={setAutoAnalysisAttemptedRevision}
+            />
+          </Suspense>
+        ) : null}
+
         {appRoute.section === "settings" ? (
           <Suspense fallback={<PageLoading label="正在加载设置…" />}>
             <SettingsWorkspace
@@ -2248,9 +2368,6 @@ function App() {
                 <SettingsOverview
                   profile={candidateEditor}
                   profileReady={workbenchProfileReady}
-                  settings={agentSettings}
-                  monitor={modelMonitor}
-                  operations={agentOperations}
                   onOpen={(page) => navigateRoute({ section: "settings", page })}
                 />
               ) : null}
@@ -2276,11 +2393,12 @@ function App() {
                   onScanPrivacy={() => void scanResumePrivacy()}
                   onFillSuggestion={fillProfileFromResume}
                   onCareerChange={refreshCandidateProfile}
-                  onOpenChat={() => navigateRoute({ section: "chat" })}
                   onClearResume={() => {
                     setCandidateEditor({ ...candidateEditor, resumeText: "", resumeFilename: "", resumeRedactedText: "" });
                     setPrivacyFindings([]);
                     setResumeProfileSuggestion(null);
+                    setInterviewPreparation(null);
+                    setAutoAnalysisAttemptedRevision(null);
                   }}
                   onSave={async () => {
                     const saved = await saveCandidateProfile();
@@ -2315,9 +2433,6 @@ function App() {
                     days={agentOperationsDays}
                     loading={agentOperationsBusy}
                     onDaysChange={changeAgentOperationsWindow}
-                    onRefresh={() => void refreshAgentOperations().catch((error: unknown) => {
-                      setErrorMessage(error instanceof Error ? error.message : "刷新 Agent 运行记录失败");
-                    })}
                   />
                 </Suspense>
               ) : null}
@@ -2333,7 +2448,13 @@ function App() {
 const root = createRoot(document.getElementById("root")!);
 
 root.render(
-  <React.StrictMode><App /></React.StrictMode>
+  <React.StrictMode>
+    <AppErrorBoundary>
+      <AuthGate apiBase={resolveApiBase()}>
+        {(accessToken, onLogout) => <App accessToken={accessToken} onLogout={onLogout} />}
+      </AuthGate>
+    </AppErrorBoundary>
+  </React.StrictMode>
 );
 
 if (import.meta.hot) {

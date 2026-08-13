@@ -46,7 +46,7 @@ def test_legacy_database_requires_confirmation_then_is_backed_up_and_rebuilt() -
                 row[0]
                 for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
             }
-        assert "candidate_facts" in tables
+        assert "candidate_memory_items" in tables
         assert "legacy_marker" not in tables
 
 
@@ -55,8 +55,9 @@ def test_existing_migration_ledger_receives_additive_upgrade() -> None:
         path = Path(directory) / "existing.db"
         initialize_or_report(path)
         with sqlite3.connect(path) as conn:
-            conn.execute("DELETE FROM schema_migrations WHERE version = ?", (DB_SCHEMA_VERSION,))
-            conn.execute("DROP TABLE job_capture_snapshots")
+            conn.execute("DELETE FROM schema_migrations WHERE version IN (?, ?)", (10, DB_SCHEMA_VERSION))
+            conn.execute("DROP TABLE candidate_sources")
+            conn.execute("DROP TABLE profiles")
 
         upgraded = initialize_or_report(path)
 
@@ -64,5 +65,8 @@ def test_existing_migration_ledger_receives_additive_upgrade() -> None:
         assert upgraded["schema_version"] == DB_SCHEMA_VERSION
         with sqlite3.connect(path) as conn:
             assert conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'job_capture_snapshots'"
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'candidate_sources'"
+            ).fetchone()
+            assert conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'profiles'"
             ).fetchone()

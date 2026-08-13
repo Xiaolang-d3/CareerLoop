@@ -163,14 +163,32 @@
 .ui-empty-state > span:last-child { max-width: 220px; font-size: 12px; line-height: 1.55; }
 
 .page-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: var(--space-4);
   width: 100%;
-  min-height: 220px;
+  min-height: 280px;
   color: var(--color-text-muted);
   font-size: 13px;
+}
+
+.page-loading-copy { display: inline-flex; align-items: center; gap: var(--space-2); }
+.page-loading-skeleton { display: grid; gap: 10px; width: min(100%, 620px); }
+.page-loading-skeleton i {
+  display: block;
+  height: 12px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, var(--color-surface-subtle), #fafaff, var(--color-surface-subtle));
+  background-size: 200% 100%;
+  animation: page-loading-shimmer 1.4s ease-in-out infinite;
+}
+.page-loading-skeleton i:nth-child(2) { width: 82%; animation-delay: .12s; }
+.page-loading-skeleton i:nth-child(3) { width: 64%; animation-delay: .24s; }
+
+@keyframes page-loading-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
 }
 
 .topbar.ui-section-header { align-items: center; padding-inline: 2px; }
@@ -213,6 +231,10 @@
 .workbench-page,
 .dashboard-page { gap: var(--space-5); }
 
+.dashboard-hero > div { min-width: 0; }
+.dashboard-hero .eyebrow { margin-bottom: 4px; }
+.dashboard-hero .ui-button { flex: 0 0 auto; }
+
 .job-project-workspace { gap: var(--space-5); }
 
 .job-project-list.ui-panel {
@@ -239,7 +261,7 @@
 .job-project-items strong { font-size: 13px; line-height: 1.35; }
 .job-project-items small { margin: 0; font-size: 11px; }
 .job-project-item-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
-.job-project-item-meta .ui-status-badge { min-height: 19px; padding: 0 6px; font-size: 9px; }
+.job-project-item-meta .ui-status-badge { min-height: 19px; padding: 0 6px; font-size: 12px; }
 
 .job-workspace-header {
   min-height: 96px;

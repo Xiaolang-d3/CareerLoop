@@ -48,11 +48,13 @@ from ..candidate_core import (
     list_candidate_sources,
     list_candidate_narratives,
     list_facts,
+    merge_facts,
     list_stories,
     list_strategies,
     list_strategy_evidence,
     list_writing_samples,
     propose_fact,
+    review_fact,
     review_candidate_narrative,
     review_story,
     record_profile_interview_answer,
@@ -65,8 +67,6 @@ from ..candidate_core import (
 )
 from ..career_feedback import (
     career_patterns,
-    list_application_stages,
-    record_application_stage,
     record_interview_debrief,
     skill_growth_map,
 )
@@ -95,7 +95,6 @@ from ..opportunity_runs import (
     list_company_signals,
     list_discovered_job_assessments,
     list_discovery_runs,
-    record_visible_import_run,
     retry_discovery_run,
 )
 from ..jobs import create_job, delete_job, get_job, list_jobs, update_job
@@ -106,6 +105,7 @@ from ..job_imports import (
     preview_job_text,
     preview_job_url,
 )
+from ..quick_match import analyze_job_description
 from ..job_browser_capture import BrowserCaptureError
 from ..job_evaluations import (
     cancel_job_evaluation,
@@ -137,6 +137,16 @@ from ..interview_workflow import (
     update_interview_round,
     update_interview_task,
 )
+from ..interview_preparation import (
+    add_interview_preparation_record,
+    analyze_interview_preparation_jd,
+    give_interview_preparation_feedback,
+    get_interview_preparation,
+    review_interview_preparation_fragment,
+    select_interview_preparation_projects,
+    start_interview_preparation_resume_analysis,
+    update_interview_preparation_node,
+)
 from ..resume_versions import (
     create_resume_version,
     delete_resume_version,
@@ -153,8 +163,9 @@ from .schemas import (
     AgentSettingsIn,
     BrowserJobCaptureIn,
     BrowserDetailImportIn,
-    ApplicationStageIn,
     CandidateFactIn,
+    CandidateFactMergeIn,
+    CandidateFactReviewIn,
     CandidateSourceIn,
     CandidateSourceAccessIn,
     CandidateNarrativeIn,
@@ -172,6 +183,12 @@ from .schemas import (
     InterviewRoundCreate,
     InterviewRoundUpdate,
     InterviewTaskUpdate,
+    InterviewPreparationFragmentReviewIn,
+    InterviewPreparationFeedbackIn,
+    InterviewPreparationJdIn,
+    InterviewPreparationNodeUpdate,
+    InterviewPreparationProjectSelectionIn,
+    InterviewPreparationRecordIn,
     JobCreate,
     JobComparisonIn,
     JobEvaluationCreateIn,
@@ -193,6 +210,7 @@ from .schemas import (
     DiscoveredJobUpdateIn,
     InterviewDebriefIn,
     ResumeChangeUpdate,
+    QuickMatchIn,
     ResumeVersionUpdate,
     VisibleJobsImportIn,
     VoiceProfileIn,
@@ -202,6 +220,105 @@ from .schemas import (
 
 
 router = APIRouter()
+
+
+@router.post("/quick-match")
+def quick_match(payload: QuickMatchIn) -> dict[str, Any]:
+    try:
+        return analyze_job_description(
+            payload.job_description,
+            job_title=payload.job_title,
+            company_name=payload.company_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/interview-preparation")
+def interview_preparation_get() -> dict[str, Any]:
+    try:
+        return get_interview_preparation()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/interview-preparation/analyze")
+async def interview_preparation_analyze() -> dict[str, Any]:
+    try:
+        return await start_interview_preparation_resume_analysis()
+    except (ValueError, ModelProviderError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.put("/interview-preparation/projects")
+def interview_preparation_projects_select(
+    payload: InterviewPreparationProjectSelectionIn,
+) -> dict[str, Any]:
+    try:
+        return select_interview_preparation_projects(payload.project_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/interview-preparation/jd-analysis")
+async def interview_preparation_jd_analyze(
+    payload: InterviewPreparationJdIn,
+) -> dict[str, Any]:
+    try:
+        return await analyze_interview_preparation_jd(payload.job_description)
+    except (ValueError, ModelProviderError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/interview-preparation/questions/{question_id}/feedback")
+async def interview_preparation_feedback(
+    question_id: str,
+    payload: InterviewPreparationFeedbackIn,
+) -> dict[str, Any]:
+    try:
+        return await give_interview_preparation_feedback(question_id, payload.answer)
+    except (ValueError, ModelProviderError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/interview-preparation/fragments/{fragment_id}/review")
+def interview_preparation_fragment_review(
+    fragment_id: str,
+    payload: InterviewPreparationFragmentReviewIn,
+) -> dict[str, Any]:
+    try:
+        return review_interview_preparation_fragment(fragment_id, action=payload.action)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.patch("/interview-preparation/nodes/{node_id}")
+def interview_preparation_node_update(
+    node_id: str,
+    payload: InterviewPreparationNodeUpdate,
+) -> dict[str, Any]:
+    try:
+        return update_interview_preparation_node(
+            node_id,
+            completed=payload.completed,
+            note=payload.note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/interview-preparation/records")
+def interview_preparation_record_create(
+    payload: InterviewPreparationRecordIn,
+) -> dict[str, Any]:
+    try:
+        return add_interview_preparation_record(
+            title=payload.title,
+            summary=payload.summary,
+            occurred_on=payload.occurred_on,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/conversations")
@@ -262,16 +379,16 @@ def conversation_context_reset(conversation_id: int) -> dict[str, Any]:
 
 
 @router.get("/jobs")
-def jobs_index(include_archived: bool = False) -> list[dict[str, Any]]:
-    return list_jobs(include_archived=include_archived)
+def jobs_index() -> list[dict[str, Any]]:
+    return list_jobs()
 
 
 @router.post("/jobs")
 def jobs_create(payload: JobCreate) -> dict[str, Any]:
-    raise HTTPException(
-        status_code=410,
-        detail="岗位项目只能从岗位收件箱提升，不支持手动创建",
-    )
+    try:
+        return create_job(payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/job-imports/preview")
@@ -583,6 +700,7 @@ def resume_versions_update(
             version_id,
             title=payload.title,
             status=payload.status,
+            template_id=payload.template_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1116,6 +1234,34 @@ def career_profile_facts_post(payload: CandidateFactIn) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+@router.post("/career-profile/facts/{fact_id}/review")
+def career_profile_fact_review(
+    fact_id: int,
+    payload: CandidateFactReviewIn,
+) -> dict[str, Any]:
+    status_value = {
+        "confirm": "confirmed",
+        "edit": "confirmed",
+        "reject": "disputed",
+        "retract": "retracted",
+    }[payload.action]
+    try:
+        return review_fact(fact_id, status=status_value, statement=payload.statement)
+    except ValueError as exc:
+        raise HTTPException(status_code=404 if "不存在" in str(exc) else 422, detail=str(exc)) from exc
+
+
+@router.post("/career-profile/facts/{fact_id}/merge")
+def career_profile_fact_merge(
+    fact_id: int,
+    payload: CandidateFactMergeIn,
+) -> dict[str, Any]:
+    try:
+        return merge_facts(fact_id, payload.target_fact_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404 if "不存在" in str(exc) else 422, detail=str(exc)) from exc
+
+
 @router.get("/career-profile/strategies")
 def career_profile_strategies_get() -> list[dict[str, Any]]:
     try:
@@ -1368,29 +1514,6 @@ def career_profile_export(
         media_type=media,
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
     )
-
-
-@router.get("/jobs/{job_id}/outcomes")
-def job_outcomes_get(job_id: int) -> list[dict[str, Any]]:
-    try:
-        return list_application_stages(job_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-
-@router.post("/jobs/{job_id}/outcomes")
-def job_outcomes_post(job_id: int, payload: ApplicationStageIn) -> dict[str, Any]:
-    try:
-        return record_application_stage(
-            job_id,
-            to_stage=payload.stage,
-            note=payload.notes,
-            feedback_verbatim=payload.recruiter_feedback,
-            source=payload.source,
-            occurred_at=payload.occurred_at,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=404 if "不存在" in str(exc) else 422, detail=str(exc)) from exc
 
 
 @router.post("/interviews/{job_id}/debrief")

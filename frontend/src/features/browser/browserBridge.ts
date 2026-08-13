@@ -1,4 +1,5 @@
 import type { BrowserJobCapture } from "../../types";
+import { createClientId } from "../../api/clientId";
 
 const PAGE_SOURCE = "bosscopilot-page";
 const EXTENSION_SOURCE = "bosscopilot-extension";
@@ -140,7 +141,7 @@ function requestExtension(
   responseTypes: string[],
   timeoutMs: number
 ): Promise<ExtensionMessage> {
-  const requestId = crypto.randomUUID();
+  const requestId = createClientId();
   return new Promise((resolve, reject) => {
     const timeout = window.setTimeout(() => {
       cleanup();

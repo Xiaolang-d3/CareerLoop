@@ -7,8 +7,6 @@ import unittest
 import json
 from unittest.mock import patch
 
-from fastapi.testclient import TestClient
-
 from app import db as db_module
 from app.main import app
 
@@ -17,11 +15,13 @@ from app.candidate_core import (
     create_candidate_source,
     create_or_update_profile,
     create_strategy,
+    get_career_profile,
     get_candidate_context,
     ingest_resume_knowledge,
     list_facts,
     propose_fact,
     remove_fact,
+    review_fact,
     verify_candidate_material,
 )
 from app.agent.orchestration import TOOL_POLICIES, route_task
@@ -42,6 +42,7 @@ from app.opportunities import (
     promote_discovered_job,
     scan_opportunity_source,
 )
+from api_client import create_authenticated_client
 
 
 class CareerOperatingSystemTest(unittest.TestCase):
@@ -54,7 +55,35 @@ class CareerOperatingSystemTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def test_resume_ingest_writes_facts_into_the_profile_document(self) -> None:
+    def test_legacy_sqlite_profile_is_migrated_to_document_storage(self) -> None:
+        legacy_db = Path(self.temp_dir.name) / "legacy" / "legacy-profile.db"
+        init_db(legacy_db)
+        with connect(legacy_db) as conn:
+            conn.execute(
+                """
+                INSERT INTO profiles (
+                    name, resume_text, privacy_mode, skills_json, projects_json
+                ) VALUES (?, ?, 'redacted', ?, ?)
+                """,
+                (
+                    "旧版候选人",
+                    "5 年 Python 后端经验",
+                    json.dumps(["Python", "FastAPI"], ensure_ascii=False),
+                    json.dumps(
+                        [{"name": "智能体平台", "summary": "构建工具调用运行时"}],
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
+
+        migrated = get_career_profile(legacy_db)
+
+        self.assertEqual(migrated["profile"]["name"], "旧版候选人")
+        self.assertIn("Python", migrated["document"]["markdown"])
+        self.assertIn("智能体平台", migrated["document"]["markdown"])
+        self.assertTrue((legacy_db.parent / "career-profile.md").is_file())
+
+    def test_resume_ingest_creates_reviewable_memory_before_formal_use(self) -> None:
         create_candidate_source(
             source_type="resume",
             title="脱敏简历",
@@ -66,14 +95,49 @@ class CareerOperatingSystemTest(unittest.TestCase):
         )
         metric = next(item for item in proposals if item["category"] == "achievement")
         self.assertTrue(metric["evidence"])
+        self.assertEqual(metric["status"], "pending")
 
+        context = get_candidate_context("resume", db_path=self.db_path)
+        self.assertNotIn(metric["id"], [item["id"] for item in context["confirmed_facts"]])
+        review_fact(metric["id"], status="confirmed", db_path=self.db_path)
         context = get_candidate_context("resume", db_path=self.db_path)
         self.assertIn(metric["id"], [item["id"] for item in context["confirmed_facts"]])
 
+    def test_confirmed_memory_updates_the_shared_knowledge_revision(self) -> None:
+        initial_revision = get_career_profile(self.db_path)["profile"]["knowledge_revision"]
+        fact = propose_fact(
+            category="skill", statement="具备 Python 工程经验", db_path=self.db_path
+        )
+        pending_revision = get_career_profile(self.db_path)["profile"]["knowledge_revision"]
+        self.assertEqual(pending_revision, initial_revision)
+
+        review_fact(fact["id"], status="confirmed", db_path=self.db_path)
+
+        confirmed_revision = get_career_profile(self.db_path)["profile"]["knowledge_revision"]
+        self.assertGreater(confirmed_revision, pending_revision)
+        with connect(self.db_path) as conn:
+            mirrored_revision = conn.execute(
+                "SELECT knowledge_revision FROM profiles WHERE id = 1"
+            ).fetchone()["knowledge_revision"]
+        self.assertEqual(mirrored_revision, confirmed_revision)
+
+    def test_resume_source_normalizes_unusual_template_bullets(self) -> None:
+        create_candidate_source(
+            source_type="resume",
+            title="原始简历",
+            content="项目经历\n\uf0b7 基于 LangChain 搭建统一网关\u200b",
+            db_path=self.db_path,
+        )
+
+        profile = get_career_profile(db_path=self.db_path)["profile"]
+        self.assertIn("- 基于 LangChain 搭建统一网关", profile["resume_text"])
+        self.assertNotIn("\uf0b7", profile["resume_text"])
+
     def test_fact_gate_blocks_metric_absent_from_the_document(self) -> None:
-        propose_fact(
+        fact = propose_fact(
             category="achievement", statement="将转化率提升 30%", db_path=self.db_path
         )
+        review_fact(fact["id"], status="confirmed", db_path=self.db_path)
         self.assertTrue(
             verify_candidate_material("将转化率提升 30%", db_path=self.db_path)["can_finalize"]
         )
@@ -107,6 +171,16 @@ class CareerOperatingSystemTest(unittest.TestCase):
         engineer_context = get_candidate_context("match", strategy_id=engineer["id"], db_path=self.db_path)
         self.assertEqual(product_context["confirmed_facts"], engineer_context["confirmed_facts"])
         self.assertNotEqual(product_context["strategy"]["target_roles"], engineer_context["strategy"]["target_roles"])
+
+    def test_document_profile_is_mirrored_for_legacy_strategy_foreign_keys(self) -> None:
+        with connect(self.db_path) as conn:
+            profile = conn.execute("SELECT id, name FROM profiles WHERE id = 1").fetchone()
+        self.assertIsNotNone(profile)
+        self.assertEqual(profile["name"], "测试候选人")
+        strategy = create_strategy(
+            name="兼容性测试", target_roles=["产品经理"], db_path=self.db_path
+        )
+        self.assertEqual(strategy["profile_id"], 1)
 
     def test_patterns_wait_for_five_progressed_jobs(self) -> None:
         for index in range(5):
@@ -160,7 +234,7 @@ class CareerOperatingSystemApiTest(unittest.TestCase):
         self.original_db_path = db_module.DB_PATH
         db_module.DB_PATH = Path(self.temp_dir.name) / "career-api.db"
         init_db()
-        self.client = TestClient(app)
+        self.client = create_authenticated_client(app)
 
     def tearDown(self) -> None:
         self.client.close()
@@ -214,15 +288,21 @@ class CareerOperatingSystemApiTest(unittest.TestCase):
             "/career-profile/strategies",
             json={"name": "后端工程", "target_roles": ["Python 工程师"], "is_active": True},
         ).json()
-        job = self.client.post(
-            "/jobs",
-            json={"job_title": "Python 工程师", "company_name": "示例科技", "description": "负责 Python FastAPI 服务设计开发和稳定性建设。"},
-        ).json()
-        outcome = self.client.post(
-            f"/jobs/{job['id']}/outcomes",
-            json={"stage": "applied", "notes": "官网投递", "recruiter_feedback": ""},
+        # 正式岗位项目只允许从岗位收件箱提升；为验证后续的结果 API，
+        # 在测试夹具中直接创建本地项目。
+        job = create_job(
+            {
+                "job_title": "Python 工程师",
+                "company_name": "示例科技",
+                "description": "负责 Python FastAPI 服务设计开发和稳定性建设。",
+            }
         )
-        self.assertEqual(outcome.status_code, 200)
+        outcome = record_application_stage(
+            job["id"],
+            to_stage="applied",
+            note="官网投递",
+        )
+        self.assertEqual(outcome["to_stage"], "applied")
         debrief = self.client.post(
             f"/interviews/{job['id']}/debrief",
             json={

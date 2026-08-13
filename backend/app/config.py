@@ -12,8 +12,29 @@ from dotenv import load_dotenv
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(BACKEND_DIR / ".env")
 
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+_FRONTEND_PORTS = (5173, 4173)
+
+
+def _split_list(raw: str | None) -> list[str]:
+    return [item.strip() for item in (raw or "").split(",") if item.strip()]
+
+
+def _origins_for_hosts(hosts: list[str]) -> list[str]:
+    return [f"http://{host}:{port}" for host in hosts for port in _FRONTEND_PORTS]
+
+
+def _is_loopback(host: str) -> bool:
+    return host.strip().strip("[]") in LOOPBACK_HOSTS
+
 
 class Settings(BaseModel):
+    bind_host: str = "127.0.0.1"
+    allowed_origins: list[str] = Field(default_factory=list)
+    api_docs_enabled: bool = True
+    login_max_attempts: int = Field(default=5, ge=1, le=100)
+    login_lockout_seconds: int = Field(default=300, ge=30, le=86_400)
+    auth_token_ttl_seconds: int = Field(default=28_800, ge=300, le=86_400)
     model_provider: str = "openai"
     model_name: str = "gpt-5.5"
     model_base_url: str | None = None
@@ -37,10 +58,39 @@ class Settings(BaseModel):
     web_research_max_sources: int = Field(default=10, ge=3, le=20)
     browser_job_import_enabled: bool = True
 
+    @property
+    def is_loopback_only(self) -> bool:
+        return _is_loopback(self.bind_host)
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = (os.getenv(name) or "").strip()
+    return int(raw) if raw.isdigit() else default
+
+
+def _resolve_allowed_origins(bind_host: str) -> list[str]:
+    """Loopback origins always work; extra hosts must be named explicitly."""
+    origins = _origins_for_hosts(["127.0.0.1", "localhost"])
+    origins.extend(_origins_for_hosts(_split_list(os.getenv("PUBLIC_HOSTS"))))
+    origins.extend(_split_list(os.getenv("ALLOWED_ORIGINS")))
+    if not _is_loopback(bind_host):
+        origins.extend(_origins_for_hosts([bind_host]))
+    return list(dict.fromkeys(origins))
+
 
 @lru_cache
 def get_settings() -> Settings:
+    bind_host = os.getenv("BIND_HOST", "127.0.0.1").strip() or "127.0.0.1"
     return Settings(
+        bind_host=bind_host,
+        allowed_origins=_resolve_allowed_origins(bind_host),
+        api_docs_enabled=os.getenv(
+            "API_DOCS_ENABLED",
+            "true" if _is_loopback(bind_host) else "false",
+        ).lower() == "true",
+        login_max_attempts=_int_env("LOGIN_MAX_ATTEMPTS", 5),
+        login_lockout_seconds=_int_env("LOGIN_LOCKOUT_SECONDS", 300),
+        auth_token_ttl_seconds=os.getenv("AUTH_TOKEN_TTL_SECONDS", "28800"),
         model_provider=os.getenv("MODEL_PROVIDER", "openai"),
         model_name=os.getenv("MODEL_NAME", "gpt-5.5"),
         model_base_url=os.getenv("MODEL_BASE_URL") or None,

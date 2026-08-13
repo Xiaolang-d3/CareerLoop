@@ -63,15 +63,25 @@ def validate_attachment(kind: AttachmentKind, filename: str, content: bytes) -> 
 class AttachmentStore:
     """Private object storage with a local fallback for development."""
 
-    def __init__(self, local_root: Path | None = None) -> None:
+    def __init__(
+        self,
+        local_root: Path | None = None,
+        *,
+        storage: Literal["local", "minio"] | None = None,
+    ) -> None:
         self.settings = get_settings()
         self.local_root = local_root or DATA_DIR / "attachments"
+        # Passing an explicit directory means the caller intentionally wants an
+        # isolated local store (for example, a test or an offline operation).
+        self.storage = storage or (
+            "local" if local_root is not None else self.settings.attachment_storage
+        )
 
     def put(self, attachment_id: str, filename: str, content: bytes) -> StoredAttachment:
         suffix = Path(filename).suffix.lower()
         object_key = f"{attachment_id[:2]}/{attachment_id}{suffix}"
         content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-        if self.settings.attachment_storage == "minio":
+        if self.storage == "minio":
             client = self._minio_client()
             if not client.bucket_exists(self.settings.minio_bucket):
                 client.make_bucket(self.settings.minio_bucket)
@@ -93,7 +103,7 @@ class AttachmentStore:
         return StoredAttachment(object_key, content_type, len(content), hashlib.sha256(content).hexdigest())
 
     def get(self, object_key: str) -> bytes:
-        if self.settings.attachment_storage == "minio":
+        if self.storage == "minio":
             response = self._minio_client().get_object(self.settings.minio_bucket, object_key)
             try:
                 return response.read()
@@ -103,7 +113,7 @@ class AttachmentStore:
         return (self.local_root / object_key).read_bytes()
 
     def delete(self, object_key: str) -> None:
-        if self.settings.attachment_storage == "minio":
+        if self.storage == "minio":
             self._minio_client().remove_object(self.settings.minio_bucket, object_key)
             return
         path = self.local_root / object_key
@@ -112,7 +122,7 @@ class AttachmentStore:
             shutil.rmtree(path.parent)
 
     def presigned_get_url(self, object_key: str, expires_seconds: int | None = None) -> str:
-        if self.settings.attachment_storage != "minio":
+        if self.storage != "minio":
             raise RuntimeError("图片直传需要先启用 MinIO 私有对象存储")
         if not self.settings.minio_public_endpoint:
             raise RuntimeError("图片直传需要配置可被模型网关访问的 MINIO_PUBLIC_ENDPOINT")

@@ -39,21 +39,23 @@ class JobProjectTest(unittest.TestCase):
             {"status": "applied", "notes": "已通过官网投递"},
             self.db_path,
         )
-        self.assertEqual(updated["status"], "applied")
+        self.assertNotIn("status", updated)
         self.assertEqual(updated["notes"], "已通过官网投递")
 
         self.assertTrue(delete_job(created["id"], self.db_path))
         self.assertIsNone(get_job(created["id"], self.db_path))
 
-    def test_archived_projects_are_hidden_by_default(self) -> None:
+    def test_retired_lifecycle_field_is_not_exposed(self) -> None:
         created = create_job(
             {"job_title": "Agent 工程师", "status": "archived"},
             self.db_path,
         )
 
-        self.assertEqual(list_jobs(db_path=self.db_path), [])
-        archived = list_jobs(include_archived=True, db_path=self.db_path)
-        self.assertEqual([item["id"] for item in archived], [created["id"]])
+        self.assertNotIn("status", created)
+        self.assertEqual(
+            [item["id"] for item in list_jobs(db_path=self.db_path)],
+            [created["id"]],
+        )
 
     def test_empty_project_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "至少填写"):

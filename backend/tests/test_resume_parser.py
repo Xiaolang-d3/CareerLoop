@@ -41,6 +41,16 @@ class ResumeParserTest(unittest.TestCase):
         self.assertIn("Agent 平台开发", text)
         self.assertIn("技能\tPython", text)
 
+    def test_normalizes_private_use_bullets_and_invisible_characters(self) -> None:
+        text = parse_resume(
+            "resume.txt",
+            "智能会议总结\n\uf0b7 基于 LangChain 搭建统一网关\u200b\n".encode(),
+        )
+
+        self.assertIn("- 基于 LangChain 搭建统一网关", text)
+        self.assertNotIn("\uf0b7", text)
+        self.assertNotIn("\u200b", text)
+
     def test_rejects_unsupported_or_empty_files(self) -> None:
         with self.assertRaises(ValueError):
             parse_resume("resume.pages", b"not supported")

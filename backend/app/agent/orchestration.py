@@ -38,7 +38,6 @@ TOOL_POLICIES: dict[str, ToolPolicy] = {
     "analyze_job_against_strategy": ToolPolicy("derived_analysis", "按职业策略分析岗位"),
     "generate_candidate_material": ToolPolicy("derived_analysis", "生成可信候选人材料"),
     "record_interview_debrief": ToolPolicy("local_pending_write", "记录面试复盘"),
-    "record_application_outcome": ToolPolicy("local_pending_write", "记录求职结果"),
     "discover_companies": ToolPolicy("external_read", "发现适合的公司"),
     "discover_funded_companies": ToolPolicy("external_read", "发现近期融资公司"),
     "scan_career_sources": ToolPolicy("external_read", "扫描官方职位来源"),
@@ -63,6 +62,7 @@ ROUTE_LABELS = {
     "jd_analysis": "JD 与简历匹配分析",
     "resume_evidence": "简历证据检索",
     "profile_analysis": "人物画像与竞争力分析",
+    "project_story": "项目经历与面试表达梳理",
     "tailored_resume": "高匹配简历内容生成",
     "interview_preparation": "面试准备",
     "career_package": "完整求职准备",
@@ -73,7 +73,6 @@ ROUTE_LABELS = {
     "profile_enrichment": "候选人知识补充",
     "career_strategy": "多职业策略维护",
     "interview_debrief": "面试复盘",
-    "application_outcome": "求职结果记录",
     "opportunity_discovery": "公司与岗位发现",
     "skill_growth": "能力成长分析",
     "job_evaluation": "岗位决策与评估",
@@ -109,8 +108,8 @@ def route_task(
             if name in available_tools and name not in tools:
                 tools.append(name)
 
-    def add_preferred(current: str, legacy: str) -> None:
-        add(current if current in available_tools else legacy)
+    def add_preferred(preferred: str, fallback: str) -> None:
+        add(preferred if preferred in available_tools else fallback)
 
     mentions_jd = any(word in text for word in ("岗位", "职位", "jd", "职位描述", "岗位要求"))
     asks_analysis = any(
@@ -132,6 +131,13 @@ def route_task(
             "我擅长什么", "我适合什么", "我适合做什么", "职业方向",
             "求职方向", "简历诊断", "评估简历", "分析简历", "优化方向",
             "核心优势", "能力画像", "个人画像",
+        )
+    )
+    asks_project_story = any(
+        phrase in text
+        for phrase in (
+            "项目亮点", "梳理项目", "项目梳理", "项目复盘", "项目表达",
+            "讲项目", "项目故事", "项目经历", "项目经验",
         )
     )
     asks_tailored_resume = any(
@@ -186,9 +192,6 @@ def route_task(
     asks_debrief = any(
         phrase in text for phrase in ("面试复盘", "复盘面试", "刚面试完", "面试官问了")
     )
-    asks_outcome = any(
-        phrase in text for phrase in ("记录投递", "投递结果", "收到 offer", "被拒", "进入面试", "招聘结果")
-    )
     asks_discovery = any(
         phrase in text for phrase in (
             "发现适合的公司", "发现岗位", "找公司官网", "扫描职位来源", "刷新岗位来源",
@@ -217,9 +220,6 @@ def route_task(
     elif asks_debrief:
         kind = "interview_debrief"
         add("record_interview_debrief", "get_candidate_context")
-    elif asks_outcome:
-        kind = "application_outcome"
-        add("record_application_outcome")
     elif asks_discovery:
         kind = "opportunity_discovery"
         add("get_candidate_context")
@@ -263,8 +263,8 @@ def route_task(
         add("search_public_web")
     elif asks_company_research and mentions_jd and asks_analysis:
         kind = "job_due_diligence"
-        add_preferred("analyze_job_against_strategy", "analyze_resume_against_jd")
-        add_preferred("search_candidate_evidence", "search_resume_evidence")
+        add_preferred("analyze_resume_against_jd", "analyze_job_against_strategy")
+        add_preferred("search_resume_evidence", "search_candidate_evidence")
         add("research_company")
     elif asks_company_research:
         kind = "company_research"
@@ -274,31 +274,34 @@ def route_task(
         add("search_public_web")
     elif asks_tailored_resume and asks_interview:
         kind = "career_package"
-        add_preferred("analyze_job_against_strategy", "analyze_resume_against_jd")
-        add_preferred("search_candidate_evidence", "search_resume_evidence")
-        add_preferred("generate_candidate_material", "generate_tailored_resume_content")
-        if "generate_candidate_material" not in available_tools:
-            add("generate_interview_advice")
+        add_preferred("analyze_resume_against_jd", "analyze_job_against_strategy")
+        add_preferred("search_resume_evidence", "search_candidate_evidence")
+        add_preferred("generate_tailored_resume_content", "generate_candidate_material")
+        add("generate_interview_advice")
     elif asks_tailored_resume:
         kind = "tailored_resume"
-        add_preferred("analyze_job_against_strategy", "analyze_resume_against_jd")
-        add_preferred("search_candidate_evidence", "search_resume_evidence")
-        add_preferred("generate_candidate_material", "generate_tailored_resume_content")
+        add_preferred("analyze_resume_against_jd", "analyze_job_against_strategy")
+        add_preferred("search_resume_evidence", "search_candidate_evidence")
+        add_preferred("generate_tailored_resume_content", "generate_candidate_material")
     elif asks_interview:
         kind = "interview_preparation"
-        add_preferred("analyze_job_against_strategy", "analyze_resume_against_jd")
-        add_preferred("search_candidate_evidence", "search_resume_evidence")
-        add_preferred("generate_candidate_material", "generate_interview_advice")
+        add_preferred("analyze_resume_against_jd", "analyze_job_against_strategy")
+        add_preferred("search_resume_evidence", "search_candidate_evidence")
+        add_preferred("generate_interview_advice", "generate_candidate_material")
+    elif asks_project_story:
+        kind = "project_story"
+        add("get_candidate_context")
+        add_preferred("search_resume_evidence", "search_candidate_evidence")
     elif mentions_jd and asks_analysis:
         kind = "jd_analysis"
-        add_preferred("analyze_job_against_strategy", "analyze_resume_against_jd")
-        add_preferred("search_candidate_evidence", "search_resume_evidence")
+        add_preferred("analyze_resume_against_jd", "analyze_job_against_strategy")
+        add_preferred("search_resume_evidence", "search_candidate_evidence")
     elif asks_evidence:
         kind = "resume_evidence"
-        add_preferred("search_candidate_evidence", "search_resume_evidence")
+        add_preferred("search_resume_evidence", "search_candidate_evidence")
     elif asks_profile_analysis:
         kind = "profile_analysis"
-        add_preferred("search_candidate_evidence", "search_resume_evidence")
+        add_preferred("search_resume_evidence", "search_candidate_evidence")
 
     if profile_interview_active:
         # A running interview makes every reply a possible answer, whatever it
@@ -384,13 +387,13 @@ def parse_plan(response: ModelResponse, goal: str, route: TaskRoute) -> AgentPla
         "web_search": ("search_public_web",),
         "job_due_diligence": ("analyze_job_against_strategy", "research_company"),
         "profile_analysis": ("search_candidate_evidence",),
+        "project_story": ("get_candidate_context", "search_candidate_evidence"),
         "tailored_resume": ("generate_candidate_material",),
         "interview_preparation": ("generate_candidate_material",),
         "career_package": (
             "generate_candidate_material",
         ),
         "interview_debrief": ("record_interview_debrief",),
-        "application_outcome": ("record_application_outcome",),
         "profile_onboarding": ("start_profile_interview",),
         "profile_enrichment": ("record_profile_interview_answer",),
         "opportunity_discovery": ("discover_companies",),

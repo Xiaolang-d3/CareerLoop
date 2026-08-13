@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from .db import connect, row_to_dict, rows_to_dicts
+from .db import connect, row_to_dict
 from .interview_workflow import add_job_event
 
 
@@ -16,19 +16,9 @@ JOB_FIELDS = (
     "source_url",
     "description",
     "notes",
-    "status",
     "priority",
 )
-JOB_STATUSES = {"saved", "applied", "interviewing", "offer", "rejected", "archived"}
 JOB_PRIORITIES = {"low", "medium", "high"}
-JOB_STATUS_LABELS = {
-    "saved": "已保存",
-    "applied": "已投递",
-    "interviewing": "面试中",
-    "offer": "Offer",
-    "rejected": "未通过",
-    "archived": "已归档",
-}
 
 JOB_SELECT = """
     SELECT j.*,
@@ -58,23 +48,19 @@ JOB_SELECT = """
 
 
 def list_jobs(
-    *,
-    include_archived: bool = False,
     db_path: str | Path | None = None,
 ) -> list[dict[str, Any]]:
-    where = "" if include_archived else "WHERE j.status != 'archived'"
     with connect(db_path) as conn:
         rows = conn.execute(
             f"""
             {JOB_SELECT}
-            {where}
             ORDER BY
                 CASE j.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
                 j.updated_at DESC,
                 j.id DESC
             """
         ).fetchall()
-    return rows_to_dicts(rows)
+    return [_job_response(row) for row in rows]
 
 
 def get_job(
@@ -83,7 +69,7 @@ def get_job(
 ) -> dict[str, Any] | None:
     with connect(db_path) as conn:
         row = conn.execute(f"{JOB_SELECT} WHERE j.id = ?", (job_id,)).fetchone()
-    return row_to_dict(row)
+    return _job_response(row) if row else None
 
 
 def create_job(
@@ -122,8 +108,8 @@ def create_job(
             """
             INSERT INTO jobs (
                 conversation_id, job_title, company_name, location, salary_text,
-                source_url, description, notes, status, priority
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                source_url, description, notes, priority
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 conversation_id,
@@ -134,7 +120,6 @@ def create_job(
                 cleaned["source_url"],
                 cleaned["description"],
                 cleaned["notes"],
-                cleaned["status"],
                 cleaned["priority"],
             ),
         )
@@ -158,7 +143,6 @@ def update_job(
     db_path: str | Path | None = None,
 ) -> dict[str, Any] | None:
     cleaned = _clean_values(values, partial=True)
-    previous_status = ""
     with connect(db_path) as conn:
         existing = conn.execute(
             "SELECT * FROM jobs WHERE id = ?",
@@ -166,7 +150,6 @@ def update_job(
         ).fetchone()
         if existing is None:
             return None
-        previous_status = existing["status"]
         if existing["conversation_id"] is None:
             project_values = {
                 "company_name": cleaned.get("company_name", existing["company_name"]),
@@ -197,15 +180,6 @@ def update_job(
                 (*parameters, job_id),
             )
     job = get_job(job_id, db_path)
-    next_status = cleaned.get("status")
-    if next_status and next_status != previous_status:
-        add_job_event(
-            job_id,
-            "status_changed",
-            f"状态更新为{JOB_STATUS_LABELS[next_status]}",
-            f"{JOB_STATUS_LABELS.get(previous_status, previous_status)} → {JOB_STATUS_LABELS[next_status]}",
-            db_path=db_path,
-        )
     return job
 
 
@@ -232,7 +206,6 @@ def _clean_values(
         "source_url": 1_000,
         "description": 50_000,
         "notes": 5_000,
-        "status": 30,
         "priority": 20,
     }
     defaults = {
@@ -243,7 +216,6 @@ def _clean_values(
         "source_url": "",
         "description": "",
         "notes": "",
-        "status": "saved",
         "priority": "medium",
     }
     fields = values.keys() if partial else JOB_FIELDS
@@ -252,8 +224,6 @@ def _clean_values(
         for field in fields
         if field in JOB_FIELDS
     }
-    if "status" in cleaned and cleaned["status"] not in JOB_STATUSES:
-        raise ValueError("岗位状态不合法")
     if "priority" in cleaned and cleaned["priority"] not in JOB_PRIORITIES:
         raise ValueError("岗位优先级不合法")
     source_url = cleaned.get("source_url", "")
@@ -271,3 +241,10 @@ def _project_title(values: dict[str, str]) -> str:
         if value
     ]
     return " · ".join(parts)[:80] or "新岗位项目"
+
+
+def _job_response(row) -> dict[str, Any]:
+    """Hide the retired lifecycle field while keeping old SQLite data intact."""
+    result = row_to_dict(row) or {}
+    result.pop("status", None)
+    return result

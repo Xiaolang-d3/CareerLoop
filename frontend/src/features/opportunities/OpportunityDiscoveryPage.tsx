@@ -34,6 +34,7 @@ type Page = "index" | "new" | "pipeline" | "sources" | "run" | "job";
 
 type Props = {
   apiBase: string;
+  accessToken: string;
   page: Page;
   runId?: number;
   discoveredJobId?: number;
@@ -83,10 +84,11 @@ function scoreLabel(score?: number) {
   return `${score} · 需判断`;
 }
 
-const triageVerdictLabel = { pass: "PASS", marginal: "MARGINAL", fail: "FAIL", skip: "SKIP" };
+const triageVerdictLabel = { pass: "值得关注", marginal: "可以看看", fail: "匹配度较低", skip: "暂不判断" };
 
 export function OpportunityDiscoveryPage({
   apiBase,
+  accessToken,
   page,
   runId,
   discoveredJobId,
@@ -98,7 +100,7 @@ export function OpportunityDiscoveryPage({
   onNavigateJob,
   onJobsChanged
 }: Props) {
-  const fetchJson = useMemo(() => createApiClient(apiBase), [apiBase]);
+  const fetchJson = useMemo(() => createApiClient(apiBase, accessToken), [apiBase, accessToken]);
   const [runs, setRuns] = useState<OpportunityRun[]>([]);
   const [jobs, setJobs] = useState<DiscoveredOpportunity[]>([]);
   const [sources, setSources] = useState<OpportunitySource[]>([]);
@@ -110,6 +112,12 @@ export function OpportunityDiscoveryPage({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [selectedJobs, setSelectedJobs] = useState<number[]>([]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(""), 2600);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
   const refreshOverview = useCallback(async () => {
     const [nextRuns, nextJobs, nextSources, nextCareer] = await Promise.all([
       fetchJson<OpportunityRun[]>("/opportunity-runs?limit=30"),
@@ -180,7 +188,7 @@ export function OpportunityDiscoveryPage({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...capture, user_initiated: true })
       });
-      setNotice(`已读取 ${result.job.company_name} · ${result.job.job_title}，正在进行本地初筛。`);
+      setNotice("已读取");
       onNavigateRun(result.run.id);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "读取当前招聘页失败");
@@ -231,7 +239,7 @@ export function OpportunityDiscoveryPage({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ priority: "medium" })
       });
-      setNotice("已保存为正式岗位项目。");
+      setNotice("保存成功");
       if (job?.id === target.id) setJob({ ...job, lifecycle_status: "saved" });
       await onJobsChanged();
     } catch (reason) {
@@ -244,7 +252,7 @@ export function OpportunityDiscoveryPage({
   return (
     <div className="opportunity-shell">
       {error ? <div className="feedback-banner error-banner"><AlertTriangle size={16} /><span>{error}</span><button onClick={() => setError("")} aria-label="关闭错误"><XCircle size={15} /></button></div> : null}
-      {notice ? <div className="feedback-banner notice-banner"><CheckCircle2 size={16} /><span>{notice}</span><button onClick={() => setNotice("")} aria-label="关闭提示"><XCircle size={15} /></button></div> : null}
+      {notice ? <div className="feedback-banner notice-banner global-notice-toast" role="status" aria-live="polite"><CheckCircle2 size={16} /><span>{notice}</span></div> : null}
       {busy && !run && !job ? <div className="page-loading"><LoaderCircle className="spinning" size={18} />正在读取岗位发现数据…</div> : null}
 
       {page === "index" ? <OpportunityHome
@@ -364,5 +372,5 @@ function RunDetailPage({ run, busy, onBack, onJob, onCancel, onRetry, onReadVisi
 function JobDetailPage({ job, assessments, busy, onBack, onDecide, onPromote }: { job: DiscoveredOpportunity | null; assessments: DiscoveredJobAssessment[]; busy: boolean; onBack: () => void; onDecide: (status: "shortlisted" | "dismissed") => void; onPromote: () => void }) {
   if (!job) return <div className="page-loading"><LoaderCircle className="spinning" size={18} />正在读取岗位详情…</div>;
   const current = assessments.find((item) => item.status === "current") || assessments[0];
-  return <section className="opportunity-subpage"><button className="back-link" onClick={onBack}><ArrowLeft size={15} />返回岗位队列</button><header className="job-discovery-header"><div><span className="eyebrow">{decisionLabel[job.lifecycle_status]}</span><h2>{job.company_name} · {job.job_title}</h2><p>{job.location || "地点未注明"} · {job.salary_text || "薪资未注明"}</p></div><div>{job.lifecycle_status === "discovered" ? <><button disabled={busy} onClick={() => onDecide("dismissed")}>暂不推进</button><button className="primary-action" disabled={busy} onClick={() => onDecide("shortlisted")}>值得推进</button></> : job.lifecycle_status === "shortlisted" ? <button className="primary-action" disabled={busy || job.posting_status === "closed"} onClick={onPromote}><Plus size={15} />开始求职准备</button> : null}</div></header><div className="job-discovery-grid"><div className="opportunity-panel"><header><div><h3>岗位要求</h3><p>来自浏览器读取的原始岗位描述，用于后续匹配分析。</p></div>{job.canonical_url ? <a href={job.canonical_url} target="_blank" rel="noreferrer">打开来源<ExternalLink size={14} /></a> : null}</header><div className="job-description">{job.description || "当前来源没有提供完整岗位描述。"}</div></div><aside className="assessment-panel"><span>初步匹配分析</span>{current ? <><strong>{triageVerdictLabel[current.verdict]} · {current.score}</strong><small>覆盖度 {current.coverage}% · {current.confidence === "high" ? "高" : current.confidence === "medium" ? "中" : "低"}置信度</small>{current.hard_conflicts.length ? <div className="assessment-block danger"><b>需要注意</b>{current.hard_conflicts.map((item) => <p key={item}>{item}</p>)}</div> : null}{current.soft_risks.length ? <div className="assessment-block"><b>待确认风险</b>{current.soft_risks.map((item) => <p key={item}>{item}</p>)}</div> : null}<div className="assessment-block"><b>分析依据</b>{current.reasons.map((item) => <p key={item}>{item}</p>)}</div><div className="assessment-block"><b>建议补充的经历证据</b>{current.evidence_gaps.slice(0, 8).map((item) => <span key={item}>{item}</span>)}</div></> : <><strong>等待初步分析</strong><small>读取完成后会结合已确认的职业资料生成初步匹配结论。</small></>}</aside></div></section>;
+  return <section className="opportunity-subpage"><button className="back-link" onClick={onBack}><ArrowLeft size={15} />返回岗位队列</button><header className="job-discovery-header"><div><span className="eyebrow">{decisionLabel[job.lifecycle_status]}</span><h2>{job.company_name} · {job.job_title}</h2><p>{job.location || "地点未注明"} · {job.salary_text || "薪资未注明"}</p></div><div>{job.lifecycle_status === "discovered" ? <><button disabled={busy} onClick={() => onDecide("dismissed")}>暂不推进</button><button className="primary-action" disabled={busy} onClick={() => onDecide("shortlisted")}>值得推进</button></> : job.lifecycle_status === "shortlisted" ? <button className="primary-action" disabled={busy || job.posting_status === "closed"} onClick={onPromote}><Plus size={15} />开始求职准备</button> : null}</div></header><div className="job-discovery-grid"><div className="opportunity-panel"><header><div><h3>岗位要求</h3><p>这是招聘方发布的岗位信息，供你判断是否值得投递。</p></div>{job.canonical_url ? <a href={job.canonical_url} target="_blank" rel="noreferrer">查看原网页<ExternalLink size={14} /></a> : null}</header><div className="job-description">{job.description || "当前页面没有提供完整的岗位描述。"}</div></div><aside className="assessment-panel"><span>初步建议</span>{current ? <><strong>{triageVerdictLabel[current.verdict]} · {current.score} 分</strong><small>这是根据当前资料给出的初步参考，完整准备前还会进一步核对。</small>{current.hard_conflicts.length ? <div className="assessment-block danger"><b>需要注意</b>{current.hard_conflicts.map((item) => <p key={item}>{item}</p>)}</div> : null}{current.soft_risks.length ? <div className="assessment-block"><b>还需确认</b>{current.soft_risks.map((item) => <p key={item}>{item}</p>)}</div> : null}<div className="assessment-block"><b>推荐原因</b>{current.reasons.map((item) => <p key={item}>{item}</p>)}</div><div className="assessment-block"><b>建议补充的经历</b>{current.evidence_gaps.slice(0, 8).map((item) => <span key={item}>{item}</span>)}</div></> : <><strong>等待初步建议</strong><small>读取完成后会根据你的求职资料给出初步建议。</small></>}</aside></div></section>;
 }

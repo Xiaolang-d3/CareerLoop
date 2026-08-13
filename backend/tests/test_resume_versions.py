@@ -129,6 +129,26 @@ class ResumeVersionTest(unittest.TestCase):
         )
         self.assertEqual(reopened["status"], "draft")
 
+    def test_template_is_persisted_per_resume_version(self) -> None:
+        version = create_resume_version(self.job["id"], self.db_path)
+
+        self.assertEqual(version["template_id"], "classic")
+        updated = update_resume_version(
+            version["id"],
+            template_id="compact",
+            db_path=self.db_path,
+        )
+
+        self.assertEqual(updated["template_id"], "compact")
+        self.assertEqual(
+            get_resume_version(version["id"], self.db_path)["template_id"],
+            "compact",
+        )
+        self.assertEqual(
+            list_resume_versions(self.job["id"], self.db_path)[0]["template_id"],
+            "compact",
+        )
+
     def test_docx_and_pdf_exports_are_valid_documents(self) -> None:
         version = create_resume_version(self.job["id"], self.db_path)
 

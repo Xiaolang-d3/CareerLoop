@@ -1,7 +1,5 @@
 import {
   ArrowRight,
-  BarChart3,
-  CalendarDays,
   Check,
   CheckCircle2,
   FileText,
@@ -20,16 +18,7 @@ import type {
   ResumeVersionSummary
 } from "../../types";
 
-export type WorkbenchStage = "overview" | "analysis" | "resume" | "interview" | "progress";
-
-export const jobStatusLabels: Record<JobProject["status"], string> = {
-  saved: "已保存",
-  applied: "已投递",
-  interviewing: "面试中",
-  offer: "Offer",
-  rejected: "未通过",
-  archived: "已归档"
-};
+export type WorkbenchStage = "analysis" | "resume" | "interview";
 
 export const priorityLabels: Record<JobProject["priority"], string> = {
   low: "低",
@@ -38,11 +27,9 @@ export const priorityLabels: Record<JobProject["priority"], string> = {
 };
 
 const workbenchStages = [
-  { key: "overview", title: "岗位要求", shortTitle: "要求", icon: BarChart3 },
   { key: "analysis", title: "匹配分析", shortTitle: "分析", icon: Target },
   { key: "resume", title: "定制简历", shortTitle: "简历", icon: FileText },
-  { key: "interview", title: "面试重点问答", shortTitle: "问答", icon: UsersRound },
-  { key: "progress", title: "面试记录与复盘", shortTitle: "复盘", icon: CalendarDays }
+  { key: "interview", title: "面试准备", shortTitle: "面试", icon: UsersRound }
 ] as const;
 
 type JobStageNavProps = {
@@ -65,11 +52,9 @@ export function JobStageNav({
   onSelect
 }: JobStageNavProps) {
   const completed: Record<WorkbenchStage, boolean> = {
-    overview: false,
     analysis: Boolean(analysis),
     resume: resumeVersions.length > 0,
-    interview: interviewKits.length > 0,
-    progress: interviewRounds.length > 0 || timeline.length > 1
+    interview: interviewKits.length > 0
   };
 
   return (
@@ -151,17 +136,10 @@ export function JobOverview({
     },
     {
       stage: "interview" as const,
-      label: "面试重点问答",
+      label: "面试准备",
       value: interviewKits.length ? `${interviewKits.length} 个准备包` : "尚未准备",
       complete: interviewKits.length > 0,
       icon: UsersRound
-    },
-    {
-      stage: "progress" as const,
-      label: "面试记录与复盘",
-      value: interviewRounds.length ? `${interviewRounds.length} 轮面试` : `${timeline.length} 条动态`,
-      complete: interviewRounds.length > 0,
-      icon: CalendarDays
     }
   ];
 
@@ -226,7 +204,7 @@ export function JobOverview({
           <SectionHeader
             title="最近动态"
             level={3}
-            actions={<ActionButton variant="ghost" size="sm" onClick={() => onSelectStage("progress")}>查看全部</ActionButton>}
+            actions={<ActionButton variant="ghost" size="sm" onClick={() => onSelectStage("interview")}>查看面试</ActionButton>}
           />
           <div>
             {timeline.slice(0, 3).map((event) => (

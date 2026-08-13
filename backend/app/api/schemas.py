@@ -9,6 +9,13 @@ class PrivacyScanIn(BaseModel):
     text: str = Field(default="", max_length=100_000)
 
 
+class LoginIn(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=8, max_length=500)
+    captcha_id: str = Field(min_length=10, max_length=100)
+    captcha_code: str = Field(min_length=5, max_length=12)
+
+
 class ChatMessageIn(BaseModel):
     content: str = Field(min_length=1)
     conversation_id: int | None = None
@@ -28,24 +35,24 @@ class ConversationUpdate(BaseModel):
 
 class JobCreate(BaseModel):
     conversation_id: int | None = Field(default=None, ge=1)
-    job_title: str = Field(default="", max_length=200)
+    job_title: str = Field(min_length=1, max_length=200)
     company_name: str = Field(default="", max_length=200)
     location: str = Field(default="", max_length=200)
     salary_text: str = Field(default="", max_length=100)
     source_url: str = Field(default="", max_length=1_000)
-    description: str = Field(default="", max_length=50_000)
+    description: str = Field(min_length=20, max_length=50_000)
     notes: str = Field(default="", max_length=5_000)
-    status: Literal[
-        "saved", "applied", "interviewing", "offer", "rejected", "archived"
-    ] = "saved"
     priority: Literal["low", "medium", "high"] = "medium"
 
 
 class JobUpdate(BaseModel):
+    job_title: str | None = Field(default=None, max_length=200)
+    company_name: str | None = Field(default=None, max_length=200)
+    location: str | None = Field(default=None, max_length=200)
+    salary_text: str | None = Field(default=None, max_length=100)
+    source_url: str | None = Field(default=None, max_length=1_000)
+    description: str | None = Field(default=None, max_length=50_000)
     notes: str | None = Field(default=None, max_length=5_000)
-    status: Literal[
-        "saved", "applied", "interviewing", "offer", "rejected", "archived"
-    ] | None = None
     priority: Literal["low", "medium", "high"] | None = None
 
 
@@ -112,6 +119,13 @@ class JobComparisonIn(BaseModel):
 class ResumeVersionUpdate(BaseModel):
     title: str | None = Field(default=None, max_length=200)
     status: Literal["draft", "final"] | None = None
+    template_id: Literal["classic", "compact", "minimal"] | None = None
+
+
+class QuickMatchIn(BaseModel):
+    job_description: str = Field(min_length=20, max_length=50_000)
+    job_title: str = Field(default="", max_length=200)
+    company_name: str = Field(default="", max_length=200)
 
 
 class ResumeChangeUpdate(BaseModel):
@@ -132,6 +146,33 @@ class InterviewKitUpdate(BaseModel):
 
 class InterviewTaskUpdate(BaseModel):
     completed: bool
+
+
+class InterviewPreparationFragmentReviewIn(BaseModel):
+    action: Literal["confirm_project", "work_responsibility", "skill_evidence", "ignore"]
+
+
+class InterviewPreparationNodeUpdate(BaseModel):
+    completed: bool | None = None
+    note: str | None = Field(default=None, max_length=2_000)
+
+
+class InterviewPreparationRecordIn(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    summary: str = Field(min_length=1, max_length=10_000)
+    occurred_on: str | None = Field(default=None, max_length=20)
+
+
+class InterviewPreparationProjectSelectionIn(BaseModel):
+    project_ids: list[str] = Field(default_factory=list)
+
+
+class InterviewPreparationJdIn(BaseModel):
+    job_description: str = Field(min_length=20, max_length=50_000)
+
+
+class InterviewPreparationFeedbackIn(BaseModel):
+    answer: str = Field(min_length=10, max_length=5_000)
 
 
 class InterviewRoundCreate(BaseModel):
@@ -212,6 +253,15 @@ class CandidateFactIn(BaseModel):
     source_id: int | None = Field(default=None, ge=1)
     excerpt: str = Field(default="", max_length=5_000)
     locator: str = Field(default="", max_length=500)
+
+
+class CandidateFactReviewIn(BaseModel):
+    action: Literal["confirm", "edit", "reject", "retract"]
+    statement: str = Field(default="", max_length=5_000)
+
+
+class CandidateFactMergeIn(BaseModel):
+    target_fact_id: int = Field(ge=1)
 
 
 class CareerStrategyIn(BaseModel):
@@ -317,18 +367,6 @@ class ProfileInterviewStartIn(BaseModel):
 
 class ProfileInterviewAnswerIn(BaseModel):
     answer: str = Field(min_length=1, max_length=20_000)
-
-
-class ApplicationStageIn(BaseModel):
-    stage: Literal[
-        "saved", "shortlisted", "applied", "recruiter_screen", "interview",
-        "final", "offer", "hired", "rejected", "withdrawn", "no_response",
-        "archived",
-    ]
-    notes: str = Field(default="", max_length=5_000)
-    recruiter_feedback: str = Field(default="", max_length=10_000)
-    source: str = Field(default="user", max_length=50)
-    occurred_at: str | None = Field(default=None, max_length=50)
 
 
 class InterviewDebriefIn(BaseModel):

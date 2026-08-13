@@ -1,141 +1,141 @@
 import {
-  Archive,
-  BarChart3,
   BriefcaseBusiness,
-  Inbox,
+  ChevronLeft,
+  ChevronRight,
+  LogOut,
   MessageCircle,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Pencil,
-  Plus,
+  MoreHorizontal,
   Settings,
-  Trash2,
+  UserRound,
 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
-import type { AgentCapabilities, Conversation, ViewKey } from "../types";
+import { type ReactNode, useState } from "react";
+import type { ViewKey } from "../types";
+import type { PreparationPage, SettingsPage } from "../routing";
+
+type PrefetchPage = "chat" | "profile" | "workbench" | "settings";
+
+type SidebarItem = {
+  key: string;
+  label: string;
+  icon: ReactNode;
+  active: boolean;
+  prefetch: PrefetchPage;
+  onClick: () => void;
+};
 
 type AppSidebarProps = {
   collapsed: boolean;
   activeView: ViewKey;
-  conversations: Conversation[];
-  currentConversationId: number | null;
-  conversationBusy: boolean;
-  capabilities: AgentCapabilities | null;
-  contextMode: "navigation" | "conversations";
   onToggle: () => void;
+  onLogout: () => void;
   onGoHome: () => void;
+  onPrefetchPage: (page: PrefetchPage) => void;
+  preparationPage?: PreparationPage;
+  settingsPage?: SettingsPage;
   onSelectView: (view: ViewKey) => void;
-  onSelectConversation: (conversationId: number) => void;
-  onCreateConversation: () => void;
-  onRenameConversation: (conversation: Conversation) => void;
-  onArchiveConversation: (conversation: Conversation) => void;
-  onRemoveConversation: (conversation: Conversation) => void;
+  onSelectPreparationPage?: (page: PreparationPage) => void;
+  onOpenProfile: () => void;
 };
 
 export function AppSidebar({
   collapsed,
   activeView,
-  conversations,
-  currentConversationId,
-  conversationBusy,
-  capabilities,
-  contextMode,
   onToggle,
+  onLogout,
   onGoHome,
+  onPrefetchPage,
+  settingsPage,
   onSelectView,
-  onSelectConversation,
-  onCreateConversation,
-  onRenameConversation,
-  onArchiveConversation,
-  onRemoveConversation
+  onOpenProfile
 }: AppSidebarProps) {
-  const [mobileConversationsOpen, setMobileConversationsOpen] = useState(false);
-
-  useEffect(() => {
-    setMobileConversationsOpen(false);
-  }, [activeView, currentConversationId]);
-
-  const navItems: Array<{ key: ViewKey; label: string; icon: ReactNode; count?: number }> = [
-    { key: "chat", label: "首页", icon: <MessageCircle size={18} /> },
-    { key: "dashboard", label: "综合控制台", icon: <BarChart3 size={18} /> },
-    { key: "opportunities", label: "岗位工作台", icon: <Inbox size={18} /> },
-    { key: "workbench", label: "求职准备", icon: <BriefcaseBusiness size={18} /> },
-    { key: "settings", label: "Agent 设置", icon: <Settings size={18} /> }
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const navItems: SidebarItem[] = [
+    { key: "workbench", label: "求职工坊", icon: <BriefcaseBusiness size={18} />, active: activeView === "workbench", prefetch: "workbench", onClick: () => onSelectView("workbench") },
+    { key: "chat", label: "对话", icon: <MessageCircle size={18} />, active: activeView === "chat", prefetch: "chat", onClick: () => onSelectView("chat") },
+    { key: "profile", label: "个人资料", icon: <UserRound size={18} />, active: activeView === "settings" && settingsPage === "profile", prefetch: "profile", onClick: onOpenProfile },
+    { key: "settings", label: "设置", icon: <Settings size={18} />, active: activeView === "settings" && settingsPage !== "profile", prefetch: "settings", onClick: () => onSelectView("settings") }
   ];
+  const navByKey = new Map(navItems.map((item) => [item.key, item]));
+  const desktopGroups = [
+    { label: "求职", keys: ["workbench", "chat"] },
+    { label: "账户", keys: ["profile", "settings"] }
+  ];
+  const mobilePrimaryKeys = ["workbench", "chat"];
+  const mobileMoreKeys = ["profile", "settings"];
+  const mobileMoreActive = mobileMoreKeys.some((key) => navByKey.get(key)?.active);
+
+  function renderItem(item: SidebarItem, extraClass = "") {
+    return (
+      <button
+        className={`nav-item ${item.active ? "active" : ""} ${extraClass}`.trim()}
+        key={item.key}
+        onClick={() => {
+          setMobileMenuOpen(false);
+          item.onClick();
+        }}
+        onMouseEnter={() => onPrefetchPage(item.prefetch)}
+        onFocus={() => onPrefetchPage(item.prefetch)}
+        aria-current={item.active ? "page" : undefined}
+        aria-label={item.label}
+        title={collapsed ? item.label : undefined}
+      >
+        {item.icon}<span>{item.label}</span>
+      </button>
+    );
+  }
 
   return (
-    <aside className={`sidebar context-${contextMode} ${collapsed ? "collapsed" : ""}`}>
+    <aside className={`sidebar context-navigation ${collapsed ? "collapsed" : ""}`}>
       <div className="brand">
         <button className="brand-home" type="button" onClick={onGoHome} aria-label="返回首页" title="返回首页">
           <span className="brand-mark" aria-hidden="true">
-            <span className="brand-monogram">B</span>
-            <i />
+            <img className="brand-mark-image" src="/careerloop-mark-v2.png" alt="" />
           </span>
-          <span className="brand-copy"><strong>BossCopilot</strong></span>
+          <span className="brand-copy"><strong>CareerLoop</strong><small>Career, in motion</small></span>
         </button>
-        <button className="sidebar-toggle" onClick={onToggle} title={collapsed ? "展开侧边栏" : "收起侧边栏"} aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}>
-          {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-        </button>
+        <div className="brand-tools">
+          <button className="sidebar-toggle sidebar-edge-toggle" type="button" onClick={onToggle} title={collapsed ? "展开侧边栏" : "收起侧边栏"} aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}>
+            {collapsed ? <ChevronRight size={16} strokeWidth={1.75} /> : <ChevronLeft size={16} strokeWidth={1.75} />}
+          </button>
+        </div>
       </div>
 
-      <span className="nav-label">工作台</span>
-      <nav className="nav" aria-label="主导航">
-        {navItems.map((item) => (
-          <button
-            className={`nav-item ${activeView === item.key ? "active" : ""}`}
-            key={item.key}
-            onClick={() => onSelectView(item.key)}
-            aria-current={activeView === item.key ? "page" : undefined}
-            aria-label={item.label}
-            title={collapsed ? item.label : undefined}
-          >
-            {item.icon}<span>{item.label}</span>
-            {item.count !== undefined ? <em>{item.count}</em> : null}
-          </button>
+      <nav className="nav nav-desktop" aria-label="主导航">
+        {desktopGroups.map((group) => (
+          <section className="nav-group" aria-labelledby={`nav-group-${group.label}`} key={group.label}>
+            <span className="nav-group-label" id={`nav-group-${group.label}`}>{group.label}</span>
+            <div className="nav-group-items">
+              {group.keys.map((key) => navByKey.get(key)).filter((item): item is SidebarItem => Boolean(item)).map((item) => renderItem(item))}
+            </div>
+          </section>
         ))}
       </nav>
 
-      {contextMode === "conversations" ? (
+      <nav className="nav nav-mobile" aria-label="移动端主导航">
+        {mobilePrimaryKeys.map((key) => navByKey.get(key)).filter((item): item is SidebarItem => Boolean(item)).map((item) => renderItem(item, "mobile-nav-item"))}
         <button
-          className="mobile-conversation-toggle"
+          className={`nav-item mobile-nav-item mobile-more-toggle ${mobileMoreActive ? "active" : ""}`}
           type="button"
-          aria-expanded={mobileConversationsOpen}
-          onClick={() => setMobileConversationsOpen((value) => !value)}
+          aria-expanded={mobileMenuOpen}
+          aria-controls="mobile-more-navigation"
+          aria-label="更多导航"
+          onClick={() => setMobileMenuOpen((open) => !open)}
         >
-          <MessageCircle size={15} />
-          <span>切换对话</span>
+          <MoreHorizontal size={18} /><span>更多</span>
         </button>
-      ) : null}
+        {mobileMenuOpen ? (
+          <div className="mobile-more-navigation" id="mobile-more-navigation" aria-label="更多工作区">
+            {mobileMoreKeys.map((key) => navByKey.get(key)).filter((item): item is SidebarItem => Boolean(item)).map((item) => renderItem(item, "mobile-more-item"))}
+          </div>
+        ) : null}
+      </nav>
 
-      {contextMode === "conversations" ? (
-      <section className={`conversation-panel ${mobileConversationsOpen ? "mobile-open" : ""}`} aria-label="对话列表">
-        <div className="conversation-heading">
-          <span>我的对话 <em>{conversations.filter((item) => item.status === "active").length}</em></span>
-          <button onClick={() => { onCreateConversation(); setMobileConversationsOpen(false); }} disabled={conversationBusy} title="新建对话" aria-label="新建对话">
-            <Plus size={14} /><strong>新对话</strong>
-          </button>
-        </div>
-        <div className="conversation-list">
-          {conversations.map((conversation) => (
-            <div className={`conversation-item ${conversation.id === currentConversationId ? "active" : ""} ${conversation.status}`} key={conversation.id}>
-              <button className="conversation-select" onClick={() => { onSelectConversation(conversation.id); setMobileConversationsOpen(false); }}>
-                <MessageCircle size={14} />
-                <span><strong>{conversation.title}</strong><small>{conversation.task_status === "active" ? "进行中" : conversation.status === "archived" ? "已归档" : `${conversation.message_count ?? 0} 条消息`}</small></span>
-              </button>
-              <div className="conversation-actions">
-                <button onClick={() => onRenameConversation(conversation)} title="重命名" aria-label="重命名对话"><Pencil size={12} /></button>
-                <button onClick={() => onArchiveConversation(conversation)} title={conversation.status === "active" ? "归档" : "恢复"} aria-label={conversation.status === "active" ? "归档对话" : "恢复对话"}><Archive size={12} /></button>
-                <button onClick={() => onRemoveConversation(conversation)} title="删除" aria-label="删除对话"><Trash2 size={12} /></button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-      ) : null}
-
-      {mobileConversationsOpen ? (
-        <button className="mobile-conversation-backdrop" aria-label="关闭对话列表" onClick={() => setMobileConversationsOpen(false)} />
-      ) : null}
+      <footer className="sidebar-session-actions">
+        <button className="sidebar-logout" type="button" onClick={onLogout} title="退出登录" aria-label="退出登录">
+          <LogOut size={18} />
+          <span>退出登录</span>
+        </button>
+      </footer>
 
     </aside>
   );

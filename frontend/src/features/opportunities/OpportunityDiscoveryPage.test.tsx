@@ -21,6 +21,7 @@ const job = {
 function props(page: "index" | "pipeline" = "index") {
   return {
     apiBase: "http://127.0.0.1:8000",
+    accessToken: "test-access-token",
     page,
     onNavigateHome: vi.fn(), onNavigateNew: vi.fn(), onNavigatePipeline: vi.fn(),
     onNavigateSources: vi.fn(), onNavigateRun: vi.fn(), onNavigateJob: vi.fn(),
@@ -53,6 +54,15 @@ describe("OpportunityDiscoveryPage", () => {
     expect(screen.queryByText("请安装或刷新浏览器助手")).not.toBeInTheDocument();
     expect(screen.queryByText("一段完整的岗位说明，只应在岗位详情页展示。")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /新建发现任务/ })).not.toBeInTheDocument();
+  });
+
+  it("sends the current login token with opportunity requests", async () => {
+    render(<OpportunityDiscoveryPage {...props()} />);
+
+    await screen.findByText("值得优先查看");
+
+    const [, options] = vi.mocked(fetch).mock.calls[0] ?? [];
+    expect(new Headers(options?.headers).get("Authorization")).toBe("Bearer test-access-token");
   });
 
   it("lets the user decide a pipeline item instead of auto-promoting it", async () => {

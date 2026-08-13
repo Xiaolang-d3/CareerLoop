@@ -15,7 +15,7 @@ from ..candidate_core import (
 
     verify_candidate_material,
 )
-from ..career_feedback import record_application_stage, record_interview_debrief
+from ..career_feedback import record_interview_debrief
 from ..domain import ToolDefinition, ToolError, ToolResult
 from ..job_evaluations import (
     create_job_comparison,
@@ -237,36 +237,6 @@ class GenerateCandidateMaterialTool:
             },
             message="已准备可信材料上下文和定稿规则",
         )
-
-
-class ApplicationOutcomeArguments(BaseModel):
-    job_id: int = Field(ge=1)
-    stage: Literal["saved", "shortlisted", "applied", "recruiter_screen", "interview", "final", "offer", "hired", "rejected", "withdrawn", "no_response", "archived"]
-    note: str = Field(default="", max_length=5000)
-    recruiter_feedback: str = Field(default="", max_length=10000)
-
-
-class RecordApplicationOutcomeTool:
-    definition = ToolDefinition(
-        name="record_application_outcome",
-        description="根据用户当前明确记录意图追加求职阶段和招聘方原话。",
-        input_schema=ApplicationOutcomeArguments.model_json_schema(),
-    )
-
-    def __init__(self, db_path: str | Path | None = None) -> None:
-        self._db_path = db_path
-
-    async def execute(self, arguments: dict[str, Any], context: ToolContext) -> ToolResult:
-        try:
-            payload = ApplicationOutcomeArguments.model_validate(arguments)
-            event = record_application_stage(
-                payload.job_id, to_stage=payload.stage, note=payload.note,
-                feedback_verbatim=payload.recruiter_feedback, source="main_chat",
-                db_path=self._db_path,
-            )
-        except (ValidationError, ValueError) as exc:
-            return invalid_arguments("无法记录求职结果", exc)
-        return ToolResult(ok=True, status="done", data={"event": event}, message="已追加求职阶段记录")
 
 
 class InterviewDebriefArguments(BaseModel):

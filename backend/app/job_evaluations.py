@@ -6,7 +6,6 @@ import re
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlparse
 
 from .candidate_core import get_candidate_context
 from .config import get_settings
@@ -16,10 +15,6 @@ from .web_research import AgentSearchClient, WebResearchError, build_evidence_bu
 
 
 EvaluationMode = Literal["full", "deep"]
-EvaluationStatus = Literal[
-    "queued", "running", "completed", "partial_failed", "failed",
-    "cancelled", "interrupted",
-]
 
 SECTION_TITLES = {
     "a": "岗位概要",
@@ -324,17 +319,6 @@ def list_job_evaluations(
     return [get_job_evaluation(int(row["id"]), db_path=db_path) for row in rows]
 
 
-def get_latest_job_evaluation(
-    job_id: int, *, db_path: str | Path | None = None
-) -> dict[str, Any] | None:
-    with connect(db_path) as conn:
-        row = conn.execute(
-            "SELECT id FROM job_evaluations WHERE job_id = ? ORDER BY id DESC LIMIT 1",
-            (job_id,),
-        ).fetchone()
-    return get_job_evaluation(int(row["id"]), db_path=db_path) if row else None
-
-
 def get_latest_completed_job_evaluation(
     job_id: int, *, db_path: str | Path | None = None
 ) -> dict[str, Any] | None:
@@ -424,12 +408,16 @@ def review_job_evaluation(
         fact_ids = [int(item) for item in payload.get("fact_ids") or []]
         if not fact_ids:
             raise ValueError("提高候选人匹配状态必须关联已确认事实")
-        with connect(db_path) as conn:
-            count = conn.execute(
-                f"SELECT COUNT(*) AS count FROM candidate_facts WHERE profile_id = ? AND status = 'confirmed' AND id IN ({','.join('?' for _ in fact_ids)})",
-                [int(evaluation["profile_id"]), *fact_ids],
-            ).fetchone()["count"]
-        if int(count) != len(set(fact_ids)):
+        context = get_candidate_context(
+            "match",
+            profile_id=int(evaluation["profile_id"]),
+            strategy_id=evaluation.get("strategy_id"),
+            db_path=db_path,
+        )
+        confirmed_ids = {
+            int(item["id"]) for item in context.get("confirmed_facts", [])
+        }
+        if not set(fact_ids).issubset(confirmed_ids):
             raise ValueError("匹配审核包含未确认、不属于当前画像或不存在的候选人事实")
     if target_type == "dimension" and "score" in payload:
         if target_key == "evidence_match":

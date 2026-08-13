@@ -111,7 +111,7 @@ class StageProgressTest(unittest.TestCase):
         self.assertEqual(workflow["stage_counts"]["job_evaluation"], 1)
 
     def test_every_career_os_tool_is_recorded(self) -> None:
-        """逐个验证 20 个 CareerOS 工具都能推进阶段，而非只有抽样的那个。"""
+        """逐个验证当前 CareerOS 工具都能推进阶段，而非依赖固定数量。"""
         career_os_tools = [
             name
             for name in TOOL_STAGES
@@ -125,7 +125,7 @@ class StageProgressTest(unittest.TestCase):
                 "search_public_web",
             }
         ]
-        self.assertEqual(len(career_os_tools), 20)
+        self.assertTrue(career_os_tools)
         workflow = self._save(
             AgentRunResult(
                 content="批量",

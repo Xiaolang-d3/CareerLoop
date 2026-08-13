@@ -7,19 +7,19 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from fastapi.testclient import TestClient
-
 from app import db
 import app.main as main_module
 import app.api.resources as resources_module
 from app.conversations import create_conversation, ensure_active_task
 from app.domain import AgentRunResult, AgentStreamEvent, ToolError
+from app.jobs import create_job
 from app.main import (
     _active_chat_runs,
     _is_workflow_status_query,
     app,
     cancel_current_agent_task,
 )
+from api_client import create_authenticated_client
 
 
 class ChatStreamingApiTest(unittest.TestCase):
@@ -28,7 +28,7 @@ class ChatStreamingApiTest(unittest.TestCase):
         self.original_db_path = db.DB_PATH
         db.DB_PATH = Path(self.temp_dir.name) / "streaming.db"
         db.init_db()
-        self.client = TestClient(app)
+        self.client = create_authenticated_client(app)
 
     def tearDown(self) -> None:
         self.client.close()
@@ -163,9 +163,19 @@ class ChatStreamingApiTest(unittest.TestCase):
     def test_job_projects_exist_without_restoring_legacy_automation_endpoints(self) -> None:
         self.assertIn(self.client.post("/chat/messages", json={"content": "测试"}).status_code, {404, 405})
         self.assertEqual(self.client.get("/candidate-profile").status_code, 404)
-        self.assertEqual(self.client.put("/candidate-profile", json={}).status_code, 404)
+        self.assertIn(self.client.put("/candidate-profile", json={}).status_code, {404, 405})
         self.assertEqual(self.client.get("/jobs").status_code, 200)
         self.assertEqual(self.client.post("/jobs", json={}).status_code, 422)
+        created = self.client.post(
+            "/jobs",
+            json={
+                "job_title": "AI 产品经理",
+                "company_name": "示例科技",
+                "description": "负责 Agent 产品规划。\n\n任职要求\n熟悉 Python 与需求分析。",
+            },
+        )
+        self.assertEqual(created.status_code, 200)
+        self.assertEqual(created.json()["job_title"], "AI 产品经理")
         self.assertIn(self.client.post("/jobs/manual-import", json={}).status_code, {404, 405})
         self.assertIn(self.client.post("/applications", json={}).status_code, {404, 405})
         self.assertEqual(self.client.get("/applications").status_code, 404)
@@ -178,9 +188,8 @@ class ChatStreamingApiTest(unittest.TestCase):
             cities=["上海"],
             salary_min=30_000,
         )
-        job = self.client.post(
-            "/jobs",
-            json={
+        job = create_job(
+            {
                 "job_title": "AI 产品经理",
                 "company_name": "示例科技",
                 "location": "上海",
@@ -188,8 +197,8 @@ class ChatStreamingApiTest(unittest.TestCase):
                     "负责 Agent 产品规划和需求分析；"
                     "要求熟悉 Python；要求熟悉 Kubernetes 集群管理。"
                 ),
-            },
-        ).json()
+            }
+        )
         self.assertEqual(self.client.get(f"/jobs/{job['id']}/evaluations").json(), [])
         analysis = self.create_completed_evaluation(job["id"])
         missing = next(
@@ -210,17 +219,16 @@ class ChatStreamingApiTest(unittest.TestCase):
             name="简历版本用户",
             resume_text="负责 Agent 产品规划和需求分析。\n使用 Python 完成内部工具。",
         )
-        job = self.client.post(
-            "/jobs",
-            json={
+        job = create_job(
+            {
                 "job_title": "AI 产品经理",
                 "company_name": "示例科技",
                 "description": (
                     "负责 Agent 产品规划和需求分析；"
                     "要求熟悉 Python；推动产品原型落地。"
                 ),
-            },
-        ).json()
+            }
+        )
         self.create_completed_evaluation(job["id"])
 
         created = self.client.post(f"/jobs/{job['id']}/resume-versions")
@@ -262,17 +270,16 @@ class ChatStreamingApiTest(unittest.TestCase):
             name="面试测试用户",
             resume_text="负责 Agent 产品规划和需求分析，使用 Python 完成原型。",
         )
-        job = self.client.post(
-            "/jobs",
-            json={
+        job = create_job(
+            {
                 "job_title": "AI 产品经理",
                 "company_name": "示例科技",
                 "description": (
                     "负责 Agent 产品规划和需求分析；"
                     "要求熟悉 Python；推动产品原型落地。"
                 ),
-            },
-        ).json()
+            }
+        )
         self.create_completed_evaluation(job["id"])
         created = self.client.post(
             f"/jobs/{job['id']}/interview-kits",
@@ -299,10 +306,7 @@ class ChatStreamingApiTest(unittest.TestCase):
         )
         self.assertEqual(scheduled.status_code, 200)
         interview = scheduled.json()
-        self.assertEqual(
-            self.client.get(f"/jobs/{job['id']}").json()["status"],
-            "interviewing",
-        )
+        self.assertEqual(interview["status"], "scheduled")
         result = self.client.patch(
             f"/interview-rounds/{interview['id']}",
             json={"status": "completed", "outcome": "passed", "notes": "进入终面"},

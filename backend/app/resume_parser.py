@@ -4,6 +4,8 @@ from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from dataclasses import dataclass, field
+import re
+import unicodedata
 
 from docx import Document
 from pypdf import PdfReader
@@ -49,10 +51,51 @@ def parse_resume_result(filename: str, content: bytes, mode: str = "fast") -> Re
         text = _parse_lightweight(suffix, content)
         parser = "lightweight"
 
-    normalized = "\n".join(line.strip() for line in text.splitlines() if line.strip())
+    normalized = normalize_resume_text(text)
     if len(normalized) < 20:
         raise ValueError("未能从简历中提取足够文字；扫描版 PDF 请使用增强解析")
     return ResumeParseResult(normalized[:100_000], parser, warnings)
+
+
+def normalize_resume_text(text: str) -> str:
+    """Keep resume text readable after PDF/Word font extraction.
+
+    Some templates encode bullet points in the Unicode private-use area (for
+    example ``\uf0b7``). Those glyphs are not meaningful text and otherwise end
+    up in the editable resume. Convert line-leading private-use glyphs into a
+    normal dash and discard other invisible/control characters without touching
+    URLs, Chinese text, punctuation, or tables.
+    """
+    normalized = unicodedata.normalize("NFC", text).replace("\r\n", "\n").replace("\r", "\n")
+    output: list[str] = []
+    line_start = True
+    for character in normalized:
+        category = unicodedata.category(character)
+        if character == "\n":
+            output.append(character)
+            line_start = True
+            continue
+        if character == "\t":
+            output.append(character)
+            line_start = False
+            continue
+        if category == "Co":
+            if line_start:
+                output.append("-")
+            continue
+        if category == "Cf" or category == "Cc":
+            continue
+        if character in {"•", "●", "▪", "◦", "■", "◆"} and line_start:
+            output.append("-")
+            continue
+        output.append(character)
+        line_start = character.isspace()
+
+    return "\n".join(
+        re.sub(r"^-\s*", "- ", line.strip())
+        for line in "".join(output).splitlines()
+        if line.strip()
+    )
 
 
 def _parse_lightweight(suffix: str, content: bytes) -> str:

@@ -14,6 +14,9 @@ from .profile_intelligence import extract_skills
 ResumeDecision = Literal["pending", "accepted", "rejected"]
 ResumeVersionStatus = Literal["draft", "final"]
 ResumeExportFormat = Literal["docx", "pdf"]
+ResumeTemplate = Literal["classic", "compact", "minimal"]
+
+_RESUME_TEMPLATES = {"classic", "compact", "minimal"}
 
 
 def create_resume_version(
@@ -142,6 +145,7 @@ def update_resume_version(
     *,
     title: str | None = None,
     status: ResumeVersionStatus | None = None,
+    template_id: ResumeTemplate | None = None,
     db_path: str | Path | None = None,
 ) -> dict[str, Any] | None:
     updates: list[str] = []
@@ -165,6 +169,11 @@ def update_resume_version(
                 raise ValueError(f"不能标记为可信定稿：{first}")
         updates.append("status = ?")
         values.append(status)
+    if template_id is not None:
+        if template_id not in _RESUME_TEMPLATES:
+            raise ValueError("不支持的简历模板")
+        updates.append("template_id = ?")
+        values.append(template_id)
     with connect(db_path) as conn:
         existing = conn.execute(
             "SELECT id FROM resume_versions WHERE id = ?",
@@ -252,12 +261,12 @@ def export_resume_version(
     if not gate["can_finalize"]:
         raise ValueError("事实安全门未通过，当前版本只能预览，不能导出为可信定稿")
     if export_format == "docx":
-        payload = _build_docx(version["title"], content)
+        payload = _build_docx(version["title"], content, version.get("template_id", "classic"))
         media_type = (
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
     elif export_format == "pdf":
-        payload = _build_pdf(version["title"], content)
+        payload = _build_pdf(version["title"], content, version.get("template_id", "classic"))
         media_type = "application/pdf"
     else:
         raise ValueError("仅支持导出 DOCX 或 PDF")
@@ -502,7 +511,7 @@ def _refresh_rendered_content(conn, version_id: int) -> None:
     )
 
 
-def _build_docx(title: str, content: str) -> bytes:
+def _build_docx(title: str, content: str, template_id: str = "classic") -> bytes:
     from docx import Document
     from docx.enum.section import WD_SECTION
     from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -512,10 +521,12 @@ def _build_docx(title: str, content: str) -> bytes:
 
     document = Document()
     section = document.sections[0]
-    section.top_margin = Cm(1.8)
-    section.bottom_margin = Cm(1.8)
-    section.left_margin = Cm(2.0)
-    section.right_margin = Cm(2.0)
+    compact = template_id == "compact"
+    minimal = template_id == "minimal"
+    section.top_margin = Cm(1.45 if compact else 1.8)
+    section.bottom_margin = Cm(1.45 if compact else 1.8)
+    section.left_margin = Cm(1.7 if compact else 2.0)
+    section.right_margin = Cm(1.7 if compact else 2.0)
     section.start_type = WD_SECTION.NEW_PAGE
 
     font_name = _document_font_name()
@@ -525,10 +536,10 @@ def _build_docx(title: str, content: str) -> bytes:
     normal.font.size = Pt(10.5)
     normal._element.rPr.rFonts.set(qn("w:eastAsia"), font_name)
     for style_name, size, color in (
-        ("Title", 22, "17324D"),
-        ("Heading 1", 15, "17324D"),
-        ("Heading 2", 12, "2D5B7D"),
-        ("List Bullet", 10.5, "263746"),
+        ("Title", 20 if compact else 22, "1C2D3B" if minimal else "17324D"),
+        ("Heading 1", 13 if compact else 15, "1C2D3B" if minimal else "17324D"),
+        ("Heading 2", 11 if compact else 12, "4A5861" if minimal else "2D5B7D"),
+        ("List Bullet", 9.7 if compact else 10.5, "263746"),
     ):
         style = styles[style_name]
         style.font.name = font_name
@@ -582,7 +593,7 @@ def _build_docx(title: str, content: str) -> bytes:
     return output.getvalue()
 
 
-def _build_pdf(title: str, content: str) -> bytes:
+def _build_pdf(title: str, content: str, template_id: str = "classic") -> bytes:
     try:
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4
@@ -608,14 +619,16 @@ def _build_pdf(title: str, content: str) -> bytes:
             continue
     if font_name == "STSong-Light":
         pdfmetrics.registerFont(UnicodeCIDFont(font_name))
+    compact = template_id == "compact"
+    minimal = template_id == "minimal"
     output = BytesIO()
     document = SimpleDocTemplate(
         output,
         pagesize=A4,
-        rightMargin=18 * mm,
-        leftMargin=18 * mm,
-        topMargin=17 * mm,
-        bottomMargin=17 * mm,
+        rightMargin=(14 if compact else 18) * mm,
+        leftMargin=(14 if compact else 18) * mm,
+        topMargin=(14 if compact else 17) * mm,
+        bottomMargin=(14 if compact else 17) * mm,
         title=title,
         author="BossCopilot",
     )
@@ -624,26 +637,26 @@ def _build_pdf(title: str, content: str) -> bytes:
         "ResumeBody",
         parent=base["BodyText"],
         fontName=font_name,
-        fontSize=9.8,
-        leading=15,
+        fontSize=9.1 if compact else 9.8,
+        leading=13.5 if compact else 15,
         textColor=colors.HexColor("#263746"),
         spaceAfter=5,
     )
     title_style = ParagraphStyle(
         "ResumeTitle",
         parent=body,
-        fontSize=20,
-        leading=25,
-        textColor=colors.HexColor("#17324D"),
+        fontSize=18 if compact else 20,
+        leading=22 if compact else 25,
+        textColor=colors.HexColor("#1C2D3B" if minimal else "#17324D"),
         spaceAfter=12,
     )
     heading = ParagraphStyle(
         "ResumeHeading",
         parent=body,
-        fontSize=13,
-        leading=18,
-        textColor=colors.HexColor("#2D5B7D"),
-        spaceBefore=9,
+        fontSize=12 if compact else 13,
+        leading=16 if compact else 18,
+        textColor=colors.HexColor("#4A5861" if minimal else "#2D5B7D"),
+        spaceBefore=7 if compact else 9,
         spaceAfter=5,
     )
     bullet = ParagraphStyle(

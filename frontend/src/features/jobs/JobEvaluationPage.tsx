@@ -4,6 +4,8 @@ import {
   FlaskConical, LoaderCircle, RefreshCw, ShieldAlert, Sparkles, UsersRound, XCircle
 } from "lucide-react";
 import type { JobEvaluation, JobEvaluationSection, JobProject } from "../../types";
+import { fetchWithTimeout } from "../../api/client";
+import { useAsyncPolling } from "../../hooks/useAsyncPolling";
 
 type SectionKey = "a" | "b" | "c" | "d" | "e" | "f" | "g";
 
@@ -28,7 +30,6 @@ const decisionLabels = {
 const riskLabels = {
   high_confidence: "未见突出风险", caution: "需要留意", suspicious: "需要重点核实", unknown: "风险未知"
 };
-const confidenceLabels = { high: "高", medium: "中", low: "低" };
 const stageLabels: Record<string, string> = {
   queued: "等待开始", extracting: "拆解岗位要求", researching: "核验公开信息",
   scoring: "计算评分与风险", completed: "已完成", failed: "运行失败",
@@ -36,7 +37,7 @@ const stageLabels: Record<string, string> = {
 };
 
 async function requestJson<T>(apiBase: string, path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${apiBase}${path}`, init);
+  const response = await fetchWithTimeout(`${apiBase}${path}`, init);
   if (!response.ok) {
     let message = `请求失败（${response.status}）`;
     try { message = (await response.json() as { detail?: string }).detail || message; } catch { /* noop */ }
@@ -78,7 +79,6 @@ function EvaluationRun({ evaluation, onCancel, onRetry }: { evaluation: JobEvalu
 export function JobEvaluationPage(props: Props) {
   const { apiBase, job, jobId, page, sectionKey, comparisonId } = props;
   const [evaluation, setEvaluation] = useState<JobEvaluation | null>(null);
-  const [history, setHistory] = useState<JobEvaluation[]>([]);
   const [sources, setSources] = useState<Array<Record<string, unknown>>>([]);
   const [comparison, setComparison] = useState<Record<string, unknown> | null>(null);
   const [busy, setBusy] = useState(false);
@@ -87,7 +87,6 @@ export function JobEvaluationPage(props: Props) {
   async function loadEvaluation() {
     if (!jobId) return;
     const items = await requestJson<JobEvaluation[]>(apiBase, `/jobs/${jobId}/evaluations`);
-    setHistory(items);
     setEvaluation(items[0] || null);
     if (items[0]?.id) {
       setSources(await requestJson<Array<Record<string, unknown>>>(apiBase, `/job-evaluations/${items[0].id}/sources`));
@@ -103,11 +102,14 @@ export function JobEvaluationPage(props: Props) {
     }
   }, [apiBase, jobId, page, comparisonId]);
 
-  useEffect(() => {
-    if (!evaluation || !["queued", "running"].includes(evaluation.status)) return;
-    const timer = window.setInterval(() => void loadEvaluation().catch(() => undefined), 1200);
-    return () => window.clearInterval(timer);
-  }, [evaluation?.id, evaluation?.status]);
+  useAsyncPolling({
+    enabled: Boolean(evaluation && ["queued", "running"].includes(evaluation.status)),
+    intervalMs: 1_200,
+    poll: loadEvaluation,
+    onError: (_reason, failures) => {
+      if (failures >= 3) setError("暂时无法获取岗位分析进度，请检查网络后重试。");
+    }
+  });
 
   async function createEvaluation(kind: "full" | "retry" | "deep") {
     if (!jobId) return;
@@ -145,7 +147,7 @@ export function JobEvaluationPage(props: Props) {
   if (page === "comparison") {
     const result = (comparison?.result || {}) as Record<string, unknown>;
     const entries = (result.entries || []) as Array<Record<string, unknown>>;
-    return <section className="evaluation-page"><button className="back-link" onClick={props.onBack}><ArrowLeft size={15} />返回求职准备</button><header className="evaluation-title"><div><span>岗位比较</span><h1>同一职业策略下的岗位排序</h1><p>匹配度与风险分开呈现，帮助你决定投入顺序。</p></div></header>{error ? <p className="inline-error">{error}</p> : null}<section className="comparison-table ui-panel"><header><span>名次</span><span>岗位</span><span>匹配</span><span>覆盖度</span><span>风险</span><span>建议</span></header>{entries.map((entry) => <article key={String(entry.evaluation_id)}><strong>#{String(entry.rank)}</strong><div><b>{String(entry.company_name || "公司待补充")} · {String(entry.job_title || "岗位待补充")}</b><small>{String(entry.location || "地点未知")}</small></div><span>{entry.score == null ? "未知" : `${String(entry.score)} 分`}</span><span>{String(entry.coverage || 0)}%</span><span>{riskLabels[entry.risk_tier as keyof typeof riskLabels] || String(entry.risk_tier)}</span><span>{decisionLabels[entry.decision as keyof typeof decisionLabels] || String(entry.decision)}</span></article>)}{!entries.length ? <p>比较快照没有可显示的岗位。</p> : null}</section><footer className="evaluation-limitations"><AlertTriangle size={16} /><div><strong>排序规则</strong><p>{String(result.ranking_rule || "先按最终建议，再按匹配分和置信度排序。")}</p></div></footer></section>;
+    return <section className="evaluation-page"><button className="back-link" onClick={props.onBack}><ArrowLeft size={15} />返回求职准备</button><header className="evaluation-title"><div><span>岗位比较</span><h1>值得优先投入的岗位</h1><p>结合匹配程度和需要留意的事项，帮助你安排投递顺序。</p></div></header>{error ? <p className="inline-error">{error}</p> : null}<section className="comparison-table ui-panel"><header><span>名次</span><span>岗位</span><span>匹配程度</span><span>信息完整度</span><span>需要留意</span><span>建议</span></header>{entries.map((entry) => <article key={String(entry.evaluation_id)}><strong>#{String(entry.rank)}</strong><div><b>{String(entry.company_name || "公司待补充")} · {String(entry.job_title || "岗位待补充")}</b><small>{String(entry.location || "地点未知")}</small></div><span>{entry.score == null ? "暂无法判断" : `${String(entry.score)} 分`}</span><span>{String(entry.coverage || 0)}%</span><span>{riskLabels[entry.risk_tier as keyof typeof riskLabels] || String(entry.risk_tier)}</span><span>{decisionLabels[entry.decision as keyof typeof decisionLabels] || String(entry.decision)}</span></article>)}{!entries.length ? <p>还没有可以比较的岗位。</p> : null}</section><footer className="evaluation-limitations"><AlertTriangle size={16} /><div><strong>说明</strong><p>{String(result.ranking_rule || "系统会结合匹配程度、信息完整度和风险提示给出优先顺序。")}</p></div></footer></section>;
   }
 
   if (!evaluation) {
@@ -166,26 +168,26 @@ export function JobEvaluationPage(props: Props) {
     const risks = evaluation.effective_risks || evaluation.risks;
     return (
       <section className="evaluation-page"><button className="back-link" onClick={props.onOpenOverview}><ArrowLeft size={15} />返回评估首页</button>
-        <header className="evaluation-title"><div><span>{currentSection.section_key.toUpperCase()} · {currentSection.confidence === "unknown" ? "置信度未知" : `${confidenceLabels[currentSection.confidence as keyof typeof confidenceLabels]}置信度`}</span><h1>{currentSection.title}</h1><p>{currentSection.status === "partial" ? "当前区块存在信息限制，请结合未知项和来源核实。" : "系统原判与用户审核分开保留。"}</p></div>{currentSection.section_key === "e" && props.onCreateResume ? <button disabled={!materialReady || busy} title={!materialReady ? "请先完成或更新有效的 A–G 评估" : undefined} onClick={() => void props.onCreateResume?.()}><FileText size={15} />创建定制简历</button> : null}{currentSection.section_key === "f" && props.onCreateInterviewKit ? <button disabled={!materialReady || busy} title={!materialReady ? "请先完成或更新有效的 A–G 评估" : undefined} onClick={() => void props.onCreateInterviewKit?.()}><UsersRound size={15} />创建面试包</button> : null}</header>
+        <header className="evaluation-title"><div><span>岗位匹配详情</span><h1>{currentSection.title}</h1><p>{currentSection.status === "partial" ? "部分信息尚不完整，请结合未确认项判断。" : "查看这项岗位信息与你的经历是否匹配。"}</p></div>{currentSection.section_key === "e" && props.onCreateResume ? <button disabled={!materialReady || busy} title={!materialReady ? "请先完成或更新有效的岗位分析" : undefined} onClick={() => void props.onCreateResume?.()}><FileText size={15} />创建定制简历</button> : null}{currentSection.section_key === "f" && props.onCreateInterviewKit ? <button disabled={!materialReady || busy} title={!materialReady ? "请先完成或更新有效的岗位分析" : undefined} onClick={() => void props.onCreateInterviewKit?.()}><UsersRound size={15} />创建面试包</button> : null}</header>
         {error ? <p className="inline-error">{error}</p> : null}
         <section className="evaluation-detail ui-panel"><StructuredValue value={currentSection.content} /></section>
         {currentSection.section_key === "g" && risks.length ? <section className="evaluation-risks"><h2>风险观察与审核</h2>{risks.map((risk) => <article className={`risk-${risk.effective_severity || risk.severity}`} key={risk.risk_key}><div><strong>{risk.observation}</strong><p>{risk.explanation}</p><small>{risk.effective_status === "resolved" ? "你的审核：已解决/不采用" : `系统原判：${risk.severity}`}</small></div><button disabled={busy} onClick={() => void reviewRisk(risk.risk_key, risk.effective_status === "resolved" ? "restore" : "resolve")}>{risk.effective_status === "resolved" ? "恢复原判" : "标记已解决"}</button></article>)}</section> : null}
         {currentSection.limitations.length ? <footer className="evaluation-limitations"><AlertTriangle size={16} /><div><strong>限制</strong>{currentSection.limitations.map((item) => <p key={item}>{item}</p>)}</div></footer> : null}
-        <section className="evaluation-sources ui-panel"><h2>本报告来源</h2><p>{sources.length} 条来源 · 当前区块引用 {currentSection.evidence_refs.join("、") || "未记录来源引用"}</p>{sources.length ? <div>{sources.map((source, index) => <article key={String(source.id || source.source_key || index)}><div><strong>{String(source.source_key || `S${index + 1}`)} · {String(source.title || "未命名来源")}</strong><small>{String(source.source_type || "公开来源")} · 抓取于 {String(source.fetched_at || "时间未知")}</small></div>{source.url ? <a href={String(source.url)} target="_blank" rel="noreferrer">打开来源</a> : null}<p>{String(source.excerpt || "没有保存可引用摘录")}</p></article>)}</div> : null}</section>
+        <section className="evaluation-sources ui-panel"><h2>参考信息</h2><p>以下内容帮助你核对岗位与公司信息。</p>{sources.length ? <div>{sources.map((source, index) => <article key={String(source.id || source.source_key || index)}><div><strong>{String(source.title || "未命名资料")}</strong><small>{String(source.source_type || "公开信息")}</small></div>{source.url ? <a href={String(source.url)} target="_blank" rel="noreferrer">查看原网页</a> : null}<p>{String(source.excerpt || "暂无摘要")}</p></article>)}</div> : null}</section>
       </section>
     );
   }
 
   if (page === "evaluation_deep") {
-    return <section className="evaluation-page"><button className="back-link" onClick={props.onOpenOverview}><ArrowLeft size={15} />返回评估首页</button><section className="evaluation-empty ui-panel-emphasis"><FlaskConical size={30} /><h1>深度研究</h1><p>{evaluation.mode === "deep" ? "当前展示的是独立深度研究版本，原完整评估仍保留。" : "创建一个最多 8 次公开搜索的新版本，重点补充薪资、公司与真实性证据。"}</p><button className="primary-action" disabled={busy || evaluation.mode === "deep"} onClick={() => void createEvaluation("deep")}>{evaluation.mode === "deep" ? "深度研究版本已完成" : "开始深度研究"}</button><small>最多保留 12 条相关证据；无法确认的信息继续标记为未知。</small></section></section>;
+    return <section className="evaluation-page"><button className="back-link" onClick={props.onOpenOverview}><ArrowLeft size={15} />返回岗位建议</button><section className="evaluation-empty ui-panel-emphasis"><FlaskConical size={30} /><h1>补充岗位信息</h1><p>{evaluation.mode === "deep" ? "补充的信息已整理完成。" : "进一步核对薪资、公司和岗位信息，帮助你判断是否值得投入。"}</p><button className="primary-action" disabled={busy || evaluation.mode === "deep"} onClick={() => void createEvaluation("deep")}>{evaluation.mode === "deep" ? "补充已完成" : "开始补充"}</button><small>无法确认的信息会明确标注，供你自行判断。</small></section></section>;
   }
 
   const score = evaluation.effective_overall_score;
   return (
     <section className="evaluation-page"><button className="back-link" onClick={props.onBack}><ArrowLeft size={15} />返回求职准备</button>
-      <header className="evaluation-title"><div><span>岗位匹配分析 · v{history.length}</span><h1>{decisionLabels[evaluation.effective_final_decision]}</h1><p>匹配 {score === null ? "未知" : `${score} 分`} · 证据覆盖 {evaluation.effective_coverage}% · {confidenceLabels[evaluation.effective_confidence]}置信度</p></div><div className="evaluation-actions"><a href={`${apiBase}/job-evaluations/${evaluation.id}/export?format=markdown`}><Download size={15} />导出分析</a><button onClick={props.onOpenDeep}><FlaskConical size={15} />补充研究</button><button disabled={busy} onClick={() => void createEvaluation("retry")}><RefreshCw size={15} />重新分析</button></div></header>
+      <header className="evaluation-title"><div><span>岗位建议</span><h1>{decisionLabels[evaluation.effective_final_decision]}</h1><p>{score === null ? "目前信息不足，建议补充后再判断。" : `综合匹配程度 ${score} / 100`}</p></div><div className="evaluation-actions"><a href={`${apiBase}/job-evaluations/${evaluation.id}/export?format=markdown`}><Download size={15} />导出建议</a><button onClick={props.onOpenDeep}><FlaskConical size={15} />补充信息</button><button disabled={busy} onClick={() => void createEvaluation("retry")}><RefreshCw size={15} />更新建议</button></div></header>
       {evaluation.is_stale ? <section className="evaluation-stale"><AlertTriangle size={18} /><div><strong>这份报告已过期</strong><p>{evaluation.stale_reasons.join("；")}</p></div></section> : null}
-      <div className="evaluation-dual"><article><CheckCircle2 size={20} /><span>匹配建议</span><strong>{decisionLabels[evaluation.effective_final_decision]}</strong><small>{score === null ? "无可评分证据" : `${score} / 100`}</small></article><article className={`risk-${evaluation.effective_risk_tier}`}><ShieldAlert size={20} /><span>真实性与用工风险</span><strong>{riskLabels[evaluation.effective_risk_tier]}</strong><small>不计入匹配分</small></article></div>
+      <div className="evaluation-dual"><article><CheckCircle2 size={20} /><span>匹配建议</span><strong>{decisionLabels[evaluation.effective_final_decision]}</strong><small>{score === null ? "暂时无法判断" : `${score} / 100`}</small></article><article className={`risk-${evaluation.effective_risk_tier}`}><ShieldAlert size={20} /><span>岗位风险提示</span><strong>{riskLabels[evaluation.effective_risk_tier]}</strong><small>投递前建议核对</small></article></div>
       <section className="evaluation-journey" aria-label="求职推进路径">
         <header>
           <div>
@@ -228,7 +230,7 @@ export function JobEvaluationPage(props: Props) {
           </article>
         </div>
       </section>
-      <section className="evaluation-dimensions ui-panel"><h2>六维透明评分</h2><div>{evaluation.effective_dimensions.map((item) => <article key={item.dimension_key}><header><strong>{item.title}</strong><span>{item.effective_status === "unknown" || item.status === "unknown" ? "未知" : `${item.effective_score ?? item.score} 分`}</span></header><div><i style={{ width: `${item.effective_score ?? item.score ?? 0}%` }} /></div><small>权重 {item.weight}% · {(item.rationale || []).join("；")}</small></article>)}</div></section>
+      <section className="evaluation-dimensions ui-panel"><h2>匹配情况</h2><div>{evaluation.effective_dimensions.map((item) => <article key={item.dimension_key}><header><strong>{item.title}</strong><span>{item.effective_status === "unknown" || item.status === "unknown" ? "待补充" : `${item.effective_score ?? item.score} 分`}</span></header><div><i style={{ width: `${item.effective_score ?? item.score ?? 0}%` }} /></div><small>{(item.rationale || []).join("；")}</small></article>)}</div></section>
       <section className="evaluation-section-grid">{evaluation.sections.map((section) => <button key={section.section_key} onClick={() => props.onOpenSection(section.section_key)}><span>{section.section_key.toUpperCase()}</span><div><strong>{section.title}</strong><small>{section.status === "partial" ? "部分完成 · 有限制" : section.status === "completed" ? "已完成" : stageLabels[section.status] || section.status}</small></div><ArrowRight size={16} /></button>)}</section>
       <footer className="evaluation-limitations"><AlertTriangle size={16} /><div><strong>报告边界</strong>{evaluation.limitations.map((item) => <p key={item}>{item}</p>)}</div></footer>
     </section>

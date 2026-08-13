@@ -3,8 +3,8 @@ import type { AgentSettings, CandidateEditor, ToolProfile, ViewKey } from "./typ
 export const bossHomeUrl = "https://www.zhipin.com/";
 
 export const defaultAgentSettings: AgentSettings = {
-  display_name: "BossCopilot",
-  persona_role: "理性、坦诚、尊重用户决定的本地求职顾问",
+  display_name: "CareerLoop",
+  persona_role: "主动、清晰、帮助用户持续推进机会的 AI 求职伙伴",
   response_style: "concise",
   custom_instructions: "",
   profile_memory_enabled: true,
@@ -35,7 +35,6 @@ export const toolLabels: Record<string, string> = {
   analyze_job_against_strategy: "按职业策略分析岗位",
   generate_candidate_material: "生成可信求职材料",
   record_interview_debrief: "记录面试复盘",
-  record_application_outcome: "记录求职结果",
   discover_companies: "发现适合的公司",
   discover_funded_companies: "发现近期融资公司",
   scan_career_sources: "扫描官方职位来源",
@@ -56,7 +55,6 @@ export const toolProfiles: ToolProfile[] = [
   { name: "analyze_job_against_strategy", category: "分析判断", description: "只用已确认事实按职业策略分析岗位", dataScope: "岗位 JD、策略与确认事实", control: "自动读取", local: true },
   { name: "generate_candidate_material", category: "分析判断", description: "生成简历、自我介绍、面试答案或沟通草稿并执行事实门", dataScope: "最小任务上下文", control: "明确指令", local: true },
   { name: "record_interview_debrief", category: "结果回流", description: "记录真实问题、原回答和反馈，生成待确认提案", dataScope: "当前面试复盘", control: "明确记录意图", local: true },
-  { name: "record_application_outcome", category: "结果回流", description: "追加求职阶段和招聘方原话", dataScope: "当前岗位项目", control: "明确记录意图", local: true },
   { name: "discover_companies", category: "外部读取", description: "发现公司官网和官方招聘页", dataScope: "公开互联网", control: "明确指令", local: false },
   { name: "discover_funded_companies", category: "外部读取", description: "用公开证据发现近期融资公司", dataScope: "公司公告、投资机构公告与公开新闻", control: "明确指令", local: false },
   { name: "scan_career_sources", category: "外部读取", description: "扫描已验证的官方职位来源", dataScope: "公开职位页与 ATS", control: "明确指令", local: false },
@@ -64,11 +62,12 @@ export const toolProfiles: ToolProfile[] = [
 ];
 
 export const pageMeta: Record<ViewKey, { title: string; description: string }> = {
-  opportunities: { title: "岗位工作台", description: "查看已读取岗位、匹配结论和当前需要推进的事项" },
-  workbench: { title: "求职准备", description: "围绕一份岗位完成匹配分析、定制简历、面试准备和复盘" },
-  dashboard: { title: "综合控制台", description: "查看岗位项目、评估、简历、面试和最近行动的本地沉淀" },
-  chat: { title: "Agent 对话", description: "提出目标，由 Agent 分析、执行并在需要时请你确认" },
-  settings: { title: "Agent 设置", description: "维护 Agent 可使用的资料、模型连接和隐私边界" }
+  opportunities: { title: "机会中心", description: "收集、筛选和排序每一个值得推进的机会" },
+  workbench: { title: "求职工坊", description: "填写岗位描述和任职要求，对照简历做分析和面试准备" },
+  "interview-prep": { title: "项目解析", description: "围绕真实项目证据练习文字问答并回顾知识点" },
+  dashboard: { title: "求职概览", description: "掌握机会进度、求职节奏和下一步行动" },
+  chat: { title: "今天，推进你的下一次机会", description: "告诉 CareerLoop 你的目标，开始梳理、准备或推进" },
+  settings: { title: "个人设置", description: "维护 CareerLoop 使用的资料、模型连接和偏好" }
 };
 
 export const emptyProfile = {

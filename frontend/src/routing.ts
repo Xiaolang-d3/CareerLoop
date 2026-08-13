@@ -2,12 +2,15 @@ import type { ViewKey } from "./types";
 
 export type SettingsPage = "overview" | "profile" | "model" | "agent";
 export type OpportunitiesPage = "index" | "new" | "pipeline" | "sources" | "run" | "job";
+export type PreparationPage = "projects" | "knowledge" | "records";
+export type PreparationFocus = "questions" | "knowledge" | "gaps";
 
 export type AppRoute =
   | { section: "opportunities"; page?: OpportunitiesPage; runId?: number; discoveredJobId?: number }
   | { section: "workbench"; page?: "index" | "new" | "detail" | "evaluation" | "evaluation_section" | "evaluation_deep" | "comparison"; jobId?: number; sectionKey?: "a" | "b" | "c" | "d" | "e" | "f" | "g"; comparisonId?: number }
+  | { section: "interview-prep"; page?: PreparationPage; experienceId?: string; focus?: PreparationFocus; nodeId?: string }
   | { section: "dashboard" }
-  | { section: "chat" }
+  | { section: "chat"; conversationId?: number }
   | { section: "settings"; page: SettingsPage; returnTo?: "workbench" };
 
 const legacyViewMap: Record<string, ViewKey> = {
@@ -16,6 +19,7 @@ const legacyViewMap: Record<string, ViewKey> = {
   tools: "dashboard",
   opportunities: "opportunities",
   workbench: "workbench",
+  "interview-prep": "interview-prep",
   dashboard: "dashboard",
   chat: "chat",
   settings: "settings"
@@ -23,6 +27,7 @@ const legacyViewMap: Record<string, ViewKey> = {
 
 export function routeForSection(section: ViewKey): AppRoute {
   if (section === "opportunities") return { section, page: "index" };
+  if (section === "interview-prep") return { section, page: "projects" };
   return section === "settings" ? { section, page: "overview" } : { section };
 }
 
@@ -52,8 +57,28 @@ export function parseAppHash(hash: string): AppRoute | null {
   if (jobDetailMatch) {
     return { section: "workbench", page: "detail", jobId: Number(jobDetailMatch[1]) };
   }
+  if (path === "interview-prep" || path === "projects") return { section: "interview-prep", page: "projects" };
+  const projectRoute = path.match(/^projects\/([^/]+)(?:\/(questions|knowledge|gaps)(?:\/([^/]+))?)?$/);
+  if (projectRoute) return {
+    section: "interview-prep",
+    page: "projects",
+    experienceId: decodeURIComponent(projectRoute[1]),
+    focus: projectRoute[2] as PreparationFocus | undefined,
+    nodeId: projectRoute[3] ? decodeURIComponent(projectRoute[3]) : undefined
+  };
+  if (path === "knowledge") return { section: "interview-prep", page: "knowledge" };
+  const knowledgeRoute = path.match(/^knowledge\/([^/]+)(?:\/([^/]+))?$/);
+  if (knowledgeRoute) return {
+    section: "interview-prep",
+    page: "knowledge",
+    experienceId: decodeURIComponent(knowledgeRoute[1]),
+    nodeId: knowledgeRoute[2] ? decodeURIComponent(knowledgeRoute[2]) : undefined
+  };
+  if (path === "interview-records") return { section: "interview-prep", page: "records" };
   if (path === "dashboard") return { section: "dashboard" };
   if (path === "chat") return { section: "chat" };
+  const chatRoute = path.match(/^chat\/(\d+)$/);
+  if (chatRoute) return { section: "chat", conversationId: Number(chatRoute[1]) };
   if (path === "settings" || path === "settings/overview") {
     return { section: "settings", page: "overview" };
   }
@@ -73,8 +98,8 @@ export function parseAppHash(hash: string): AppRoute | null {
 export function initialAppRoute(hash: string, legacyView: string | null): AppRoute {
   const parsed = parseAppHash(hash);
   if (parsed) return parsed;
-  if (hash && hash !== "#") return { section: "workbench" };
-  return routeForSection("chat");
+  if (hash && hash !== "#") return { section: "workbench", page: "index" };
+  return { section: "workbench", page: "index" };
 }
 
 export function appRouteHash(route: AppRoute): string {
@@ -95,6 +120,24 @@ export function appRouteHash(route: AppRoute): string {
     if (route.page === "comparison" && route.comparisonId) return `#/workbench/comparisons/${route.comparisonId}`;
     return "#/workbench";
   }
+  if (route.section === "interview-prep") {
+    if (route.page === "knowledge") {
+      if (!route.experienceId) return "#/knowledge";
+      const experience = encodeURIComponent(route.experienceId);
+      return route.nodeId ? `#/knowledge/${experience}/${encodeURIComponent(route.nodeId)}` : `#/knowledge/${experience}`;
+    }
+    if (route.page === "records") return "#/interview-records";
+    if (route.experienceId) {
+      const experience = encodeURIComponent(route.experienceId);
+      if (!route.focus) return `#/projects/${experience}`;
+      const focus = route.focus;
+      return route.nodeId
+        ? `#/projects/${experience}/${focus}/${encodeURIComponent(route.nodeId)}`
+        : `#/projects/${experience}/${focus}`;
+    }
+    return "#/projects";
+  }
+  if (route.section === "chat") return route.conversationId ? `#/chat/${route.conversationId}` : "#/chat";
   if (route.section !== "settings") return `#/${route.section}`;
   if (route.page === "overview") return "#/settings";
   const query = route.page === "profile" && route.returnTo === "workbench"

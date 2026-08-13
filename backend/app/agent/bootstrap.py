@@ -23,7 +23,6 @@ from ..tools import (
     GetJobEvaluationTool,
     ProposeCandidateKnowledgeTool,
     ProcessOpportunityPipelineTool,
-    RecordApplicationOutcomeTool,
     RecordInterviewDebriefTool,
     ReviewJobEvaluationTool,
     RunJobDeepResearchTool,
@@ -73,7 +72,6 @@ def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
     tools.register_handler(AnalyzeJobAgainstStrategyTool())
     tools.register_handler(GenerateCandidateMaterialTool())
     tools.register_handler(RecordInterviewDebriefTool())
-    tools.register_handler(RecordApplicationOutcomeTool())
     tools.register_handler(DiscoverCompaniesTool())
     tools.register_handler(DiscoverFundedCompaniesTool())
     tools.register_handler(ScanCareerSourcesTool())

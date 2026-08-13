@@ -115,7 +115,7 @@ class InterviewWorkflowTest(unittest.TestCase):
             db_path=self.db_path,
         )
 
-        self.assertEqual(get_job(self.job["id"], self.db_path)["status"], "interviewing")
+        self.assertEqual(interview["status"], "scheduled")
         self.assertEqual(
             list_interview_rounds(self.job["id"], self.db_path)[0]["id"],
             interview["id"],

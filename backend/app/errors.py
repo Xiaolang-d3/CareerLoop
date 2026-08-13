@@ -8,7 +8,3 @@ class DuplicateRegistrationError(RegistrationError):
 
 class UnknownRegistrationError(RegistrationError):
     pass
-
-
-class CapabilityNotSupportedError(RuntimeError):
-    pass

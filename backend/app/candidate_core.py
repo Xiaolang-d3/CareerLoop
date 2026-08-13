@@ -8,9 +8,19 @@ from pathlib import Path
 from typing import Any, Literal
 
 from . import profile_document
+from .candidate_memory import (
+    get_memory_item,
+    is_memory_id,
+    list_memory_items,
+    merge_memory,
+    propose_memory,
+    review_memory,
+)
 from .db import connect, json_dump, row_to_dict, rows_to_dicts
+from .knowledge import delete_document, index_document
 from .privacy import scan_and_redact
 from .profile_intelligence import extract_skills, suggest_profile_fields
+from .resume_parser import normalize_resume_text
 
 
 class ProfileNotInitializedError(ValueError):
@@ -76,15 +86,135 @@ def _profile_response(document: profile_document.ProfileDocument) -> dict[str, A
         "resume_filename": "",
         "skills_json": "[]",
         "projects_json": "[]",
-        # 文档是单一事实来源，没有需要失效的缓存，固定为 1。
-        "knowledge_revision": 1,
+        "knowledge_revision": document.knowledge_revision,
         "created_at": document.created_at,
         "updated_at": document.updated_at,
     }
 
 
 def active_profile_id(db_path: str | Path | None = None) -> int | None:
-    return PROFILE_ID if profile_document.exists(db_path) else None
+    return PROFILE_ID if _load_or_migrate_profile(db_path) is not None else None
+
+
+def _legacy_list(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    try:
+        loaded = json.loads(str(value or "[]"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    return loaded if isinstance(loaded, list) else []
+
+
+def _load_or_migrate_profile(
+    db_path: str | Path | None = None,
+) -> profile_document.ProfileDocument | None:
+    """Load the document profile, upgrading a legacy SQLite profile once."""
+    document = profile_document.load(db_path)
+    if document is not None:
+        return document
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM profiles ORDER BY updated_at DESC, id DESC LIMIT 1"
+        ).fetchone()
+    if row is None:
+        return None
+    legacy = dict(row)
+    skills = [str(item).strip() for item in _legacy_list(legacy.get("skills_json")) if str(item).strip()]
+    projects: list[str] = []
+    for item in _legacy_list(legacy.get("projects_json")):
+        if isinstance(item, dict):
+            text = "：".join(
+                part for part in (
+                    str(item.get("name") or "").strip(),
+                    str(item.get("summary") or item.get("description") or "").strip(),
+                ) if part
+            )
+        else:
+            text = str(item).strip()
+        if text:
+            projects.append(text)
+    migrated = profile_document.save(
+        profile_document.ProfileDocument(
+            name=str(legacy.get("name") or profile_document.DEFAULT_PROFILE_NAME),
+            locale=str(legacy.get("locale") or "zh-CN"),
+            privacy_mode=str(legacy.get("privacy_mode") or "redacted"),
+            knowledge_revision=max(int(legacy.get("knowledge_revision") or 0), 0),
+            created_at=str(legacy.get("created_at") or ""),
+            updated_at=str(legacy.get("updated_at") or ""),
+            skills="\n".join(f"- {item}" for item in skills),
+            projects="\n".join(f"- {item}" for item in projects),
+            resume_text=str(legacy.get("resume_text") or ""),
+        ),
+        db_path,
+    )
+    _sync_profile_compat(migrated, db_path)
+    return migrated
+
+
+def _sync_profile_compat(
+    document: profile_document.ProfileDocument,
+    db_path: str | Path | None = None,
+) -> None:
+    """Mirror the document profile for legacy tables with profile foreign keys."""
+    resume_text = document.resume_text
+    redacted_text = scan_and_redact(resume_text)[1] if resume_text else ""
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO profiles (
+                id, name, resume_text, resume_filename, resume_redacted_text,
+                privacy_mode, skills_json, projects_json, locale, knowledge_revision
+            ) VALUES (?, ?, ?, '', ?, ?, '[]', '[]', ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                resume_text = excluded.resume_text,
+                resume_redacted_text = excluded.resume_redacted_text,
+                privacy_mode = excluded.privacy_mode,
+                locale = excluded.locale,
+                knowledge_revision = excluded.knowledge_revision,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                PROFILE_ID,
+                document.name,
+                resume_text,
+                redacted_text,
+                document.privacy_mode,
+                document.locale,
+                document.knowledge_revision,
+            ),
+        )
+    _sync_resume_knowledge(redacted_text, db_path)
+
+
+def _sync_resume_knowledge(
+    redacted_text: str,
+    db_path: str | Path | None = None,
+) -> None:
+    """Keep the resume evidence index in step with the saved profile.
+
+    Only redacted text is indexed: search_resume_evidence hands its results
+    straight to the model.
+    """
+    if redacted_text.strip():
+        index_document(
+            "resume",
+            PROFILE_ID,
+            "候选人简历",
+            redacted_text,
+            db_path=db_path,
+        )
+    else:
+        delete_document("resume", PROFILE_ID, db_path=db_path)
+
+
+def _touch_profile_revision(
+    db_path: str | Path | None = None,
+) -> profile_document.ProfileDocument:
+    document = profile_document.save(_require_document(db_path), db_path)
+    _sync_profile_compat(document, db_path)
+    return document
 
 
 def create_or_update_profile(
@@ -103,12 +233,8 @@ def create_or_update_profile(
         locale=locale[:20] or "zh-CN",
         privacy_mode=privacy_mode,
     )
+    _sync_profile_compat(document, db_path)
     return _profile_response(document)
-
-
-def delete_profile(db_path: str | Path | None = None) -> bool:
-    """删除画像文档。文档即全部画像数据，所以删文件等价于原先的级联删除。"""
-    return profile_document.delete(db_path)
 
 
 DEFAULT_PROFILE_NAME = profile_document.DEFAULT_PROFILE_NAME
@@ -130,26 +256,25 @@ def ensure_profile(db_path: str | Path | None = None) -> int:
 def _require_document(
     db_path: str | Path | None = None,
 ) -> profile_document.ProfileDocument:
-    document = profile_document.load(db_path)
+    document = _load_or_migrate_profile(db_path)
     if document is None:
         raise ProfileNotInitializedError("请先创建候选人画像")
     return document
 
 
 def _require_profile(profile_id: int | None, db_path: str | Path | None = None) -> int:
-    _require_document(db_path)
+    _sync_profile_compat(_require_document(db_path), db_path)
     return PROFILE_ID
 
 
 def _bump_revision(profile_id: int, conn) -> int:
     """No-op shim.
 
-    ``knowledge_revision`` existed to invalidate the ``candidate_context_briefs``
-    cache. The document is the single source of truth and is re-read on every
-    access, so there is nothing to invalidate. Kept so the strategy, story, and
-    voice functions that still live in SQLite need no changes.
+    ``knowledge_revision`` is held in the profile document and increments on
+    every document write. Strategy and story writes are stored in SQLite, so
+    they do not mutate the profile document from this compatibility shim.
     """
-    return 1
+    return 0
 
 
 # 文档模型里没有独立的"资料来源"表：简历正文就是文档的一个小节，其他来源
@@ -174,11 +299,12 @@ def create_candidate_source(
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
     _require_document(db_path)
-    clean_content = content.strip()
+    clean_content = normalize_resume_text(content).strip()
     if not clean_content:
         raise ValueError("资料内容不能为空")
     if source_type == "resume":
         document = profile_document.update(db_path, resume_text=clean_content)
+        _sync_profile_compat(document, db_path)
     else:
         document = profile_document.load(db_path) or profile_document.ProfileDocument()
     return _source_response(document, source_type=source_type, title=title)
@@ -233,6 +359,7 @@ def update_candidate_source_access(
     _require_document(db_path)
     next_privacy_mode = privacy_mode or ("original" if allow_model_original else "redacted")
     document = profile_document.update(db_path, privacy_mode=next_privacy_mode)
+    _sync_profile_compat(document, db_path)
     return _source_response(document, title="简历原文")
 
 
@@ -252,25 +379,20 @@ def propose_fact(
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
     _require_document(db_path)
-    clean_statement = " ".join(statement.strip().split())
-    if not clean_statement:
-        raise ValueError("事实内容不能为空")
-    if sensitivity not in {"public", "private", "sensitive"}:
-        raise ValueError("事实敏感级别不合法")
-    section = profile_document.SECTION_BY_FACT_CATEGORY.get(category, "experience")
-    profile_document.append_section(section, clean_statement, db_path)
-    document = _require_document(db_path)
-    match = next(
-        (
-            item
-            for item in document.facts()
-            if item["statement"] == clean_statement and item["section"] == section
-        ),
-        None,
+    return propose_memory(
+        profile_id=PROFILE_ID,
+        category=category,
+        statement=statement,
+        canonical_key=canonical_key,
+        value=value,
+        sensitivity=sensitivity,
+        confidence=confidence,
+        source_id=source_id,
+        excerpt=excerpt,
+        locator=locator,
+        source_kind=extraction_method,
+        db_path=db_path,
     )
-    if match is None:  # 理论上不会发生：刚写入就应当读得到
-        raise ValueError("画像写入失败")
-    return match
 
 
 def ingest_resume_knowledge(
@@ -292,6 +414,10 @@ def ingest_resume_knowledge(
                 category="skill",
                 statement=f"具备 {skill} 相关经验",
                 value={"name": skill},
+                source_id=source_id,
+                excerpt=skill,
+                extraction_method="resume_parser",
+                confidence=0.8,
                 db_path=db_path,
             )
         )
@@ -301,7 +427,15 @@ def ingest_resume_knowledge(
             continue
         if re.search(r"\d+(?:\.\d+)?\s*%|[$￥¥€£]\s*\d|\d+\s*[万亿千kKmM+]", clean):
             proposed.append(
-                propose_fact(category="achievement", statement=clean, db_path=db_path)
+                propose_fact(
+                    category="achievement",
+                    statement=clean,
+                    source_id=source_id,
+                    excerpt=clean,
+                    extraction_method="resume_parser",
+                    confidence=0.8,
+                    db_path=db_path,
+                )
             )
     if suggestions.get("target_roles"):
         ensure_default_strategy(
@@ -316,6 +450,17 @@ def remove_fact(fact_id: int, db_path: str | Path | None = None) -> bool:
     取代原先的 review_fact(status="retracted")：文档模型下"不要这条"就是删除，
     不需要保留撤回状态。
     """
+    if is_memory_id(fact_id):
+        existing = get_memory_item(fact_id, db_path=db_path)
+        if existing is None or existing.get("status") == "retracted":
+            return False
+        try:
+            review_memory(fact_id, action="retract", db_path=db_path)
+        except ValueError:
+            return False
+        if existing.get("status") == "confirmed":
+            _touch_profile_revision(db_path)
+        return True
     document = _require_document(db_path)
     target = next((item for item in document.facts() if item["id"] == fact_id), None)
     if target is None:
@@ -326,12 +471,13 @@ def remove_fact(fact_id: int, db_path: str | Path | None = None) -> bool:
         for line in document.entries(section)
         if line != target["statement"]
     ]
-    profile_document.save(
+    updated = profile_document.save(
         document.model_copy(
             update={section: "\n".join(f"- {line}" for line in kept)}
         ),
         db_path,
     )
+    _sync_profile_compat(updated, db_path)
     return True
 
 
@@ -343,16 +489,106 @@ def list_facts(
     db_path: str | Path | None = None,
 ) -> list[dict[str, Any]]:
     document = _require_document(db_path)
-    items = document.facts()
-    if category:
-        items = [item for item in items if item["category"] == category]
-    # ``status`` 参数保留是为了不改调用方签名；文档模型里内容不再分状态，
-    # 一律视为用户画像的一部分。
     if status and status not in FACT_STATUSES:
         raise ValueError("事实状态不合法")
-    if status in {"disputed", "retracted"}:
-        return []
+    document_items = [{**item, "status": "confirmed", "memory_item": False} for item in document.facts()]
+    memory_status = {
+        "pending": "proposed",
+        "confirmed": "confirmed",
+        "disputed": "rejected",
+        "retracted": "retracted",
+    }.get(status or "")
+    memory_items = list_memory_items(
+        profile_id=PROFILE_ID,
+        status=memory_status or None,
+        category=category,
+        db_path=db_path,
+    )
+    if status in {"pending", "disputed", "retracted"}:
+        return memory_items
+    if status is None:
+        memory_items = [
+            item for item in memory_items
+            if item.get("status") in {"pending", "confirmed"}
+        ]
+    items = document_items + memory_items
+    if status == "confirmed":
+        items = [item for item in items if item.get("status") == "confirmed"]
+    if category:
+        items = [item for item in items if item["category"] == category]
     return items
+
+
+def review_fact(
+    fact_id: int,
+    *,
+    status: FactStatus,
+    statement: str = "",
+    db_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Review a proposed memory item or safely update a document baseline fact."""
+    if status not in FACT_STATUSES:
+        raise ValueError("事实状态不合法")
+    if is_memory_id(fact_id):
+        before = get_memory_item(fact_id, db_path=db_path)
+        action = {
+            "pending": "confirm",
+            "confirmed": "confirm",
+            "disputed": "reject",
+            "retracted": "retract",
+        }[status]
+        if statement.strip():
+            action = "edit"
+        reviewed = review_memory(
+            fact_id, action=action, statement=statement, db_path=db_path
+        )
+        before_confirmed = bool(before and before.get("status") == "confirmed")
+        after_confirmed = reviewed.get("status") == "confirmed"
+        if before_confirmed != after_confirmed or (
+            before_confirmed and after_confirmed and action == "edit"
+        ):
+            _touch_profile_revision(db_path)
+        return reviewed
+
+    document = _require_document(db_path)
+    target = next((item for item in document.facts() if item["id"] == fact_id), None)
+    if target is None:
+        raise ValueError("事实不存在")
+    if status in {"disputed", "retracted"}:
+        remove_fact(fact_id, db_path)
+        return {**target, "status": "retracted"}
+    if statement.strip():
+        section = target["section"]
+        replacement = " ".join(statement.split())
+        lines = [
+            replacement if line == target["statement"] else line
+            for line in document.entries(section)
+        ]
+        saved = profile_document.save(
+            document.model_copy(update={section: "\n".join(f"- {line}" for line in lines)}),
+            db_path,
+        )
+        _sync_profile_compat(saved, db_path)
+        updated = _require_document(db_path)
+        target = next(
+            item for item in updated.facts()
+            if item["section"] == section and item["statement"] == replacement
+        )
+    return {**target, "status": "confirmed"}
+
+
+def merge_facts(
+    source_fact_id: int,
+    target_fact_id: int,
+    db_path: str | Path | None = None,
+) -> dict[str, Any]:
+    if not is_memory_id(source_fact_id) or not is_memory_id(target_fact_id):
+        raise ValueError("只能合并待审核记忆条目")
+    source = get_memory_item(source_fact_id, db_path=db_path)
+    merged = merge_memory(source_fact_id, target_fact_id, db_path=db_path)
+    if source and source.get("status") == "confirmed":
+        _touch_profile_revision(db_path)
+    return merged
 
 
 
@@ -988,7 +1224,11 @@ def verify_candidate_material(
     document = _require_document(db_path)
     # 事实门比对整份画像文档：声称的数字、日期、证书必须在用户自己写下的内容里
     # 出现过。这条保护不依赖事实状态机，所以文档模型下依然成立。
-    source_text = document.section_text().lower()
+    source_text = "\n".join(
+        [document.section_text(), *[item["statement"] for item in list_facts(
+            profile_id=resolved, status="confirmed", db_path=db_path
+        )]]
+    ).lower()
     retracted: list[dict[str, Any]] = []
     target = text.strip()
     metrics = {

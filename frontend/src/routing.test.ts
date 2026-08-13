@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { appRouteHash, initialAppRoute, parseAppHash } from "./routing";
 
 describe("home route", () => {
-  it("opens the Agent conversation when no route is specified", () => {
-    expect(initialAppRoute("", null)).toEqual({ section: "chat" });
-    expect(initialAppRoute("#", "dashboard")).toEqual({ section: "chat" });
+  it("opens the job workbench when no route is specified", () => {
+    expect(initialAppRoute("", null)).toEqual({ section: "workbench", page: "index" });
+    expect(initialAppRoute("#", "dashboard")).toEqual({ section: "workbench", page: "index" });
   });
 });
 
@@ -33,5 +33,34 @@ describe("opportunity discovery route hierarchy", () => {
     expect(parseAppHash("#/opportunities/runs/7")).toEqual({ section: "opportunities", page: "run", runId: 7 });
     expect(parseAppHash("#/opportunities/jobs/9")).toEqual({ section: "opportunities", page: "job", discoveredJobId: 9 });
     expect(appRouteHash({ section: "opportunities", page: "run", runId: 7 })).toBe("#/opportunities/runs/7");
+  });
+});
+
+describe("interview preparation route", () => {
+  it("keeps personal preparation independent of a specific job and separates its three areas", () => {
+    expect(parseAppHash("#/interview-prep")).toEqual({ section: "interview-prep", page: "projects" });
+    expect(parseAppHash("#/knowledge")).toEqual({ section: "interview-prep", page: "knowledge" });
+    expect(parseAppHash("#/interview-records")).toEqual({ section: "interview-prep", page: "records" });
+    expect(appRouteHash({ section: "interview-prep", page: "projects" })).toBe("#/projects");
+    expect(appRouteHash({ section: "interview-prep", page: "knowledge" })).toBe("#/knowledge");
+  });
+
+  it("preserves the active experience, preparation focus, and node in deep links", () => {
+    expect(parseAppHash("#/projects/experience-1/questions/experience-1-contribution")).toEqual({
+      section: "interview-prep", page: "projects", experienceId: "experience-1", focus: "questions", nodeId: "experience-1-contribution"
+    });
+    expect(appRouteHash({
+      section: "interview-prep", page: "projects", experienceId: "experience-1", focus: "knowledge", nodeId: "experience-1-skill-fastapi"
+    })).toBe("#/projects/experience-1/knowledge/experience-1-skill-fastapi");
+    expect(parseAppHash("#/knowledge/experience-1/experience-1-skill-fastapi")).toEqual({
+      section: "interview-prep", page: "knowledge", experienceId: "experience-1", nodeId: "experience-1-skill-fastapi"
+    });
+  });
+});
+
+describe("conversation route", () => {
+  it("keeps a specific conversation addressable", () => {
+    expect(parseAppHash("#/chat/42")).toEqual({ section: "chat", conversationId: 42 });
+    expect(appRouteHash({ section: "chat", conversationId: 42 })).toBe("#/chat/42");
   });
 });

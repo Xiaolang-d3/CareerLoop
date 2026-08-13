@@ -47,6 +47,16 @@
     ) {
       return "captcha";
     }
+    // BOSS may display a generic “登录后查看” call-to-action even on an
+    // otherwise readable job-detail page. Prefer the actual page evidence so
+    // a visible JD is not mistakenly rejected as a login page.
+    if (
+      path.includes("/job_detail/")
+      && combined.includes("职位描述")
+      && text.length >= 25
+    ) {
+      return "job_detail";
+    }
     if (
       path.includes("/login")
       || ["登录后查看", "登录/注册", "请先登录"].some((item) => combined.includes(item))
@@ -57,13 +67,6 @@
       ["职位已下架", "岗位已下架", "职位不存在", "停止招聘"].some((item) => combined.includes(item))
     ) {
       return "job_expired";
-    }
-    if (
-      path.includes("/job_detail/")
-      && combined.includes("职位描述")
-      && text.length >= 25
-    ) {
-      return "job_detail";
     }
     if (!text || text.length < 40) return "empty_page";
     return "unknown";

@@ -51,8 +51,8 @@ describe("JobEvaluationPage", () => {
     const value = props();
     render(<JobEvaluationPage {...value} />);
     expect(await screen.findByRole("heading", { name: "可以考虑" })).toBeInTheDocument();
-    expect(screen.getByText("真实性与用工风险")).toBeInTheDocument();
-    expect(screen.getByText("六维透明评分")).toBeInTheDocument();
+    expect(screen.getByText("岗位风险提示")).toBeInTheDocument();
+    expect(screen.getByText("匹配情况")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /真实性风险/ }));
     expect(value.onOpenSection).toHaveBeenCalledWith("g");
   });

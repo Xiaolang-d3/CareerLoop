@@ -309,15 +309,6 @@ def create_interview_round(
             ),
         )
         round_id = cursor.lastrowid
-        if job["status"] in {"saved", "applied"}:
-            conn.execute(
-                """
-                UPDATE jobs
-                SET status = 'interviewing', updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                (job_id,),
-            )
     label = INTERVIEW_TYPE_LABELS[round_type]
     detail = " · ".join(
         item

@@ -31,7 +31,9 @@ React Web 工作台
             -> OpenAI 兼容适配器
        -> 工具注册表
             -> JD 与简历分析工具
-            -> 简历证据检索工具
+            -> 候选人画像与证据工具
+            -> 岗位评估与机会发现工具
+            -> 公开信息研究工具
        -> 工作流状态投影
        -> SQLite 仓储
   -> 本地附件目录或 MinIO
@@ -70,7 +72,7 @@ FastAPI API 负责：
 
 目标状态下，API 层不应包含主要业务 SQL、模型提示词或复杂业务决策。当前部分旧接口仍直接访问 SQLite，后续应迁移到服务层和仓储层。
 
-本地模式默认只应监听 `127.0.0.1`。如果开放到局域网，必须增加访问认证，不能把 CORS 当作安全边界。
+本地模式默认只应监听 `127.0.0.1`。超出本机访问时必须经过 `backend/app/auth.py` 的管理员口令认证；远程访问由 `scripts/start-remote.sh` 通过 Cloudflare Tunnel 提供 HTTPS，后端本身不在路由器上开放端口。不能把 CORS 当作安全边界。
 
 ## 6. Agent Runtime
 
@@ -129,15 +131,38 @@ class ModelProvider(Protocol):
 
 ## 8. 工具边界
 
-工具注册表当前暴露 JD 与简历分析能力，并允许继续注册浏览器、职位库、文件生成或外部操作工具。运行时只把当前任务计划允许的最小工具集合交给模型。
+工具注册表在 `backend/app/agent/bootstrap.py` 中注册，并允许继续注册浏览器、职位库、文件生成或外部操作工具。运行时只把当前任务计划允许的最小工具集合交给模型。当前注册的工具按能力域划分：
 
-### 只读工具
+### 简历与 JD 分析
 
-- `search_resume_evidence`
-
-### 分析工具
-
+- `search_resume_evidence`（只读）
 - `analyze_resume_against_jd`
+- `generate_tailored_resume_content`
+- `generate_interview_advice`
+
+### 候选人画像与访谈
+
+- `get_candidate_context`、`search_candidate_evidence`（只读）
+- `propose_candidate_knowledge`
+- `start_profile_interview`、`record_profile_interview_answer`、`pause_profile_interview`
+
+### 岗位评估与决策
+
+- `create_job_evaluation`、`get_job_evaluation`、`review_job_evaluation`
+- `compare_job_evaluations`、`run_job_deep_research`
+- `analyze_job_against_strategy`
+
+### 机会发现与推进
+
+- `discover_companies`、`discover_funded_companies`、`scan_career_sources`
+- `process_opportunity_pipeline`
+
+### 材料、面试与联网研究
+
+- `generate_candidate_material`、`record_interview_debrief`
+- `research_company`、`search_public_web`（外部只读）
+
+工具定义与注册是两件事：`backend/app/tools/career_os.py` 中的 `record_application_outcome` 已定义但未注册，模型无法调用。新增工具必须同时通过注册表和任务计划两道关卡。
 
 当前内置路径中的 JD 粘贴、岗位截图上传、OCR 和文本清理由 API 与附件服务处理，不进入模型工具集。分析工具读取当前活动画像的脱敏简历，不允许模型选择任意画像 ID。
 
@@ -250,26 +275,21 @@ class ToolResult(BaseModel):
 
 ## 13. 数据与持久化
 
-当前使用 SQLite，主要表包括：
+当前使用 SQLite。表按领域划分，完整清单见 `backend/app/db.py`，主要领域包括：
 
-- `profiles`
-- `preferences`
-- `jobs`
-- `job_evaluations`、`job_evaluation_sections`、`job_evaluation_dimensions`
-- `job_evaluation_requirements`、`job_evaluation_sources`、`job_evaluation_risks`、`job_evaluation_reviews`
-- `conversations`
-- `conversation_tasks`
-- `chat_messages`
-- `attachments`
-- `knowledge_chunks`
-- `agent_settings`
-- `workflow_runs`
-- `workflow_nodes`
-- `workflow_events`
+- 账号与画像：`users`、`profiles`、`preferences`、`profile_interview_sessions`
+- 岗位与评估：`jobs`、`job_evaluations` 及其 section/dimension/requirement/source/risk/review 子表、`job_comparisons`、`job_comparison_entries`
+- 材料与面试：`resume_versions`、`resume_changes`、`interview_kits`、`interview_tasks`、`interview_rounds`、`interview_debriefs`、`interview_preparation_state`、`interview_question_bank`
+- 机会发现：`companies`、`company_signals`、`opportunity_sources`、`opportunity_scan_runs`、`discovered_jobs`、`discovery_runs`
+- 候选人记忆与叙事：`candidate_memory_items`、`candidate_stories`、`candidate_narratives`、`career_strategies`、`voice_profiles`
+- 对话与运行：`conversations`、`conversation_tasks`、`chat_messages`、`agent_settings`、`agent_tool_calls`、`model_service_events`
+- 附件与知识：`attachments`、`job_capture_snapshots`、`knowledge_chunks`
+- 工作流与缓存：`workflow_runs`、`workflow_nodes`、`workflow_events`、`company_research_cache`、`job_research_cache`
+- 迁移：`schema_migrations`
 
 SQLite 连接应由真正的上下文管理器关闭，并为本地并发场景配置 WAL 和 busy timeout。
 
-在发布前需要引入 schema 版本和可重复执行的迁移机制。`CREATE TABLE IF NOT EXISTS` 和临时 `ALTER TABLE` 只能作为早期本地兼容手段。
+建表仍以 `CREATE TABLE IF NOT EXISTS` 为主，增量结构变更走 `db._apply_migrations()` 的编号事务迁移，并记录在 `schema_migrations` 中。当前迁移只支持追加，不支持回滚；破坏性变更仍需要单独的升级方案。
 
 ## 14. 配置
 

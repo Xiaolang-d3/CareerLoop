@@ -23,13 +23,21 @@ def index_document(
     """Index redacted/local text using a deterministic on-device hash vector."""
     chunks = _chunk_text(content)
     with connect(db_path) as conn:
-        _load_vec(conn)
+        try:
+            _load_vec(conn)
+            vectors_available = True
+        except Exception:
+            # Mirrors search_knowledge and delete_document: the text rows stay
+            # authoritative so keyword fallback search still has data to read
+            # when the optional native vector extension is unavailable.
+            vectors_available = False
         existing = conn.execute(
             "SELECT id FROM knowledge_chunks WHERE source_type = ? AND source_id = ?",
             (source_type, str(source_id)),
         ).fetchall()
-        for row in existing:
-            conn.execute("DELETE FROM vec_knowledge WHERE rowid = ?", (row["id"],))
+        if vectors_available:
+            for row in existing:
+                conn.execute("DELETE FROM vec_knowledge WHERE rowid = ?", (row["id"],))
         conn.execute(
             "DELETE FROM knowledge_chunks WHERE source_type = ? AND source_id = ?",
             (source_type, str(source_id)),
@@ -42,10 +50,11 @@ def index_document(
                 """,
                 (source_type, str(source_id), title, chunk, json_dump(metadata or {})),
             )
-            conn.execute(
-                "INSERT INTO vec_knowledge(rowid, embedding) VALUES (?, ?)",
-                (cursor.lastrowid, _serialize(_embed(chunk))),
-            )
+            if vectors_available:
+                conn.execute(
+                    "INSERT INTO vec_knowledge(rowid, embedding) VALUES (?, ?)",
+                    (cursor.lastrowid, _serialize(_embed(chunk))),
+                )
     return len(chunks)
 
 

@@ -6,7 +6,7 @@ describe("JobStageNav", () => {
   it("shows the user-facing job agent workflow", () => {
     render(
       <JobStageNav
-        activeStage="overview"
+        activeStage="analysis"
         analysis={null}
         resumeVersions={[]}
         interviewKits={[]}
@@ -17,7 +17,7 @@ describe("JobStageNav", () => {
     );
 
     expect(screen.getByRole("navigation", { name: "岗位工作流" })).toBeInTheDocument();
-    for (const stage of ["岗位要求", "匹配分析", "定制简历", "面试重点问答", "面试记录与复盘"]) {
+    for (const stage of ["匹配分析", "定制简历", "面试准备"]) {
       expect(screen.getByRole("button", { name: stage })).toBeInTheDocument();
     }
   });

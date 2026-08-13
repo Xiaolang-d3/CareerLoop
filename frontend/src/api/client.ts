@@ -1,6 +1,35 @@
-export function createApiClient(apiBase: string) {
+export const DEFAULT_API_TIMEOUT_MS = 30_000;
+
+export async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  options: RequestInit = {},
+  timeoutMs = DEFAULT_API_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const onAbort = () => controller.abort();
+  options.signal?.addEventListener("abort", onAbort, { once: true });
+  const timeout = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    return await fetch(input, { ...options, signal: controller.signal });
+  } catch (reason) {
+    if (timedOut) throw new Error("请求超时，请检查网络后重试");
+    throw reason;
+  } finally {
+    window.clearTimeout(timeout);
+    options.signal?.removeEventListener("abort", onAbort);
+  }
+}
+
+export function createApiClient(apiBase: string, accessToken?: string) {
   return async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
-    const response = await fetch(`${apiBase}${path}`, options);
+    const headers = new Headers(options?.headers);
+    if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
+    const response = await fetchWithTimeout(`${apiBase}${path}`, { ...options, headers });
     if (!response.ok) {
       let message = `${path} 请求失败（${response.status}）`;
       try {

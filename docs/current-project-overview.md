@@ -1,6 +1,6 @@
 # BossCopilot 当前项目说明
 
-> 本文基于 2026-07-29 的仓库代码、配置、测试和界面实现整理，用于回答“这是一个怎样的项目、当前有什么功能”。如历史 PRD、变更日志与本文冲突，应以当前代码、根目录 `README.md` 和 `docs/technical-architecture.md` 为准。
+> 本文基于 2026-08-13 的仓库代码、配置、测试和界面实现整理，用于回答“这是一个怎样的项目、当前有什么功能”。如历史 PRD、变更日志与本文冲突，应以当前代码、根目录 `README.md` 和 `docs/technical-architecture.md` 为准。
 
 ## 1. 一句话概括
 
@@ -19,7 +19,6 @@ BossCopilot 是一个面向个人用户的、本地优先的求职 Agent 工作�
 | `bosscopilot/` | 主产品仓库，包含 React 前端、FastAPI 后端、测试和产品文档 | 是 |
 | `agent-search/` | 独立的自托管搜索服务，可为公司研究和单轮联网搜索提供公开网页数据 | 否，联网能力启用时才需要 |
 | `docs/`、`output/`、`tmp/` | Playwright 实践笔记、CSV、DOCX、截图和临时构建产物 | 否，不属于主产品运行链路 |
-| `backend/` | 当前为空目录 | 否 |
 
 因此，本文中的“项目”主要指 `bosscopilot/`；`agent-search/` 作为可选基础设施单独说明。
 
@@ -154,7 +153,9 @@ flowchart LR
 
 ### 5.4 Agent 求职能力
 
-当前运行时注册了六个结构化工具：
+当前运行时在 `backend/app/agent/bootstrap.py` 中注册了 24 个结构化工具，按能力域分组如下。
+
+简历与 JD 分析：
 
 | 工具 | 用户能力 | 数据范围 |
 | --- | --- | --- |
@@ -162,8 +163,43 @@ flowchart LR
 | `search_resume_evidence` | 查找能证明某项能力的项目和经历 | 本地脱敏简历 |
 | `generate_tailored_resume_content` | 生成完整、可复制的岗位定制简历文本 | 当前 JD、当前脱敏简历 |
 | `generate_interview_advice` | 生成自我介绍、问题预测、回答方向、STAR 素材、反向提问和准备清单 | 当前 JD、当前脱敏简历 |
+
+候选人画像与访谈：
+
+| 工具 | 用户能力 | 数据范围 |
+| --- | --- | --- |
+| `get_candidate_context` | 读取当前画像、偏好和求职策略上下文 | 本地画像 |
+| `search_candidate_evidence` | 跨简历与画像事实检索可验证证据 | 本地脱敏知识索引 |
+| `propose_candidate_knowledge` | 提出待用户确认的画像补充条目 | 本地画像 |
+| `start_profile_interview`、`record_profile_interview_answer`、`pause_profile_interview` | 以结构化访谈补全画像信息 | 本地画像 |
+
+岗位评估与决策：
+
+| 工具 | 用户能力 | 数据范围 |
+| --- | --- | --- |
+| `create_job_evaluation`、`get_job_evaluation`、`review_job_evaluation` | 生成、读取和人工复核 A–G 岗位决策快照 | 本地岗位项目、脱敏简历 |
+| `compare_job_evaluations` | 横向比较多个岗位的评估结果 | 本地岗位评估 |
+| `run_job_deep_research` | 对单个岗位执行有来源的深度尽调 | 本地岗位项目、公开互联网 |
+| `analyze_job_against_strategy` | 判断岗位与当前求职策略的契合度 | 本地画像、岗位项目 |
+
+机会发现与推进：
+
+| 工具 | 用户能力 | 数据范围 |
+| --- | --- | --- |
+| `discover_companies`、`discover_funded_companies` | 按方向或融资信号发现目标公司 | 公开互联网 |
+| `scan_career_sources` | 扫描用户指定的公开招聘来源 | 公开互联网 |
+| `process_opportunity_pipeline` | 推进机会从发现到岗位项目的流转 | 本地机会记录 |
+
+材料、面试与联网研究：
+
+| 工具 | 用户能力 | 数据范围 |
+| --- | --- | --- |
+| `generate_candidate_material` | 生成岗位定制材料草稿 | 本地画像、岗位项目 |
+| `record_interview_debrief` | 记录面试复盘与后续动作 | 本地面试记录 |
 | `research_company` | 核验公司身份，研究业务、动态、正面/风险信号并保留来源 | 公开互联网 |
 | `search_public_web` | 为用户明确开启的单轮消息搜索公开网页 | 公开互联网 |
+
+工具定义与注册是两件事：`backend/app/tools/career_os.py` 中还定义了 `record_application_outcome`，但当前没有注册进运行时，模型无法调用。
 
 运行时会先根据用户原始消息把任务路由到普通咨询、JD 分析、画像分析、定制简历、面试准备、完整求职包、公司研究、岗位尽调或单轮联网搜索等任务类型。
 
@@ -185,14 +221,19 @@ flowchart LR
 
 ### 5.6 工作台和数据看板
 
-前端有四个主要页面：
+前端侧栏（`frontend/src/components/AppSidebar.tsx`）把九个页面分为四组：
 
-| 页面 | 当前作用 |
-| --- | --- |
-| 岗位项目 | 输入并保存岗位，查看 A–G 决策报告，管理定制简历、PDF/DOCX、面试准备包、面试轮次和完整时间线 |
-| 求职总览 | 查看岗位项目数量、评估状态、简历版本、面试准备和最近行动 |
-| 对话 | 查看 Agent 结果、附件、来源和执行过程，继续交流 |
-| 设置 | 管理候选人资料、简历、偏好、Agent、模型和隐私相关配置 |
+| 分组 | 页面 | 当前作用 |
+| --- | --- | --- |
+| 进展 | 求职概览 | 查看岗位项目数量、评估状态、简历版本、面试准备和最近行动 |
+| 进展 | 对话 | 查看 Agent 结果、附件、来源和执行过程，继续交流 |
+| 找工作 | 机会中心 | 发现、筛选并推进尚未成为岗位项目的机会 |
+| 找工作 | 求职工坊 | 输入并保存岗位，查看 A–G 决策报告，管理定制简历、PDF/DOCX 和岗位时间线 |
+| 面试准备 | 项目解析 | 从简历中拆解项目经历与证据 |
+| 面试准备 | 知识点回顾 | 复习岗位相关知识点 |
+| 面试准备 | 面试记录 | 记录面试轮次、结果和后续动作 |
+| 账户 | 个人资料 | 管理候选人画像、简历和求职偏好 |
+| 账户 | 设置 | 管理 Agent、模型和隐私相关配置 |
 
 岗位输入和公开信息研究仍保留兼容页面，但不属于主导航；它们的结果应回到岗位项目并服务于评估。
 
@@ -200,7 +241,7 @@ flowchart LR
 
 联网研究默认关闭。启用后，BossCopilot 通过 `AgentSearchClient` 调用旁边的 `agent-search/` 服务：
 
-- 使用 `/search`、`/search/extract` 和 `/read` 搜索并提取公开网页。
+- 使用 `/search` 和 `/read` 搜索并提取公开网页。
 - 过滤非公开、内网、回环和不安全来源 URL。
 - 对公司来源进行去重、分级和证据打包。
 - 区分官网/政府监管来源与普通第三方来源。
@@ -244,14 +285,17 @@ flowchart TB
 - React 19、TypeScript、Vite 6。
 - `@assistant-ui/react` 管理聊天交互。
 - `@ag-ui/client` 消费标准流式事件。
-- `react-markdown`、GFM 和 Ant Design X Markdown 渲染回答。
+- `react-markdown` 与 GFM 渲染回答。
 - Lucide React 提供图标。
 
 关键文件：
 
 - `frontend/src/main.tsx`：全局页面状态、数据加载和交互编排。
+- `frontend/src/routing.ts`、`frontend/src/route-data.ts`、`frontend/src/page-prefetch.ts`：路由解析、按页数据加载和预取。
+- `frontend/src/components/AppSidebar.tsx`：分组侧栏导航。
 - `frontend/src/components/ChatWorkspace.tsx`：聊天、附件、联网开关和消息操作。
 - `frontend/src/components/WorkspaceViews.tsx`：工作台、看板和设置页面。
+- `frontend/src/features/`：机会中心、岗位评估、面试准备和设置等按功能拆分的页面。
 - `frontend/src/api/client.ts`：HTTP 客户端。
 
 ### 6.2 后端
@@ -269,8 +313,9 @@ flowchart TB
 
 - `backend/app/main.py`：应用入口、健康检查、消息读取、取消和 `/ag-ui`。
 - `backend/app/api/resources.py`：对话、附件、画像、设置和工作流资源接口。
-- `backend/app/agent/`：任务路由、计划和模型-工具循环。
-- `backend/app/tools/`：六个结构化 Agent 工具。
+- `backend/app/agent/`：任务路由、计划、工具注册和模型-工具循环。
+- `backend/app/tools/`：结构化 Agent 工具实现。
+- `backend/app/auth.py`：本地管理员口令认证与会话校验。
 - `backend/app/services/`：聊天和候选人画像服务。
 - `backend/app/attachments.py`：附件验证、存储、解析和删除。
 - `backend/app/knowledge.py`：简历知识分块、索引和检索。
@@ -280,21 +325,32 @@ flowchart TB
 
 SQLite 主要表包括：
 
+- `users`：本地管理员账号与口令散列。
 - `profiles`：候选人画像和简历文本。
 - `preferences`：目标岗位、城市、薪资和偏好。
 - `jobs`：用户主动保存的岗位项目及状态、优先级和来源。
-- `job_analyses`：岗位要求、简历证据、偏好冲突、投递建议和用户反馈。
+- `job_evaluations` 及 `job_evaluation_sections`、`job_evaluation_dimensions`、`job_evaluation_requirements`、`job_evaluation_sources`、`job_evaluation_risks`、`job_evaluation_reviews`：A–G 岗位决策快照及其人工复核。
+- `job_comparisons`、`job_comparison_entries`：多岗位横向比较。
 - `resume_versions`：岗位定制简历版本、分析快照引用、草稿/最终版状态和当前预览。
 - `resume_changes`：每项修改的前后内容、证据、人工决策和用户编辑标记。
 - `interview_kits`、`interview_tasks`：面试准备内容和行动清单。
-- `interview_rounds`：面试类型、时间、联系人、地点、状态和结果。
-- `job_events`：岗位创建、状态变化、面试和手工进展时间线。
+- `interview_rounds`、`interview_debriefs`：面试安排、结果和复盘。
+- `interview_preparation_state`、`interview_question_bank`：面试准备页状态与题库。
+- `job_events`、`application_stage_events`：岗位与投递阶段时间线。
+- `companies`、`company_signals`、`opportunity_sources`、`opportunity_scan_runs`：机会中心的公司、信号和扫描运行。
+- `discovered_jobs`、`discovered_job_occurrences`、`discovered_job_assessments`、`discovery_runs`、`discovery_run_items`：岗位发现结果与运行记录。
+- `candidate_memory_items`、`candidate_memory_evidence`、`candidate_memory_insights`、`candidate_sources`：候选人记忆与证据来源。
+- `candidate_stories`、`candidate_story_facts`、`candidate_story_strategies`、`candidate_narratives`、`job_story_links`：STAR 素材与岗位关联。
+- `career_strategies`、`strategy_evidence`：求职策略及其证据。
+- `voice_profiles`、`writing_samples`：写作风格样本。
+- `profile_interview_sessions`：画像结构化访谈会话。
 - `conversations`、`conversation_tasks`、`chat_messages`：对话、当前任务和权威消息。
-- `attachments`：附件元数据、解析状态和文本。
+- `attachments`、`job_capture_snapshots`：附件元数据与浏览器岗位抓取快照。
 - `knowledge_chunks`、`vec_knowledge`：本地简历知识索引。
-- `agent_settings`：Agent 人设、模型和记忆设置。
+- `agent_settings`、`agent_tool_calls`、`model_service_events`：Agent 设置、工具调用审计与模型服务事件。
 - `workflow_runs`、`workflow_nodes`、`workflow_events`：工作流状态与审计事件。
-- `company_research_cache`：公司研究来源缓存。
+- `company_research_cache`、`job_research_cache`：公司与岗位研究来源缓存。
+- `schema_migrations`：已应用的编号迁移。
 
 数据库启用外键、WAL 和 10 秒 busy timeout。默认数据库与附件目录位于 `backend/data/`，并尽量设置为仅当前用户可读写。
 
@@ -319,18 +375,19 @@ SQLite 主要表包括：
 - 前后端主链路已实现。
 - 求职任务有明确的工具边界和风险门。
 - 隐私、附件、对话、知识检索和联网研究均有自动化测试。
-- 2026-07-30 本次检查中，后端 83 个单元/接口测试全部通过。
+- 后端有 `backend/tests/` 下的单元与接口测试，前端有 Vitest 组件测试和 `frontend/e2e/` 下的 Playwright 端到端用例。
 - 前端 TypeScript 与 Vite 生产构建通过。
+- 已有本地管理员口令认证，并可通过 Cloudflare Tunnel 在 HTTPS 下远程访问。
 
 它仍不是面向公网或多人环境的成熟产品，主要原因包括：
 
-- 面向本机单用户，没有应用级登录认证和多租户隔离。
-- SQLite schema 仍主要通过 `CREATE TABLE IF NOT EXISTS` 和兼容性 `ALTER TABLE` 演进，尚无正式迁移版本体系。
-- 前端缺少组件和端到端自动化测试。
-- 当前生产构建存在一个超过 500 kB 的 JavaScript chunk 警告，需要进一步代码分割。
-- `frontend/src/main.tsx` 和部分后端入口仍承担较多编排职责。
+- 面向本机单用户，只有单一管理员口令，没有多账号或多租户隔离。
+- SQLite 建表仍以 `CREATE TABLE IF NOT EXISTS` 为主，编号迁移（`schema_migrations` 与 `db._apply_migrations`）只覆盖增量变更，不支持回滚。
+- `backend/app/repositories/` 目前是空目录，业务 SQL 仍分散在各领域模块中。
+- `frontend/src/main.tsx` 与 `frontend/src/components/WorkspaceViews.tsx` 均超过 2000 行，仍承担较多编排职责。
 - 数据备份、导出、恢复和“一键清除个人数据”能力尚未完整产品化。
 - 真实模型、真实 OCR 文档和真实 AgentSearch 部署仍需要受控集成测试。
+- 尚无 CI；测试与构建依赖本地手工执行。
 
 ## 9. 如何启动和验证
 
@@ -357,9 +414,14 @@ cd bosscopilot
 
 ```bash
 cd bosscopilot/backend
-.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python -m pytest tests -q
 
 cd ../frontend
+npm run test
+npm run build
+
+cd ../browser-extension
+npm test
 npm run build
 
 cd ..
@@ -379,4 +441,4 @@ git diff --check
 7. `backend/app/api/resources.py` 与 `backend/app/main.py`：HTTP 和 AG-UI 接口。
 8. `backend/tests/`：当前行为最可靠的可执行说明。
 
-`docs/bosscopilot-mvp-prd.md` 已标记为历史方案，其中岗位库、投递台、状态管理等内容不代表当前实现。`CHANGELOG.md` 也保留了多轮方向调整的记录，不应把其中所有历史功能都视为现有能力。
+`docs/archive/bosscopilot-mvp-prd.md` 已标记为历史方案，其中岗位库、投递台、状态管理等内容不代表当前实现。`CHANGELOG.md` 也保留了多轮方向调整的记录，不应把其中所有历史功能都视为现有能力。

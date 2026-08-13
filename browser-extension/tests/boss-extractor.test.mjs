@@ -37,6 +37,17 @@ test("classifies visible job detail content", () => {
   );
 });
 
+test("does not mistake a login call-to-action on a visible job for a login page", () => {
+  assert.equal(
+    extractor.classifyPageFromText(
+      "https://www.zhipin.com/job_detail/abc.html",
+      "AI智能体应用开发工程师招聘",
+      "职位描述 负责端云智能体架构设计、大模型选择和系统集成。登录后查看联系方式"
+    ),
+    "job_detail"
+  );
+});
+
 test("normalizes control characters and whitespace", () => {
   assert.equal(
     extractor.normalizeText("职位\u0000描述 \n  负责  Agent   开发"),

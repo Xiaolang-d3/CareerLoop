@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DashboardView } from "./WorkspaceViews";
 import type { WorkflowStatus } from "../types";
@@ -25,12 +25,35 @@ function workflow(overrides: Partial<WorkflowStatus> = {}): WorkflowStatus {
   };
 }
 
-function renderDashboard(status: WorkflowStatus | null) {
+function renderDashboard(status: WorkflowStatus | null, onNextStep = vi.fn()) {
   return render(
     <DashboardView
       workflow={status}
       conversations={[]}
       jobs={[]}
+      nextStep={{
+        title: "先建立职业画像",
+        detail: "导入简历或填写关键经历。",
+        action: "创建个人资料"
+      }}
+      onNextStep={onNextStep}
+      onOpenConversation={vi.fn()}
+    />
+  );
+}
+
+function renderDashboardWithConversations(conversations: React.ComponentProps<typeof DashboardView>["conversations"]) {
+  return render(
+    <DashboardView
+      workflow={null}
+      conversations={conversations}
+      jobs={[]}
+      nextStep={{
+        title: "先建立职业画像",
+        detail: "导入简历或填写关键经历。",
+        action: "创建个人资料"
+      }}
+      onNextStep={vi.fn()}
       onOpenConversation={vi.fn()}
     />
   );
@@ -101,6 +124,31 @@ describe("DashboardView 求职流程阶段", () => {
 
   it("renders without a workflow snapshot", () => {
     renderDashboard(null);
-    expect(screen.getByRole("heading", { name: "综合控制台" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "先建立职业画像" })).toBeInTheDocument();
+  });
+
+  it("turns the suggested next step into a direct action", () => {
+    const onNextStep = vi.fn();
+    renderDashboard(null, onNextStep);
+
+    fireEvent.click(screen.getByRole("button", { name: "创建个人资料" }));
+
+    expect(onNextStep).toHaveBeenCalledOnce();
+  });
+
+  it("does not present an empty auto-created conversation as recent progress", () => {
+    renderDashboardWithConversations([{
+      id: 1,
+      title: "历史对话",
+      status: "active",
+      summary: "",
+      message_count: 0,
+      task_status: "active",
+      updated_at: "2026-08-13T00:00:00Z"
+    }]);
+
+    expect(screen.queryByRole("button", { name: /历史对话/ })).not.toBeInTheDocument();
+    expect(screen.getByText("0 条记录")).toBeInTheDocument();
+    expect(screen.getByText("完成第一次岗位分析后，任务记录会显示在这里。")).toBeInTheDocument();
   });
 });

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.candidate_core import create_strategy, propose_fact
+from app.candidate_core import create_strategy, propose_fact, review_fact
 from app.db import connect
 from app.job_evaluations import create_job_evaluation, execute_job_evaluation
 
@@ -30,10 +30,11 @@ def seed_confirmed_facts_and_evaluation(
         ("credential", "已取得本科学历。"),
     ]
     for category, statement in statements:
-        propose_fact(
+        fact = propose_fact(
             profile_id=profile_id, category=category, statement=statement,
             extraction_method="test_fixture", confidence=1.0, db_path=db_path,
         )
+        review_fact(fact["id"], status="confirmed", db_path=db_path)
     with connect(db_path) as conn:
         conn.execute("UPDATE jobs SET career_strategy_id = ? WHERE id = ?", (strategy["id"], job_id))
     evaluation = create_job_evaluation(

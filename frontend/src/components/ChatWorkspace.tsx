@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type RefObject } from "react";
+import type { Conversation } from "../types";
+import { ConversationHistoryPanel } from "./ConversationHistoryPanel";
 import {
   ActionBarPrimitive,
   AssistantRuntimeProvider,
@@ -12,7 +14,6 @@ import {
 } from "@assistant-ui/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { toolLabels } from "../constants";
 import {
   ArrowUpRight,
   Check,
@@ -20,6 +21,7 @@ import {
   Copy,
   ChevronDown,
   FileText,
+  History,
   ImagePlus,
   LoaderCircle,
   Pencil,
@@ -102,10 +104,13 @@ export type ChatRetryDraft = {
 };
 
 type ChatWorkspaceProps = {
+  conversationTitle?: string;
   messages: ChatMessage[];
   hiddenMessageCount: number;
   chatBusy: boolean;
   currentConversationId: number | null;
+  conversations: Conversation[];
+  conversationBusy: boolean;
   waitingForUser: boolean;
   latestAgent?: AgentRunResult;
   taskCancelBusy: boolean;
@@ -113,6 +118,11 @@ type ChatWorkspaceProps = {
   chatEndRef: RefObject<HTMLDivElement | null>;
   chatInputRef: RefObject<HTMLTextAreaElement | null>;
   onLoadMore: () => void;
+  onSelectConversation: (conversationId: number) => void;
+  onCreateConversation: () => void;
+  onRenameConversation: (conversation: Conversation) => void;
+  onArchiveConversation: (conversation: Conversation) => void;
+  onRemoveConversation: (conversation: Conversation) => void;
   attachmentBusy: boolean;
   attachmentConfig: AttachmentConfig | null;
   webSearchAvailable: boolean;
@@ -177,7 +187,7 @@ function AgentResultNote({ run }: { run?: AgentRunResult }) {
     <div className={`agent-result-note ${cancelled ? "cancelled" : failed ? "failed" : "waiting"}`}>
       {failed || waiting ? <TriangleAlert size={14} /> : <CheckCircle2 size={14} />}
       <span>
-        <strong>{cancelled ? "任务已结束" : failed ? (profileRequired ? "还需要先建立画像" : "执行已终止") : waitingForManualImport ? "等待你手动导入岗位" : "已暂停，等待你的操作"}</strong>
+        <strong>{cancelled ? "任务已结束" : failed ? (profileRequired ? "还需要先建立画像" : "执行已终止") : waitingForManualImport ? "等待你补充资料" : "已暂停，等待你的操作"}</strong>
         {run.error?.message ? <small>{run.error.message}</small> : null}
         {failed ? <small>{failureHint}</small> : null}
       </span>
@@ -186,8 +196,9 @@ function AgentResultNote({ run }: { run?: AgentRunResult }) {
 }
 
 function MarkdownContent({ children }: { children: string }) {
+  const projectAnalysisAnswer = /(项目(?:经历|经验|解析|背景|亮点)|技术深度|证据完整度|简历版|面试版)/.test(children);
   return (
-    <div className="message-markdown">
+    <div className={`message-markdown ${projectAnalysisAnswer ? "project-analysis-answer" : ""}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         skipHtml
@@ -284,55 +295,6 @@ function UserMessageContent({ content }: { content: string }) {
   );
 }
 
-const executionStatusLabels: Record<string, string> = {
-  done: "已完成",
-  failed: "失败",
-  blocked: "已阻止",
-  waiting_approval: "等待确认",
-  running: "执行中",
-  pending: "待执行"
-};
-
-function AgentExecutionDetails({ run, active = false }: { run?: AgentRunResult; active?: boolean }) {
-  if (!run) return null;
-  const calls = Array.from(run.events.reduce((result, event) => {
-    if (event.tool_name !== "agent_thinking") result.set(event.tool_call_id, event);
-    return result;
-  }, new Map<string, AgentRunResult["events"][number]>()).values());
-  if (!run.plan && !calls.length && !active) return null;
-  const completedSteps = run.plan?.steps.filter((step) => step.status === "done").length ?? 0;
-  const totalSteps = run.plan?.steps.length || calls.length;
-  const currentStep = [...(run.plan?.steps || [])].reverse().find((step) => step.status === "running")?.title
-    || [...calls].reverse().find((call) => call.status === "running")?.message
-    || "正在分析你的请求";
-  return (
-    <details className={`agent-execution-details ${active ? "active" : ""}`} open={active}>
-      <summary>
-        <span><ChevronDown size={14} /><strong>{active ? "Agent 正在执行" : "Agent 执行记录"}</strong></span>
-        <em>{active ? `${totalSteps ? `${completedSteps}/${totalSteps} 步` : "准备中"} · ${currentStep}` : `${calls.length} 次调用`}</em>
-      </summary>
-      <div className="agent-execution-body">
-        {active && !run.plan && !calls.length ? <section><span>当前状态</span><strong>正在理解你的问题并确定下一步。</strong></section> : null}
-        {run.plan ? (
-          <section>
-            <span>执行计划</span>
-            <strong>{run.plan.goal}</strong>
-            {run.plan.steps.length ? (
-              <ol>{run.plan.steps.map((step) => <li key={step.id}><i className={step.status} />{step.title}<em>{executionStatusLabels[step.status] || step.status}</em></li>)}</ol>
-            ) : null}
-          </section>
-        ) : null}
-        {calls.length ? (
-          <section>
-            <span>工具调用</span>
-            <ul>{calls.map((call) => <li key={call.tool_call_id}><i className={call.status} /><strong>{toolLabels[call.tool_name] || call.tool_name}</strong><em>{executionStatusLabels[call.status] || call.status}</em>{call.message ? <small>{call.message}</small> : null}</li>)}</ul>
-          </section>
-        ) : null}
-      </div>
-    </details>
-  );
-}
-
 function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: boolean }) {
   const source = state.metadata.custom.source as ChatMessage | undefined;
   if (!source) return null;
@@ -361,14 +323,12 @@ function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: boolean 
       <span className="avatar">{source.role === "user" ? <UserRound size={17} /> : <Sparkles size={17} />}</span>
       <div className="message-content">
         <div className="message-meta">
-          <strong>{source.role === "user" ? "你" : "BossCopilot"}</strong>
+          <strong>{source.role === "user" ? "你" : "CareerLoop"}</strong>
           <time>{formatDate(source.created_at)}</time>
         </div>
         {source.role === "assistant" ? (
           <>
-            {isActiveAssistant ? (
-              <AgentExecutionDetails run={source.payload?.agent} active />
-            ) : null}
+            {isActiveAssistant ? <div className="agent-result-note waiting" role="status">正在为你整理结果…</div> : null}
             <section className="message-result" aria-label="输出结果">
               <MarkdownContent>{resultContent}</MarkdownContent>
               <AgentResultNote run={source.payload?.agent} />
@@ -382,7 +342,6 @@ function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: boolean 
                 </ActionBarPrimitive.Reload>
               </ActionBarPrimitive.Root>
             </section>
-            {!isActiveAssistant ? <AgentExecutionDetails run={source.payload?.agent} /> : null}
             <WebSourcesPanel sources={webSources} />
           </>
         ) : (
@@ -427,9 +386,11 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const [isDraggingAttachment, setIsDraggingAttachment] = useState(false);
   const [expandedPreview, setExpandedPreview] = useState<{ filename: string; url: string } | null>(null);
+  const [conversationListOpen, setConversationListOpen] = useState(false);
 
   useEffect(() => {
     setExpandedPreview(null);
+    setConversationListOpen(false);
   }, [props.currentConversationId]);
 
   async function selectAttachment(file?: File) {
@@ -444,7 +405,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
         await props.onUpload(file);
         return;
       }
-      props.onAttachmentInvalid("仅支持岗位截图（PNG、JPG、WEBP）或简历（PDF、DOCX、TXT、MD）。");
+      props.onAttachmentInvalid("仅支持图片（PNG、JPG、WEBP）或文档（PDF、DOCX、TXT、MD）。");
     } catch {
       // The parent already exposes the localized upload/parse error to the user.
     }
@@ -475,13 +436,23 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
     event.preventDefault();
     const file = clipboardFile.name
       ? clipboardFile
-      : new File([clipboardFile], `粘贴的岗位截图.${clipboardFile.type.split("/")[1] || "png"}`, { type: clipboardFile.type });
+      : new File([clipboardFile], `粘贴的图片.${clipboardFile.type.split("/")[1] || "png"}`, { type: clipboardFile.type });
     void selectAttachment(file);
   }
 
   return (
     <section className={`chat-workspace ${props.messages.length ? "has-history" : "is-empty"} ${props.chatBusy ? "is-running" : ""}`}>
       <ThreadPrimitive.Root className="chat-main">
+        <header className="chat-session-header">
+          <div>
+            <span>CareerLoop · 面试准备</span>
+            <h1>{props.conversationTitle || "新对话"}</h1>
+          </div>
+          <small>准备中</small>
+          <button className="chat-history-toggle" type="button" onClick={() => setConversationListOpen(true)} aria-label="打开对话记录">
+            <History size={16} />
+          </button>
+        </header>
         <ThreadPrimitive.Viewport className="chat-thread" role="log" aria-live="polite" aria-relevant="additions">
           {props.hiddenMessageCount > 0 ? (
             <button className="load-history-button" onClick={props.onLoadMore}>
@@ -491,9 +462,19 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
 
           {props.messages.length === 0 ? (
             <div className="chat-welcome">
-              <span className="agent-welcome-mark" aria-hidden="true">B</span>
-              <h2>你好，有什么可以帮你？</h2>
-              <p>说说你现在的求职问题。</p>
+              <h2>从一个具体问题开始。</h2>
+              <p>围绕真实经历练表达、补知识点，或复盘一次面试。</p>
+              <div className="starter-prompt-list" aria-label="快捷开始">
+                {[
+                  { prompt: "帮我梳理项目亮点", title: "梳理项目表达", description: "把经历变成可讲的亮点" },
+                  { prompt: "围绕一个项目追问我", title: "练习项目追问", description: "从细节到取舍反复演练" },
+                  { prompt: "复盘刚结束的面试", title: "复盘一次面试", description: "把反馈变成下一步准备" }
+                ].map(({ prompt, title, description }) => (
+                  <button key={prompt} type="button" onClick={() => void props.onSend(prompt)}>
+                    <strong>{title}</strong><small>{description}</small>
+                  </button>
+                ))}
+              </div>
             </div>
           ) : (
             <ThreadPrimitive.Messages>
@@ -528,7 +509,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
               </div>
               <div className="task-prompt-actions">
                 <button className="task-action-button" onClick={props.onSuggestedAction}>
-                  {props.latestAgent?.error?.code === "manual_job_import_required" ? "手动导入岗位" : "继续处理"}<ArrowUpRight size={14} />
+                  继续处理<ArrowUpRight size={14} />
                 </button>
                 <button className="task-cancel-button" onClick={props.onCancelTask} disabled={props.taskCancelBusy}>
                   {props.taskCancelBusy ? "结束中…" : "结束任务"}
@@ -567,26 +548,27 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                 rows={1}
                 maxLength={1000}
                 aria-label="输入消息"
-                placeholder="例如：帮我分析这个岗位，或准备下一轮面试…"
+                placeholder="输入一个项目、知识点，或一场需要复盘的面试…"
                 submitMode="enter"
                 onPaste={handleComposerPaste}
               />
               <div className="composer-bottom-row">
-                <div className="composer-shortcuts" aria-label="添加求职资料">
-                  <button type="button" onClick={() => attachmentInputRef.current?.click()} disabled={props.attachmentBusy} title="上传岗位截图或简历，也可直接粘贴截图">
+              <div className="composer-shortcuts" aria-label="添加资料">
+                  <button type="button" onClick={() => attachmentInputRef.current?.click()} disabled={props.attachmentBusy} title="上传图片或文档，也可直接粘贴图片">
                     {props.attachmentBusy ? <LoaderCircle className="spinning" size={15} /> : <ImagePlus size={15} />}
-                    <span>{props.attachmentBusy ? "处理中…" : "上传文件"}</span>
+                    <span>{props.attachmentBusy ? "处理中…" : "添加资料"}</span>
                   </button>
                   <button
                     type="button"
-                    className={`${props.webSearchSelected ? "active" : ""} ${!props.webSearchAvailable ? "unavailable" : ""}`.trim()}
+                    className={`web-search-toggle ${props.webSearchSelected ? "active" : ""} ${!props.webSearchAvailable ? "unavailable" : ""}`.trim()}
                     onClick={props.onToggleWebSearch}
                     disabled={props.chatBusy}
                     aria-pressed={props.webSearchSelected}
-                    title={props.webSearchAvailable ? "仅为下一条消息启用公开互联网搜索" : "可以选中；发送后会提示配置 AgentSearch"}
+                    aria-label="联网搜索"
+                    title={props.webSearchAvailable ? "为下一条消息补充公开信息" : "可以选中；发送后会提示配置 AgentSearch"}
                   >
                     <Search size={15} />
-                    <span>联网搜索</span>
+                    <span>联网</span>
                   </button>
                 </div>
                 {props.chatBusy ? (
@@ -632,7 +614,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                 ))}
               </div>
             ) : null}
-            {isDraggingAttachment ? <div className="composer-drop-hint" aria-live="polite">松开即可本地解析岗位截图或简历</div> : null}
+            {isDraggingAttachment ? <div className="composer-drop-hint" aria-live="polite">松开即可添加图片或文档</div> : null}
           </div>
           {expandedPreview ? (
             <div className="attachment-preview-dialog" role="dialog" aria-modal="true" aria-label={`${expandedPreview.filename} 预览`} onClick={() => setExpandedPreview(null)}>
@@ -642,6 +624,19 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
           ) : null}
         </div>
       </ThreadPrimitive.Root>
+      <ConversationHistoryPanel
+        conversations={props.conversations}
+        currentConversationId={props.currentConversationId}
+        busy={props.conversationBusy}
+        mobileOpen={conversationListOpen}
+        onCloseMobile={() => setConversationListOpen(false)}
+        onSelect={props.onSelectConversation}
+        onCreate={props.onCreateConversation}
+        onRename={props.onRenameConversation}
+        onArchive={props.onArchiveConversation}
+        onRemove={props.onRemoveConversation}
+      />
+      {conversationListOpen ? <button className="conversation-history-backdrop" type="button" aria-label="关闭对话记录" onClick={() => setConversationListOpen(false)} /> : null}
     </section>
   );
 }
@@ -671,7 +666,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
   const uploadAttachment = useCallback(async (file?: File) => {
     if (!file) return;
     const previewUrl = file.type.startsWith("image/") ? URL.createObjectURL(file) : null;
-    if (previewUrl) setUploadingPreview({ filename: file.name || "粘贴的岗位截图", url: previewUrl });
+    if (previewUrl) setUploadingPreview({ filename: file.name || "粘贴的图片", url: previewUrl });
     try {
       const attachment = await props.onUploadAttachment(file);
       if (previewUrl) {

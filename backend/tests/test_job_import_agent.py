@@ -432,7 +432,10 @@ class JobImportAgentTest(unittest.TestCase):
                     "stop_reason": "测试停止",
                 }
 
-        with patch("app.api.resources.JobImportAgent", FakeStreamingAgent):
+        with (
+            patch("app.api.resources.JobImportAgent", FakeStreamingAgent),
+            patch("app.main.current_user", return_value={"id": 1, "email": "test@example.com"}),
+        ):
             response = TestClient(app).post(
                 "/job-imports/preview/stream",
                 json={"url": "https://example.com/job/1"},
@@ -491,6 +494,7 @@ class JobImportAgentTest(unittest.TestCase):
                 "app.api.resources.get_settings",
                 return_value=SimpleNamespace(browser_job_import_enabled=True),
             ),
+            patch("app.main.current_user", return_value={"id": 1, "email": "test@example.com"}),
         ):
             response = TestClient(app).post(
                 "/job-imports/browser-preview/stream",

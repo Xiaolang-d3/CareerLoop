@@ -42,7 +42,6 @@ PROGRESSED_STAGES = {
 }
 
 POSITIVE_STAGES = {"recruiter_screen", "interview", "final", "offer", "hired"}
-TERMINAL_STAGES = {"hired", "rejected", "withdrawn", "no_response", "archived"}
 
 
 def record_application_stage(
@@ -125,23 +124,6 @@ def record_application_stage(
     return row_to_dict(row) or {}
 
 
-def list_application_stages(
-    job_id: int,
-    db_path: str | Path | None = None,
-) -> list[dict[str, Any]]:
-    with connect(db_path) as conn:
-        if conn.execute("SELECT id FROM jobs WHERE id = ?", (job_id,)).fetchone() is None:
-            raise ValueError("岗位项目不存在")
-        rows = conn.execute(
-            """
-            SELECT * FROM application_stage_events
-            WHERE job_id = ? ORDER BY occurred_at, id
-            """,
-            (job_id,),
-        ).fetchall()
-    return rows_to_dicts(rows)
-
-
 def record_interview_debrief(
     job_id: int,
     *,
@@ -187,7 +169,11 @@ def record_interview_debrief(
             (
                 job_id,
                 round_id,
-                source["id"],
+                # Candidate sources are now represented by the profile document
+                # and memory evidence records rather than the retired
+                # candidate_sources table. Keep the debrief row independent of
+                # that legacy foreign key until source links are migrated.
+                None,
                 input_source[:20],
                 summary.strip()[:10000],
                 json_dump(questions),
@@ -382,11 +368,3 @@ def skill_growth_map(db_path: str | Path | None = None) -> dict[str, Any]:
         for skill, frequency in gaps.most_common()
     ]
     return {"items": items, "rule": "单个 JD 缺口不会直接升级为学习任务"}
-
-
-def json_load(value: str) -> dict[str, Any]:
-    try:
-        loaded = __import__("json").loads(value or "{}")
-    except Exception:
-        return {}
-    return loaded if isinstance(loaded, dict) else {}

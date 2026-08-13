@@ -22,7 +22,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
-from .db import DATA_DIR
+from . import db as db_module
 
 
 DOCUMENT_NAME = "career-profile.md"
@@ -59,10 +59,6 @@ FACT_CATEGORY_BY_SECTION = {
     "voice": "voice_preference",
 }
 
-SECTION_BY_FACT_CATEGORY = {
-    category: field for field, category in FACT_CATEGORY_BY_SECTION.items()
-}
-
 PRIVACY_MODES = {"redacted", "original"}
 
 
@@ -72,6 +68,7 @@ class ProfileDocument(BaseModel):
     name: str = Field(default=DEFAULT_PROFILE_NAME, max_length=100)
     locale: str = Field(default="zh-CN", max_length=20)
     privacy_mode: str = Field(default="redacted")
+    knowledge_revision: int = Field(default=0, ge=0)
     created_at: str = ""
     updated_at: str = ""
 
@@ -101,9 +98,6 @@ class ProfileDocument(BaseModel):
     def section_text(self) -> str:
         """把画像正文拼成一段语料，供事实门比对声明用。"""
         return "\n".join(getattr(self, field) for _, field in SECTIONS)
-
-    def is_empty(self) -> bool:
-        return not self.section_text().strip()
 
     def entries(self, field: str) -> list[str]:
         """把一个小节按行拆成条目，去掉 Markdown 列表符号。"""
@@ -151,7 +145,11 @@ class ProfileDocument(BaseModel):
 def document_path(base_dir: str | Path | None = None) -> Path:
     """画像文档路径。``base_dir`` 便于测试隔离，语义对应原先的 ``db_path``。"""
     if base_dir is None:
-        return DATA_DIR / DOCUMENT_NAME
+        # DB_PATH can be redirected by tests and by a local data-directory
+        # override.  Resolve it at call time instead of capturing DATA_DIR
+        # during module import, so the profile and its SQLite records stay in
+        # the same private data directory.
+        return db_module.DB_PATH.parent / DOCUMENT_NAME
     resolved = Path(base_dir)
     # 允许直接传文件路径（含 .md 或 .db 后缀时取其所在目录）
     if resolved.suffix:
@@ -173,6 +171,7 @@ def render(document: ProfileDocument) -> str:
         "name": document.name,
         "locale": document.locale,
         "privacy_mode": document.privacy_mode,
+        "knowledge_revision": document.knowledge_revision,
         "created_at": document.created_at,
         "updated_at": document.updated_at,
     }
@@ -219,7 +218,7 @@ def parse(text: str) -> ProfileDocument:
     payload: dict[str, Any] = {
         key: value
         for key, value in front.items()
-        if key in {"name", "locale", "privacy_mode", "created_at", "updated_at"}
+        if key in {"name", "locale", "privacy_mode", "knowledge_revision", "created_at", "updated_at"}
         and value is not None
     }
     for field, lines in sections.items():
@@ -249,6 +248,7 @@ def save(document: ProfileDocument, base_dir: str | Path | None = None) -> Profi
         update={
             "created_at": document.created_at or _now(),
             "updated_at": _now(),
+            "knowledge_revision": document.knowledge_revision + 1,
         }
     )
     temp_path = path.with_name(f".{path.name}.tmp")
@@ -279,21 +279,3 @@ def update(
     return save(current.model_copy(update=changes), base_dir)
 
 
-def append_section(
-    field: str,
-    addition: str,
-    base_dir: str | Path | None = None,
-) -> ProfileDocument:
-    """往某个小节追加一行内容，重复内容不再追加。"""
-    if field not in TITLE_BY_SECTION:
-        raise ValueError("画像小节不存在")
-    clean = " ".join(addition.strip().split())
-    if not clean:
-        raise ValueError("画像内容不能为空")
-    current = load(base_dir) or ProfileDocument()
-    existing = getattr(current, field)
-    lines = [line for line in existing.splitlines() if line.strip()]
-    if any(clean == line.strip().lstrip("- ").strip() for line in lines):
-        return current
-    lines.append(f"- {clean}")
-    return save(current.model_copy(update={field: "\n".join(lines)}), base_dir)

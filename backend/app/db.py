@@ -11,7 +11,7 @@ from typing import Any, Iterable
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT_DIR / "data"
 DB_PATH = DATA_DIR / "bosscopilot.db"
-DB_SCHEMA_VERSION = 7
+DB_SCHEMA_VERSION = 13
 
 
 @contextmanager
@@ -152,6 +152,7 @@ def init_db(db_path: str | Path | None = None) -> None:
                 evaluation_id INTEGER,
                 title TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'draft',
+                template_id TEXT NOT NULL DEFAULT 'classic',
                 base_content TEXT NOT NULL,
                 rendered_content TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -314,6 +315,10 @@ def init_db(db_path: str | Path | None = None) -> None:
         )
 
         _apply_migrations(conn)
+        # Compatibility mirrors are required by several legacy foreign keys.
+        # Keep this idempotent guard so an interrupted/manual repair cannot
+        # leave the document-backed profile without its SQLite counterpart.
+        conn.executescript(_PROFILES_COMPATIBILITY_SCHEMA)
 
         # Fresh 2.0 databases still use guarded column creation for deterministic
         # test setup. Legacy user databases are stopped before init_db and must be
@@ -334,6 +339,7 @@ def init_db(db_path: str | Path | None = None) -> None:
         ensure_column("jobs", "career_strategy_id", "INTEGER REFERENCES career_strategies(id) ON DELETE SET NULL")
         ensure_column("jobs", "discovered_job_id", "INTEGER REFERENCES discovered_jobs(id) ON DELETE SET NULL")
         ensure_column("resume_versions", "evaluation_id", "INTEGER REFERENCES job_evaluations(id) ON DELETE SET NULL")
+        ensure_column("resume_versions", "template_id", "TEXT NOT NULL DEFAULT 'classic'")
         ensure_column("interview_kits", "evaluation_id", "INTEGER REFERENCES job_evaluations(id) ON DELETE SET NULL")
         ensure_column("career_strategies", "title_expansions_json", "TEXT NOT NULL DEFAULT '[]'")
         ensure_column("career_strategies", "evaluation_weights_json", "TEXT NOT NULL DEFAULT '{}'")
@@ -414,6 +420,12 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         (5, "job_decision_evaluations", _JOB_EVALUATION_SCHEMA),
         (6, "browser_job_capture_snapshots", _BROWSER_JOB_CAPTURE_SCHEMA),
         (7, "agent_tool_call_audit", _AGENT_TOOL_CALL_AUDIT_SCHEMA),
+        (8, "job_story_links", _JOB_STORY_LINKS_SCHEMA),
+        (9, "candidate_memory_ledger", _CANDIDATE_MEMORY_LEDGER_SCHEMA),
+        (10, "candidate_sources_compatibility", _CANDIDATE_SOURCES_COMPATIBILITY_SCHEMA),
+        (11, "profiles_compatibility", _PROFILES_COMPATIBILITY_SCHEMA),
+        (12, "local_user_authentication", _LOCAL_USER_AUTH_SCHEMA),
+        (13, "interview_preparation_state", _INTERVIEW_PREPARATION_SCHEMA),
     ]
     applied = {
         int(row["version"])
@@ -427,6 +439,27 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
             "INSERT INTO schema_migrations (version, name) VALUES (?, ?)",
             (version, name),
         )
+
+
+_LOCAL_USER_AUTH_SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+
+_INTERVIEW_PREPARATION_SCHEMA = """
+CREATE TABLE IF NOT EXISTS interview_preparation_state (
+    profile_id INTEGER PRIMARY KEY,
+    knowledge_revision INTEGER NOT NULL DEFAULT 0,
+    node_state_json TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+);
+"""
 
 
 _CAREER_OS_SCHEMA = """
@@ -1010,6 +1043,112 @@ CREATE INDEX IF NOT EXISTS idx_agent_tool_calls_tool_call_id
     ON agent_tool_calls(tool_call_id);
 CREATE INDEX IF NOT EXISTS idx_agent_tool_calls_conversation_id
     ON agent_tool_calls(conversation_id, created_at);
+"""
+
+
+_JOB_STORY_LINKS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS job_story_links (
+    job_id INTEGER NOT NULL,
+    story_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (job_id, story_id),
+    FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+    FOREIGN KEY (story_id) REFERENCES candidate_stories(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_job_story_links_story
+    ON job_story_links(story_id, job_id);
+"""
+
+
+_CANDIDATE_MEMORY_LEDGER_SCHEMA = """
+CREATE TABLE IF NOT EXISTS candidate_memory_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER NOT NULL,
+    category TEXT NOT NULL,
+    statement TEXT NOT NULL,
+    canonical_key TEXT NOT NULL DEFAULT '',
+    value_json TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'proposed',
+    sensitivity TEXT NOT NULL DEFAULT 'private',
+    confidence REAL NOT NULL DEFAULT 0,
+    source_kind TEXT NOT NULL DEFAULT 'agent_proposal',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    superseded_by_id INTEGER,
+    expires_at TEXT,
+    reviewed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (status IN ('proposed', 'confirmed', 'rejected', 'retracted', 'superseded')),
+    CHECK (sensitivity IN ('public', 'private', 'sensitive')),
+    FOREIGN KEY (superseded_by_id) REFERENCES candidate_memory_items(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS candidate_memory_evidence (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    memory_item_id INTEGER NOT NULL,
+    source_id INTEGER,
+    excerpt TEXT NOT NULL DEFAULT '',
+    locator TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (memory_item_id) REFERENCES candidate_memory_items(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS candidate_memory_insights (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER NOT NULL,
+    insight_type TEXT NOT NULL,
+    content_json TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'proposed',
+    sample_size INTEGER NOT NULL DEFAULT 0,
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    expires_at TEXT,
+    reviewed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (status IN ('proposed', 'confirmed', 'rejected', 'retracted'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_candidate_memory_items_profile_status
+    ON candidate_memory_items(profile_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_candidate_memory_evidence_item
+    ON candidate_memory_evidence(memory_item_id, id);
+CREATE INDEX IF NOT EXISTS idx_candidate_memory_insights_profile_status
+    ON candidate_memory_insights(profile_id, status, updated_at DESC);
+"""
+
+
+_CANDIDATE_SOURCES_COMPATIBILITY_SCHEMA = """
+-- Existing career-feedback tables retain this foreign key.  Profile documents
+-- replaced the original source table, but keeping this lightweight registry
+-- makes old databases and nullable debrief references valid during migration.
+CREATE TABLE IF NOT EXISTS candidate_sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER NOT NULL DEFAULT 1,
+    source_type TEXT NOT NULL DEFAULT 'profile_document',
+    title TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+
+_PROFILES_COMPATIBILITY_SCHEMA = """
+-- Older career tables still reference profiles(id). The user-facing profile is
+-- now a Markdown document, so this table mirrors the active document solely
+-- to preserve those foreign keys and legacy read paths.
+CREATE TABLE IF NOT EXISTS profiles (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    resume_text TEXT NOT NULL DEFAULT '',
+    resume_filename TEXT NOT NULL DEFAULT '',
+    resume_redacted_text TEXT NOT NULL DEFAULT '',
+    privacy_mode TEXT NOT NULL DEFAULT 'redacted',
+    skills_json TEXT NOT NULL DEFAULT '[]',
+    projects_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    locale TEXT NOT NULL DEFAULT 'zh-CN',
+    knowledge_revision INTEGER NOT NULL DEFAULT 0
+);
 """
 
 

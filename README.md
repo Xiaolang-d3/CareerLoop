@@ -47,6 +47,22 @@ bosscopilot/
 ./scripts/stop-dev.sh
 ```
 
+### 任意网络的安全远程访问（HTTPS）
+
+`start-remote.sh` 构建前端，并由后端在同一个来源托管页面和 API；随后通过 Cloudflare Quick Tunnel 发布一个 HTTPS 地址。后端仅监听 `127.0.0.1`，不会在路由器上开放端口。
+
+```bash
+./scripts/start-remote.sh
+```
+
+脚本输出的 `https://…trycloudflare.com` 即为手机蜂窝网络、外网或其他设备的访问地址。该地址是临时地址：服务、Tunnel 或 Mac 重启后会改变；Mac 必须保持开机。停止远程服务：
+
+```bash
+./scripts/stop-remote.sh
+```
+
+Quick Tunnel 提供 HTTPS，但公开 URL 知道即可尝试登录。使用至少 16 位的管理员密码，避免在不可信设备登录；长期稳定使用应改用自有域名 Cloudflare Tunnel，并配置 Cloudflare Access。
+
 ### 手动启动
 
 先配置后端：

@@ -97,7 +97,9 @@ MODEL_TIMEOUT_SECONDS=60
 当前内置实现支持以下岗位输入方式：
 
 - 用户主动粘贴岗位文字。
+- 用户提交公开 HTTPS 岗位链接，由岗位导入智能体读取和验证。
 - 用户上传自己保存的岗位截图，由本机识别文字。
+- 用户通过可选 Chrome 扩展读取当前已经打开的岗位页面。
 - 用户检查标题、公司、岗位描述和来源信息后明确确认导入。
 
 招聘网站、职位库或其他外部来源可以通过后续平台适配器和结构化工具接入。聊天中的平台操作请求会进入正常 Agent 路由，由运行时根据已注册能力处理，不再被接口层提前拦截。
@@ -136,7 +138,7 @@ docker compose -f docker-compose.minio.yml up -d
 
 ```bash
 cd backend
-.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python -m pytest tests -q
 ```
 
 后端编译检查：
@@ -146,11 +148,19 @@ cd backend
 .venv/bin/python -m compileall -q app tests
 ```
 
-前端类型检查和生产构建：
+前端单元测试、类型检查和生产构建：
 
 ```bash
 cd frontend
+npm run test
 npm run build
+```
+
+前端端到端测试（需要本地服务已启动）：
+
+```bash
+cd frontend
+npm run test:e2e
 ```
 
 浏览器扩展测试和构建：

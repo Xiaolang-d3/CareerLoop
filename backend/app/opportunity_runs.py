@@ -1,19 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
-from .agent_settings import get_model_connection
 from .candidate_core import get_candidate_context
 from .config import get_settings
 from .db import connect, json_dump, row_to_dict, rows_to_dicts
-from .domain import AgentMessage, ModelRequest
-from .models import ModelProviderError, OpenAICompatibleProvider
 from .opportunities import (
     OpportunityScanError,
     create_or_update_company,
@@ -160,50 +156,6 @@ def startup_scan_source_ids(*, db_path: str | Path | None = None) -> list[int]:
         ).fetchall()
     return [int(row["id"]) for row in rows]
 
-
-def record_visible_import_run(
-    import_result: dict[str, Any],
-    *,
-    strategy_id: int | None = None,
-    db_path: str | Path | None = None,
-) -> dict[str, Any]:
-    jobs = list(import_result.get("imported") or [])
-    run = create_discovery_run(
-        "scan",
-        strategy_id=strategy_id,
-        trigger="browser_visible",
-        config={
-            "platform": import_result.get("platform"),
-            "page_url": import_result.get("page_url"),
-            "captured_at": import_result.get("captured_at"),
-        },
-        db_path=db_path,
-    )
-    with connect(db_path) as conn:
-        for job in jobs:
-            conn.execute(
-                """
-                INSERT INTO discovery_run_items (
-                    run_id, entity_type, entity_id, label, stage, status, result_json
-                ) VALUES (?, 'job', ?, ?, 'imported', 'completed', ?)
-                """,
-                (
-                    run["id"], job.get("id"),
-                    f"{job.get('company_name', '')} · {job.get('job_title', '')}"[:500],
-                    json_dump({"import_outcome": job.get("import_outcome", "created")}),
-                ),
-            )
-        conn.execute(
-            """
-            UPDATE discovery_runs
-            SET status = 'completed', total_count = ?, completed_count = ?,
-                succeeded_count = ?, started_at = CURRENT_TIMESTAMP,
-                completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (len(jobs), len(jobs), len(jobs), run["id"]),
-        )
-    return get_discovery_run(int(run["id"]), db_path=db_path)
 
 
 def execute_discovery_run(run_id: int, *, db_path: str | Path | None = None) -> dict[str, Any]:
@@ -681,58 +633,6 @@ def _local_assessment(job: dict[str, Any], candidate: dict[str, Any]) -> dict[st
         "reasons": reasons,
     }
 
-
-async def _deep_assessment(
-    job: dict[str, Any], candidate: dict[str, Any], local: dict[str, Any]
-) -> dict[str, Any]:
-    connection = get_model_connection()
-    if not connection.get("api_key"):
-        raise ValueError("尚未配置模型连接，已保留本地评估")
-    settings = get_settings()
-    provider = OpenAICompatibleProvider(
-        api_key=connection["api_key"], model=connection["model_name"],
-        base_url=connection.get("model_base_url") or None,
-        timeout_seconds=settings.model_timeout_seconds,
-    )
-    facts = [item.get("statement") for item in candidate.get("confirmed_facts") or []]
-    prompt = {
-        "task": "只根据已确认事实复核岗位匹配，返回 JSON，不得补造经历",
-        "job": {
-            "title": job.get("job_title"), "company": job.get("company_name"),
-            "location": job.get("location"), "description": str(job.get("description") or "")[:20000],
-        },
-        "strategy": candidate.get("strategy") or {},
-        "confirmed_facts": facts,
-        "local_assessment": local,
-        "output": {
-            "score": "0-100 integer", "recommendation": "strong|good|review|not_recommended",
-            "matched_skills": [], "evidence_gaps": [], "hard_conflicts": [], "reasons": [],
-        },
-    }
-    response = await provider.generate(ModelRequest(messages=[
-        AgentMessage(role="system", content="你是严谨的岗位匹配分析器，只输出合法 JSON。"),
-        AgentMessage(role="user", content=json.dumps(prompt, ensure_ascii=False)),
-    ]))
-    raw = response.content.strip()
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I | re.S)
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ModelProviderError("invalid_response", "模型深度分析未返回合法 JSON") from exc
-    return {
-        "score": max(0, min(int(parsed.get("score") or local["score"]), 100)),
-        "recommendation": parsed.get("recommendation") if parsed.get("recommendation") in {"strong", "good", "review", "not_recommended"} else local["recommendation"],
-        "matched_skills": list(parsed.get("matched_skills") or local["matched_skills"])[:50],
-        "evidence_gaps": list(parsed.get("evidence_gaps") or local["evidence_gaps"])[:50],
-        "hard_conflicts": list(parsed.get("hard_conflicts") or local["hard_conflicts"])[:30],
-        "reasons": list(parsed.get("reasons") or local["reasons"])[:20],
-        "verdict": local["verdict"],
-        "triage_dimensions": local["triage_dimensions"],
-        "coverage": local["coverage"],
-        "confidence": local["confidence"],
-        "soft_risks": local["soft_risks"],
-    }
 
 
 def _save_assessment(

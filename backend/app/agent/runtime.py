@@ -206,6 +206,7 @@ class AgentRuntime:
 
         conversation_history = history or []
         messages = [*conversation_history]
+        planned_tools = {step.tool_name for step in plan.steps} if plan is not None else set()
         if plan is not None:
             messages.append(
                 AgentMessage(
@@ -214,6 +215,18 @@ class AgentRuntime:
                         "当前任务已经过规划。只执行计划中允许的工具；每次根据工具结果判断下一步，"
                         "任一步骤失败或被阻止时立即停止，不要继续调用其他工具。计划："
                         + plan.model_dump_json()
+                    ),
+                )
+            )
+        if "get_candidate_context" in planned_tools:
+            messages.append(
+                AgentMessage(
+                    role="system",
+                    content=(
+                        "本轮需要基于当前用户的个人资料回答。请先调用 get_candidate_context；"
+                        "项目亮点、面试表达和能力判断必须依据其返回的资料，"
+                        "不得声称无法读取本地简历或要求用户重复粘贴已有资料。"
+                        "涉及项目表达时，scope 使用 interview。"
                     ),
                 )
             )
@@ -259,7 +272,6 @@ class AgentRuntime:
                 payload={"image_urls": image_urls or []} if image_urls else {},
             )
         )
-        planned_tools = {step.tool_name for step in plan.steps} if plan is not None else set()
         tool_definitions = [
             definition
             for definition in self._tools.definitions()

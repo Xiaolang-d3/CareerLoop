@@ -47,6 +47,9 @@ export type CareerProfileBundle = {
     name: string;
     locale: string;
     privacy_mode: "redacted" | "original";
+    resume_text: string;
+    resume_redacted_text: string;
+    resume_filename: string;
     knowledge_revision: number;
   } | null;
   active_strategy: {
@@ -92,7 +95,6 @@ export type JobProject = {
   source_url: string;
   description: string;
   notes: string;
-  status: "saved" | "applied" | "interviewing" | "offer" | "rejected" | "archived";
   priority: "low" | "medium" | "high";
   created_at: string;
   updated_at: string;
@@ -107,7 +109,6 @@ export type JobProjectDraft = Pick<
   | "source_url"
   | "description"
   | "notes"
-  | "status"
   | "priority"
 >;
 
@@ -308,6 +309,21 @@ export type JobEvaluation = {
 };
 
 export type ResumeChangeDecision = "pending" | "accepted" | "rejected";
+export type ResumeTemplate = "classic" | "compact" | "minimal";
+
+export type QuickMatchResult = {
+  job: { title: string; company_name: string; description_character_count: number };
+  analysis: {
+    required_skills: string[];
+    matched_skills: string[];
+    missing_skills: string[];
+    evidence: Array<{ skills: string[]; text: string }>;
+    skill_coverage: number | null;
+    confidence: "high" | "limited";
+    limitations: string[];
+  };
+  persistence: "not_saved_as_job";
+};
 
 export type ResumeEvidence = {
   source: "job" | "resume" | "user_edit";
@@ -339,6 +355,7 @@ export type ResumeVersionSummary = {
   evaluation_id: number | null;
   title: string;
   status: "draft" | "final";
+  template_id: ResumeTemplate;
   change_count: number;
   change_counts: Record<ResumeChangeDecision, number>;
   created_at: string;
@@ -430,6 +447,67 @@ export type InterviewRound = {
   updated_at: string;
 };
 
+export type InterviewPreparationNode = {
+  id: string;
+  kind: "question" | "knowledge" | "gap";
+  title: string;
+  completed: boolean;
+  note: string;
+};
+
+export type InterviewPreparationExperience = {
+  id: string;
+  title: string;
+  evidence: string;
+  fields?: Array<{ label: string; value: string }>;
+  questions: InterviewPreparationNode[];
+  knowledge: InterviewPreparationNode[];
+  gaps: InterviewPreparationNode[];
+};
+
+export type InterviewPreparationRecord = {
+  id: string;
+  title: string;
+  summary: string;
+  occurred_on: string;
+};
+
+export type InterviewPreparation = {
+  has_profile?: boolean;
+  profile: { id: number; name: string };
+  source_revision: number;
+  stale: boolean;
+  has_resume: boolean;
+  overview: { target_roles: string[]; summary: string };
+  resume_structure?: {
+    modules: Array<{ key: string; label: string; fields: Array<{ label: string; value: string }> }>;
+    projects: Array<{ title: string; evidence: string; fields: Array<{ label: string; value: string }> }>;
+    classified_fragment_count: number;
+  } | null;
+  resume_analysis?: {
+    status: "idle" | "running" | "failed" | "completed";
+    phase?: "preparing_resume" | "calling_model" | "validating_result" | "completed";
+    message?: string;
+  };
+  experiences: InterviewPreparationExperience[];
+  selected_project_ids: string[];
+  job_analysis?: {
+    job_description: string;
+    summary: { fit: string; matched: string[]; gaps: string[] };
+    projects: Array<{
+      id: string;
+      rewrite: string;
+      questions: Array<{ id: string; question: string; focus: string }>;
+    }>;
+  } | null;
+  unclassified_fragments: Array<{ id: string; text: string; decision: "pending" | "confirm_project" | "work_responsibility" | "skill_evidence" | "ignore" }>;
+  classified_fragment_count: number;
+  ignored_fragment_count: number;
+  review_items: InterviewPreparationNode[];
+  general_knowledge: InterviewPreparationNode[];
+  interview_records: InterviewPreparationRecord[];
+};
+
 export type JobEvent = {
   id: number;
   job_id: number;
@@ -479,6 +557,7 @@ export type AgentCapabilities = {
 export type ViewKey =
   | "opportunities"
   | "workbench"
+  | "interview-prep"
   | "dashboard"
   | "chat"
   | "settings";

@@ -2,7 +2,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from app.candidate_core import create_strategy, propose_fact
+from app.candidate_core import create_strategy, propose_fact, review_fact
 from app.db import connect, init_db
 from app.job_evaluations import (
     create_job_comparison,
@@ -53,7 +53,9 @@ class JobEvaluationTest(unittest.TestCase):
             statement="拥有5年 AI Agent 产品经验，使用 Python 和 FastAPI 推动 RAG 原型落地。",
             db_path=self.db_path,
         )
-        self.confirmed_fact = confirmed
+        self.confirmed_fact = review_fact(
+            confirmed["id"], status="confirmed", db_path=self.db_path
+        )
         self.pending_fact = propose_fact(
             profile_id=profile_id, category="skill", statement="熟悉 Kubernetes 集群管理。",
             db_path=self.db_path,

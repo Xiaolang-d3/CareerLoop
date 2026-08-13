@@ -11,7 +11,6 @@ import {
   CheckCircle2,
   Download,
   ExternalLink,
-  FileSearch,
   FileCheck2,
   FileText,
   ImagePlus,
@@ -46,18 +45,20 @@ import type {
   JobProjectDraft,
   ResumeChange,
   ResumeChangeDecision,
+  ResumeTemplate,
   ResumeVersion,
   ResumeVersionSummary,
+  QuickMatchResult,
   WorkflowNode,
   WorkflowStatus
 } from "../types";
 import {
-  JobOverview,
   JobStageNav,
-  jobStatusLabels,
   priorityLabels,
   type WorkbenchStage
 } from "../features/jobs/JobWorkspaceChrome";
+import { ActionButton } from "./ui/ActionButton";
+import { composeJobDescription, splitJobDescription } from "../features/jobs/job-description";
 
 type WorkbenchViewProps = {
   viewMode: "index" | "new" | "detail";
@@ -87,6 +88,11 @@ type WorkbenchViewProps = {
   onNavigateDetail: (jobId: number) => void;
   onNavigateEvaluation: (jobId: number) => void;
   onCreateComparison: (evaluationIds: number[]) => Promise<number>;
+  onQuickMatch: (payload: {
+    job_description: string;
+    job_title?: string;
+    company_name?: string;
+  }) => Promise<QuickMatchResult>;
   onSaveJob: (draft: JobProjectDraft, jobId: number | null) => Promise<JobProject>;
   onPreviewJobUrl: (url: string) => Promise<JobImportPreview>;
   onOpenJobInBrowser: (url: string) => Promise<{ tabId: number; opened: boolean; reused: boolean }>;
@@ -103,7 +109,7 @@ type WorkbenchViewProps = {
   ) => Promise<void>;
   onUpdateResumeVersion: (
     versionId: number,
-    status: "draft" | "final"
+    patch: { status?: "draft" | "final"; template_id?: ResumeTemplate }
   ) => Promise<void>;
   onExportResume: (versionId: number, format: "docx" | "pdf") => Promise<void>;
   onCreateInterviewKit: (job: JobProject, interviewType?: InterviewType) => Promise<InterviewKit>;
@@ -143,7 +149,6 @@ const emptyJobDraft: JobProjectDraft = {
   source_url: "",
   description: "",
   notes: "",
-  status: "saved",
   priority: "medium"
 };
 
@@ -156,7 +161,6 @@ function jobToDraft(job: JobProject): JobProjectDraft {
     source_url: job.source_url,
     description: job.description,
     notes: job.notes,
-    status: job.status,
     priority: job.priority
   };
 }
@@ -189,6 +193,15 @@ function importPlatformLabel(platform: string) {
   }[platform] || platform;
 }
 
+function isWebUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 export function WorkbenchView({
   viewMode,
   hasProfile,
@@ -217,6 +230,7 @@ export function WorkbenchView({
   onNavigateDetail,
   onNavigateEvaluation,
   onCreateComparison,
+  onQuickMatch,
   onSaveJob,
   onPreviewJobUrl,
   onOpenJobInBrowser,
@@ -240,6 +254,7 @@ export function WorkbenchView({
   const [draft, setDraft] = useState<JobProjectDraft>(emptyJobDraft);
   const [dirty, setDirty] = useState(false);
   const [importUrl, setImportUrl] = useState("");
+  const [browserImportUrl, setBrowserImportUrl] = useState("");
   const [pastedJobText, setPastedJobText] = useState("");
   const [pasteJobTextOpen, setPasteJobTextOpen] = useState(false);
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
@@ -247,10 +262,17 @@ export function WorkbenchView({
   const [importDescriptionExpanded, setImportDescriptionExpanded] = useState(false);
   const [editingJob, setEditingJob] = useState(true);
   const [jobDetailsExpanded, setJobDetailsExpanded] = useState(false);
-  const [activeStage, setActiveStage] = useState<WorkbenchStage>("overview");
+  const [activeStage, setActiveStage] = useState<WorkbenchStage>("analysis");
   const [jobSearch, setJobSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | JobProject["status"]>("all");
   const [comparisonJobs, setComparisonJobs] = useState<number[]>([]);
+  const [quickMatchInput, setQuickMatchInput] = useState("");
+  const [quickMatchPreview, setQuickMatchPreview] = useState<JobImportPreview | null>(null);
+  const [quickMatchBrowserUrl, setQuickMatchBrowserUrl] = useState("");
+  const [quickMatchBrowserTabId, setQuickMatchBrowserTabId] = useState<number | null>(null);
+  const [quickMatchResult, setQuickMatchResult] = useState<QuickMatchResult | null>(null);
+  const [quickMatchError, setQuickMatchError] = useState("");
+  const [quickMatchBusy, setQuickMatchBusy] = useState(false);
+  const [requirementsText, setRequirementsText] = useState("");
   const selectedJob = viewMode === "detail"
     ? jobs.find((job) => job.id === selectedJobId) ?? null
     : null;
@@ -266,15 +288,17 @@ export function WorkbenchView({
   const importBrowserRequired = importPreview?.status === "browser_required";
 
   useEffect(() => {
-    setActiveStage("overview");
+    setActiveStage("analysis");
   }, [selectedJobId]);
 
   useEffect(() => {
     if (!selectedJob) {
       setDraft(emptyJobDraft);
+      setRequirementsText("");
       setDirty(false);
       setEditingJob(true);
       setImportUrl("");
+      setBrowserImportUrl("");
       setPastedJobText("");
       setPasteJobTextOpen(false);
       setImportWarnings([]);
@@ -283,7 +307,9 @@ export function WorkbenchView({
       setJobDetailsExpanded(false);
       return;
     }
-    setDraft(jobToDraft(selectedJob));
+    const parts = splitJobDescription(selectedJob.description);
+    setDraft({ ...jobToDraft(selectedJob), description: parts.description });
+    setRequirementsText(parts.requirements);
     setDirty(false);
     setEditingJob(false);
     setImportPreview(null);
@@ -298,7 +324,12 @@ export function WorkbenchView({
 
   async function persistJob() {
     const existingJobId = viewMode === "detail" ? selectedJobId : null;
-    const saved = await onSaveJob(draft, existingJobId);
+    const nextDraft = {
+      ...draft,
+      description: composeJobDescription(draft.description, requirementsText)
+    };
+    setDraft({ ...nextDraft, description: draft.description });
+    const saved = await onSaveJob(nextDraft, existingJobId);
     setDirty(false);
     setEditingJob(false);
     if (!existingJobId) onNavigateDetail(saved.id);
@@ -320,7 +351,9 @@ export function WorkbenchView({
 
   function cancelJobEditing() {
     if (!selectedJob) return;
-    setDraft(jobToDraft(selectedJob));
+    const parts = splitJobDescription(selectedJob.description);
+    setDraft({ ...jobToDraft(selectedJob), description: parts.description });
+    setRequirementsText(parts.requirements);
     setDirty(false);
     setEditingJob(false);
   }
@@ -329,8 +362,9 @@ export function WorkbenchView({
     setDraft(emptyJobDraft);
     setDirty(false);
     setEditingJob(true);
-    setActiveStage("overview");
+    setActiveStage("analysis");
     setImportUrl("");
+    setBrowserImportUrl("");
     setImportWarnings([]);
     setImportPreview(null);
     setImportDescriptionExpanded(false);
@@ -353,6 +387,7 @@ export function WorkbenchView({
     const url = importUrl.trim();
     if (!url || jobImportBusy) return;
     try {
+      setBrowserImportUrl(url);
       const preview = await onPreviewJobUrl(url);
       const stopped = ["unsupported", "blocked", "invalid"].includes(preview.status);
       if (stopped || preview.status === "browser_required") {
@@ -386,7 +421,7 @@ export function WorkbenchView({
   async function openJobForImport() {
     if (!importPreview || jobImportBusy) return;
     try {
-      await onOpenJobInBrowser(importPreview.final_url || importPreview.source_url);
+      await onOpenJobInBrowser(browserImportUrl || importPreview.final_url || importPreview.source_url);
     } catch {
       return;
     }
@@ -425,7 +460,7 @@ export function WorkbenchView({
     try {
       const previousTrace = importPreview.agent_trace || [];
       const preview = await onPreviewJobFromBrowser(
-        importPreview.final_url || importPreview.source_url,
+        browserImportUrl || importPreview.final_url || importPreview.source_url,
         browserJobOpened ? browserJobTabId ?? undefined : undefined
       );
       const traceOffset = previousTrace.length;
@@ -532,16 +567,14 @@ export function WorkbenchView({
   }
 
   const hasProjectContent = Boolean(
-    draft.job_title.trim() || draft.company_name.trim() || draft.description.trim()
+    draft.job_title.trim() && draft.description.trim() && requirementsText.trim()
   );
   const ready = hasProfile && Boolean(draft.description.trim()) && !chatBusy && !jobBusy && !analysisBusy;
   const nextAction: WorkbenchStage = !analysisReady
     ? "analysis"
     : !resumeVersions.length
       ? "resume"
-      : !interviewKits.length
-        ? "interview"
-        : "progress";
+      : "interview";
   const nextActionCopy = {
     analysis: currentAnalysis?.is_stale
       ? {
@@ -560,14 +593,9 @@ export function WorkbenchView({
       action: "创建定制简历"
     },
     interview: {
-      title: "围绕真实经历准备重点问答",
+      title: "围绕真实经历准备面试",
       description: "根据岗位要求和真实简历证据，生成重点问题、回答框架和追问提示。",
-      action: "生成面试重点问答"
-    },
-    progress: {
-      title: "记录面试并完成复盘",
-      description: "保存面试安排、真实问题与反馈，让 Agent 帮你整理下一轮改进重点。",
-      action: "打开面试记录"
+      action: "生成面试准备"
     }
   }[nextAction];
 
@@ -582,22 +610,16 @@ export function WorkbenchView({
     }
     if (nextAction === "interview") {
       void runTask("interview");
-      return;
     }
-    setActiveStage("progress");
   }
 
   const visibleJobs = jobs.filter((job) => {
-    const matchesStatus = statusFilter === "all" || job.status === statusFilter;
     const query = jobSearch.trim().toLowerCase();
     const matchesSearch = !query || [job.job_title, job.company_name, job.location]
       .some((value) => value.toLowerCase().includes(query));
-    return matchesStatus && matchesSearch;
+    return matchesSearch;
   });
   const comparisonStrategyId = jobs.find((job) => comparisonJobs.includes(job.id))?.latest_evaluation_strategy_id;
-  const activeJobCount = jobs.filter((job) => !["rejected", "archived"].includes(job.status)).length;
-  const interviewJobCount = jobs.filter((job) => job.status === "interviewing").length;
-  const offerJobCount = jobs.filter((job) => job.status === "offer").length;
 
   async function compareSelectedJobs() {
     const selected = jobs.filter((job) => comparisonJobs.includes(job.id));
@@ -606,41 +628,115 @@ export function WorkbenchView({
     await onCreateComparison(evaluationIds);
   }
 
+  async function analyzeQuickMatchPreview(preview: JobImportPreview) {
+    setQuickMatchPreview(preview);
+    if (preview.status === "browser_required") {
+      setQuickMatchError("该岗位页需要在 Chrome 中登录或完成验证后读取。");
+      return;
+    }
+    if (stoppedImportStatuses.has(preview.status)) {
+      setQuickMatchError(preview.stop_reason || preview.warnings[0] || "未能读取到可用于分析的岗位内容。");
+      return;
+    }
+    if (preview.description.trim().length < 20) {
+      setQuickMatchError(preview.warnings[0] || "未能识别到足够的岗位描述，请粘贴职责和任职要求后重试。");
+      return;
+    }
+    setQuickMatchResult(await onQuickMatch({
+      job_description: preview.description,
+      job_title: preview.job_title,
+      company_name: preview.company_name
+    }));
+  }
+
+  async function submitQuickMatch() {
+    const input = quickMatchInput.trim();
+    if (!input || quickMatchBusy || jobImportBusy) return;
+    setQuickMatchBusy(true);
+    setQuickMatchError("");
+    setQuickMatchResult(null);
+    setQuickMatchPreview(null);
+    setQuickMatchBrowserTabId(null);
+    setQuickMatchBrowserUrl(isWebUrl(input) ? input : "");
+    try {
+      const preview = isWebUrl(input)
+        ? await onPreviewJobUrl(input)
+        : await onPreviewJobText(input);
+      await analyzeQuickMatchPreview(preview);
+    } catch (error) {
+      setQuickMatchError(error instanceof Error ? error.message : "快速匹配失败，请稍后重试。");
+    } finally {
+      setQuickMatchBusy(false);
+    }
+  }
+
+  async function continueQuickMatchInBrowser() {
+    if (!quickMatchPreview || quickMatchBusy || jobImportBusy) return;
+    setQuickMatchBusy(true);
+    setQuickMatchError("");
+    try {
+      if (quickMatchBrowserTabId == null) {
+        const browserPage = await onOpenJobInBrowser(
+          quickMatchBrowserUrl || quickMatchPreview.final_url || quickMatchPreview.source_url
+        );
+        setQuickMatchBrowserTabId(browserPage.tabId);
+        return;
+      }
+      const preview = await onPreviewJobFromBrowser(
+        quickMatchBrowserUrl || quickMatchPreview.final_url || quickMatchPreview.source_url,
+        quickMatchBrowserTabId
+      );
+      await analyzeQuickMatchPreview(preview);
+    } catch (error) {
+      setQuickMatchError(error instanceof Error ? error.message : "无法从 Chrome 读取岗位页面。");
+    } finally {
+      setQuickMatchBusy(false);
+    }
+  }
+
+  async function quickMatchFromScreenshot(file: File) {
+    if (quickMatchBusy || jobImportBusy) return;
+    setQuickMatchBusy(true);
+    setQuickMatchError("");
+    setQuickMatchResult(null);
+    setQuickMatchBrowserTabId(null);
+    setQuickMatchBrowserUrl("");
+    try {
+      const preview = await onPreviewJobScreenshot(file);
+      await analyzeQuickMatchPreview(preview);
+    } catch (error) {
+      setQuickMatchError(error instanceof Error ? error.message : "岗位截图识别失败，请稍后重试。");
+    } finally {
+      setQuickMatchBusy(false);
+    }
+  }
+
   if (viewMode === "index") {
     return (
       <section className="job-project-index">
         <header className="job-index-hero">
           <div>
-            <span className="analysis-kicker">JOB AGENT WORKSPACE</span>
-            <h2>围绕每个岗位完成一次求职准备</h2>
-            <p>先看岗位要求与匹配分析，再完成定制简历、重点问答和面试复盘。每一步都保留依据和版本。</p>
+            <span className="analysis-kicker">JOB MATCH</span>
+            <h2>填写岗位，对照简历分析</h2>
+            <p>手动输入岗位描述和任职要求，再做匹配分析和面试准备。不读取招聘网站。</p>
           </div>
+          <button type="button" className="primary-button" onClick={startNewJob}>
+            <Plus size={15} />填写岗位
+          </button>
         </header>
 
         {!hasProfile ? (
           <div className="job-index-profile-warning">
             <AlertTriangle size={16} />
-            <div><strong>匹配分析尚未启用</strong><span>请先在岗位工作台保存要推进的岗位；开始分析前需要至少一条已确认的个人经历或技能。</span></div>
+            <div><strong>还没有可用简历</strong><span>请先在个人资料中上传并保存简历，分析只会使用本机脱敏文本。</span></div>
           </div>
         ) : null}
 
-        <div className="job-index-stats">
-          <div><strong>{jobs.length}</strong><span>全部岗位</span></div>
-          <div><strong>{activeJobCount}</strong><span>进行中</span></div>
-          <div><strong>{interviewJobCount}</strong><span>面试中</span></div>
-          <div><strong>{offerJobCount}</strong><span>Offer</span></div>
-        </div>
-
         <section className="job-index-list-section">
           <header>
-            <div><h3>我的岗位</h3><span>{visibleJobs.length} 个岗位</span></div>
+            <div><h3>已保存的岗位</h3><span>{visibleJobs.length} 个岗位</span></div>
             <div className="job-index-controls">
-              {comparisonJobs.length >= 2 ? <button className="secondary-button" onClick={() => void compareSelectedJobs()}>比较 {comparisonJobs.length} 个岗位</button> : null}
               <label className="job-index-search"><Search size={15} /><input value={jobSearch} onChange={(event) => setJobSearch(event.target.value)} placeholder="搜索岗位、公司或城市" /></label>
-              <select aria-label="筛选岗位状态" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as "all" | JobProject["status"])}>
-                <option value="all">全部状态</option>
-                {Object.entries(jobStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </select>
             </div>
           </header>
 
@@ -649,12 +745,11 @@ export function WorkbenchView({
               {visibleJobs.map((job) => (
                 <article className="job-index-card-wrap" key={job.id}>
                 <button type="button" className="job-index-card" onClick={() => openJob(job.id)}>
-                  <div className="job-index-card-top"><span className={`job-priority ${job.priority}`} /><span>{jobStatusLabels[job.status]}</span><small>{priorityLabels[job.priority]}</small></div>
+                  <div className="job-index-card-top"><span className={`job-priority ${job.priority}`} /><small>{priorityLabels[job.priority]}优先级</small></div>
                   <div><h3>{job.job_title || "未命名岗位"}</h3><p>{job.company_name || "公司待补充"}</p></div>
                   <div className="job-index-card-meta">{job.location ? <span><MapPin size={13} />{job.location}</span> : null}{job.salary_text ? <span>{job.salary_text}</span> : null}</div>
                   <footer><span>{job.latest_evaluation_id ? "匹配分析已完成" : "等待匹配分析"}</span><em>继续准备<ArrowRight size={14} /></em></footer>
                 </button>
-                {job.latest_evaluation_id ? <label className="job-compare-check" title={comparisonStrategyId != null && job.latest_evaluation_strategy_id !== comparisonStrategyId ? "不同职业策略会单独分组，不能产生统一排名" : undefined}><input type="checkbox" checked={comparisonJobs.includes(job.id)} disabled={!comparisonJobs.includes(job.id) && (comparisonJobs.length >= 10 || (comparisonStrategyId != null && job.latest_evaluation_strategy_id !== comparisonStrategyId))} onChange={(event) => setComparisonJobs((current) => event.target.checked ? [...current, job.id] : current.filter((id) => id !== job.id))} />加入比较</label> : null}
                 </article>
               ))}
             </div>
@@ -662,7 +757,10 @@ export function WorkbenchView({
             <div className="job-index-empty">
               <span><Building2 size={24} /></span>
               <strong>{jobs.length ? "没有符合筛选条件的岗位" : "还没有需要推进的岗位"}</strong>
-              <p>{jobs.length ? "调整搜索词或状态筛选。" : "请从岗位工作台保存值得推进的岗位，再开始匹配分析和求职准备。"}</p>
+              <p>{jobs.length ? "调整搜索词或状态筛选。" : "填写岗位描述和任职要求后，就可以开始匹配分析。"}</p>
+              {!jobs.length ? (
+                <button type="button" className="primary-button" onClick={startNewJob}>填写岗位</button>
+              ) : null}
             </div>
           )}
         </section>
@@ -692,14 +790,58 @@ export function WorkbenchView({
       <section className="workbench-page job-project-subpage">
         <header className="job-subpage-nav">
           <button type="button" onClick={onNavigateIndex}><ArrowLeft size={15} />返回求职准备</button>
-          <span>/</span><strong>浏览器读取</strong>
+          <span>/</span><strong>填写岗位</strong>
         </header>
-        <div className="job-detail-unavailable">
-          <FileSearch size={22} />
-          <strong>岗位项目只能从岗位收件箱保存</strong>
-          <p>请在招聘详情页使用浏览器助手读取当前岗位，完成初筛后再入围并保存为岗位项目。</p>
-          <button type="button" onClick={onNavigateIndex}>查看已有岗位</button>
-        </div>
+        <section className="flow-step jd-entry-card">
+          <header className="flow-step-heading">
+            <span className="flow-step-number"><PencilLine size={15} /></span>
+            <div>
+              <h2>手动填写岗位</h2>
+              <p>输入岗位描述和任职要求。分析只使用你写下的内容，不会去招聘网站读取页面。</p>
+            </div>
+          </header>
+          <div className="job-project-fields">
+            <label>
+              <span>岗位名称</span>
+              <input value={draft.job_title} maxLength={200} placeholder="例如：AI 产品经理" onChange={(event) => updateDraft({ job_title: event.target.value })} />
+            </label>
+            <label>
+              <span>公司名称</span>
+              <input value={draft.company_name} maxLength={200} placeholder="选填" onChange={(event) => updateDraft({ company_name: event.target.value })} />
+            </label>
+          </div>
+          <label className="job-description-field">
+            <span>岗位描述 <em>必填</em></span>
+            <textarea
+              value={draft.description}
+              maxLength={50_000}
+              placeholder="岗位职责、团队背景、工作内容…"
+              onChange={(event) => updateDraft({ description: event.target.value })}
+            />
+          </label>
+          <label className="job-description-field">
+            <span>任职要求 <em>必填</em></span>
+            <textarea
+              value={requirementsText}
+              maxLength={50_000}
+              placeholder="技能、经验、学历或其他硬性要求…"
+              onChange={(event) => {
+                setRequirementsText(event.target.value);
+                setDirty(true);
+              }}
+            />
+          </label>
+          <footer className="job-project-actions">
+            <span>{!hasProfile ? "保存前请先上传简历" : "保存后进入该岗位的分析和面试准备"}</span>
+            <button
+              className="secondary-button"
+              onClick={() => void persistJob()}
+              disabled={!hasProjectContent || jobBusy}
+            >
+              <Save size={14} />{jobBusy ? "保存中…" : "保存岗位"}
+            </button>
+          </footer>
+        </section>
       </section>
     );
   }
@@ -732,20 +874,6 @@ export function WorkbenchView({
               </div>
               <div className="job-workspace-meta">
                 <label>
-                  <span>状态</span>
-                  <select
-                    value={draft.status}
-                    disabled={jobBusy || dirty}
-                    onChange={(event) => void saveQuickPatch({
-                      status: event.target.value as JobProject["status"]
-                    })}
-                  >
-                    {Object.entries(jobStatusLabels).map(([value, label]) => (
-                      <option value={value} key={value}>{label}</option>
-                    ))}
-                  </select>
-                </label>
-                <label>
                   <span>优先级</span>
                   <select
                     value={draft.priority}
@@ -774,713 +902,58 @@ export function WorkbenchView({
             </header>
           ) : null}
 
-          {!selectedJob || editingJob ? (
+          {editingJob && selectedJob ? (
             <section className={`flow-step jd-entry-card ${draft.description.trim() ? "complete" : ""}`}>
               <header className="flow-step-heading">
-                <span className="flow-step-number">{selectedJob ? <PencilLine size={15} /> : <Link2 size={15} />}</span>
+                <span className="flow-step-number"><PencilLine size={15} /></span>
                 <div>
-                  <h2>
-                    {selectedJob
-                      ? "编辑岗位项目"
-                      : importBrowserRequired && !jobDetailsExpanded
-                        ? "导入岗位"
-                      : importStopped && !jobDetailsExpanded
-                        ? "导入岗位"
-                      : jobDetailsExpanded
-                        ? importPreview
-                          ? "补充岗位资料"
-                          : "手动填写岗位"
-                        : importPreview
-                          ? "确认识别结果"
-                          : "导入一个岗位"}
-                  </h2>
-                  <p>
-                    {selectedJob
-                      ? "修改后保存，后续分析会使用最新岗位资料。"
-                      : importBrowserRequired && !jobDetailsExpanded
-                        ? browserJobOpened
-                          ? "岗位页面已在 Chrome 中打开。请完成登录或安全验证，回到此页面确认后再读取。"
-                          : "公开读取受限，点击下方按钮打开 Chrome 岗位页，完成登录后再继续。"
-                      : importStopped && !jobDetailsExpanded
-                        ? "未获取到可用岗位内容，可重新输入或手动填写。"
-                      : jobDetailsExpanded
-                        ? importPreview
-                          ? "补全未识别的内容；岗位 JD 是开始分析的必要内容。"
-                          : "只需要补充已有的信息，岗位 JD 是开始分析的必要内容。"
-                        : importPreview
-                          ? "先确认关键内容，需要时再展开编辑。"
-                          : "先粘贴岗位链接，确认识别结果后再进入分析。"}
-                  </p>
+                  <h2>编辑岗位</h2>
+                  <p>修改岗位描述和任职要求。后续分析会使用最新内容。</p>
                 </div>
-                {selectedJob || dirty || importPreview || jobDetailsExpanded ? (
-                  <span className={`flow-step-status ${selectedJob && !dirty ? "complete" : ""}`}>
-                    {importBrowserRequired
-                      ? <Bot size={14} />
-                      : importStopped
-                      ? <AlertTriangle size={14} />
-                      : selectedJob && !dirty
-                        ? <CheckCircle2 size={14} />
-                        : <PencilLine size={14} />}
-                    {importBrowserRequired
-                      ? "等待浏览器"
-                      : importStopped
-                      ? "已停止"
-                      : selectedJob && !dirty
-                        ? "已保存"
-                        : dirty
-                          ? "有修改"
-                          : "填写中"}
-                  </span>
-                ) : null}
               </header>
-              {!selectedJob && !importPreview && !jobDetailsExpanded ? (
-                <section className="job-link-import">
-                  <label className="job-link-label" htmlFor="job-import-url">
-                    <strong>岗位页面链接</strong>
-                    <span>支持公开可访问的岗位详情页</span>
-                  </label>
-                  <form
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void importJobLink();
-                    }}
-                  >
-                    <input
-                      id="job-import-url"
-                      type="url"
-                      inputMode="url"
-                      autoComplete="url"
-                      spellCheck={false}
-                      value={importUrl}
-                      disabled={jobImportBusy}
-                      placeholder="https://www.zhipin.com/job_detail/..."
-                      onChange={(event) => {
-                        setImportUrl(event.target.value);
-                        setImportWarnings([]);
-                      }}
-                    />
-                    <button disabled={!importUrl.trim() || jobImportBusy} type="submit">
-                      {jobImportBusy
-                        ? <LoaderCircle className="spinning" size={15} />
-                        : <Link2 size={15} />}
-                      {jobImportBusy ? "读取中…" : "读取岗位"}
-                    </button>
-                  </form>
-                  <div className="job-import-fallback-actions" aria-label="其他岗位输入方式">
-                    <span>公开页面受限时，也可以：</span>
-                    <button
-                      type="button"
-                      onClick={() => setPasteJobTextOpen(true)}
-                      disabled={jobImportBusy}
-                    >
-                      <FileText size={14} />粘贴文字自动识别
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setJobDetailsExpanded(true)}
-                      disabled={jobImportBusy}
-                    >
-                      <PencilLine size={14} />逐项填写
-                    </button>
-                    <label className="job-import-upload-button">
-                      <ImagePlus size={14} />上传岗位截图
-                      <input
-                        type="file"
-                        accept="image/png,image/jpeg,image/webp"
-                        disabled={jobImportBusy}
-                        onChange={(event) => {
-                          const file = event.target.files?.[0];
-                          event.currentTarget.value = "";
-                          if (file) void importJobFromScreenshot(file);
-                        }}
-                      />
-                    </label>
-                  </div>
-                  {pasteJobTextOpen ? (
-                    <section className="job-import-text-fallback">
-                      <header>
-                        <div>
-                          <strong>粘贴岗位文字</strong>
-                          <small>可从 Chrome 复制岗位描述、职位要求和公司信息，系统只在本机提取字段。</small>
-                        </div>
-                        <button
-                          type="button"
-                          className="tertiary-button"
-                          onClick={() => setPasteJobTextOpen(false)}
-                          disabled={jobImportBusy}
-                        >
-                          关闭
-                        </button>
-                      </header>
-                      <textarea
-                        value={pastedJobText}
-                        maxLength={50_000}
-                        placeholder={'例如：\nAI 产品经理\n公司名称：示例科技\n职位描述\n负责……'}
-                        onChange={(event) => setPastedJobText(event.target.value)}
-                      />
-                      <footer>
-                        <small>{pastedJobText.trim().length} 字 · 不会读取 Cookie 或登录信息</small>
-                        <button
-                          type="button"
-                          className="primary-button"
-                          disabled={!pastedJobText.trim() || jobImportBusy}
-                          onClick={() => void importJobFromText()}
-                        >
-                          {jobImportBusy ? <LoaderCircle className="spinning" size={15} /> : <FileText size={15} />}
-                          {jobImportBusy ? "识别中…" : "自动识别岗位"}
-                        </button>
-                      </footer>
-                    </section>
-                  ) : null}
-                  {jobImportBusy ? (
-                    <section className="job-import-agent-live" role="status" aria-live="polite">
-                      <header>
-                        <span className="job-import-agent-avatar"><Bot size={16} /></span>
-                        <div>
-                          <strong>Job Import Agent</strong>
-                          <small>
-                            {jobImportActivity[jobImportActivity.length - 1]?.message || "正在建立任务上下文"}
-                          </small>
-                        </div>
-                        <span className="job-import-agent-running">
-                          <i />运行中
-                        </span>
-                      </header>
-                      <div className="job-import-agent-activity">
-                        {jobImportActivity.length ? (
-                          jobImportActivity.slice(-8).map((event) => {
-                            const active = event.status === "thinking" || event.status === "running";
-                            const complete = event.status === "done" || event.status === "ready";
-                            return (
-                              <div className={event.status} key={event.id}>
-                                <span>
-                                  {active
-                                    ? <LoaderCircle className="spinning" size={12} />
-                                    : complete
-                                      ? <Check size={12} />
-                                      : <AlertTriangle size={12} />}
-                                </span>
-                                <p>{event.message}</p>
-                                {event.round ? <small>R{event.round}</small> : null}
-                              </div>
-                            );
-                          })
-                        ) : (
-                          <div className="thinking">
-                            <span><LoaderCircle className="spinning" size={12} /></span>
-                            <p>正在启动岗位导入智能体</p>
-                          </div>
-                        )}
-                      </div>
-                    </section>
-                  ) : null}
-                  {importWarnings.length ? (
-                    <div className="job-import-warnings" role="status">
-                      {importWarnings.map((warning) => (
-                        <span key={warning}><AlertTriangle size={13} />{warning}</span>
-                      ))}
-                    </div>
-                  ) : null}
-                </section>
-              ) : null}
-
-              {!selectedJob && importPreview && !jobDetailsExpanded ? (
-                <section
-                  className={[
-                    "job-import-preview",
-                    importPreview.status,
-                    !importStopped && !importBrowserRequired ? "review" : ""
-                  ].filter(Boolean).join(" ")}
-                >
-                  <div className="job-import-preview-heading">
-                    <div>
-                      <span className="eyebrow">
-                        {importPreview.status === "ready"
-                          ? "识别完成"
-                          : importPreview.status === "partial"
-                            ? "需要补充"
-                            : importBrowserRequired
-                              ? "需要浏览器"
-                              : "读取失败"}
-                      </span>
-                      <h2>
-                        {importBrowserRequired
-                          ? "从 Chrome 读取岗位"
-                          : importStopped
-                          ? stoppedImportTitle(importPreview.page_type)
-                          : draft.job_title || "岗位名称待补充"}
-                      </h2>
-                      {importBrowserRequired ? (
-                        <p>
-                          {browserJobOpened
-                            ? "岗位页面已打开。请在 Chrome 中完成登录或安全验证，回到这里点击确认后继续读取。"
-                            : browserJobImportAvailable
-                              ? "浏览器助手已连接，点击下方按钮打开岗位页面。"
-                              : "浏览器助手尚未连接；加载扩展后可打开岗位页面。"}
-                        </p>
-                      ) : !importStopped ? (
-                        <p>
-                          {[draft.company_name, draft.location, draft.salary_text]
-                            .filter(Boolean)
-                          .join(" · ") || "公司与岗位信息待补充"}
-                        </p>
-                      ) : null}
-                    </div>
-                    {importPreview.final_url || importPreview.source_url ? (
-                      <a
-                        className="job-import-source"
-                        href={importPreview.final_url || importPreview.source_url}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        {importPreview.source_domain}<ExternalLink size={12} />
-                      </a>
-                    ) : (
-                      <span className="job-import-source">{importPreview.source_domain}</span>
-                    )}
-                  </div>
-                  {jobImportBusy && importBrowserRequired ? (
-                    <section className="job-import-agent-live" role="status" aria-live="polite">
-                      <header>
-                        <span className="job-import-agent-avatar"><Bot size={16} /></span>
-                        <div>
-                          <strong>Browser Agent</strong>
-                          <small>
-                            {jobImportActivity[jobImportActivity.length - 1]?.message
-                              || "正在连接 Chrome 页面"}
-                          </small>
-                        </div>
-                        <span className="job-import-agent-running">
-                          <i />运行中
-                        </span>
-                      </header>
-                      <div className="job-import-agent-activity">
-                        {jobImportActivity.slice(-6).map((event) => {
-                          const active = event.status === "thinking" || event.status === "running";
-                          const complete = event.status === "done" || event.status === "ready";
-                          return (
-                            <div className={event.status} key={`browser-${event.id}`}>
-                              <span>
-                                {active
-                                  ? <LoaderCircle className="spinning" size={12} />
-                                  : complete
-                                    ? <Check size={12} />
-                                    : <AlertTriangle size={12} />}
-                              </span>
-                              <p>{event.message}</p>
-                              {event.round ? <small>R{event.round}</small> : null}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </section>
-                  ) : null}
-                  {!importStopped && !importBrowserRequired ? (
-                    <div className="job-import-review-layout">
-                      <article className="job-import-review-document">
-                        <div className="job-import-review-fields">
-                          <div>
-                            <span><Building2 size={15} /></span>
-                            <div>
-                              <small>公司</small>
-                              <strong>{draft.company_name || "待补充"}</strong>
-                            </div>
-                          </div>
-                          <div>
-                            <span><MapPin size={15} /></span>
-                            <div>
-                              <small>工作地点</small>
-                              <strong>{draft.location || "待补充"}</strong>
-                            </div>
-                          </div>
-                          <div>
-                            <span><Target size={15} /></span>
-                            <div>
-                              <small>薪资</small>
-                              <strong>{draft.salary_text || "待补充"}</strong>
-                            </div>
-                          </div>
-                        </div>
-                        <section className="job-import-jd-preview">
-                          <header>
-                            <div>
-                              <span><FileText size={15} /></span>
-                              <div>
-                                <strong>岗位描述</strong>
-                                <small>已识别 {importPreview.character_count} 字</small>
-                              </div>
-                            </div>
-                            <span className="job-import-quality-badge">
-                              <CheckCircle2 size={13} />可用于岗位分析
-                            </span>
-                          </header>
-                          <div className={importDescriptionExpanded ? "expanded" : ""}>
-                            {draft.description || "岗位描述待补充"}
-                          </div>
-                          {draft.description.length > 360 ? (
-                            <button
-                              type="button"
-                              aria-expanded={importDescriptionExpanded}
-                              onClick={() => setImportDescriptionExpanded((current) => !current)}
-                            >
-                              {importDescriptionExpanded ? "收起岗位描述" : "展开完整岗位描述"}
-                            </button>
-                          ) : null}
-                        </section>
-                      </article>
-                      <aside className="job-import-review-checks">
-                        <header>
-                          <span><ListChecks size={15} /></span>
-                          <div>
-                            <strong>导入检查</strong>
-                            <small>保存前确认关键字段</small>
-                          </div>
-                        </header>
-                        <div>
-                          {[
-                            ["岗位名称", Boolean(draft.job_title)],
-                            ["公司名称", Boolean(draft.company_name)],
-                            ["工作地点", Boolean(draft.location)],
-                            ["完整 JD", draft.description.trim().length >= 40]
-                          ].map(([label, complete]) => (
-                            <span className={complete ? "complete" : "missing"} key={String(label)}>
-                              {complete
-                                ? <Check size={12} />
-                                : <AlertTriangle size={12} />}
-                              <strong>{String(label)}</strong>
-                              <small>{complete ? "已识别" : "待补充"}</small>
-                            </span>
-                          ))}
-                        </div>
-                        {importWarnings.length ? (
-                          <div className="job-import-warnings" role="status">
-                            {importWarnings.map((warning) => (
-                              <span key={warning}><AlertTriangle size={13} />{warning}</span>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="job-import-review-ready">
-                            <CheckCircle2 size={14} />关键内容已齐全，可以创建岗位项目。
-                          </p>
-                        )}
-                      </aside>
-                    </div>
-                  ) : null}
-                  {importPreview.agent_trace?.length ? (
-                    !importStopped && !importBrowserRequired ? (
-                      <details className="job-import-agent-trace compact">
-                        <summary>
-                          <span><Bot size={14} /></span>
-                          <div>
-                            <strong>查看智能体执行记录</strong>
-                            <small>
-                              {importPreview.agent_trace.length} 项任务 · {importPlatformLabel(importPreview.platform)}
-                            </small>
-                          </div>
-                        </summary>
-                        <div>
-                          {importPreview.agent_trace.map((event) => (
-                            <div className={event.status} key={`${event.step}-${event.tool}`}>
-                              <span>
-                                {event.status === "done"
-                                  ? <Check size={12} />
-                                  : <AlertTriangle size={12} />}
-                              </span>
-                              <p>{event.message}</p>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
-                    ) : (
-                      <section className="job-import-agent-trace" aria-label="智能体执行过程">
-                        <header>
-                          <span><Bot size={14} /></span>
-                          <div>
-                            <strong>智能体执行记录</strong>
-                            <small>
-                              {importPreview.agent_trace.filter(
-                                (event) => !(importStopped && event.tool === "stop_job_import")
-                              ).length} 项任务 · {importPlatformLabel(importPreview.platform)}
-                            </small>
-                          </div>
-                        </header>
-                        <div>
-                          {importPreview.agent_trace
-                            .filter((event) => !(importStopped && event.tool === "stop_job_import"))
-                            .map((event) => (
-                              <div className={event.status} key={`${event.step}-${event.tool}`}>
-                                <span>
-                                  {event.status === "done"
-                                    ? <Check size={12} />
-                                    : <AlertTriangle size={12} />}
-                                </span>
-                                <p>{event.message}</p>
-                              </div>
-                            ))}
-                        </div>
-                      </section>
-                    )
-                  ) : null}
-                  <div className="job-import-preview-actions">
-                    <button
-                      type="button"
-                      className="tertiary-button"
-                      onClick={() => {
-                        setImportPreview(null);
-                        setImportUrl("");
-                        setImportWarnings([]);
-                        setDraft(emptyJobDraft);
-                        setImportDescriptionExpanded(false);
-                        setDirty(false);
-                      }}
-                    >
-                      {importStopped || importBrowserRequired ? "重新输入" : "重新识别"}
-                    </button>
-                    {importBrowserRequired ? (
-                      <>
-                        <button
-                          type="button"
-                          className="secondary-button"
-                          onClick={() => {
-                            setPasteJobTextOpen(true);
-                            setJobDetailsExpanded(false);
-                          }}
-                        >
-                          <FileText size={15} />粘贴文字
-                        </button>
-                        <button
-                          type="button"
-                          className="secondary-button"
-                          onClick={() => setJobDetailsExpanded(true)}
-                        >
-                          <PencilLine size={15} />手动填写
-                        </button>
-                        <button
-                          type="button"
-                          className="primary-button"
-                          disabled={jobImportBusy}
-                          onClick={() => void (browserJobOpened ? importJobFromBrowser() : openJobForImport())}
-                        >
-                          {jobImportBusy
-                            ? <LoaderCircle className="spinning" size={15} />
-                            : <ExternalLink size={15} />}
-                          {jobImportBusy
-                            ? browserJobOpened ? "读取中…" : "打开中…"
-                            : browserJobOpened
-                              ? "确认已登录，继续读取"
-                              : browserJobImportAvailable
-                                ? "打开 Chrome 岗位页"
-                                : "打开 Chrome 并登录"}
-                        </button>
-                        <label className="secondary-button job-import-upload-button">
-                          <ImagePlus size={15} />上传岗位截图
-                          <input
-                            type="file"
-                            accept="image/png,image/jpeg,image/webp"
-                            disabled={jobImportBusy}
-                            onChange={(event) => {
-                              const file = event.target.files?.[0];
-                              event.currentTarget.value = "";
-                              if (file) void importJobFromScreenshot(file);
-                            }}
-                          />
-                        </label>
-                      </>
-                    ) : importStopped ? (
-                      <>
-                        <button
-                          type="button"
-                          className="secondary-button"
-                          onClick={() => {
-                            setPasteJobTextOpen(true);
-                            setJobDetailsExpanded(false);
-                          }}
-                        >
-                          <FileText size={15} />粘贴文字
-                        </button>
-                        <button
-                          type="button"
-                          className="primary-button"
-                          onClick={() => setJobDetailsExpanded(true)}
-                        >
-                          <PencilLine size={15} />手动填写岗位
-                        </button>
-                        <label className="secondary-button job-import-upload-button">
-                          <ImagePlus size={15} />上传岗位截图
-                          <input
-                            type="file"
-                            accept="image/png,image/jpeg,image/webp"
-                            disabled={jobImportBusy}
-                            onChange={(event) => {
-                              const file = event.target.files?.[0];
-                              event.currentTarget.value = "";
-                              if (file) void importJobFromScreenshot(file);
-                            }}
-                          />
-                        </label>
-                      </>
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          className="secondary-button"
-                          onClick={() => setJobDetailsExpanded(true)}
-                        >
-                          <PencilLine size={15} />编辑识别结果
-                        </button>
-                        <button
-                          type="button"
-                          className="primary-button"
-                          disabled={jobBusy}
-                          onClick={() => {
-                            if (importPreview.status === "partial" || !draft.description.trim()) {
-                              setJobDetailsExpanded(true);
-                              return;
-                            }
-                            void persistJob();
-                          }}
-                        >
-                          {importPreview.status === "partial" || !draft.description.trim() ? (
-                            <>补充缺失信息<ArrowRight size={15} /></>
-                          ) : jobBusy ? (
-                            "保存中…"
-                          ) : (
-                            <>确认并创建岗位<ArrowRight size={15} /></>
-                          )}
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </section>
-              ) : null}
-
-              {!selectedJob && importPreview && pasteJobTextOpen ? (
-                <section className="job-import-text-fallback job-import-text-fallback-preview">
-                  <header>
-                    <div>
-                      <strong>粘贴岗位文字</strong>
-                      <small>可从 Chrome 复制岗位描述、职位要求和公司信息，系统只在本机提取字段。</small>
-                    </div>
-                    <button
-                      type="button"
-                      className="tertiary-button"
-                      onClick={() => setPasteJobTextOpen(false)}
-                      disabled={jobImportBusy}
-                    >
-                      关闭
-                    </button>
-                  </header>
-                  <textarea
-                    value={pastedJobText}
-                    maxLength={50_000}
-                    placeholder={'例如：\nAI 产品经理\n公司名称：示例科技\n职位描述\n负责……'}
-                    onChange={(event) => setPastedJobText(event.target.value)}
-                  />
-                  <footer>
-                    <small>{pastedJobText.trim().length} 字 · 不会读取 Cookie 或登录信息</small>
-                    <button
-                      type="button"
-                      className="primary-button"
-                      disabled={!pastedJobText.trim() || jobImportBusy}
-                      onClick={() => void importJobFromText()}
-                    >
-                      {jobImportBusy ? <LoaderCircle className="spinning" size={15} /> : <FileText size={15} />}
-                      {jobImportBusy ? "识别中…" : "自动识别岗位"}
-                    </button>
-                  </footer>
-                </section>
-              ) : null}
-
-              {!selectedJob && !importPreview && !jobDetailsExpanded ? (
-                <button
-                  type="button"
-                  className="manual-job-entry-toggle"
-                  onClick={() => setJobDetailsExpanded(true)}
-                >
-                  <PencilLine size={15} />
-                  无法读取链接？改为手动粘贴 JD
-                </button>
-              ) : null}
-
-              {selectedJob || jobDetailsExpanded ? (
-                <>
-          <div className="job-project-fields">
-            <label>
-              <span>岗位名称</span>
-              <input value={draft.job_title} maxLength={200} placeholder="例如：AI 产品经理" onChange={(event) => updateDraft({ job_title: event.target.value })} />
-            </label>
-            <label>
-              <span>公司名称</span>
-              <input value={draft.company_name} maxLength={200} placeholder="例如：示例科技" onChange={(event) => updateDraft({ company_name: event.target.value })} />
-            </label>
-            <label>
-              <span>工作地点</span>
-              <input value={draft.location} maxLength={200} placeholder="上海 · 浦东" onChange={(event) => updateDraft({ location: event.target.value })} />
-            </label>
-            <label>
-              <span>薪资信息</span>
-              <input value={draft.salary_text} maxLength={100} placeholder="30-45K · 15薪" onChange={(event) => updateDraft({ salary_text: event.target.value })} />
-            </label>
-            <label>
-              <span>当前状态</span>
-              <select value={draft.status} onChange={(event) => updateDraft({ status: event.target.value as JobProject["status"] })}>
-                {Object.entries(jobStatusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
-              </select>
-            </label>
-            <label>
-              <span>优先级</span>
-              <select value={draft.priority} onChange={(event) => updateDraft({ priority: event.target.value as JobProject["priority"] })}>
-                {Object.entries(priorityLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
-              </select>
-            </label>
-            <label className="wide">
-              <span>岗位来源</span>
-              <div className="job-source-input">
-                <input value={draft.source_url} maxLength={1_000} placeholder="https://…" onChange={(event) => updateDraft({ source_url: event.target.value })} />
-                {draft.source_url.trim() ? <a href={draft.source_url} target="_blank" rel="noreferrer" title="打开岗位来源"><ExternalLink size={15} /></a> : null}
+              <div className="job-project-fields">
+                <label>
+                  <span>岗位名称</span>
+                  <input value={draft.job_title} maxLength={200} placeholder="例如：AI 产品经理" onChange={(event) => updateDraft({ job_title: event.target.value })} />
+                </label>
+                <label>
+                  <span>公司名称</span>
+                  <input value={draft.company_name} maxLength={200} placeholder="选填" onChange={(event) => updateDraft({ company_name: event.target.value })} />
+                </label>
               </div>
-            </label>
-          </div>
-          <label className="job-description-field">
-            <span>岗位 JD <em>分析任务必填</em></span>
-            <textarea
-          value={draft.description}
-          maxLength={50_000}
-          placeholder="例如：岗位职责、任职要求、技能要求、工作地点等…"
-              onChange={(event) => updateDraft({ description: event.target.value })}
-        />
-        </label>
-          <label className="job-notes-field">
-            <span>个人备注</span>
-            <textarea value={draft.notes} maxLength={5_000} placeholder="例如：朋友内推、关注团队稳定性、需要确认远程政策…" onChange={(event) => updateDraft({ notes: event.target.value })} />
-          </label>
-          <footer className="job-project-actions">
-            <span>{selectedJob ? `已关联独立对话 · ${selectedJob.message_count ?? 0} 条消息` : "保存后会自动创建独立对话"}</span>
-            {selectedJob ? (
-              <>
+              <label className="job-description-field">
+                <span>岗位描述 <em>必填</em></span>
+                <textarea
+                  value={draft.description}
+                  maxLength={50_000}
+                  placeholder="岗位职责、团队背景、工作内容…"
+                  onChange={(event) => updateDraft({ description: event.target.value })}
+                />
+              </label>
+              <label className="job-description-field">
+                <span>任职要求 <em>必填</em></span>
+                <textarea
+                  value={requirementsText}
+                  maxLength={50_000}
+                  placeholder="技能、经验、学历或其他硬性要求…"
+                  onChange={(event) => {
+                    setRequirementsText(event.target.value);
+                    setDirty(true);
+                  }}
+                />
+              </label>
+              <footer className="job-project-actions">
+                <span>已关联独立对话 · {selectedJob.message_count ?? 0} 条消息</span>
                 <button className="danger-text-button" onClick={() => void deleteCurrentJob(selectedJob)} disabled={jobBusy || chatBusy}>
                   <Trash2 size={14} />删除项目
                 </button>
                 <button className="secondary-button" onClick={cancelJobEditing} disabled={jobBusy}>
                   取消
                 </button>
-              </>
-            ) : null}
-            {!selectedJob && importPreview ? (
-              <button
-                className="secondary-button"
-                onClick={() => setJobDetailsExpanded(false)}
-                disabled={jobBusy}
-              >
-                返回识别结果
-              </button>
-            ) : null}
-            <button className="secondary-button" onClick={() => void persistJob()} disabled={!hasProjectContent || jobBusy || (!dirty && Boolean(selectedJob))}>
-              <Save size={14} />{jobBusy ? "保存中…" : selectedJob ? "保存修改" : "保存岗位"}
-            </button>
-          </footer>
-                </>
-              ) : null}
+                <button className="secondary-button" onClick={() => void persistJob()} disabled={!hasProjectContent || jobBusy || !dirty}>
+                  <Save size={14} />{jobBusy ? "保存中…" : "保存修改"}
+                </button>
+              </footer>
             </section>
           ) : null}
 
@@ -1493,25 +966,8 @@ export function WorkbenchView({
                 interviewKits={interviewKits}
                 interviewRounds={interviewRounds}
                 timeline={jobTimeline}
-                onSelect={(stage) => stage === "analysis" ? onNavigateEvaluation(selectedJob.id) : setActiveStage(stage)}
+                onSelect={setActiveStage}
               />
-
-              {activeStage === "overview" ? (
-                <JobOverview
-                  draft={draft}
-                  analysis={analysisReady ? currentAnalysis : null}
-                  resumeVersions={resumeVersions}
-                  interviewKits={interviewKits}
-                  interviewRounds={interviewRounds}
-                  timeline={jobTimeline}
-                  nextActionCopy={nextActionCopy}
-                  nextActionDisabled={nextAction !== "progress" && (!ready || resumeBusy || interviewBusy)}
-                  nextActionTitle={!hasProfile ? "请先完成人物资料并保存简历" : !draft.description.trim() ? "请先补充岗位 JD" : undefined}
-                  onNextAction={runNextAction}
-                  onSelectStage={(stage) => stage === "analysis" ? onNavigateEvaluation(selectedJob.id) : setActiveStage(stage)}
-                  onEdit={() => setEditingJob(true)}
-                />
-              ) : null}
             </>
           ) : null}
 
@@ -1569,11 +1025,9 @@ export function WorkbenchView({
         />
       ) : null}
 
-      {selectedJob && (
-        activeStage === "progress" || (activeStage === "interview" && analysisReady)
-      ) ? (
+      {selectedJob && activeStage === "interview" && analysisReady ? (
         <InterviewWorkflowPanel
-          section={activeStage === "interview" ? "preparation" : "progress"}
+          section="preparation"
           job={selectedJob}
           kits={interviewKits}
           kit={interviewKit}
@@ -1607,7 +1061,10 @@ type ResumeVersionPanelProps = {
     changeId: number,
     patch: { decision?: ResumeChangeDecision; after_text?: string }
   ) => Promise<void>;
-  onUpdateVersion: (versionId: number, status: "draft" | "final") => Promise<void>;
+  onUpdateVersion: (
+    versionId: number,
+    patch: { status?: "draft" | "final"; template_id?: ResumeTemplate }
+  ) => Promise<void>;
   onExport: (versionId: number, format: "docx" | "pdf") => Promise<void>;
 };
 
@@ -1622,6 +1079,21 @@ function ResumeVersionPanel({
   onUpdateVersion,
   onExport
 }: ResumeVersionPanelProps) {
+  const [previewEdits, setPreviewEdits] = useState<Record<number, string>>({});
+
+  useEffect(() => {
+    setPreviewEdits({});
+  }, [version?.id, version?.updated_at]);
+
+  const previewContent = version
+    ? version.changes
+      .map((change) => change.decision === "rejected"
+        ? change.before_text
+        : previewEdits[change.id] ?? change.after_text)
+      .filter(Boolean)
+      .join("\n\n")
+    : "";
+
   return (
     <section className="resume-version-panel">
       <header className="resume-version-heading">
@@ -1664,7 +1136,7 @@ function ResumeVersionPanel({
                 disabled={busy}
                 onClick={() => void onUpdateVersion(
                   version.id,
-                  version.status === "final" ? "draft" : "final"
+                  { status: version.status === "final" ? "draft" : "final" }
                 )}
               >
                 <FileCheck2 size={14} />
@@ -1691,6 +1163,7 @@ function ResumeVersionPanel({
                     change={change}
                     busy={busy}
                     key={change.id}
+                    onDraftChange={(value) => setPreviewEdits((current) => ({ ...current, [change.id]: value }))}
                     onUpdate={(patch) => onUpdateChange(version.id, change.id, patch)}
                   />
                 ))}
@@ -1699,10 +1172,24 @@ function ResumeVersionPanel({
 
             <section className="resume-preview-card">
               <header>
-                <div><h3>当前版本预览</h3><p>待确认和已接受的内容会进入导出文件。</p></div>
+                <div><h3>当前版本预览</h3><p>编辑建议内容时，预览会即时更新。</p></div>
                 <span className={version.status}>{version.status === "final" ? "最终版" : "草稿"}</span>
               </header>
-              <ResumePreview content={version.rendered_content} />
+              <label className="resume-template-picker">
+                <span>版式模板</span>
+                <select
+                  value={version.template_id}
+                  disabled={busy}
+                  onChange={(event) => void onUpdateVersion(version.id, {
+                    template_id: event.target.value as ResumeTemplate
+                  })}
+                >
+                  <option value="classic">经典专业</option>
+                  <option value="compact">紧凑一页</option>
+                  <option value="minimal">极简黑白</option>
+                </select>
+              </label>
+              <ResumePreview content={previewContent} templateId={version.template_id} />
             </section>
           </div>
         </>
@@ -1723,10 +1210,12 @@ function ResumeVersionPanel({
 function ResumeChangeCard({
   change,
   busy,
+  onDraftChange,
   onUpdate
 }: {
   change: ResumeChange;
   busy: boolean;
+  onDraftChange: (value: string) => void;
   onUpdate: (patch: { decision?: ResumeChangeDecision; after_text?: string }) => Promise<void>;
 }) {
   const [draft, setDraft] = useState(change.after_text);
@@ -1767,7 +1256,10 @@ function ResumeChangeCard({
           value={draft}
           maxLength={100_000}
           disabled={busy}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            onDraftChange(event.target.value);
+          }}
         />
       </label>
       <details className="resume-evidence-details">
@@ -1816,9 +1308,9 @@ function ResumeChangeCard({
   );
 }
 
-function ResumePreview({ content }: { content: string }) {
+function ResumePreview({ content, templateId }: { content: string; templateId: ResumeTemplate }) {
   return (
-    <div className="resume-paper">
+    <div className={`resume-paper template-${templateId}`}>
       {content.split("\n").map((line, index) => {
         const text = line.trim();
         if (!text) return <div className="resume-preview-spacer" key={`space-${index}`} />;
@@ -2233,6 +1725,12 @@ type DashboardViewProps = {
   workflow: WorkflowStatus | null;
   conversations: Conversation[];
   jobs: JobProject[];
+  nextStep: {
+    title: string;
+    detail: string;
+    action: string;
+  };
+  onNextStep: () => void;
   onOpenConversation: (conversationId: number) => void;
 };
 
@@ -2272,25 +1770,32 @@ export function DashboardView({
   workflow,
   conversations,
   jobs,
+  nextStep,
+  onNextStep,
   onOpenConversation
 }: DashboardViewProps) {
   const stageCounts = workflow?.stage_counts;
   const counts = workflow?.counts;
   const stageCount = (stageId: string, legacy?: number) => stageCounts?.[stageId] ?? legacy ?? 0;
+  const recentConversations = conversations.filter((conversation) => (conversation.message_count ?? 0) > 0);
   const cards = [
     { label: "岗位项目", value: jobs.length, icon: <Building2 size={18} />, note: `${jobs.filter((job) => job.priority === "high").length} 个高优先级` },
     { label: "岗位评估", value: stageCount("job_evaluation", counts?.jd_analyses), icon: <Target size={18} />, note: "当前对话累计" },
     { label: "定制简历", value: stageCount("material_preparation", counts?.tailored_resume_generations), icon: <FileText size={18} />, note: "高匹配文本" },
-    { label: "面试准备", value: stageCount("interview_preparation", counts?.interview_advice_generations), icon: <UsersRound size={18} />, note: "个人化建议" },
-    { label: "面试进程", value: jobs.filter((job) => job.status === "interviewing").length, icon: <CalendarDays size={18} />, note: "当前岗位项目" },
-    { label: "活跃对话", value: conversations.filter((item) => item.status === "active").length, icon: <MessageCircle size={18} />, note: "可继续追问" }
+    { label: "面试准备", value: stageCount("interview_preparation", counts?.interview_advice_generations), icon: <UsersRound size={18} />, note: "个人化建议" }
   ];
 
   return (
     <section className="dashboard-page">
-      <div className="dashboard-hero">
-        <div><h2>综合控制台</h2></div>
-        <span className="dashboard-badge"><BarChart3 size={17} />本地求职数据</span>
+      <div className="dashboard-hero" aria-labelledby="dashboard-next-step-title">
+        <div>
+          <span className="eyebrow">建议下一步</span>
+          <h2 id="dashboard-next-step-title">{nextStep.title}</h2>
+          <p>{nextStep.detail}</p>
+        </div>
+        <ActionButton variant="primary" icon={<ArrowRight size={16} />} onClick={onNextStep}>
+          {nextStep.action}
+        </ActionButton>
       </div>
 
       <div className="metric-grid">
@@ -2307,11 +1812,11 @@ export function DashboardView({
       <section className="dashboard-history">
         <div className="section-heading">
           <div><div><h3>最近任务</h3></div></div>
-          <small>{conversations.length} 条记录</small>
+          <small>{recentConversations.length} 条记录</small>
         </div>
-        {conversations.length ? (
+        {recentConversations.length ? (
           <div className="dashboard-history-list">
-            {conversations.slice(0, 8).map((conversation) => (
+            {recentConversations.slice(0, 8).map((conversation) => (
               <button key={conversation.id} onClick={() => onOpenConversation(conversation.id)}>
                 <span className={conversation.status} />
                 <div><strong>{conversation.title}</strong><small>{conversation.message_count ?? 0} 条消息 · {conversation.task_status === "active" ? "任务进行中" : conversation.status === "archived" ? "已归档" : "可继续"}</small></div>

@@ -111,6 +111,18 @@ class AgentRuntimeStatusTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(route.kind, "profile_analysis")
         self.assertEqual(route.allowed_tools, ("search_resume_evidence",))
 
+    async def test_project_highlights_read_current_candidate_context(self) -> None:
+        route = route_task(
+            "帮我梳理项目亮点",
+            {"get_candidate_context", "search_candidate_evidence"},
+        )
+
+        self.assertEqual(route.kind, "project_story")
+        self.assertEqual(
+            route.allowed_tools,
+            ("get_candidate_context", "search_candidate_evidence"),
+        )
+
     async def test_company_research_opens_only_public_research_tool(self) -> None:
         route = route_task(
             "帮我调查一下示例科技这家公司怎么样，有没有风险",
@@ -158,6 +170,20 @@ class AgentRuntimeStatusTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(route.kind, "profile_analysis")
         self.assertEqual(route.allowed_tools, ("search_resume_evidence",))
+
+    async def test_jd_analysis_prefers_original_tools_over_career_os(self) -> None:
+        available = {
+            "analyze_resume_against_jd",
+            "analyze_job_against_strategy",
+            "search_resume_evidence",
+            "search_candidate_evidence",
+        }
+        route = route_task("分析这个岗位是否适合我", available)
+        self.assertEqual(route.kind, "jd_analysis")
+        self.assertEqual(
+            set(route.allowed_tools),
+            {"analyze_resume_against_jd", "search_resume_evidence"},
+        )
 
     async def test_full_job_evaluation_uses_saved_project_tools(self) -> None:
         available = {

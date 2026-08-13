@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from ag_ui.core import (
@@ -27,6 +29,8 @@ from ag_ui.core import (
 )
 from ag_ui.encoder import EventEncoder
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
@@ -35,6 +39,16 @@ from .agent import get_agent_runtime
 from .api import resources_router
 from .api.dependencies import require_conversation
 from .api.schemas import ChatMessageIn
+from .api.schemas import LoginIn
+from .config import get_settings
+from .auth import (
+    authenticate,
+    captcha_svg,
+    create_captcha,
+    create_initial_user,
+    current_user,
+    public_auth_config,
+)
 from .conversations import (
     end_active_task,
     ensure_active_task,
@@ -68,18 +82,61 @@ from .opportunity_runs import (
 from .job_evaluations import interrupt_active_evaluations
 
 
-app = FastAPI(title="BossCopilot API", version="2.0.0")
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+FRONTEND_DIST_DIR = BACKEND_DIR.parent / "frontend" / "dist"
+
+_settings = get_settings()
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    startup()
+    yield
+
+# API docs describe every route, so they stay closed unless explicitly enabled.
+app = FastAPI(
+    title="BossCopilot API",
+    version="2.0.0",
+    docs_url="/docs" if _settings.api_docs_enabled else None,
+    redoc_url="/redoc" if _settings.api_docs_enabled else None,
+    openapi_url="/openapi.json" if _settings.api_docs_enabled else None,
+    lifespan=lifespan,
+)
 
 _active_chat_runs: dict[int, asyncio.Task[None]] = {}
 
+_OPEN_AUTH_PATHS = {"/health", "/auth/config", "/auth/captcha", "/auth/bootstrap", "/auth/login"}
+_DOC_PATHS = {"/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"}
+# Docs are protected by token when disabled, so they stay out of the open list.
+_REQUIRE_LOGIN_WHITELIST = _OPEN_AUTH_PATHS | (_DOC_PATHS if _settings.api_docs_enabled else set())
+_PUBLIC_FRONTEND_FILES = {"/favicon.ico", "/vite.svg", "/careerloop-mark-v2.png", "/careerloop-mark.svg"}
+_STATIC_ASSET_CACHE_CONTROL = "public, max-age=31536000, immutable"
+
+
+def static_asset_cache_control(path: str) -> str | None:
+    """Return the safe long-lived cache policy for Vite's content-hashed assets."""
+    return _STATIC_ASSET_CACHE_CONTROL if path.startswith("/assets/") else None
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next: Any) -> Any:
+    path = request.url.path
+    is_frontend_asset = path == "/" or path.startswith("/assets/") or path in _PUBLIC_FRONTEND_FILES
+    if request.method == "OPTIONS" or is_frontend_asset or path in _REQUIRE_LOGIN_WHITELIST or path.startswith("/auth/captcha/"):
+        response = await call_next(request)
+        cache_control = static_asset_cache_control(path)
+        if cache_control and response.status_code == 200:
+            response.headers["Cache-Control"] = cache_control
+        return response
+    try:
+        current_user(request.headers.get("Authorization"))
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:5173",
-        "http://localhost:5173",
-        "http://127.0.0.1:4173",
-        "http://localhost:4173",
-    ],
+    allow_origins=_settings.allowed_origins,
     allow_origin_regex=r"chrome-extension://[a-z]{32}",
     allow_credentials=True,
     allow_methods=["*"],
@@ -89,7 +146,47 @@ app.add_middleware(
 app.include_router(resources_router)
 
 
-@app.on_event("startup")
+@app.get("/auth/config")
+def get_auth_config() -> dict[str, bool]:
+    return public_auth_config()
+
+
+@app.get("/auth/captcha")
+def get_captcha() -> dict[str, str]:
+    return create_captcha()
+
+
+@app.get("/auth/captcha/{captcha_id}.svg")
+def get_captcha_image(captcha_id: str) -> Response:
+    image = captcha_svg(captcha_id)
+    if image is None:
+        raise HTTPException(status_code=404, detail="验证码已过期")
+    return Response(content=image, media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/auth/login")
+def login(payload: LoginIn, request: Request) -> dict[str, Any]:
+    token = authenticate(
+        payload.email,
+        payload.password,
+        payload.captcha_id,
+        payload.captcha_code,
+        client=request.client.host if request.client else None,
+    )
+    return {"access_token": token, "token_type": "bearer", "user": current_user(f"Bearer {token}")}
+
+
+@app.post("/auth/bootstrap")
+def bootstrap_admin(payload: LoginIn) -> dict[str, Any]:
+    token = create_initial_user(payload.email, payload.password, payload.captcha_id, payload.captcha_code)
+    return {"access_token": token, "token_type": "bearer", "user": current_user(f"Bearer {token}")}
+
+
+@app.get("/auth/me")
+def get_current_user(request: Request) -> dict[str, Any]:
+    return {"user": current_user(request.headers.get("Authorization"))}
+
+
 def startup() -> None:
     state = initialize_or_report()
     if state["status"] != "ready":
@@ -564,3 +661,9 @@ async def run_ag_ui(payload: dict[str, Any], request: Request) -> StreamingRespo
         ag_ui_input=ag_ui_input,
         accept=request.headers.get("accept"),
     )
+
+
+# Production mode uses one origin: FastAPI serves the built SPA and its API.
+# This lets an HTTPS tunnel expose a single protected URL without public :8000.
+if FRONTEND_DIST_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST_DIR, html=True), name="frontend")
