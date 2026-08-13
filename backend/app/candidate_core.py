@@ -20,7 +20,7 @@ from .db import connect, json_dump, row_to_dict, rows_to_dicts
 from .knowledge import delete_document, index_document
 from .privacy import scan_and_redact
 from .profile_intelligence import extract_skills, suggest_profile_fields
-from .resume_parser import normalize_resume_text
+from .resume.parser import normalize_resume_text
 
 
 class ProfileNotInitializedError(ValueError):

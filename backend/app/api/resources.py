@@ -147,7 +147,7 @@ from ..interview_preparation import (
     start_interview_preparation_resume_analysis,
     update_interview_preparation_node,
 )
-from ..resume_versions import (
+from ..resume.versions import (
     create_resume_version,
     delete_resume_version,
     export_resume_version,

@@ -5,7 +5,7 @@ from typing import Any
 
 from ..privacy import scan_and_redact
 from ..profile_intelligence import extract_skills, suggest_profile_fields
-from ..resume_parser import parse_resume_result
+from ..resume.parser import parse_resume_result
 
 
 def parse_candidate_resume(

@@ -5,7 +5,7 @@ from io import BytesIO
 
 from docx import Document
 
-from app.resume_parser import parse_resume
+from app.resume.parser import parse_resume
 from app.services.profile import parse_candidate_resume
 
 
