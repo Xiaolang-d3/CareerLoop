@@ -25,8 +25,8 @@ from ..job_evaluations import (
     retry_job_evaluation,
     review_job_evaluation,
 )
-from ..opportunities import OpportunityScanError
-from ..opportunity_runs import create_discovery_run, execute_discovery_run
+from ..opportunities.service import OpportunityScanError
+from ..opportunities.runs import create_discovery_run, execute_discovery_run
 from ..profile_intelligence import extract_skills
 from .base import ToolContext
 from .local_data import invalid_arguments, tool_error_boundary

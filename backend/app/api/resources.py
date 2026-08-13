@@ -70,7 +70,7 @@ from ..career_feedback import (
     record_interview_debrief,
     skill_growth_map,
 )
-from ..opportunities import (
+from ..opportunities.service import (
     OpportunityScanError,
     add_opportunity_source,
     create_or_update_company,
@@ -87,7 +87,7 @@ from ..opportunities import (
     update_discovered_job,
     update_opportunity_source,
 )
-from ..opportunity_runs import (
+from ..opportunities.runs import (
     cancel_discovery_run,
     create_discovery_run,
     execute_discovery_run,

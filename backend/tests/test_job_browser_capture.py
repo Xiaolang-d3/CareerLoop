@@ -10,7 +10,7 @@ from app.job_browser_capture import (
     validate_browser_job_capture,
 )
 from app.db import connect, init_db
-from app.opportunities import import_browser_job_detail, promote_discovered_job
+from app.opportunities.service import import_browser_job_detail, promote_discovered_job
 from pathlib import Path
 from tempfile import TemporaryDirectory
 

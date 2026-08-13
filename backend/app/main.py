@@ -73,7 +73,7 @@ from .chat.service import (
     workflow_summary as _workflow_summary,
 )
 from .workflow.engine import refresh_workflow_status
-from .opportunity_runs import (
+from .opportunities.runs import (
     create_discovery_run,
     execute_discovery_run,
     interrupt_active_runs,

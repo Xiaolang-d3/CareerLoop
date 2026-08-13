@@ -35,7 +35,7 @@ from app.tools import (
     ToolContext,
 )
 from app.jobs import create_job
-from app.opportunities import (
+from app.opportunities.service import (
     add_opportunity_source,
     create_or_update_company,
     list_discovered_jobs,
@@ -198,7 +198,7 @@ class CareerOperatingSystemTest(unittest.TestCase):
 
     def test_official_source_scan_deduplicates_and_requires_promotion(self) -> None:
         company = create_or_update_company(name="Example", followed=True, db_path=self.db_path)
-        with patch("app.opportunities.is_public_source_url", return_value=True):
+        with patch("app.opportunities.service.is_public_source_url", return_value=True):
             source = add_opportunity_source(
                 company_id=company["id"],
                 source_url="https://boards.greenhouse.io/example",
@@ -209,17 +209,17 @@ class CareerOperatingSystemTest(unittest.TestCase):
             "company_name": "Example", "job_title": "AI Engineer",
             "location": "上海", "salary_text": "", "description": "负责 AI Agent 平台开发。",
         }]
-        with patch("app.opportunities._provider_jobs", return_value=fixture):
+        with patch("app.opportunities.service._provider_jobs", return_value=fixture):
             first = scan_opportunity_source(source["id"], db_path=self.db_path)
             second = scan_opportunity_source(source["id"], db_path=self.db_path)
         self.assertEqual(first["created"], 1)
         self.assertEqual(second["created"], 0)
         discovered = list_discovered_jobs(db_path=self.db_path)
         self.assertEqual(len(discovered), 1)
-        with patch("app.opportunities._provider_jobs", return_value=[]):
+        with patch("app.opportunities.service._provider_jobs", return_value=[]):
             closed = scan_opportunity_source(source["id"], db_path=self.db_path)
         self.assertEqual(closed["closed"], 1)
-        with patch("app.opportunities._provider_jobs", return_value=fixture):
+        with patch("app.opportunities.service._provider_jobs", return_value=fixture):
             restored = scan_opportunity_source(source["id"], db_path=self.db_path)
         self.assertEqual(restored["restored"], 1)
         with connect(self.db_path) as conn:
