@@ -17,7 +17,7 @@ from ..domain import (
 )
 from ..candidate_core import get_profile_interview_session
 from ..models import ModelProviderError, ModelProviderRegistry
-from ..tool_call_audit import record_tool_call_event
+from ..observability.tool_call_audit import record_tool_call_event
 from ..tools import ToolContext, ToolRegistry
 from .orchestration import parse_plan, planner_prompt, route_summary, route_task
 

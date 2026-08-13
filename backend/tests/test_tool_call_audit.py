@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from app.db import connect, init_db
-from app.tool_call_audit import record_tool_call_event
+from app.observability.tool_call_audit import record_tool_call_event
 
 
 class ToolCallAuditTest(unittest.TestCase):

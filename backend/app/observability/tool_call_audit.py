@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .db import connect
+from ..db import connect
 
 
 def record_tool_call_event(

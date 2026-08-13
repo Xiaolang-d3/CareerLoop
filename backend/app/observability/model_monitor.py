@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from .agent_settings import get_model_connection
-from .db import connect, row_to_dict
+from ..agent_settings import get_model_connection
+from ..db import connect, row_to_dict
 
 
 ERROR_LABELS = {

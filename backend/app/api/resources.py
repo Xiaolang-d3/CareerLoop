@@ -121,7 +121,7 @@ from ..job_evaluations import (
     review_job_evaluation,
     validate_evaluation_weights,
 )
-from ..model_monitor import get_model_monitor_snapshot, record_model_service_event
+from ..observability.model_monitor import get_model_monitor_snapshot, record_model_service_event
 from ..models import ModelProviderError, OpenAICompatibleProvider
 from ..interview_workflow import (
     add_job_event,
