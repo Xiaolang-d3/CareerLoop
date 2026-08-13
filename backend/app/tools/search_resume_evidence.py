@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
-from ..agent_settings import get_agent_settings
+from ..agent.settings import get_agent_settings
 from ..domain import ToolDefinition, ToolError, ToolResult
 from ..knowledge import search_knowledge
 from .base import ToolContext

@@ -11,12 +11,12 @@ from fastapi.responses import StreamingResponse
 
 from ..agent import get_agent_capabilities
 from ..agent.bootstrap import reload_agent_components
-from ..agent_settings import (
+from ..agent.settings import (
     get_agent_settings,
     get_model_connection,
     save_agent_settings,
 )
-from ..agent_operations import get_agent_operations_snapshot
+from ..agent.operations import get_agent_operations_snapshot
 from ..attachments import (
     create_attachment,
     delete_attachment,

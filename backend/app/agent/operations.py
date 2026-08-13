@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from .db import connect
+from ..db import connect
 
 
 WINDOW_OPTIONS = {7, 30, 90}

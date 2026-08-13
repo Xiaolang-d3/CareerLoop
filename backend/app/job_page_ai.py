@@ -13,7 +13,7 @@ from openai import (
     RateLimitError,
 )
 
-from .agent_settings import get_model_connection
+from .agent.settings import get_model_connection
 from .config import get_settings
 
 

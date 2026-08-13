@@ -15,7 +15,7 @@ from openai import (
 )
 
 from ..domain import ModelRequest, ModelResponse, ModelStreamEvent, ModelUsage, ToolCall
-from ..agent_settings import get_agent_settings, persona_prompt
+from ..agent.settings import get_agent_settings, persona_prompt
 from ..observability.model_monitor import record_model_service_event
 from .base import ModelProviderError
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
-from ..agent_settings import get_model_connection
+from .settings import get_model_connection
 from ..config import get_settings
 from ..models import ModelProviderRegistry, OpenAICompatibleProvider
 from ..tools import (

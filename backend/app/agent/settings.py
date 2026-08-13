@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .config import get_settings
-from .db import connect, row_to_dict
+from ..config import get_settings
+from ..db import connect, row_to_dict
 
 
 DEFAULT_AGENT_SETTINGS: dict[str, Any] = {

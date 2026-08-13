@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app.agent_settings import get_agent_settings, save_agent_settings
+from app.agent.settings import get_agent_settings, save_agent_settings
 from app.db import init_db
 from app.observability.model_monitor import (
     get_model_monitor_snapshot,

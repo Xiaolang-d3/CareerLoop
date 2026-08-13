@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app.agent_operations import get_agent_operations_snapshot
+from app.agent.operations import get_agent_operations_snapshot
 from app.db import connect, init_db
 
 

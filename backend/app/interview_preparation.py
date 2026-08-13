@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from .candidate_core import ProfileNotInitializedError, get_career_profile
 from .db import connect, json_dump, row_to_dict
-from .agent_settings import get_model_connection
+from .agent.settings import get_model_connection
 from .config import get_settings
 from .domain import AgentMessage, ModelRequest
 from .models import ModelProviderError, OpenAICompatibleProvider
