@@ -18,7 +18,7 @@ from .opportunities import (
     scan_opportunity_source,
 )
 from .profile_intelligence import extract_skills
-from .web_research import AgentSearchClient, WebResearchError, is_public_source_url
+from .research.web import AgentSearchClient, WebResearchError, is_public_source_url
 
 
 RUN_MODES = {"scan", "discover", "company_funded", "pipeline", "batch"}

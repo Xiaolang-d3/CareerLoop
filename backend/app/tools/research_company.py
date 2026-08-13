@@ -7,10 +7,10 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, ValidationError
 
-from ..company_research_cache import load_company_sources, save_company_sources
+from ..research.company_cache import load_company_sources, save_company_sources
 from ..config import Settings, get_settings
 from ..domain import ToolDefinition, ToolError, ToolResult
-from ..web_research import AgentSearchClient, WebResearchError, build_evidence_bundle
+from ..research.web import AgentSearchClient, WebResearchError, build_evidence_bundle
 from .base import ToolContext
 from .local_data import invalid_arguments
 

@@ -11,7 +11,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse, urlunparse
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
-from .web_research import is_public_source_url
+from .research.web import is_public_source_url
 
 
 MAX_PAGE_BYTES = 2_000_000

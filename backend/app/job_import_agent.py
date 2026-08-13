@@ -18,7 +18,7 @@ from .job_imports import (
     validate_job_import_url,
 )
 from .job_page_ai import JobImportAIError, JobImportAgentModel, JobImportModelAction
-from .web_research import AgentSearchClient, WebResearchError
+from .research.web import AgentSearchClient, WebResearchError
 
 
 MAX_AGENT_ROUNDS = 8

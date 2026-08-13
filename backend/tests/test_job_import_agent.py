@@ -12,7 +12,7 @@ from app.main import app
 from app.job_import_agent import JobImportAgent
 from app.job_imports import JobImportError, preview_job_url
 from app.job_page_ai import JobImportAIError, JobImportModelAction
-from app.web_research import WebResearchError
+from app.research.web import WebResearchError
 
 
 class FakeModel:

@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from app.config import Settings
 from app.tools import ResearchCompanyTool, SearchPublicWebTool, ToolContext
-from app.web_research import AgentSearchClient, validate_backend_url
+from app.research.web import AgentSearchClient, validate_backend_url
 
 
 class FakeAgentSearchClient:
@@ -38,7 +38,7 @@ class PartiallyFailingAgentSearchClient(FakeAgentSearchClient):
     async def search(self, query: str, count: int):
         if "最新消息" in query:
             self.queries.append(query)
-            from app.web_research import WebResearchError
+            from app.research.web import WebResearchError
 
             raise WebResearchError("agent_search_http_error", "临时失败", retryable=True)
         return await super().search(query, count)

@@ -5,7 +5,7 @@ import json
 import re
 from typing import Any
 
-from .db import connect
+from ..db import connect
 
 
 def normalize_company_name(value: str) -> str:

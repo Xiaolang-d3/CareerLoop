@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from ..config import Settings, get_settings
 from ..domain import ToolDefinition, ToolError, ToolResult
-from ..web_research import AgentSearchClient, WebResearchError, build_evidence_bundle
+from ..research.web import AgentSearchClient, WebResearchError, build_evidence_bundle
 from .base import ToolContext
 from .local_data import invalid_arguments
 

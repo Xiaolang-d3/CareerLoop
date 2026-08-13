@@ -14,7 +14,7 @@ from app.job_evaluations import (
     validate_evaluation_weights,
 )
 from app.jobs import create_job
-from app.web_research import WebResearchError
+from app.research.web import WebResearchError
 
 
 class FakeSearchClient:
