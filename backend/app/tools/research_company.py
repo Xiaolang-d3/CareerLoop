@@ -99,8 +99,10 @@ class ResearchCompanyTool:
             for word in ("boss", "直聘", "招聘", "岗位", "职位")
         )
 
-        per_query = max(3, min(5, self._settings.web_research_max_sources))
-        target_source_count = min(3, self._settings.web_research_max_sources)
+        # Modest default below the settings ceiling (10). Not a Searx/engine limit;
+        # the old 5-per-query / stop-at-3 caps made company research look incomplete.
+        per_query = max(3, min(8, self._settings.web_research_max_sources))
+        target_source_count = min(8, self._settings.web_research_max_sources)
         search_warnings: list[dict[str, str]] = []
         sources: list[dict[str, Any]] = []
         seen_urls: set[str] = set()

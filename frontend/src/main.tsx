@@ -1,24 +1,28 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { AgentSubscriber, HttpAgent as HttpAgentType } from "@ag-ui/client";
-import { createApiClient } from "./api/client";
+import { createApiClient, fetchWithTimeout } from "./api/client";
+import { readAnalysisRunStream, type AnalysisRunEvent } from "./features/jobs/analysis-run";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
-import { AuthGate } from "./components/AuthGate";
+import { AuthGate, type AuthUser } from "./components/AuthGate";
 import { AppSidebar } from "./components/AppSidebar";
+import { AppIdentityMenu } from "./components/AppIdentityMenu";
+import { AppTopBar } from "./components/AppTopBar";
 import { createClientId } from "./api/clientId";
 import { ConversationDialog, type ConversationDialogState } from "./components/ConversationDialog";
 import type { AgentRunResult, AttachmentConfig, ChatAttachment, ChatMessage, ChatRetryDraft } from "./components/ChatWorkspace";
-import { SectionHeader } from "./components/ui";
 import {
   bossHomeUrl,
   defaultAgentSettings,
   emptyCandidateEditor,
-  pageMeta
+  pageMeta,
+  topbarSectionForPage
 } from "./constants";
+import { inboxFactLabel, isSettingsProfileReady } from "./features/home/home-metrics";
 import { createPagePrefetcher } from "./page-prefetch";
 import { createRouteDataCache, requiredDataForRoute, type RouteDataKey } from "./route-data";
 import { useAsyncPolling } from "./hooks/useAsyncPolling";
-import { appRouteHash, initialAppRoute, parseAppHash, routeForSection, type AppRoute, type PreparationFocus, type PreparationPage } from "./routing";
+import { appRouteHash, initialAppRoute, parseAppHash, routeForSection, type AppRoute, type PreparationFocus } from "./routing";
 import type {
   AgentCapabilities,
   AgentOperationsSnapshot,
@@ -33,16 +37,18 @@ import type {
   InterviewType,
   JobEvaluation,
   JobEvent,
-  JobImportActivityEvent,
   JobImportPreview,
   JobProject,
   JobProjectDraft,
   ResumeChangeDecision,
   ResumeProfileSuggestion,
+  ResumeLayoutSettings,
+  ResumeStyle,
   ResumeTemplate,
   ResumeVersion,
   ResumeVersionSummary,
   QuickMatchResult,
+  ModelCapabilityReport,
   ModelServiceMonitor,
   ViewKey,
   WorkflowStatus
@@ -64,9 +70,12 @@ import "./AppStyles";
 
 const loadChatWorkspace = () => import("./components/ChatWorkspace");
 const loadWorkspaceViews = () => import("./components/WorkspaceViews");
+const loadHomePage = () => import("./features/home/HomePage");
 const loadSettingsWorkspace = () => import("./features/settings/SettingsWorkspace");
 const loadProfileSettingsPage = () => import("./features/settings/ProfileSettingsPage");
+const loadAccountSettingsPage = () => import("./features/settings/AccountSettingsPage");
 const loadInterviewPreparationPage = () => import("./features/interview/InterviewPreparationPage");
+const loadProjectStudioPage = () => import("./features/projects/ProjectStudioPage");
 const ChatWorkspace = lazy(() => loadChatWorkspace().then((module) => ({
   default: module.ChatWorkspace
 })));
@@ -75,8 +84,8 @@ const WorkbenchView = lazy(() => loadWorkspaceViews().then((module) => ({
   default: module.WorkbenchView
 })));
 
-const DashboardView = lazy(() => loadWorkspaceViews().then((module) => ({
-  default: module.DashboardView
+const HomePage = lazy(() => loadHomePage().then((module) => ({
+  default: module.HomePage
 })));
 
 const AgentOperationsDashboard = lazy(() => import("./features/settings/AgentOperationsDashboard").then((module) => ({
@@ -93,6 +102,10 @@ const SettingsOverview = lazy(() => loadSettingsWorkspace().then((module) => ({
 
 const ProfileSettingsPage = lazy(() => loadProfileSettingsPage().then((module) => ({
   default: module.ProfileSettingsPage
+})));
+
+const AccountSettingsPage = lazy(() => loadAccountSettingsPage().then((module) => ({
+  default: module.AccountSettingsPage
 })));
 
 const ModelSettingsPage = lazy(() => import("./features/settings/ModelSettingsPage").then((module) => ({
@@ -112,15 +125,21 @@ const InterviewPreparationPage = lazy(() => loadInterviewPreparationPage().then(
   default: module.InterviewPreparationPage
 })));
 
+const ProjectStudioPage = lazy(() => loadProjectStudioPage().then((module) => ({
+  default: module.ProjectStudioPage
+})));
+
 const pagePrefetcher = createPagePrefetcher({
   chat: loadChatWorkspace,
   profile: () => Promise.all([loadSettingsWorkspace(), loadProfileSettingsPage()]),
+  account: () => Promise.all([loadSettingsWorkspace(), loadAccountSettingsPage()]),
   projects: loadInterviewPreparationPage,
   knowledge: loadInterviewPreparationPage,
   records: loadInterviewPreparationPage,
+  "project-lab": loadProjectStudioPage,
   workbench: loadWorkspaceViews,
   opportunities: loadOpportunityDiscoveryPage,
-  dashboard: loadWorkspaceViews,
+  dashboard: loadHomePage,
   settings: loadSettingsWorkspace
 });
 
@@ -155,22 +174,51 @@ for (const key of ["sidebar", "view"]) {
   }
 }
 
-function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => void }) {
+function preferenceKey(base: string, email: string) {
+  return `${base}:${email}`;
+}
+
+function readPreference(base: string, email: string) {
+  return window.localStorage.getItem(preferenceKey(base, email)) ?? window.localStorage.getItem(base);
+}
+
+function appTopBarShowsTitle(route: AppRoute): boolean {
+  if (route.section === "dashboard" || route.section === "chat" || route.section === "interview-prep" || route.section === "project-lab") return false;
+  if (route.section === "workbench") {
+    return ["evaluation", "evaluation_section", "comparison"].includes(route.page || "");
+  }
+  return true;
+}
+
+function App({
+  accessToken,
+  onLogout,
+  user,
+  updateSession
+}: {
+  accessToken: string;
+  onLogout: () => void;
+  user: AuthUser;
+  updateSession: (token: string, nextUser: AuthUser) => void;
+}) {
+  const userEmail = user.email;
   const apiBase = useMemo(() => resolveApiBase(), []);
   const fetchJson = useMemo(() => createApiClient(apiBase, accessToken), [apiBase, accessToken]);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem("careerloop-sidebar") === "collapsed");
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [avatarEpoch, setAvatarEpoch] = useState(0);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readPreference("careerloop-sidebar", userEmail) === "collapsed");
   const [appRoute, setAppRoute] = useState<AppRoute>(() => initialAppRoute(
     window.location.hash,
-    window.localStorage.getItem("careerloop-view")
+    readPreference("careerloop-view", userEmail)
   ));
   const activeView: ViewKey = appRoute.section;
   const [workflow, setWorkflow] = useState<WorkflowStatus | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [jobs, setJobs] = useState<JobProject[]>([]);
+  const [jobsLoaded, setJobsLoaded] = useState(false);
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
   const [jobBusy, setJobBusy] = useState(false);
   const [jobImportBusy, setJobImportBusy] = useState(false);
-  const [jobImportActivity, setJobImportActivity] = useState<JobImportActivityEvent[]>([]);
   const [jobEvaluation, setJobEvaluation] = useState<JobEvaluation | null>(null);
   const [jobEvaluationBusy, setJobEvaluationBusy] = useState(false);
   const [resumeVersions, setResumeVersions] = useState<ResumeVersionSummary[]>([]);
@@ -183,7 +231,13 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
   const [interviewPreparationBusy, setInterviewPreparationBusy] = useState(false);
   const [autoAnalysisAttemptedRevision, setAutoAnalysisAttemptedRevision] = useState<number | null>(null);
   const [jobTimeline, setJobTimeline] = useState<JobEvent[]>([]);
-  const [interviewBusy, setInterviewBusy] = useState(false);
+  const [interviewBusy, setInterviewBusy] = useState(() => {
+    const route = initialAppRoute(
+      window.location.hash,
+      readPreference("careerloop-view", userEmail)
+    );
+    return route.section === "workbench" && route.page === "interview";
+  });
   const [currentConversationId, setCurrentConversationId] = useState<number | null>(null);
   const currentConversationIdRef = useRef<number | null>(null);
   const [conversationBusy, setConversationBusy] = useState(false);
@@ -201,7 +255,17 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const [candidateEditor, setCandidateEditor] = useState(emptyCandidateEditor);
+  const hasStoredResumeRef = useRef(false);
+  const candidateProfileGenerationRef = useRef(0);
   const [confirmedCareerFactCount, setConfirmedCareerFactCount] = useState(0);
+  const [pendingCareerFacts, setPendingCareerFacts] = useState<Array<{
+    id: number;
+    statement: string;
+    category?: string;
+    value?: { name?: string };
+    sourceKind?: string;
+    evidence?: Array<{ excerpt?: string; source_title?: string }>;
+  }>>([]);
   const [candidateProfileLoaded, setCandidateProfileLoaded] = useState(false);
   const [candidateProfileBusy, setCandidateProfileBusy] = useState(false);
   const [resumeParseBusy, setResumeParseBusy] = useState(false);
@@ -213,6 +277,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
   const [savedAgentSettings, setSavedAgentSettings] = useState<AgentSettings>(defaultAgentSettings);
   const [agentSettingsBusy, setAgentSettingsBusy] = useState(false);
   const [modelSettingsEditing, setModelSettingsEditing] = useState(false);
+  const modelSettingsEditingRef = useRef(false);
   const [modelMonitor, setModelMonitor] = useState<ModelServiceMonitor | null>(null);
   const [modelMonitorBusy, setModelMonitorBusy] = useState(false);
   const [agentOperations, setAgentOperations] = useState<AgentOperationsSnapshot | null>(null);
@@ -221,6 +286,8 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [modelDiscoveryBusy, setModelDiscoveryBusy] = useState(false);
   const [modelDiscoveryError, setModelDiscoveryError] = useState("");
+  const [modelCapabilities, setModelCapabilities] = useState<ModelCapabilityReport | null>(null);
+  const [modelCapabilitiesBusy, setModelCapabilitiesBusy] = useState(false);
   const [databaseReady, setDatabaseReady] = useState(false);
   const databaseInitializationRef = useRef<Promise<void> | null>(null);
   const modelDiscoveryKeyRef = useRef("");
@@ -228,6 +295,9 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
   const currentConversation = conversations.find((item) => item.id === currentConversationId) ?? null;
 
   function navigateRoute(route: AppRoute, replace = false) {
+    if (route.section === "workbench" && route.page === "interview") {
+      setInterviewBusy(true);
+    }
     const nextHash = appRouteHash(route);
     setAppRoute(route);
     if (replace) {
@@ -244,7 +314,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
   useEffect(() => {
     const canonicalHash = appRouteHash(initialAppRoute(
       window.location.hash,
-      window.localStorage.getItem("careerloop-view")
+      readPreference("careerloop-view", userEmail)
     ));
     if (window.location.hash !== canonicalHash) {
       window.history.replaceState(null, "", canonicalHash);
@@ -252,7 +322,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
     function syncRoute() {
       const next = parseAppHash(window.location.hash);
       if (next) setAppRoute(next);
-      else navigateRoute({ section: "workbench", page: "index" }, true);
+      else navigateRoute({ section: "dashboard" }, true);
     }
     window.addEventListener("hashchange", syncRoute);
     return () => window.removeEventListener("hashchange", syncRoute);
@@ -273,12 +343,19 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
 
   useEffect(() => {
     if (appRoute.section !== "workbench") return;
-    if (["detail", "evaluation", "evaluation_section", "evaluation_deep"].includes(appRoute.page || "") && appRoute.jobId) {
+    if (["detail", "resume", "interview", "evaluation", "evaluation_section"].includes(appRoute.page || "") && appRoute.jobId) {
       setSelectedJobId(appRoute.jobId);
       return;
     }
+    if (appRoute.page === "interview") {
+      const resumePrepJob = jobs.find((item) => item.job_title === "按简历准备");
+      if (resumePrepJob) {
+        setSelectedJobId(resumePrepJob.id);
+        return;
+      }
+    }
     setSelectedJobId(null);
-  }, [appRoute]);
+  }, [appRoute, jobs]);
 
   useEffect(() => {
     if (appRoute.section !== "chat" || !currentConversationId || !conversations.length) return;
@@ -297,7 +374,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
   }, [currentConversationId]);
 
   useEffect(() => {
-    window.localStorage.setItem("careerloop-view", activeView);
+    window.localStorage.setItem(preferenceKey("careerloop-view", userEmail), activeView);
   }, [activeView]);
 
   useEffect(() => {
@@ -305,6 +382,32 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
     const timer = window.setTimeout(() => setNoticeMessage(""), 2600);
     return () => window.clearTimeout(timer);
   }, [noticeMessage]);
+
+  useEffect(() => {
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    if (!user.has_avatar) {
+      setAvatarUrl(null);
+      return;
+    }
+    void fetch(`${apiBase}/auth/me/avatar`, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("avatar missing");
+        const blob = await response.blob();
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setAvatarUrl(objectUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setAvatarUrl(null);
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [apiBase, accessToken, user.has_avatar, avatarEpoch]);
 
   useEffect(() => {
     function focusComposer(event: KeyboardEvent) {
@@ -323,14 +426,17 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
   function toggleSidebar() {
     setSidebarCollapsed((current) => {
       const next = !current;
-      window.localStorage.setItem("careerloop-sidebar", next ? "collapsed" : "expanded");
+      window.localStorage.setItem(preferenceKey("careerloop-sidebar", userEmail), next ? "collapsed" : "expanded");
       return next;
     });
   }
 
   const hasProfile = (workflow?.counts.profiles ?? 0) > 0;
-  const hasSavedResume = Boolean(candidateEditor.resumeText.trim() || candidateEditor.resumeRedactedText.trim());
+  const hasSavedResume = Boolean(candidateEditor.resumeText.trim());
   const workbenchProfileReady = hasProfile && confirmedCareerFactCount > 0;
+  const settingsProfileReady = candidateProfileLoaded
+    ? isSettingsProfileReady(candidateEditor)
+    : null;
   const hiddenMessageCount = Math.max(0, chatMessages.length - visibleMessageCount);
   const visibleChatMessages = chatMessages.slice(-visibleMessageCount);
   const latestAgent = [...chatMessages]
@@ -338,10 +444,10 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
     .find((message) => message.role === "assistant" && message.payload?.agent)?.payload?.agent;
   const waitingForUser = latestAgent?.status === "waiting_user";
   const nextStep = !hasProfile
-    ? { title: "先建立职业画像", detail: "导入简历或填写关键经历，让岗位判断和面试准备真正贴合你。", action: "创建个人资料", kind: "settings" as const }
+    ? { title: "先建立职业画像", detail: "导入简历或填写关键经历，让岗位判断和面试准备真正贴合你。", action: "创建求职资料", kind: "settings" as const }
     : !workbenchProfileReady
       ? { title: "确认候选人事实", detail: "待确认知识不会参与岗位评分；请先在画像中心核对证据。", action: "审核画像", kind: "settings" as const }
-      : { title: "对照一份目标岗位", detail: "粘贴岗位描述、提交公开链接或上传截图，开始匹配分析。", action: "开始分析", kind: "workbench" as const };
+      : { title: "分析这份简历", detail: "先看已保存简历的方向与缺口；需要时再对照岗位。", action: "开始分析", kind: "workbench" as const };
 
   async function refreshData(conversationId = currentConversationId) {
     try {
@@ -367,6 +473,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
   async function refreshJobs() {
     const next = await fetchJson<JobProject[]>("/jobs");
     setJobs(next);
+    setJobsLoaded(true);
     setSelectedJobId((current) => (
       current && next.some((job) => job.id === current)
         ? current
@@ -404,24 +511,60 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
     }
   }
 
-  async function runQuickMatch(payload: {
+  async function runQuickMatch(
+    payload: {
+      job_description: string;
+      job_title?: string;
+      company_name?: string;
+    },
+    onEvent?: (event: AnalysisRunEvent) => void
+  ): Promise<QuickMatchResult> {
+    if (!onEvent) {
+      return fetchJson<QuickMatchResult>("/quick-match", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+    }
+    const headers = new Headers({
+      "Content-Type": "application/json",
+      Accept: "text/event-stream"
+    });
+    if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
+    const response = await fetchWithTimeout(
+      `${apiBase}/quick-match/run`,
+      { method: "POST", headers, body: JSON.stringify(payload) },
+      90_000
+    );
+    return readAnalysisRunStream(response, onEvent);
+  }
+
+  async function applyResumeRewrite(payload: {
+    original: string;
+    suggested: string;
     job_description: string;
     job_title?: string;
     company_name?: string;
   }): Promise<QuickMatchResult> {
-    return fetchJson<QuickMatchResult>("/quick-match", {
+    const result = await fetchJson<QuickMatchResult & { resume_text?: string }>("/quick-match/apply-rewrite", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
+    if (result.resume_text) {
+      setCandidateEditor((current) => ({ ...current, resumeText: result.resume_text || current.resumeText }));
+      hasStoredResumeRef.current = true;
+      routeDataCacheRef.current.invalidate("candidateProfile");
+    }
+    return result;
   }
 
   async function refreshResumeVersions(
-    jobId: number,
+    jobId?: number,
     preferredVersionId?: number
   ): Promise<ResumeVersionSummary[]> {
     const versions = await fetchJson<ResumeVersionSummary[]>(
-      `/jobs/${jobId}/resume-versions`
+      jobId ? `/jobs/${jobId}/resume-versions` : "/resume-versions"
     );
     setResumeVersions(versions);
     const versionId = preferredVersionId ?? versions[0]?.id;
@@ -434,16 +577,16 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
     return versions;
   }
 
-  async function createTailoredResumeVersion(job: JobProject): Promise<ResumeVersion> {
+  async function createTailoredResumeVersion(job?: JobProject): Promise<ResumeVersion> {
     setResumeVersionBusy(true);
     setErrorMessage("");
     try {
       const version = await fetchJson<ResumeVersion>(
-        `/jobs/${job.id}/resume-versions`,
+        job ? `/jobs/${job.id}/resume-versions` : "/resume-versions",
         { method: "POST" }
       );
       setResumeVersion(version);
-      await refreshResumeVersions(job.id, version.id);
+      await refreshResumeVersions(undefined, version.id);
       setNoticeMessage("简历已生成");
       return version;
     } catch (error) {
@@ -494,6 +637,8 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
         title: version.title,
         status: version.status,
         template_id: version.template_id,
+        style_id: version.style_id,
+        layout: version.layout,
         change_count: version.change_count,
         change_counts: version.change_counts,
         created_at: version.created_at,
@@ -522,7 +667,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
 
   async function updateTailoredResumeVersion(
     versionId: number,
-    patch: { status?: "draft" | "final"; template_id?: ResumeTemplate }
+    patch: { status?: "draft" | "final"; template_id?: ResumeTemplate; style_id?: ResumeStyle; layout?: ResumeLayoutSettings }
   ) {
     setResumeVersionBusy(true);
     setErrorMessage("");
@@ -533,10 +678,28 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
           body: JSON.stringify(patch)
       });
       setResumeVersion(version);
-      if (selectedJobId) await refreshResumeVersions(selectedJobId, version.id);
+      setResumeVersions((current) => current.map((item) => (
+        item.id === version.id
+          ? {
+              ...item,
+              title: version.title,
+              status: version.status,
+              template_id: version.template_id,
+              style_id: version.style_id,
+              layout: version.layout,
+              change_count: version.change_count,
+              change_counts: version.change_counts,
+              updated_at: version.updated_at
+            }
+          : item
+      )));
       setNoticeMessage(
-        patch.template_id
+        patch.layout
+          ? "已更新排版"
+          : patch.style_id
           ? "已应用模板"
+          : patch.template_id
+          ? "已选择简历类型"
           : patch.status === "final"
             ? "已设为最终版"
             : "已恢复草稿"
@@ -553,7 +716,8 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
     setErrorMessage("");
     try {
       const response = await fetch(
-        `${apiBase}/resume-versions/${versionId}/export?format=${format}`
+        `${apiBase}/resume-versions/${versionId}/export?format=${format}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
       );
       if (!response.ok) {
         let message = `导出失败（${response.status}）`;
@@ -817,98 +981,11 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
     }
   }
 
-  async function consumeJobImportStream(
-    path: string,
-    body: Record<string, unknown>
-  ): Promise<JobImportPreview> {
-    const response = await fetch(`${apiBase}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    });
-    if (!response.ok) {
-      let message = `岗位链接解析失败（${response.status}）`;
-      try {
-        const payload = await response.json() as { detail?: string };
-        if (payload.detail) message = payload.detail;
-      } catch {
-        // 保留状态码错误。
-      }
-      throw new Error(message);
-    }
-    if (!response.body) throw new Error("浏览器不支持智能体流式响应");
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    const previewResults: JobImportPreview[] = [];
-
-    const consumeLine = (line: string) => {
-      if (!line.trim()) return;
-      const event = JSON.parse(line) as (
-        JobImportActivityEvent
-        | { type: "result"; preview: JobImportPreview }
-        | { type: "error"; message: string }
-      );
-      if (event.type === "result") {
-        previewResults.push(event.preview);
-        return;
-      }
-      if (event.type === "error") throw new Error(event.message);
-      setJobImportActivity((current) => {
-        const index = current.findIndex((item) => item.id === event.id);
-        if (index < 0) return [...current, event];
-        const next = [...current];
-        next[index] = event;
-        return next;
-      });
-    };
-
-    while (true) {
-      const { done, value } = await reader.read();
-      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-      lines.forEach(consumeLine);
-      if (done) break;
-    }
-    consumeLine(buffer);
-    const preview = previewResults[previewResults.length - 1];
-    if (!preview) throw new Error("岗位导入智能体没有返回最终结果");
-    return preview;
-  }
-
-  async function previewJobLink(url: string): Promise<JobImportPreview> {
-    setJobImportBusy(true);
-    setJobImportActivity([]);
-    setErrorMessage("");
-    try {
-      const preview = await consumeJobImportStream(
-        "/job-imports/preview/stream",
-        { url }
-      );
-      setNoticeMessage(
-        preview.status === "ready"
-          ? "岗位信息已读取"
-          : preview.status === "partial"
-            ? "岗位信息不完整"
-            : "已停止读取"
-      );
-      return preview;
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "岗位链接解析失败");
-      throw error;
-    } finally {
-      setJobImportBusy(false);
-    }
-  }
-
   async function previewJobText(
     text: string,
     sourceUrl = ""
   ): Promise<JobImportPreview> {
     setJobImportBusy(true);
-    setJobImportActivity([]);
     setErrorMessage("");
     try {
       const preview = await fetchJson<JobImportPreview>("/job-imports/text-preview", {
@@ -932,7 +1009,6 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
 
   async function previewJobScreenshot(file: File, sourceUrl = ""): Promise<JobImportPreview> {
     setJobImportBusy(true);
-    setJobImportActivity([]);
     setErrorMessage("");
     try {
       const form = new FormData();
@@ -1063,12 +1139,20 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
     setAttachmentConfig(next);
   }
 
+  function updateModelSettingsEditing(next: boolean) {
+    modelSettingsEditingRef.current = next;
+    setModelSettingsEditing(next);
+  }
+
   async function refreshAgentSettings() {
     const next = await fetchJson<AgentSettings>("/agent/settings");
     const clean = { ...next, api_key: "" };
-    setAgentSettings(clean);
     setSavedAgentSettings(clean);
-    setModelSettingsEditing(!next.api_key_configured);
+    if (modelSettingsEditingRef.current) {
+      return;
+    }
+    setAgentSettings(clean);
+    updateModelSettingsEditing(!next.api_key_configured);
     if (next.api_key_configured) {
       void discoverModels(clean, { silent: true });
     }
@@ -1078,6 +1162,35 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
     const next = await fetchJson<ModelServiceMonitor>("/agent/model-monitor?hours=24");
     setModelMonitor(next);
     return next;
+  }
+
+  async function refreshModelCapabilities(probe = false) {
+    setModelCapabilitiesBusy(true);
+    try {
+      const next = probe
+        ? await fetchJson<ModelCapabilityReport>("/agent/models/capabilities", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model_name: agentSettings.model_name,
+              model_base_url: agentSettings.model_base_url,
+              api_key: agentSettings.api_key,
+              probe: true
+            })
+          })
+        : await fetchJson<ModelCapabilityReport>(
+            `/agent/models/capabilities?model_name=${encodeURIComponent(agentSettings.model_name)}`
+          );
+      setModelCapabilities(next);
+      if (probe && next.probe_error) {
+        setErrorMessage(next.probe_error);
+      } else if (probe) {
+        setNoticeMessage(next.vision.source === "probe" ? "已完成能力检测" : "已读取模型能力");
+      }
+      return next;
+    } finally {
+      setModelCapabilitiesBusy(false);
+    }
   }
 
   async function refreshAgentOperations(days = agentOperationsDays, showLoading = true) {
@@ -1159,12 +1272,12 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
 
   function beginModelSettingsEdit() {
     if (!window.confirm("确认编辑模型连接或切换模型吗？\n\n设置将在再次确认保存后生效，编辑期间不会影响当前连接。")) return;
-    setModelSettingsEditing(true);
+    updateModelSettingsEditing(true);
   }
 
   function cancelModelSettingsEdit() {
     setAgentSettings({ ...savedAgentSettings, api_key: "" });
-    setModelSettingsEditing(false);
+    updateModelSettingsEditing(false);
     setModelDiscoveryError("");
   }
 
@@ -1181,9 +1294,9 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
       const clean = { ...saved, api_key: "" };
       setAgentSettings(clean);
       setSavedAgentSettings(clean);
-      setModelSettingsEditing(false);
+      updateModelSettingsEditing(false);
       modelDiscoveryKeyRef.current = "";
-      await Promise.all([refreshCapabilities(), refreshModelMonitor()]);
+      await Promise.all([refreshCapabilities(), refreshModelMonitor(), refreshModelCapabilities()]);
       void discoverModels(clean, { silent: true, force: true });
       setNoticeMessage("保存成功");
     } catch (error) {
@@ -1213,22 +1326,48 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
   }
 
   async function refreshCandidateProfile() {
+    const generation = candidateProfileGenerationRef.current;
     try {
     const bundle = await fetchJson<CareerProfileBundle>("/career-profile");
+    if (generation !== candidateProfileGenerationRef.current) return;
     setResumeProfileSuggestion(null);
     if (!bundle.profile) {
       setConfirmedCareerFactCount(0);
+      setPendingCareerFacts([]);
+      hasStoredResumeRef.current = false;
       setCandidateEditor(emptyCandidateEditor);
       return;
     }
     const profile = bundle.profile;
     const confirmedFacts = bundle.facts.filter((fact) => fact.status === "confirmed");
+    const pendingFacts = bundle.facts.filter((fact) => fact.status === "pending");
     const strategy = bundle.active_strategy;
     const resumeSource = bundle.sources.find((source) => source.source_type === "resume");
-    const skills = confirmedFacts
-      .filter((fact) => fact.category === "skill")
-      .map((fact) => String(fact.value?.name || fact.statement.replace(/^具备\s+|\s+相关经验$/g, "")));
+    const blockedSkills = new Set(
+      bundle.facts
+        .filter((fact) => fact.category === "skill" && (fact.status === "disputed" || fact.status === "retracted"))
+        .map((fact) => inboxFactLabel(fact).toLowerCase())
+        .filter(Boolean)
+    );
+    const skills: string[] = [];
+    const seenSkills = new Set<string>();
+    for (const fact of confirmedFacts) {
+      if (fact.category !== "skill") continue;
+      const name = inboxFactLabel(fact);
+      const key = name.toLowerCase();
+      if (!name || blockedSkills.has(key) || seenSkills.has(key)) continue;
+      seenSkills.add(key);
+      skills.push(name);
+    }
     setConfirmedCareerFactCount(confirmedFacts.length);
+    setPendingCareerFacts(pendingFacts.map((fact) => ({
+      id: fact.id,
+      statement: fact.statement,
+      category: fact.category,
+      value: fact.value as { name?: string } | undefined,
+      sourceKind: fact.source_kind,
+      evidence: fact.evidence
+    })));
     setCandidateEditor((current) => ({
       ...current,
       name: profile.name || "",
@@ -1245,9 +1384,18 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
       resumeFilename: resumeSource?.title || profile.resume_filename || "",
       privacyMode: profile.privacy_mode || "redacted"
     }));
+    hasStoredResumeRef.current = Boolean((profile.resume_text || "").trim());
     } finally {
-      setCandidateProfileLoaded(true);
+      if (generation === candidateProfileGenerationRef.current) {
+        setCandidateProfileLoaded(true);
+      }
     }
+  }
+
+  async function persistClearedResume() {
+    await fetchJson("/career-profile/resume", { method: "DELETE" });
+    hasStoredResumeRef.current = false;
+    routeDataCacheRef.current.invalidate("candidateProfile");
   }
 
   async function saveCandidateProfile(): Promise<boolean> {
@@ -1282,6 +1430,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
           })
         });
         resumeSourceId = sourceResult.source.id;
+        hasStoredResumeRef.current = true;
         await fetchJson(`/career-profile/sources/${resumeSourceId}/access`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -1290,20 +1439,31 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
             privacy_mode: candidateEditor.privacyMode
           })
         });
+      } else if (hasStoredResumeRef.current) {
+        await persistClearedResume();
       }
-      await Promise.all(splitList(candidateEditor.skills).map((skill) => fetchJson("/career-profile/facts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          category: "skill",
-          canonical_key: `skill:${skill.toLowerCase()}`,
-          statement: `具备 ${skill} 相关经验`,
-          value: { name: skill },
-          source_id: resumeSourceId,
-          excerpt: resumeSourceId ? skill : "",
-          sensitivity: "private"
-        })
-      })));
+      await Promise.all(splitList(candidateEditor.skills).map(async (skill) => {
+        const fact = await fetchJson<{ id: number; status: string }>("/career-profile/facts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            category: "skill",
+            canonical_key: `skill:${skill.toLowerCase()}`,
+            statement: skill,
+            value: { name: skill },
+            source_id: resumeSourceId,
+            excerpt: resumeSourceId ? skill : "",
+            sensitivity: "private"
+          })
+        });
+        if (fact.status === "pending") {
+          await fetchJson(`/career-profile/facts/${fact.id}/review`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "confirm" })
+          });
+        }
+      }));
       const strategies = await fetchJson<Array<{ id: number; is_active: boolean }>>("/career-profile/strategies");
       const strategyPayload = {
         name: candidateEditor.targetRole.trim() || "主要求职方向",
@@ -1330,7 +1490,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
       setNoticeMessage("保存成功");
       return true;
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "保存个人资料失败");
+      setErrorMessage(error instanceof Error ? error.message : "保存求职资料失败");
       return false;
     } finally {
       setCandidateProfileBusy(false);
@@ -1512,9 +1672,23 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
           status: "done" as const,
           events: []
         };
+        const existing = agent.events.find((item) => item.tool_call_id === agentEvent.tool_call_id);
+        const incomingGeneric = !agentEvent.message.trim()
+          || /^(?:正在执行(?:\s+\S+)?)$/i.test(agentEvent.message.trim());
+        const keepExistingMessage = Boolean(
+          existing?.message
+          && incomingGeneric
+          && existing.message.trim() !== agentEvent.message.trim()
+        );
+        const merged = {
+          ...existing,
+          ...agentEvent,
+          message: keepExistingMessage ? existing!.message : agentEvent.message,
+          data: { ...existing?.data, ...agentEvent.data }
+        };
         const events = [
           ...agent.events.filter((item) => item.tool_call_id !== agentEvent.tool_call_id),
-          agentEvent
+          merged
         ];
         return { ...message, payload: { ...message.payload, agent: { ...agent, events } } };
       }));
@@ -1573,6 +1747,9 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
               userMessage
             ]);
           }
+        }
+        if (event.name === "careerloop.agent_event" && event.value && typeof event.value === "object") {
+          updateAgentEvent(event.value as AgentRunResult["events"][number]);
         }
       },
       onTextMessageStartEvent: () => {
@@ -1805,6 +1982,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
       interviewPreparation: refreshInterviewPreparation,
       jobs: refreshJobs,
       modelMonitor: refreshModelMonitor,
+      modelCapabilities: () => refreshModelCapabilities(false),
       workflow: () => refreshData(currentConversationId)
     };
     void Promise.all(requiredDataForRoute(appRoute).map((key) => (
@@ -1812,6 +1990,14 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
     ))).catch((error: unknown) => {
       setErrorMessage(error instanceof Error ? error.message : "读取页面数据失败");
     });
+    if (appRoute.section === "dashboard") {
+      const timer = window.setTimeout(() => {
+        void pagePrefetcher.prefetch("workbench");
+        void routeDataCacheRef.current.load("jobs", loaders.jobs);
+        void routeDataCacheRef.current.load("candidateProfile", loaders.candidateProfile);
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
   }, [appRoute, databaseReady]);
 
   useAsyncPolling({
@@ -1903,14 +2089,18 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
   }, [selectedJobId, fetchJson]);
 
   useEffect(() => {
-    if (!selectedJobId) {
+    const onResumePage = appRoute.section === "workbench" && appRoute.page === "resume";
+    if (!onResumePage && !selectedJobId) {
       setResumeVersions([]);
       setResumeVersion(null);
       return;
     }
     let active = true;
     setResumeVersionBusy(true);
-    fetchJson<ResumeVersionSummary[]>(`/jobs/${selectedJobId}/resume-versions`)
+    const url = onResumePage || !selectedJobId
+      ? "/resume-versions"
+      : `/jobs/${selectedJobId}/resume-versions`;
+    fetchJson<ResumeVersionSummary[]>(url)
       .then(async (versions) => {
         if (!active) return;
         setResumeVersions(versions);
@@ -1932,7 +2122,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
     return () => {
       active = false;
     };
-  }, [selectedJobId, fetchJson]);
+  }, [appRoute.section, appRoute.section === "workbench" ? appRoute.page : undefined, selectedJobId, fetchJson]);
 
   useEffect(() => () => chatAgentRef.current?.abortRun(), []);
 
@@ -1945,8 +2135,9 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
   const routePageMeta = appRoute.section === "settings"
     ? {
         overview: pageMeta.settings,
-        profile: { title: "我的求职资料", description: "完善经历、简历和求职偏好，让推荐和准备更贴合你" },
-        model: { title: "Agent 推理模型", description: "配置 Agent 使用的模型服务，并检查连接质量" },
+        account: { title: "账号与安全", description: "管理跟随登录账号的昵称、头像和密码" },
+        profile: { title: "求职资料", description: "完善经历、简历和求职偏好，让推荐和准备更贴合你" },
+        model: { title: "模型设置", description: "配置推理模型、服务地址和 API Key，并检查连接质量" },
         agent: { title: "Agent 执行记录", description: "查看 Agent 已完成的任务、工具使用和异常原因" }
       }[appRoute.page]
     : appRoute.section === "opportunities"
@@ -1963,17 +2154,17 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
                 : pageMeta.opportunities
     : appRoute.section === "workbench"
       ? appRoute.page === "new"
-        ? { title: "新的分析", description: "输入岗位描述和任职要求，对照简历开始分析" }
+        ? { title: "新的分析", description: "先分析已保存简历，需要时再对照岗位" }
         : appRoute.page === "evaluation_section"
           ? { title: "匹配分析依据", description: "查看 Agent 的分析依据、不确定项和你需要确认的内容" }
-          : appRoute.page === "evaluation_deep"
-          ? { title: "补充岗位研究", description: "让 Agent 在明确范围内补充公开信息和匹配依据" }
             : appRoute.page === "evaluation"
-              ? { title: "简历分析", description: "查看匹配、缺口、证据和下一步建议" }
+              ? { title: "匹配分析", description: "查看匹配、缺口、证据和下一步建议" }
               : appRoute.page === "comparison"
                 ? { title: "选择优先岗位", description: "在同一求职目标下比较岗位匹配与下一步行动" }
+        : appRoute.page === "interview"
+          ? { title: "面试问答", description: "根据已保存简历准备预测问题、STAR 讲法和追问；导入岗位后可以再出一版" }
         : appRoute.page === "detail"
-          ? { title: "简历分析", description: "对照这份岗位查看匹配、缺口和证据" }
+          ? { title: "匹配分析", description: "对照这份岗位查看匹配、缺口和证据" }
           : pageMeta.workbench
       : appRoute.section === "interview-prep"
         ? appRoute.page === "knowledge"
@@ -1983,14 +2174,28 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
             : { title: "项目解析", description: "把真实项目拆成可讲证据，并通过文字追问反复练习" }
       : pageMeta[appRoute.section];
 
-  useEffect(() => {
-    document.title = `${routePageMeta.title}｜CareerLoop`;
-  }, [routePageMeta.title]);
+  const documentPageTitle = appRoute.section === "chat"
+    ? currentConversation?.title || "新对话"
+    : routePageMeta.title;
+  const topbarTitle = appTopBarShowsTitle(appRoute) ? documentPageTitle : undefined;
+  const topbarSection = topbarTitle ? topbarSectionForPage(appRoute.section, topbarTitle) : undefined;
 
-  const showTopbar = !(
-    (appRoute.section === "settings" && appRoute.page === "profile")
-    || appRoute.section === "interview-prep"
-    || appRoute.section === "chat"
+  useEffect(() => {
+    document.title = `${documentPageTitle}｜CareerLoop`;
+  }, [documentPageTitle]);
+
+  const identityMenu = (
+    <AppIdentityMenu
+      userEmail={userEmail}
+      accountName={user.display_name}
+      avatarUrl={avatarUrl}
+      activeView={activeView}
+      settingsPage={appRoute.section === "settings" ? appRoute.page : undefined}
+      onOpenProfile={() => navigateRoute({ section: "settings", page: "profile" })}
+      onOpenAccount={() => navigateRoute({ section: "settings", page: "account" })}
+      onLogout={onLogout}
+      onPrefetchPage={(page) => void pagePrefetcher.prefetch(page)}
+    />
   );
 
   return (
@@ -1999,25 +2204,23 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
         collapsed={sidebarCollapsed}
         activeView={activeView}
         onToggle={toggleSidebar}
-        onLogout={onLogout}
-        onGoHome={() => navigateRoute({ section: "workbench", page: "index" })}
+        onGoHome={() => navigateRoute({ section: "dashboard" })}
         onPrefetchPage={(page) => void pagePrefetcher.prefetch(page)}
-        preparationPage={appRoute.section === "interview-prep" ? appRoute.page || "projects" : undefined}
         settingsPage={appRoute.section === "settings" ? appRoute.page : undefined}
         onSelectView={setActiveView}
-        onSelectPreparationPage={(page: PreparationPage) => navigateRoute({ section: "interview-prep", page })}
-        onOpenProfile={() => navigateRoute({ section: "settings", page: "profile" })}
+        identity={identityMenu}
       />
 
-      <section className={`content ${activeView === "chat" ? "chat-content" : ""}`}>
-        {showTopbar ? <SectionHeader
-          className="topbar"
-          level={1}
-          title={activeView === "chat" && currentConversation ? currentConversation.title : routePageMeta.title}
-        /> : null}
+      <section className={`content${activeView === "chat" ? " chat-content" : ""}${topbarTitle ? "" : " is-titleless"}`}>
+        <AppTopBar
+          section={topbarSection}
+          title={topbarTitle}
+        >
+          {identityMenu}
+        </AppTopBar>
 
         {errorMessage ? (
-          <div className="feedback-banner error-banner"><TriangleAlert size={16} /><span>{errorMessage}</span><button onClick={() => setErrorMessage("")} aria-label="关闭错误提示"><X size={15} /></button></div>
+          <div className="feedback-banner error-banner global-error-toast"><TriangleAlert size={16} /><span>{errorMessage}</span><button onClick={() => setErrorMessage("")} aria-label="关闭错误提示"><X size={15} /></button></div>
         ) : null}
 
         {conversationDialog ? (
@@ -2034,17 +2237,52 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
         ) : null}
 
         {activeView === "dashboard" ? (
-          <Suspense fallback={<PageLoading label="正在加载数据看板…" />}>
-            <DashboardView
-              workflow={workflow}
-              conversations={conversations}
+          <Suspense fallback={<PageLoading label="正在加载首页…" />}>
+            <HomePage
+              apiBase={apiBase}
+              accessToken={accessToken}
+              displayName={user.display_name}
+              email={userEmail}
+              profileName={candidateEditor.name}
+              targetRole={candidateEditor.targetRole}
+              targetCity={candidateEditor.targetCity}
+              resumeText={candidateEditor.resumeText}
+              resumeFilename={candidateEditor.resumeFilename}
+              skills={candidateEditor.skills}
+              profileLoaded={candidateProfileLoaded}
               jobs={jobs}
-              nextStep={nextStep}
-              onNextStep={handleNextStep}
-              onOpenConversation={(conversationId) => {
-                setCurrentConversationId(conversationId);
-                setActiveView("chat");
+              jobsLoaded={jobsLoaded}
+              conversations={conversations}
+              pendingFacts={pendingCareerFacts}
+              onOpenAnalysis={() => navigateRoute({ section: "workbench", page: "index" })}
+              onOpenResume={() => navigateRoute({ section: "workbench", page: "resume" })}
+              onOpenInterview={() => {
+                const resumePrepJob = jobs.find((item) => item.job_title === "按简历准备");
+                navigateRoute(
+                  resumePrepJob
+                    ? { section: "workbench", page: "interview", jobId: resumePrepJob.id }
+                    : { section: "workbench", page: "interview" }
+                );
               }}
+              onOpenProject={(experienceId) => navigateRoute({
+                section: "project-lab",
+                projectId: experienceId || undefined
+              })}
+              onOpenProfile={() => navigateRoute({ section: "settings", page: "profile" })}
+              onOpenJob={(jobId) => {
+                const job = jobs.find((item) => item.id === jobId);
+                navigateRoute(
+                  job?.latest_evaluation_id
+                    ? { section: "workbench", page: "evaluation", jobId }
+                    : { section: "workbench", page: "detail", jobId }
+                );
+              }}
+              onOpenChat={(conversationId) => {
+                if (conversationId) setCurrentConversationId(conversationId);
+                navigateRoute({ section: "chat", conversationId });
+              }}
+              onOpenOpportunities={() => navigateRoute({ section: "opportunities", page: "index" })}
+              onFactsChanged={() => void refreshCandidateProfile()}
             />
           </Suspense>
         ) : null}
@@ -2092,6 +2330,19 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
               onStop={stopChatGeneration}
               onEdit={editChatMessage}
               onRegenerate={regenerateChatMessage}
+              onOpenResume={() => {
+                navigateRoute({ section: "settings", page: "profile" });
+                const startedAt = Date.now();
+                const tryScroll = () => {
+                  const target = document.getElementById("resume-upload");
+                  if (target) {
+                    target.scrollIntoView({ behavior: "smooth", block: "start" });
+                    return;
+                  }
+                  if (Date.now() - startedAt < 2000) window.requestAnimationFrame(tryScroll);
+                };
+                window.requestAnimationFrame(tryScroll);
+              }}
             />
           </Suspense>
         ) : null}
@@ -2105,30 +2356,39 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
               runId={appRoute.section === "opportunities" ? appRoute.runId : undefined}
               discoveredJobId={appRoute.section === "opportunities" ? appRoute.discoveredJobId : undefined}
               onNavigateHome={() => navigateRoute({ section: "opportunities", page: "index" })}
-              onNavigateNew={() => navigateRoute({ section: "opportunities", page: "new" })}
               onNavigatePipeline={() => navigateRoute({ section: "opportunities", page: "pipeline" })}
               onNavigateSources={() => navigateRoute({ section: "opportunities", page: "sources" })}
               onNavigateRun={(runId) => navigateRoute({ section: "opportunities", page: "run", runId })}
               onNavigateJob={(discoveredJobId) => navigateRoute({ section: "opportunities", page: "job", discoveredJobId })}
               onJobsChanged={async () => { await refreshJobs(); }}
+              onOpenPreparedJob={(jobId) => {
+                const job = jobs.find((item) => item.id === jobId);
+                navigateRoute(
+                  job?.latest_evaluation_id
+                    ? { section: "workbench", page: "evaluation", jobId }
+                    : { section: "workbench", page: "detail", jobId }
+                );
+              }}
             />
           </Suspense>
         ) : null}
 
         {activeView === "workbench" ? (
-          <Suspense fallback={<PageLoading label="正在加载简历分析…" />}>
-            {appRoute.section === "workbench" && ["evaluation", "evaluation_section", "evaluation_deep", "comparison"].includes(appRoute.page || "") ? (
+          <Suspense fallback={<PageLoading label={appRoute.section === "workbench" && appRoute.page === "resume" ? "正在加载定制简历…" : appRoute.section === "workbench" && appRoute.page === "interview" ? "正在加载面试问答…" : "正在加载匹配分析…"} />}>
+            {appRoute.section === "workbench" && ["evaluation", "evaluation_section", "comparison"].includes(appRoute.page || "") ? (
               <JobEvaluationPage
                 apiBase={apiBase}
-                page={appRoute.page as "evaluation" | "evaluation_section" | "evaluation_deep" | "comparison"}
+                accessToken={accessToken}
+                page={appRoute.page as "evaluation" | "evaluation_section" | "comparison"}
                 jobId={appRoute.jobId}
                 job={jobs.find((item) => item.id === appRoute.jobId)}
                 sectionKey={appRoute.sectionKey}
                 comparisonId={appRoute.comparisonId}
                 onBack={() => navigateRoute({ section: "workbench", page: "index" })}
                 onOpenOverview={() => appRoute.jobId && navigateRoute({ section: "workbench", page: "evaluation", jobId: appRoute.jobId })}
+                onOpenResume={() => appRoute.jobId && navigateRoute({ section: "workbench", page: "resume", jobId: appRoute.jobId })}
+                onOpenInterview={() => appRoute.jobId && navigateRoute({ section: "workbench", page: "interview", jobId: appRoute.jobId })}
                 onOpenSection={(sectionKey) => appRoute.jobId && navigateRoute({ section: "workbench", page: "evaluation_section", jobId: appRoute.jobId, sectionKey })}
-                onOpenDeep={() => appRoute.jobId && navigateRoute({ section: "workbench", page: "evaluation_deep", jobId: appRoute.jobId })}
                 interviewKit={interviewKit}
                 interviewBusy={interviewBusy}
                 onCreateInterviewKit={async () => {
@@ -2138,7 +2398,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
               />
             ) : (
             <WorkbenchView
-              viewMode={appRoute.section === "workbench" && ["index", "new", "detail"].includes(appRoute.page || "index") ? (appRoute.page || "index") as "index" | "new" | "detail" : "index"}
+              viewMode={appRoute.section === "workbench" && ["index", "new", "detail", "resume", "interview"].includes(appRoute.page || "index") ? (appRoute.page || "index") as "index" | "new" | "detail" | "resume" | "interview" : "index"}
               hasProfile={hasSavedResume}
               resumeFilename={candidateEditor.resumeFilename}
               resumeText={candidateEditor.resumeText}
@@ -2147,7 +2407,6 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
               chatBusy={chatBusy}
               jobBusy={jobBusy}
               jobImportBusy={jobImportBusy}
-              jobImportActivity={jobImportActivity}
               analysis={jobEvaluation}
               analysisBusy={jobEvaluationBusy}
               resumeVersions={resumeVersions}
@@ -2164,11 +2423,21 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
               onNavigateIndex={() => navigateRoute({ section: "workbench", page: "index" })}
               onNavigateNew={() => navigateRoute({ section: "workbench", page: "new" })}
               onNavigateDetail={(jobId) => navigateRoute({ section: "workbench", page: "detail", jobId })}
+              onNavigateResume={(jobId) => navigateRoute(
+                jobId
+                  ? { section: "workbench", page: "resume", jobId }
+                  : { section: "workbench", page: "resume" }
+              )}
+              onNavigateInterview={(jobId) => navigateRoute(
+                jobId
+                  ? { section: "workbench", page: "interview", jobId }
+                  : { section: "workbench", page: "interview" }
+              )}
               onNavigateEvaluation={(jobId) => navigateRoute({ section: "workbench", page: "evaluation", jobId })}
               onCreateComparison={createJobComparison}
               onQuickMatch={runQuickMatch}
+              onApplyResumeRewrite={applyResumeRewrite}
               onSaveJob={saveJobProject}
-              onPreviewJobUrl={previewJobLink}
               onPreviewJobText={previewJobText}
               onPreviewJobScreenshot={previewJobScreenshot}
               onDeleteJob={removeJobProject}
@@ -2184,14 +2453,31 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
               onCreateInterviewRound={createInterviewSchedule}
               onUpdateInterviewRound={updateInterviewSchedule}
               onAddTimelineNote={addTimelineNote}
+              conversations={conversations}
+              onOpenChat={(conversationId) => {
+                setCurrentConversationId(conversationId);
+                navigateRoute({ section: "chat", conversationId });
+              }}
               onOpenProfile={() => navigateRoute({ section: "settings", page: "profile" })}
             />
             )}
           </Suspense>
         ) : null}
 
+        {appRoute.section === "project-lab" ? (
+          <Suspense fallback={<PageLoading label="正在加载项目…" />}>
+            <ProjectStudioPage
+              apiBase={apiBase}
+              accessToken={accessToken}
+              projectId={appRoute.projectId}
+              onOpenProject={(projectId) => navigateRoute({ section: "project-lab", projectId })}
+              onOpenProfile={() => navigateRoute({ section: "settings", page: "profile" })}
+            />
+          </Suspense>
+        ) : null}
+
         {appRoute.section === "interview-prep" ? (
-          <Suspense fallback={<PageLoading label="正在加载面试准备…" />}>
+          <Suspense fallback={<PageLoading label="正在加载项目解析…" />}>
             <InterviewPreparationPage
               apiBase={apiBase}
               accessToken={accessToken}
@@ -2220,8 +2506,25 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
               {appRoute.page === "overview" ? (
                 <SettingsOverview
                   profile={candidateEditor}
-                  profileReady={workbenchProfileReady}
+                  profileReady={settingsProfileReady}
+                  accountEmail={user.email}
+                  accountName={user.display_name}
+                  modelName={savedAgentSettings.model_name}
+                  apiKeyConfigured={savedAgentSettings.api_key_configured}
                   onOpen={(page) => navigateRoute({ section: "settings", page })}
+                />
+              ) : null}
+              {appRoute.page === "account" ? (
+                <AccountSettingsPage
+                  apiBase={apiBase}
+                  accessToken={accessToken}
+                  account={user}
+                  avatarUrl={avatarUrl}
+                  onAccountChange={(next) => {
+                    updateSession(accessToken, next);
+                    if (next.has_avatar) setAvatarEpoch((value) => value + 1);
+                  }}
+                  onPasswordChanged={updateSession}
                 />
               ) : null}
               {appRoute.page === "profile" ? (
@@ -2247,11 +2550,25 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
                   onFillSuggestion={fillProfileFromResume}
                   onCareerChange={refreshCandidateProfile}
                   onClearResume={() => {
-                    setCandidateEditor({ ...candidateEditor, resumeText: "", resumeFilename: "", resumeRedactedText: "" });
+                    candidateProfileGenerationRef.current += 1;
+                    setCandidateEditor((current) => ({
+                      ...current,
+                      resumeText: "",
+                      resumeFilename: "",
+                      resumeRedactedText: ""
+                    }));
+                    setCandidateProfileLoaded(true);
                     setPrivacyFindings([]);
                     setResumeProfileSuggestion(null);
                     setInterviewPreparation(null);
                     setAutoAnalysisAttemptedRevision(null);
+                    if (!hasStoredResumeRef.current) {
+                      routeDataCacheRef.current.invalidate("candidateProfile");
+                      return;
+                    }
+                    void persistClearedResume().catch((error) => {
+                      setErrorMessage(error instanceof Error ? error.message : "清除简历失败");
+                    });
                   }}
                   onSave={async () => {
                     const saved = await saveCandidateProfile();
@@ -2271,9 +2588,12 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
                   availableModels={availableModels}
                   discoveryBusy={modelDiscoveryBusy}
                   discoveryError={modelDiscoveryError}
+                  capabilities={modelCapabilities}
+                  capabilitiesBusy={modelCapabilitiesBusy}
                   onSettingsChange={setAgentSettings}
                   onDiscoverModels={(force) => void discoverModels(agentSettings, { force, silent: !force })}
                   onCheckService={() => void checkModelService()}
+                  onProbeCapabilities={() => void refreshModelCapabilities(true)}
                   onBeginEdit={beginModelSettingsEdit}
                   onCancelEdit={cancelModelSettingsEdit}
                   onSave={() => void saveAgentPreferences()}
@@ -2304,7 +2624,9 @@ root.render(
   <React.StrictMode>
     <AppErrorBoundary>
       <AuthGate apiBase={resolveApiBase()}>
-        {(accessToken, onLogout) => <App accessToken={accessToken} onLogout={onLogout} />}
+        {(accessToken, onLogout, user, updateSession) => (
+          <App accessToken={accessToken} onLogout={onLogout} user={user} updateSession={updateSession} />
+        )}
       </AuthGate>
     </AppErrorBoundary>
   </React.StrictMode>

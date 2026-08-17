@@ -4,11 +4,14 @@ import sqlite3
 from typing import Any
 
 from ..db import connect, json_dump, row_to_dict, rows_to_dicts
-from .stages import LEGACY_COUNT_KEYS, STAGE_DEFS
+from .stages import LEGACY_COUNT_KEYS, STAGE_DEFS, STAGE_IDS
+
+WORKSPACE_RUN_NAME = "default"
 
 
 def _run_name(conversation_id: int | None) -> str:
-    return f"conversation-{conversation_id}" if conversation_id is not None else "default"
+    del conversation_id
+    return WORKSPACE_RUN_NAME
 
 
 def _ensure_run(conn: sqlite3.Connection, conversation_id: int | None) -> int:
@@ -110,12 +113,9 @@ def _sync_nodes(
     updates = []
     for stage_id, _, hint in STAGE_DEFS:
         count = stage_counts.get(stage_id, 0)
-        if count > 0:
-            status = "done"
-            detail = f"已完成 {count} 次操作"
-        elif stage_id in engaged:
+        if count > 0 or stage_id in engaged:
             status = "running"
-            detail = "已进入该阶段，尚未产出结果"
+            detail = f"已触达 {count} 次"
         else:
             status = "pending"
             detail = hint
@@ -140,16 +140,7 @@ def _finalize_run(
     run_id: int,
     state: dict[str, Any],
 ) -> str:
-    placeholders = ",".join("?" for _ in STAGE_DEFS)
-    pending = conn.execute(
-        f"""
-        SELECT COUNT(*) AS count
-        FROM workflow_nodes
-        WHERE run_id = ? AND status != 'done' AND node_id IN ({placeholders})
-        """,
-        (run_id, *(stage_id for stage_id, _, _ in STAGE_DEFS)),
-    ).fetchone()["count"]
-    status = "done" if pending == 0 else "in_progress"
+    status = "in_progress"
     conn.execute(
         """
         UPDATE workflow_runs
@@ -159,6 +150,26 @@ def _finalize_run(
         (status, json_dump({**state, "status": status}), run_id),
     )
     return status
+
+
+def record_stage_activity(
+    stage_id: str,
+    event_type: str,
+    message: str,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    """Record a workbench touch on the workspace ledger. Does not schedule stages."""
+    if stage_id not in STAGE_IDS:
+        return
+    with connect() as conn:
+        run_id = _ensure_run(conn, None)
+        conn.execute(
+            """
+            INSERT INTO workflow_events (run_id, node_id, event_type, message, payload_json)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (run_id, stage_id, event_type, message, json_dump(payload or {})),
+        )
 
 
 def record_events(

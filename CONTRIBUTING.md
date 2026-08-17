@@ -1,4 +1,4 @@
-# BossCopilot 贡献规范
+# CareerLoop 贡献规范
 
 ## Git 是项目变更记录的唯一事实来源
 
@@ -56,7 +56,7 @@ fix bug
 
 ## 提交边界
 
-- 文档基线与业务代码分别提交。
+- 智能体行为变更必须同步更新 `docs/agent.md`（路由、工具、runtime、记忆、阶段或导入循环）；文档基线与业务代码仍分别提交。
 - 条件允许时，代码重构与行为变更分别提交。
 - 依赖变更与对应锁文件放在同一提交中。
 - 不提交构建产物、本地数据库、浏览器配置、运行日志和密钥。
@@ -86,9 +86,20 @@ fix bug
 仓库只有一名活跃开发者时，经过验证的小提交可以直接进入 `main`。开始多人协作或远程自动化后：
 
 - 保护 `main` 分支。
-- 使用 `feat/...`、`fix/...`、`docs/...` 或 `refactor/...` 分支。
+- 分支使用 `<类型>-<简短目标>` 格式，例如 `feat-resume-analysis`。
 - 通过经过审查的 Pull Request 合并。
 - 强制执行后端测试和前端构建检查。
+
+分支类型与提交类型保持一致，常用类型包括 `feat`、`fix`、`refactor`、`docs`、`test`、`chore`、`build` 和 `ci`。目标部分使用小写英文与连字符，描述该分支最终交付的能力或解决的问题：
+
+```text
+feat-interview-practice
+fix-chat-stream-reconnect
+refactor-agent-runtime
+docs-development-workflow
+```
+
+一个分支只承载一个明确的交付目标。为完成同一目标，可以同时修改前端、后端、智能体、测试和文档；没有共同交付目标的改动应拆分到不同分支。避免使用 `dev`、`update`、`fix` 或 `feat-many-changes` 等目标不明确的名称。
 
 ## 查看变更记录
 

@@ -7,9 +7,10 @@ from pathlib import Path
 from app import db
 from app.agent.orchestration import ROUTE_LABELS, TOOL_POLICIES
 from app.chat.conversations import create_conversation, ensure_active_task
-from app.domain import AgentPlan, AgentPlanStep, AgentRunResult, ToolEvent
-from app.chat.service import save_stream_result
-from app.workflow.engine import refresh_workflow_status
+from app.agent.snapshots import load_run_snapshot
+from app.domain import AgentPlan, AgentPlanStep, AgentRunResult, AgentRunSnapshot, ToolEvent
+from app.chat.service import save_stream_result, workflow_summary
+from app.workflow.engine import record_stage_activity, refresh_workflow_status
 from app.workflow.stages import (
     LEGACY_COUNT_KEYS,
     ROUTE_STAGES,
@@ -33,7 +34,8 @@ class StageDefinitionTest(unittest.TestCase):
             if stage_id is not None:
                 self.assertIn(stage_id, STAGE_IDS, f"route {kind} 指向未知阶段 {stage_id}")
         for tool_name, stage_id in TOOL_STAGES.items():
-            self.assertIn(stage_id, STAGE_IDS, f"工具 {tool_name} 指向未知阶段 {stage_id}")
+            if stage_id is not None:
+                self.assertIn(stage_id, STAGE_IDS, f"工具 {tool_name} 指向未知阶段 {stage_id}")
 
     def test_legacy_count_keys_reference_real_stages(self) -> None:
         for legacy_key, stage_id in LEGACY_COUNT_KEYS.items():
@@ -107,15 +109,17 @@ class StageProgressTest(unittest.TestCase):
                 ],
             )
         )
-        self.assertEqual(self._node(workflow, "job_evaluation")["status"], "done")
+        self.assertEqual(self._node(workflow, "job_evaluation")["status"], "running")
+        self.assertIn("触达", self._node(workflow, "job_evaluation")["detail"])
         self.assertEqual(workflow["stage_counts"]["job_evaluation"], 1)
 
     def test_every_career_os_tool_is_recorded(self) -> None:
         """逐个验证当前 CareerOS 工具都能推进阶段，而非依赖固定数量。"""
         career_os_tools = [
             name
-            for name in TOOL_STAGES
-            if name
+            for name, stage_id in TOOL_STAGES.items()
+            if stage_id is not None
+            and name
             not in {
                 "analyze_resume_against_jd",
                 "search_resume_evidence",
@@ -152,7 +156,7 @@ class StageProgressTest(unittest.TestCase):
                 ],
             )
         )
-        self.assertEqual(self._node(workflow, "job_evaluation")["status"], "done")
+        self.assertEqual(self._node(workflow, "job_evaluation")["status"], "running")
 
     def test_local_answer_route_marks_stage_running_without_tools(self) -> None:
         """本地快捷回复只有 agent_thinking 事件，仍应让主阶段离开 pending。"""
@@ -208,22 +212,22 @@ class StageProgressTest(unittest.TestCase):
                 provider="test",
                 platform="manual",
                 rounds=1,
-                events=[_tool_event("discover_companies")],
+                events=[_tool_event("create_job_evaluation")],
                 plan=AgentPlan(
-                    goal="发现公司",
-                    route="opportunity_discovery",
+                    goal="评估岗位",
+                    route="job_evaluation",
                     steps=[
                         AgentPlanStep(
                             id="s1",
-                            title="发现公司",
-                            tool_name="discover_companies",
+                            title="生成评估",
+                            tool_name="create_job_evaluation",
                             risk="external_read",
                         )
                     ],
                 ),
             )
         )
-        self.assertEqual(self._node(workflow, "opportunity_discovery")["status"], "done")
+        self.assertEqual(self._node(workflow, "job_evaluation")["status"], "running")
 
     def test_response_keeps_legacy_count_keys(self) -> None:
         """前端与 e2e mock 仍读旧键，后端改动不应破坏它们。"""
@@ -242,7 +246,7 @@ class StageProgressTest(unittest.TestCase):
             self.assertTrue(node["hint"])
             self.assertEqual(node["status"], "pending")
 
-    def test_run_status_becomes_done_only_when_all_stages_done(self) -> None:
+    def test_run_stays_in_progress_after_all_stages_are_touched(self) -> None:
         partial = self._save(
             AgentRunResult(
                 content="部分",
@@ -254,20 +258,108 @@ class StageProgressTest(unittest.TestCase):
         )
         self.assertEqual(partial["status"], "in_progress")
 
-        workflow = self._save(
+        tool_events = []
+        for stage_id, _, _ in STAGE_DEFS:
+            tool_name = next((name for name, mapped in TOOL_STAGES.items() if mapped == stage_id), None)
+            if tool_name:
+                tool_events.append(_tool_event(tool_name))
+        self._save(
             AgentRunResult(
                 content="全部",
                 provider="test",
                 platform="manual",
                 rounds=1,
-                events=[_thinking_event("conversation")]
-                + [
-                    _tool_event(next(t for t, s in TOOL_STAGES.items() if s == stage_id))
-                    for stage_id, _, _ in STAGE_DEFS
-                ],
+                events=[_thinking_event("conversation"), *tool_events],
             )
         )
-        self.assertEqual(workflow["status"], "done")
+        for stage_id, _, _ in STAGE_DEFS:
+            if not any(mapped == stage_id for mapped in TOOL_STAGES.values()):
+                record_stage_activity(stage_id, "stage_engaged", "工作台已触达该阶段")
+        workflow = refresh_workflow_status(self.conversation_id)
+        self.assertEqual(workflow["status"], "in_progress")
+        for node in workflow["nodes"]:
+            self.assertEqual(node["status"], "running")
+            self.assertIn("触达", node["detail"])
+
+    def test_workbench_activity_touches_the_workspace_ledger(self) -> None:
+        from app.workflow.engine import record_stage_activity, refresh_workflow_status
+
+        record_stage_activity("job_evaluation", "stage_engaged", "工作台已创建岗位评估")
+        workflow = refresh_workflow_status(self.conversation_id)
+        node = self._node(workflow, "job_evaluation")
+        self.assertEqual(node["status"], "running")
+        self.assertIn("触达", node["detail"])
+
+    def test_workflow_summary_uses_touch_language(self) -> None:
+        empty = refresh_workflow_status(self.conversation_id)
+        self.assertIn("尚未触达", workflow_summary(empty))
+        self.assertNotIn("节点完成", workflow_summary(empty))
+        touched = self._save(
+            AgentRunResult(
+                content="已分析",
+                provider="test",
+                platform="manual",
+                rounds=1,
+                events=[_thinking_event("jd_analysis"), _tool_event("analyze_resume_against_jd")],
+            )
+        )
+        summary = workflow_summary(touched)
+        self.assertIn("已触达", summary)
+        self.assertNotIn("节点完成", summary)
+
+    def test_waiting_snapshot_is_saved_and_cleared(self) -> None:
+        waiting = AgentRunResult(
+            content="需要确认",
+            provider="test",
+            platform="manual",
+            rounds=1,
+            status="waiting_user",
+            events=[_thinking_event("conversation")],
+            snapshot=AgentRunSnapshot(
+                route_kind="conversation",
+                needs_plan=False,
+                allowed_tools=[],
+                messages=[],
+                rounds_used=1,
+            ),
+        )
+        save_stream_result(
+            self.conversation_id,
+            self.task_id,
+            {"id": 0, "role": "user", "content": "测试"},
+            waiting,
+        )
+        loaded = load_run_snapshot(self.conversation_id)
+        self.assertIsNotNone(loaded)
+        self.assertEqual(loaded.route_kind, "conversation")
+
+        save_stream_result(
+            self.conversation_id,
+            self.task_id,
+            {"id": 0, "role": "user", "content": "进度"},
+            AgentRunResult(
+                content="进度",
+                provider="local_router",
+                platform="manual",
+                rounds=0,
+                events=[_thinking_event("workflow_status")],
+            ),
+        )
+        self.assertIsNotNone(load_run_snapshot(self.conversation_id))
+
+        save_stream_result(
+            self.conversation_id,
+            self.task_id,
+            {"id": 0, "role": "user", "content": "完成"},
+            AgentRunResult(
+                content="完成",
+                provider="test",
+                platform="manual",
+                rounds=1,
+                events=[_thinking_event("conversation")],
+            ),
+        )
+        self.assertIsNone(load_run_snapshot(self.conversation_id))
 
 
 if __name__ == "__main__":

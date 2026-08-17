@@ -19,6 +19,7 @@ from ..config import get_settings
 from ..domain import AgentMessage, ModelRequest
 from ..models import ModelProviderError, OpenAICompatibleProvider
 from ..profile.intelligence import extract_skills
+from ..resume.blocks import parse_resume_blocks
 
 
 _RESUME_HEADINGS = {
@@ -160,7 +161,13 @@ def get_interview_preparation(db_path: str | Path | None = None) -> dict[str, An
         classified_fragment_count = structure["classified_fragment_count"]
     else:
         experiences = [
-            _experience_item(item["evidence"], index, node_state, title=item["title"])
+            _experience_item(
+                item["evidence"],
+                index,
+                node_state,
+                title=item["title"],
+                block_id=item.get("id"),
+            )
             for index, item in enumerate([*(project_blocks or fallback_projects or excerpt_candidates), *manual_project_blocks])
         ]
         unclassified_fragments = [
@@ -490,7 +497,10 @@ def review_interview_preparation_fragment(
     profile = bundle["profile"]
     if profile is None:
         raise ProfileNotInitializedError("请先创建候选人画像")
-    if not re.fullmatch(r"fragment-\d{1,6}", fragment_id):
+    if not re.fullmatch(
+        r"(?:fragment|fact)-\d{1,6}|(?:other|work|skill|education|project)-[a-f0-9]{16}",
+        fragment_id,
+    ):
         raise ValueError("待归类片段无效")
 
     resume_text = str(profile.get("resume_text") or "").strip()
@@ -645,61 +655,23 @@ def _normalise_occurred_on(value: str | None) -> str:
 
 
 def _project_blocks(resume_text: str, facts: list[str]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
-    """Conservatively extract only explicit project blocks; keep everything else reviewable."""
-    lines = [re.sub(r"\s+", " ", line).strip() for line in resume_text.splitlines()]
-    blocks: list[dict[str, str]] = []
-    fragments: list[dict[str, str]] = []
-    in_projects = False
-    current_title = ""
-    current_lines: list[str] = []
-
-    def add_fragment(text: str, index: int) -> None:
-        clean = text.strip()
-        if not clean or clean.casefold().rstrip(":：") in _RESUME_HEADINGS:
-            return
-        if re.fullmatch(r"[\w.+-]+@[\w.-]+", clean) or re.fullmatch(r"[\d\s-]{8,}", clean):
-            return
-        fragments.append({"id": f"fragment-{index + 1}", "text": clean[:500]})
-
-    def flush_project() -> None:
-        nonlocal current_title, current_lines
-        if not current_title:
-            return
-        evidence = "\n".join([current_title, *current_lines]).strip()
-        blocks.append({"title": current_title[:200], "evidence": evidence[:2_000]})
-        current_title = ""
-        current_lines = []
-
-    for index, line in enumerate(lines):
-        if not line:
+    """Project blocks keep stable IDs; other sections stay reviewable fragments."""
+    parsed = parse_resume_blocks(resume_text)
+    blocks = [
+        {"id": item.id, "title": item.title, "evidence": item.evidence}
+        for item in parsed
+        if item.kind == "project"
+    ]
+    fragments = [
+        {"id": item.id, "text": item.evidence[:500]}
+        for item in parsed
+        if item.kind != "project" and item.evidence.strip()
+    ]
+    for index, fact in enumerate(facts):
+        clean = fact.strip()
+        if not clean:
             continue
-        normalized = line.casefold().rstrip(":：")
-        if normalized in {"项目经历", "项目经验", "项目实践", "projects"}:
-            flush_project()
-            in_projects = True
-            continue
-        if normalized in _RESUME_HEADINGS or re.match(r"^(?:技能|专业技能|skills?)\s*[:：]", normalized):
-            flush_project()
-            in_projects = False
-            if re.match(r"^(?:技能|专业技能|skills?)\s*[:：]", normalized):
-                add_fragment(line, index)
-            continue
-        if not in_projects:
-            add_fragment(line, index)
-            continue
-        if line.startswith(("-", "•", "·")):
-            if current_title:
-                current_lines.append(line)
-            else:
-                add_fragment(line, index)
-            continue
-        if current_title:
-            flush_project()
-        current_title = line
-
-    flush_project()
-    for fact in facts:
-        add_fragment(fact, len(lines) + len(fragments))
+        fragments.append({"id": f"fact-{index + 1}", "text": clean[:500]})
     return blocks, fragments
 
 
@@ -803,8 +775,9 @@ def _experience_item(
     *,
     title: str | None = None,
     fields: list[dict[str, str]] | None = None,
+    block_id: str | None = None,
 ) -> dict[str, Any]:
-    prefix = f"experience-{index + 1}"
+    prefix = block_id or f"experience-{index + 1}"
     skills = extract_skills(evidence)
     questions = [
         _node(f"{prefix}-contribution", "question", "你在这段经历中具体负责什么？", node_state),

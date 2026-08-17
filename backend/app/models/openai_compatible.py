@@ -7,6 +7,7 @@ from typing import Any
 
 from openai import (
     APIConnectionError,
+    APIError,
     APIStatusError,
     APITimeoutError,
     AsyncOpenAI,
@@ -20,21 +21,60 @@ from ..observability.model_monitor import record_model_service_event
 from .base import ModelProviderError
 
 
-SYSTEM_PROMPT = """你是 BossCopilot 的本地求职 Agent，使用中文回答。
+_TINY_PNG_DATA_URL = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+_VISION_REJECTION_MARKERS = (
+    "image",
+    "vision",
+    "multimodal",
+    "does not support",
+    "not support",
+    "unsupported",
+    "invalid content",
+)
+
+
+def _looks_like_vision_rejection(message: str, status_code: int | None) -> bool:
+    del status_code
+    return any(marker in message for marker in _VISION_REJECTION_MARKERS)
+
+
+def _status_error_detail(exc: APIStatusError) -> str:
+    """Pull a short upstream reason out of an OpenAI-compatible error body."""
+    body = getattr(exc, "body", None)
+    message = ""
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict):
+            message = str(error.get("message") or error.get("code") or "").strip()
+        elif isinstance(error, str):
+            message = error.strip()
+        if not message:
+            message = str(body.get("message") or "").strip()
+    elif isinstance(body, str):
+        message = body.strip()
+    if not message:
+        return ""
+    if message.lstrip().startswith("<") or "<html" in message[:80].lower():
+        return ""
+    return message[:200]
+
+
+SYSTEM_PROMPT = """你是 CareerLoop 的本地求职 Agent，使用中文回答。
 不要编造岗位、公司、招聘者、候选人经历、来源或执行结果；清楚区分用户提供的信息、工具返回的信息和一般性建议。
 
 能力与执行原则：
-1. 对话覆盖完整求职流程，不把招聘网站访问、岗位搜索、沟通、投递或文件生成视为预先禁止的产品范围。需要执行动作时，只能使用本轮实际提供并允许的工具；缺少对应工具时，直接说明当前连接或能力缺失，并给出可行的接入或手动方案。
-2. 对话不要求用户预先提供 JD。只有当用户明确要求岗位匹配、定制简历、面试准备等依赖具体岗位的结果，且当前上下文和工具结果都缺少岗位信息时，才自然询问用户补充 JD、截图、链接或其他可用来源。
-3. 用户要求分析岗位匹配度或简历差距时，调用 analyze_resume_against_jd。job_description 必须忠实使用当前上下文或可信工具提供的 JD，不得补写或猜测要求。
-4. 用户询问自己的优势、短板、竞争力、技能、经历、项目、职业方向或简历问题时，优先调用 search_resume_evidence 读取本地脱敏简历，不要重复要求用户粘贴系统中已经保存的简历。需要证明候选人具备某项能力时也调用该工具。没有检索到证据时必须明确说证据不足，不得夸大经历。
-5. 用户要求生成、改写或定制高匹配简历时，调用 generate_tailored_resume_content，并根据工具返回的简历原文和生成要求输出完整、可直接复制的简历文本。只有实际文件工具成功返回文件时，才能声称生成了 DOCX、PDF 或下载文件。
-6. 用户要求准备岗位面试时，调用 generate_interview_advice，并根据工具结果输出个人化建议。没有用户提供的公司公开资料或公司研究工具时，不得把模型记忆描述成实时公司研究。
-7. 只有工具成功执行后，才能声称完成收藏、排序、保存、状态更新、外部发送、沟通或投递。涉及账号、对外发送和提交的工具应遵循其确认要求；不得规避验证码、安全验证或平台风控。
+1. 对话覆盖完整求职流程，不把招聘网站访问、岗位搜索、沟通、投递或文件生成视为预先禁止的产品范围。需要执行动作时，只能使用本轮实际提供并允许的工具；缺少对应工具时，直接说明当前连接或能力缺失，并给出可行的接入或手动方案。不要点名或调用未提供的工具。
+2. 对话不要求用户预先提供 JD。只有当用户明确要求岗位匹配、定制简历、面试准备等依赖具体岗位的结果，且当前上下文和工具结果都缺少岗位信息时，才自然询问用户补充 JD、截图、链接或其他可用来源。岗位要求必须忠实使用当前上下文或可信工具提供的内容，不得补写或猜测。
+3. 没有检索到证据时必须明确说证据不足，不得夸大经历。不要重复要求用户粘贴系统中已经保存的简历。
+4. 只有实际文件工具成功返回文件时，才能声称生成了 DOCX、PDF 或下载文件。没有公司公开资料或公司研究工具结果时，不得把模型记忆描述成实时公司研究。
+5. 只有工具成功执行后，才能声称完成收藏、排序、保存、状态更新、外部发送、沟通或投递。涉及账号、对外发送和提交的工具应遵循其确认要求；不得规避验证码、安全验证或平台风控。
 
-如果工具返回 waiting_approval、blocked 或 failed，解释阻塞原因和下一步，不要重复调用同一失败工具。
+缺少继续执行所需的关键信息，或同一指代有多种合理解读时，调用 ask_user 列出选项并等待用户选择；不要猜测后继续，也不要只在正文里提问。
 执行过程、工具选择和“我先读取/我将检查”等过程叙述会由界面单独展示。最终回答只输出对用户有用的结论、问题或下一步，禁止在最终回答中重复执行过程。
-最终回答使用清晰、克制的 Markdown；可以使用短标题、列表、表格、引用和代码块，但不得输出 HTML。"""
+最终回答使用清晰、克制的 Markdown；可以使用短标题、列表、表格、引用和代码块，但不得输出 HTML。只有用户明确要求思维导图时，才可输出带 mermaid 语言标记的 Mermaid mindmap 代码块，界面会渲染成可展开、缩放的交互导图；普通回答不要默认生成图。"""
 
 
 class OpenAICompatibleProvider:
@@ -210,10 +250,55 @@ class OpenAICompatibleProvider:
         total_tokens = usage.total_tokens if usage is not None else 0
         self._record_event("health_check", started_at, total_tokens=total_tokens)
 
+    async def probe_vision(self) -> dict[str, str]:
+        """Send a 1x1 PNG to see whether the current model accepts image input."""
+        started_at = perf_counter()
+        try:
+            await self._client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "只回复 OK"},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": _TINY_PNG_DATA_URL},
+                            },
+                        ],
+                    }
+                ],
+                max_tokens=8,
+            )
+        except (
+            AuthenticationError,
+            RateLimitError,
+            APITimeoutError,
+            APIConnectionError,
+            APIStatusError,
+        ) as exc:
+            error = self._provider_error(exc)
+            self._record_event("health_check", started_at, error=error)
+            message = str(exc).lower()
+            if _looks_like_vision_rejection(message, getattr(exc, "status_code", None)):
+                return {
+                    "status": "unsupported",
+                    "source": "probe",
+                    "detail": "服务拒绝了图片输入，当前模型不支持多模态",
+                }
+            raise error from exc
+        self._record_event("health_check", started_at)
+        return {
+            "status": "supported",
+            "source": "probe",
+            "detail": "服务接受了图片输入，当前模型支持多模态",
+        }
+
     async def list_models(self) -> list[str]:
         """Return model IDs exposed by an OpenAI-compatible /v1/models endpoint."""
         try:
             page = await self._client.models.list()
+            items = list(getattr(page, "data", None) or [])
         except (
             AuthenticationError,
             RateLimitError,
@@ -222,13 +307,26 @@ class OpenAICompatibleProvider:
             APIStatusError,
         ) as exc:
             raise self._provider_error(exc) from exc
+        except (APIError, ValueError, TypeError, AttributeError) as exc:
+            # 网关把模型目录指向官网或控制台时会返回 HTML 或缺少 data 的 JSON，
+            # SDK 抛出的解析异常必须归一成 ModelProviderError，否则会冒泡成 500。
+            raise ModelProviderError(
+                "invalid_model_catalog",
+                f"模型目录 {self.models_url} 没有返回 OpenAI 兼容的模型列表，"
+                "请确认 Base URL 填写的是模型服务的 API 网关地址",
+            ) from exc
         return sorted(
             {
                 str(item.id).strip()
-                for item in page.data
+                for item in items
                 if getattr(item, "id", None) and str(item.id).strip()
             }
         )
+
+    @property
+    def models_url(self) -> str:
+        """The model catalog address actually requested, after base URL normalization."""
+        return f"{str(self._client.base_url).rstrip('/')}/models"
 
     @staticmethod
     def _provider_error(exc: Exception) -> ModelProviderError:
@@ -256,9 +354,13 @@ class OpenAICompatibleProvider:
                 retryable=True,
             )
         if isinstance(exc, APIStatusError):
+            detail = _status_error_detail(exc)
+            message = f"模型服务返回异常状态（{exc.status_code}）"
+            if detail:
+                message = f"{message}：{detail}"
             return ModelProviderError(
                 "provider_error",
-                f"模型服务返回异常状态（{exc.status_code}）",
+                message,
                 retryable=exc.status_code >= 500,
             )
         return ModelProviderError("provider_error", "模型服务发生未知异常")

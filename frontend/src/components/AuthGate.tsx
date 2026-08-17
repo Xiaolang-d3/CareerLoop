@@ -1,25 +1,80 @@
-import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, ReactNode, RefObject, useCallback, useEffect, useRef, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
-import { createApiClient } from "../api/client";
+import { createApiClient, fetchWithTimeout } from "../api/client";
 import "./auth-gate.css";
 
-type AuthConfig = { enabled: boolean; setup_required: boolean };
-type AuthSession = { access_token: string; user: { email: string } };
+type AuthConfig = { enabled: boolean; setup_required: boolean; registration_open?: boolean };
+export type AuthUser = { id?: number; email: string; display_name?: string; has_avatar?: boolean };
+type AuthSession = { access_token: string; user: AuthUser };
 type Captcha = { captcha_id: string; svg: string; accessible_text?: string };
 type FieldErrors = { email?: string; password?: string; passwordConfirmation?: string; captcha?: string };
-type LoginIssue = { kind: "captcha" | "credentials" | "network" | "throttled" | "generic"; message: string; field?: keyof FieldErrors };
+type LoginIssue = { kind: "captcha" | "credentials" | "network" | "throttled" | "exists" | "generic"; message: string; field?: keyof FieldErrors };
 
-const sessionStorageKey = "bosscopilot-auth-token";
+const tokenStorageKey = "careerloop-auth-token";
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const successPauseMs = 320;
+const restoreRetryMs = 1500;
+
+function readStoredToken() {
+  const local = window.localStorage.getItem(tokenStorageKey);
+  if (local) return local;
+  const session = window.sessionStorage.getItem(tokenStorageKey);
+  if (!session) return null;
+  window.localStorage.setItem(tokenStorageKey, session);
+  window.sessionStorage.removeItem(tokenStorageKey);
+  return session;
+}
+
+function writeStoredToken(token: string) {
+  window.localStorage.setItem(tokenStorageKey, token);
+  window.sessionStorage.removeItem(tokenStorageKey);
+}
+
+function clearStoredToken() {
+  window.localStorage.removeItem(tokenStorageKey);
+  window.sessionStorage.removeItem(tokenStorageKey);
+}
+
+class SessionRestoreError extends Error {
+  status?: number;
+  constructor(message: string, status?: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
+function isExpiredSession(reason: unknown) {
+  return reason instanceof SessionRestoreError && reason.status === 401;
+}
+
+async function restoreSession(apiBase: string, token: string) {
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(`${apiBase}/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+  } catch (reason) {
+    throw new SessionRestoreError(
+      reason instanceof Error ? reason.message : "登录服务暂时不可用，正在重试…"
+    );
+  }
+  if (response.status === 401) {
+    throw new SessionRestoreError("登录状态已失效，请重新登录", 401);
+  }
+  if (!response.ok) {
+    throw new SessionRestoreError("登录服务暂时不可用，正在重试…", response.status);
+  }
+  const payload = await response.json() as { user: AuthUser };
+  return payload.user;
+}
 
 function normalizeCaptchaCode(value: string) {
   return value.replace(/\s+/g, "").toUpperCase().slice(0, 5);
 }
 
-function classifyLoginError(reason: unknown, setupRequired: boolean): LoginIssue {
+function classifyLoginError(reason: unknown, registering: boolean): LoginIssue {
   const message = reason instanceof Error ? reason.message : "登录失败，请稍后重试";
-  const endpoint = setupRequired ? "/auth/bootstrap" : "/auth/login";
+  const endpoint = registering ? "/auth/register" : "/auth/login";
   if (/failed to fetch|networkerror|load failed|网络|无法连接|请求超时/i.test(message)) {
     return { kind: "network", message: "网络已断开，请检查连接后点重新连接。" };
   }
@@ -28,6 +83,9 @@ function classifyLoginError(reason: unknown, setupRequired: boolean): LoginIssue
   }
   if (message.includes("验证码") || message.includes(`${endpoint} 请求失败（422）`)) {
     return { kind: "captcha", message: "验证码不正确或已过期，已为你更换，请重新输入。", field: "captcha" };
+  }
+  if (message.includes("已注册") || message.includes(`${endpoint} 请求失败（409）`)) {
+    return { kind: "exists", message: "该邮箱已注册，请直接登录。", field: "email" };
   }
   if (message.includes("邮箱或密码") || message.includes(`${endpoint} 请求失败（401）`)) {
     return { kind: "credentials", message: "邮箱或密码不正确，请核对后重试。验证码已更新。", field: "password" };
@@ -41,14 +99,14 @@ function validateLoginFields(input: {
   passwordConfirmation: string;
   captcha: Captcha | null;
   captchaCode: string;
-  setupRequired: boolean;
+  registering: boolean;
 }): FieldErrors {
   const next: FieldErrors = {};
   if (!input.email.trim()) next.email = "请输入邮箱";
   else if (!emailPattern.test(input.email.trim())) next.email = "请输入有效的邮箱地址";
   if (!input.password) next.password = "请输入密码";
   else if (input.password.length < 8) next.password = "密码至少 8 位";
-  if (input.setupRequired) {
+  if (input.registering) {
     if (!input.passwordConfirmation) next.passwordConfirmation = "请再次输入密码";
     else if (input.password !== input.passwordConfirmation) next.passwordConfirmation = "两次输入的密码不一致";
   }
@@ -57,10 +115,14 @@ function validateLoginFields(input: {
   return next;
 }
 
-export function AuthGate({ apiBase, children }: { apiBase: string; children: (accessToken: string, onLogout: () => void) => ReactNode }) {
+export function AuthGate({ apiBase, children }: { apiBase: string; children: (accessToken: string, onLogout: () => void, user: AuthUser, updateSession: (token: string, user: AuthUser) => void) => ReactNode }) {
   const [config, setConfig] = useState<AuthConfig | null>(null);
-  const [token, setToken] = useState<string | null>(() => window.sessionStorage.getItem(sessionStorageKey));
+  const [token, setToken] = useState<string | null>(() => readStoredToken());
   const [validatedToken, setValidatedToken] = useState<string | null>(null);
+  const [sessionUser, setSessionUser] = useState<AuthUser | null>(null);
+  const [restoreError, setRestoreError] = useState("");
+  const [restoreNonce, setRestoreNonce] = useState(0);
+  const [registering, setRegistering] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
@@ -100,6 +162,7 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
     void createApiClient(apiBase)<AuthConfig>("/auth/config")
       .then((next) => {
         setConfig(next);
+        setRegistering(Boolean(next.setup_required));
         setError("");
       })
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "无法连接登录服务"));
@@ -114,14 +177,37 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
 
   useEffect(() => {
     if (!token || token === validatedToken) return;
-    void createApiClient(apiBase, token)<{ user: { email: string } }>("/auth/me")
-      .then(() => setValidatedToken(token))
-      .catch(() => {
-        window.sessionStorage.removeItem(sessionStorageKey);
-        setToken(null);
-        setValidatedToken(null);
+    let cancelled = false;
+    void restoreSession(apiBase, token)
+      .then((user) => {
+        if (cancelled) return;
+        writeStoredToken(token);
+        setSessionUser(user);
+        setValidatedToken(token);
+        setRestoreError("");
+      })
+      .catch((reason: unknown) => {
+        if (cancelled) return;
+        if (isExpiredSession(reason)) {
+          clearStoredToken();
+          setToken(null);
+          setValidatedToken(null);
+          setSessionUser(null);
+          setRestoreError("");
+          return;
+        }
+        setRestoreError(reason instanceof Error ? reason.message : "登录服务暂时不可用，正在重试…");
       });
-  }, [apiBase, token, validatedToken]);
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase, token, validatedToken, restoreNonce]);
+
+  useEffect(() => {
+    if (!token || token === validatedToken || !restoreError) return;
+    const timer = window.setTimeout(() => setRestoreNonce((value) => value + 1), restoreRetryMs);
+    return () => window.clearTimeout(timer);
+  }, [token, validatedToken, restoreError]);
 
   function focusFirstInvalid(next: FieldErrors) {
     if (next.email) emailInputRef.current?.focus();
@@ -139,7 +225,7 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
       passwordConfirmation,
       captcha,
       captchaCode,
-      setupRequired: Boolean(config?.setup_required)
+      registering
     });
     setFieldErrors(nextFields);
     if (Object.keys(nextFields).length) {
@@ -152,22 +238,23 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
     setError("");
     setErrorKind("");
     try {
-      const session = await createApiClient(apiBase)<AuthSession>(config?.setup_required ? "/auth/bootstrap" : "/auth/login", {
+      const session = await createApiClient(apiBase)<AuthSession>(registering ? "/auth/register" : "/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password, captcha_id: captcha.captcha_id, captcha_code: normalizeCaptchaCode(captchaCode) })
       });
-      window.sessionStorage.setItem(sessionStorageKey, session.access_token);
+      writeStoredToken(session.access_token);
       setEntering(true);
-      if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      if (!prefersReducedMotion()) {
         await new Promise((resolve) => window.setTimeout(resolve, successPauseMs));
       }
       setPassword("");
       setPasswordConfirmation("");
+      setSessionUser(session.user);
       setToken(session.access_token);
       setValidatedToken(session.access_token);
     } catch (reason) {
-      const issue = classifyLoginError(reason, Boolean(config?.setup_required));
+      const issue = classifyLoginError(reason, registering);
       setError(issue.message);
       setErrorKind(issue.kind);
       setFieldErrors(issue.field ? { [issue.field]: issue.message } : {});
@@ -181,35 +268,50 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
   }
 
   function logout() {
-    window.sessionStorage.removeItem(sessionStorageKey);
+    clearStoredToken();
     setValidatedToken(null);
     setToken(null);
+    setSessionUser(null);
+    setRestoreError("");
+  }
+
+  function updateSession(nextToken: string, nextUser: AuthUser) {
+    writeStoredToken(nextToken);
+    setToken(nextToken);
+    setValidatedToken(nextToken);
+    setSessionUser(nextUser);
+    setRestoreError("");
   }
   if (token && token !== validatedToken) {
-    return <AuthStatus message="正在验证登录状态…" />;
+    return (
+      <AuthStatus
+        message={restoreError || "正在验证登录状态…"}
+        alert={Boolean(restoreError)}
+        onRetry={restoreError ? () => { setRestoreError(""); setRestoreNonce((value) => value + 1); } : undefined}
+      />
+    );
   }
-  if (token) {
+  if (token && sessionUser) {
     return <>
-      {children(token, logout)}
+      {children(token, logout, sessionUser, updateSession)}
     </>;
   }
   if (error && !config) {
     return <AuthStatus message={error} alert onRetry={() => { setError(""); setBootNonce((value) => value + 1); void refreshCaptcha(); }} />;
   }
   if (!config) return <AuthStatus message="正在连接登录服务…" />;
-  const confirmMismatch = Boolean(config.setup_required && passwordConfirmation && password !== passwordConfirmation);
+  const confirmMismatch = Boolean(registering && passwordConfirmation && password !== passwordConfirmation);
   return (
-    <main className="auth-gate">
-      <AuthAtmosphere />
+    <AuthGateShell>
       <div className="auth-shell">
         <aside className="auth-intro" aria-label="CareerLoop 如何帮助求职">
           <p className="auth-intro-kicker">把求职变成可持续推进的过程</p>
           <h2>从真实经历出发，准备每一次机会。</h2>
           <p>CareerLoop 帮你整理职业证据、判断岗位匹配，并把面试复盘沉淀为下一次的准备。</p>
           <ol className="auth-intro-steps">
-            <li>验证身份</li>
-            <li>进入求职系统</li>
-            <li>登录只在当前标签页</li>
+            <li>保存简历</li>
+            <li>分析岗位</li>
+            <li>准备面试</li>
           </ol>
           <ul>
             <li><strong>有据可循</strong><span>每份建议回到你的经历与岗位要求。</span></li>
@@ -220,17 +322,9 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
 
         <form className="auth-card" onSubmit={submit} noValidate aria-busy={busy}>
           <div className="auth-brand">
-            <img className="auth-logo" src="/careerloop-mark-v2.png" alt="" />
-            <div className="auth-brand-copy">
-              <p className="auth-eyebrow">CAREERLOOP</p>
-              <p className="auth-brand-line">职业成长助手</p>
-            </div>
+            <img className="auth-logo" src="/careerloop-mark-v2.png" alt="" draggable={false} />
+            <h1 className="auth-eyebrow">CAREERLOOP</h1>
           </div>
-          <header className="auth-card-header">
-            <h1>{config.setup_required ? "创建管理员账户" : "登录继续你的求职计划"}</h1>
-            <p>{config.setup_required ? "首次使用，请先创建唯一的本地管理员账户。" : "使用账户进入你的职业成长工作台。"}</p>
-            <p className="auth-card-path">验证身份 → 进入求职系统，登录只在当前标签页。</p>
-          </header>
           <div className="auth-fields">
             <div className="auth-field">
               <label htmlFor="auth-email">邮箱</label>
@@ -262,7 +356,7 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
                   type={passwordVisible ? "text" : "password"}
                   name="password"
                   minLength={8}
-                  autoComplete={config.setup_required ? "new-password" : "current-password"}
+                  autoComplete={registering ? "new-password" : "current-password"}
                   placeholder="至少 8 位"
                   value={password}
                   disabled={busy}
@@ -286,7 +380,7 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
               </span>
               {fieldErrors.password ? <small id="auth-password-error" className="auth-field-error" role="alert">{fieldErrors.password}</small> : null}
             </div>
-            {config.setup_required ? (
+            {registering ? (
               <div className="auth-field">
                 <label htmlFor="auth-password-confirm">确认密码</label>
                 <span className="auth-password-field">
@@ -355,32 +449,96 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
               {errorKind === "network" ? <button type="button" className="auth-error-action" onClick={() => { setError(""); setErrorKind(""); void refreshCaptcha(); }}>重新连接</button> : null}
             </p>
           ) : null}
-          <button className="auth-submit" type="submit" disabled={busy || entering || !captcha} aria-busy={busy || entering}>{entering ? "正在进入…" : busy ? "正在登录…" : config.setup_required ? "创建并进入系统" : "安全登录"}</button>
-          <p className="auth-security-note">登录状态只保存在当前标签页，关闭后需要重新登录。</p>
+          <button className="auth-submit" type="submit" disabled={busy || entering || !captcha} aria-busy={busy || entering}>{entering ? "正在进入…" : busy ? (registering ? "正在创建…" : "正在登录…") : registering ? "创建账号" : "登录"}</button>
+          <p className="auth-mode-switch">
+            {registering ? (
+              <button type="button" onClick={() => { setRegistering(false); setPasswordConfirmation(""); setFieldErrors({}); setError(""); }} disabled={busy}>已有账号？去登录</button>
+            ) : (
+              <button type="button" onClick={() => { setRegistering(true); setFieldErrors({}); setError(""); }} disabled={busy}>没有账号？创建账号</button>
+            )}
+          </p>
         </form>
       </div>
+    </AuthGateShell>
+  );
+}
+
+function prefersReducedMotion() {
+  return typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+const gridCellPx = 36;
+
+function useAuthGridLinger(rootRef: RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || prefersReducedMotion()) return;
+    const grid = root.querySelector(".auth-grid");
+    if (!(grid instanceof HTMLElement)) return;
+
+    const onPointerMove = (event: PointerEvent) => {
+      const rect = grid.getBoundingClientRect();
+      if (rect.width < 1 || rect.height < 1) return;
+      const cellX = Math.floor((event.clientX - rect.left) / gridCellPx) * gridCellPx;
+      const cellY = Math.floor((event.clientY - rect.top) / gridCellPx) * gridCellPx;
+      root.style.setProperty("--cell-x", `${cellX}px`);
+      root.style.setProperty("--cell-y", `${cellY}px`);
+      root.style.setProperty("--linger", "1");
+    };
+
+    const onPointerLeave = () => {
+      root.style.setProperty("--linger", "0");
+    };
+
+    root.addEventListener("pointermove", onPointerMove, { passive: true });
+    root.addEventListener("pointerleave", onPointerLeave);
+    return () => {
+      root.removeEventListener("pointermove", onPointerMove);
+      root.removeEventListener("pointerleave", onPointerLeave);
+    };
+  }, [rootRef]);
+}
+
+function isAuthFormTarget(target: EventTarget | null) {
+  return target instanceof Element && Boolean(target.closest("form, input, button, textarea, label, .auth-card, .auth-status-card"));
+}
+
+function suppressBackgroundDoubleClick(event: { target: EventTarget | null; preventDefault: () => void }) {
+  if (isAuthFormTarget(event.target)) return;
+  event.preventDefault();
+}
+
+function AuthGateShell({ status = false, children }: { status?: boolean; children: ReactNode }) {
+  const rootRef = useRef<HTMLElement>(null);
+  useAuthGridLinger(rootRef);
+  return (
+    <main ref={rootRef} className={status ? "auth-gate auth-gate-status" : "auth-gate"} onDoubleClick={suppressBackgroundDoubleClick}>
+      <AuthAtmosphere />
+      {children}
     </main>
   );
 }
 
 function AuthAtmosphere() {
   return (
-    <div className="auth-atmosphere" aria-hidden="true">
-      <span className="auth-orb auth-orb-a" />
-      <span className="auth-orb auth-orb-b" />
-      <span className="auth-orb auth-orb-c" />
+    <div className="auth-atmosphere" aria-hidden="true" onDoubleClick={suppressBackgroundDoubleClick}>
+      <span className="auth-veil" />
+      <span className="auth-grid">
+        <span className="auth-cell" />
+      </span>
+      <span className="auth-gleam" />
+      <span className="auth-grain" />
     </div>
   );
 }
 
 function AuthStatus({ message, alert = false, onRetry }: { message: string; alert?: boolean; onRetry?: () => void }) {
   return (
-    <main className="auth-gate auth-gate-status">
-      <AuthAtmosphere />
+    <AuthGateShell status>
       <div className="auth-status-card">
         <p role={alert ? "alert" : undefined}>{message}</p>
         {onRetry ? <button type="button" className="auth-status-retry" onClick={onRetry}>重新连接</button> : null}
       </div>
-    </main>
+    </AuthGateShell>
   );
 }

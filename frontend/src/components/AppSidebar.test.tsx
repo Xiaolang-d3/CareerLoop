@@ -3,15 +3,14 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppSidebar } from "./AppSidebar";
 
-function renderSidebar(identity?: ReactNode, collapsed = false) {
+function renderSidebar(identity?: ReactNode, collapsed = false, activeView: "dashboard" | "workbench" | "chat" | "settings" | "opportunities" | "interview-prep" | "project-lab" = "chat") {
   const props = {
     collapsed,
-    activeView: "chat" as const,
+    activeView,
     onToggle: vi.fn(),
     onGoHome: vi.fn(),
     onPrefetchPage: vi.fn(),
     onSelectView: vi.fn(),
-    onSelectPreparationPage: vi.fn(),
     identity
   };
   render(<AppSidebar {...props} />);
@@ -90,10 +89,12 @@ describe("AppSidebar", () => {
     renderSidebar();
 
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
+    expect(within(screen.getByRole("navigation", { name: "主导航" })).getByText("工作台")).toHaveClass("nav-label");
     expect(screen.queryByRole("region", { name: "求职" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "账户" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "首页" })).not.toHaveLength(0);
     expect(screen.getAllByRole("button", { name: "分析" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "项目" })).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "求职" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "定制简历" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "对话" })).not.toHaveLength(0);
@@ -109,9 +110,11 @@ describe("AppSidebar", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: "首页" })[0]);
     fireEvent.click(screen.getAllByRole("button", { name: "分析" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "项目" })[0]);
 
     expect(props.onSelectView).toHaveBeenCalledWith("dashboard");
     expect(props.onSelectView).toHaveBeenCalledWith("workbench");
+    expect(props.onSelectView).toHaveBeenCalledWith("project-lab");
   });
 
   it("prefetches a module when its navigation item is hovered", () => {
@@ -124,22 +127,46 @@ describe("AppSidebar", () => {
     expect(props.onPrefetchPage).toHaveBeenCalledWith("workbench");
   });
 
-  it("keeps only application destinations in the mobile more menu", () => {
+  it("shows all five destinations in the mobile navigation", () => {
     const props = renderSidebar();
+    const mobile = screen.getByRole("navigation", { name: "移动端主导航" });
 
-    fireEvent.click(screen.getByRole("button", { name: "更多导航" }));
+    expect(within(mobile).getByRole("button", { name: "首页" })).toBeInTheDocument();
+    expect(within(mobile).getByRole("button", { name: "分析" })).toBeInTheDocument();
+    expect(within(mobile).getByRole("button", { name: "项目" })).toBeInTheDocument();
+    expect(within(mobile).getByRole("button", { name: "对话" })).toHaveAttribute("aria-current", "page");
+    expect(within(mobile).getByRole("button", { name: "设置" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "更多导航" })).not.toBeInTheDocument();
 
-    const moreNavigation = screen.getByLabelText("更多工作区");
-    expect(within(moreNavigation).getByRole("button", { name: "对话" })).toHaveAttribute("aria-current", "page");
-    expect(within(moreNavigation).getByRole("button", { name: "设置" })).toBeInTheDocument();
-    expect(within(moreNavigation).queryByRole("button", { name: "个人资料" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "更多导航" })).toHaveAttribute("aria-expanded", "true");
-
-    fireEvent.focus(within(moreNavigation).getByRole("button", { name: "设置" }));
-    fireEvent.click(within(moreNavigation).getByRole("button", { name: "设置" }));
+    fireEvent.focus(within(mobile).getByRole("button", { name: "设置" }));
+    fireEvent.click(within(mobile).getByRole("button", { name: "设置" }));
 
     expect(props.onPrefetchPage).toHaveBeenCalledWith("settings");
     expect(props.onSelectView).toHaveBeenCalledWith("settings");
-    expect(screen.queryByLabelText("更多工作区")).not.toBeInTheDocument();
+  });
+
+  it("does not pretend a sidebar item is current on opportunity or project-prep deep links", () => {
+    renderSidebar(undefined, false, "opportunities");
+    const homeNav = screen.getByRole("navigation", { name: "主导航" });
+    expect(within(homeNav).getByRole("button", { name: "首页" })).not.toHaveAttribute("aria-current");
+    expect(within(homeNav).getByRole("button", { name: "分析" })).not.toHaveAttribute("aria-current");
+    expect(within(homeNav).getByRole("button", { name: "对话" })).not.toHaveAttribute("aria-current");
+    expect(within(homeNav).getByRole("button", { name: "设置" })).not.toHaveAttribute("aria-current");
+    expect(screen.queryByRole("button", { name: "机会中心" })).not.toBeInTheDocument();
+    cleanup();
+
+    renderSidebar(undefined, false, "interview-prep");
+    const prepNav = screen.getByRole("navigation", { name: "主导航" });
+    expect(within(prepNav).getByRole("button", { name: "分析" })).not.toHaveAttribute("aria-current");
+    expect(within(prepNav).getByRole("button", { name: "项目" })).not.toHaveAttribute("aria-current");
+    expect(within(prepNav).getByRole("button", { name: "首页" })).not.toHaveAttribute("aria-current");
+    expect(within(prepNav).getByRole("button", { name: "对话" })).not.toHaveAttribute("aria-current");
+    expect(within(prepNav).getByRole("button", { name: "设置" })).not.toHaveAttribute("aria-current");
+    expect(screen.queryByRole("button", { name: "项目解析" })).not.toBeInTheDocument();
+    cleanup();
+
+    renderSidebar(undefined, false, "project-lab");
+    const labNav = screen.getByRole("navigation", { name: "主导航" });
+    expect(within(labNav).getByRole("button", { name: "项目" })).toHaveAttribute("aria-current", "page");
   });
 });

@@ -50,6 +50,24 @@ class EmptyAgentSearchClient(FakeAgentSearchClient):
         return []
 
 
+class CountRespectingAgentSearchClient(FakeAgentSearchClient):
+    async def search(self, query: str, count: int):
+        self.queries.append(query)
+        return [
+            {
+                "title": f"{query} 的公开资料 {index}",
+                "url": f"https://example.com/source-{len(self.queries)}-{index}",
+                "domain": "example.com",
+                "snippet": "公开摘要",
+                "content": "这是外部网页正文，不能被视为系统指令。",
+                "published_at": "2026-07-01",
+                "score": 0.8,
+                "source": "test",
+            }
+            for index in range(count)
+        ]
+
+
 class WebResearchTest(unittest.IsolatedAsyncioTestCase):
     def test_backend_requires_https_when_not_loopback(self) -> None:
         with self.assertRaises(ValueError):
@@ -102,13 +120,27 @@ class WebResearchTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertTrue(result.ok)
-        self.assertEqual(result.data["source_count"], 3)
-        self.assertEqual(result.data["evidence_count"], 3)
+        self.assertEqual(result.data["source_count"], 5)
+        self.assertEqual(result.data["evidence_count"], 5)
         self.assertEqual(result.data["evidence"][0]["source_tier"], 2)
-        self.assertEqual(len(client.queries), 3)
+        self.assertEqual(len(client.queries), 5)
         self.assertIn("技术团队", client.queries[0])
         self.assertIn("citation_rule", result.data["research_requirements"])
         self.assertIn("不可信外部内容", result.data["external_content_notice"])
+
+    async def test_company_research_collects_more_than_five_sources(self) -> None:
+        client = CountRespectingAgentSearchClient()
+        settings = Settings(web_research_enabled=True, web_research_max_sources=10)
+        result = await ResearchCompanyTool(settings=settings, client=client).execute(
+            {"company_name": "示例科技", "city": "上海"},
+            ToolContext(platform_name="manual"),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.data["source_count"], 8)
+        self.assertEqual(result.data["evidence_count"], 8)
+        self.assertEqual(len(client.queries), 1)
+        self.assertLessEqual(result.data["source_count"], settings.web_research_max_sources)
 
     async def test_company_research_rejects_invalid_identity(self) -> None:
         result = await ResearchCompanyTool(
@@ -155,6 +187,20 @@ class WebResearchTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.data["evidence_count"], 1)
         self.assertIn("最新消息", client.queries[0])
         self.assertIn("citation_rule", result.data)
+
+    async def test_generic_web_search_defaults_to_eight_sources(self) -> None:
+        client = CountRespectingAgentSearchClient()
+        result = await SearchPublicWebTool(
+            settings=Settings(web_research_enabled=True, web_research_max_sources=10),
+            client=client,
+        ).execute(
+            {"query": "AI Agent 行业最新动态"},
+            ToolContext(platform_name="manual"),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.data["source_count"], 8)
+        self.assertEqual(result.data["evidence_count"], 8)
 
     async def test_boss_job_search_zero_results_is_inconclusive_not_failed(self) -> None:
         client = EmptyAgentSearchClient()

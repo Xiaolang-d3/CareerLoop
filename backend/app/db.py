@@ -3,20 +3,37 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, Iterable
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT_DIR / "data"
-DB_PATH = DATA_DIR / "bosscopilot.db"
-DB_SCHEMA_VERSION = 13
+DB_PATH = DATA_DIR / "careerloop.db"
+LEGACY_DB_PATH = DATA_DIR / "bosscopilot.db"
+DB_SCHEMA_VERSION = 16
+
+
+def adopt_legacy_database() -> None:
+    """Rename the pre-rebrand bosscopilot.db (and WAL/SHM sidecars) to careerloop.db."""
+    if DB_PATH.exists() or not LEGACY_DB_PATH.exists():
+        return
+    LEGACY_DB_PATH.rename(DB_PATH)
+    for suffix in ("-wal", "-shm"):
+        sidecar = Path(f"{LEGACY_DB_PATH}{suffix}")
+        if sidecar.exists():
+            sidecar.rename(Path(f"{DB_PATH}{suffix}"))
 
 
 @contextmanager
 def connect(db_path: str | Path | None = None) -> Iterator[sqlite3.Connection]:
-    path = Path(db_path) if db_path is not None else DB_PATH
+    if db_path is not None:
+        path = Path(db_path)
+    else:
+        from .workspace import resolve_db_path
+
+        path = resolve_db_path()
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     try:
         path.parent.chmod(0o700)
@@ -147,12 +164,14 @@ def init_db(db_path: str | Path | None = None) -> None:
 
             CREATE TABLE IF NOT EXISTS resume_versions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                job_id INTEGER NOT NULL,
+                job_id INTEGER,
                 profile_id INTEGER NOT NULL,
                 evaluation_id INTEGER,
                 title TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'draft',
                 template_id TEXT NOT NULL DEFAULT 'classic',
+                style_id TEXT NOT NULL DEFAULT 'navy',
+                layout_json TEXT NOT NULL DEFAULT '{}',
                 base_content TEXT NOT NULL,
                 rendered_content TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -268,7 +287,7 @@ def init_db(db_path: str | Path | None = None) -> None:
 
             CREATE TABLE IF NOT EXISTS agent_settings (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
-                display_name TEXT NOT NULL DEFAULT 'BossCopilot',
+                display_name TEXT NOT NULL DEFAULT 'CareerLoop',
                 persona_role TEXT NOT NULL DEFAULT '理性、坦诚、尊重用户决定的本地求职顾问',
                 response_style TEXT NOT NULL DEFAULT 'concise',
                 custom_instructions TEXT NOT NULL DEFAULT '',
@@ -340,6 +359,8 @@ def init_db(db_path: str | Path | None = None) -> None:
         ensure_column("jobs", "discovered_job_id", "INTEGER REFERENCES discovered_jobs(id) ON DELETE SET NULL")
         ensure_column("resume_versions", "evaluation_id", "INTEGER REFERENCES job_evaluations(id) ON DELETE SET NULL")
         ensure_column("resume_versions", "template_id", "TEXT NOT NULL DEFAULT 'classic'")
+        ensure_column("resume_versions", "style_id", "TEXT NOT NULL DEFAULT 'navy'")
+        ensure_column("resume_versions", "layout_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column("interview_kits", "evaluation_id", "INTEGER REFERENCES job_evaluations(id) ON DELETE SET NULL")
         ensure_column("career_strategies", "title_expansions_json", "TEXT NOT NULL DEFAULT '[]'")
         ensure_column("career_strategies", "evaluation_weights_json", "TEXT NOT NULL DEFAULT '{}'")
@@ -413,7 +434,7 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     migration ledger makes schema drift visible and gives future releases a
     deterministic upgrade path.
     """
-    migrations: list[tuple[int, str, str]] = [
+    migrations: list[tuple[int, str, str | Callable[[sqlite3.Connection], None]]] = [
         (2, "career_operating_system", _CAREER_OS_SCHEMA),
         (3, "career_operating_system_relations", _CAREER_OS_RELATIONS_SCHEMA),
         (4, "opportunity_discovery_runs", _OPPORTUNITY_DISCOVERY_SCHEMA),
@@ -426,19 +447,87 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         (11, "profiles_compatibility", _PROFILES_COMPATIBILITY_SCHEMA),
         (12, "local_user_authentication", _LOCAL_USER_AUTH_SCHEMA),
         (13, "interview_preparation_state", _INTERVIEW_PREPARATION_SCHEMA),
+        (14, "resume_versions_optional_job", _migrate_resume_versions_optional_job),
+        (15, "career_weekly_reports", _CAREER_WEEKLY_REPORT_SCHEMA),
+        (16, "agent_run_snapshots", _AGENT_RUN_SNAPSHOT_SCHEMA),
     ]
     applied = {
         int(row["version"])
         for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
     }
-    for version, name, sql in migrations:
+    for version, name, step in migrations:
         if version in applied:
             continue
-        conn.executescript(sql)
+        if callable(step):
+            step(conn)
+        else:
+            conn.executescript(step)
         conn.execute(
             "INSERT INTO schema_migrations (version, name) VALUES (?, ?)",
             (version, name),
         )
+
+
+def _migrate_resume_versions_optional_job(conn: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]: row
+        for row in conn.execute("PRAGMA table_info(resume_versions)")
+    }
+    job_column = columns.get("job_id")
+    if job_column is None or int(job_column["notnull"]) == 0:
+        return
+    new_columns = (
+        "id",
+        "job_id",
+        "profile_id",
+        "evaluation_id",
+        "title",
+        "status",
+        "template_id",
+        "style_id",
+        "layout_json",
+        "base_content",
+        "rendered_content",
+        "created_at",
+        "updated_at",
+    )
+    shared = [name for name in new_columns if name in columns]
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute(
+            """
+            CREATE TABLE resume_versions_v14 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id INTEGER,
+                profile_id INTEGER NOT NULL,
+                evaluation_id INTEGER,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'draft',
+                template_id TEXT NOT NULL DEFAULT 'classic',
+                style_id TEXT NOT NULL DEFAULT 'navy',
+                layout_json TEXT NOT NULL DEFAULT '{}',
+                base_content TEXT NOT NULL,
+                rendered_content TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+                FOREIGN KEY (evaluation_id) REFERENCES job_evaluations(id) ON DELETE SET NULL
+            )
+            """
+        )
+        conn.execute(
+            f"""
+            INSERT INTO resume_versions_v14 ({", ".join(shared)})
+            SELECT {", ".join(shared)} FROM resume_versions
+            """
+        )
+        conn.execute("DROP TABLE resume_versions")
+        conn.execute("ALTER TABLE resume_versions_v14 RENAME TO resume_versions")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_resume_versions_job ON resume_versions(job_id, id DESC)"
+        )
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
 
 
 _LOCAL_USER_AUTH_SCHEMA = """
@@ -446,6 +535,8 @@ CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT NOT NULL UNIQUE COLLATE NOCASE,
     password_hash TEXT NOT NULL,
+    display_name TEXT NOT NULL DEFAULT '',
+    avatar_relpath TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """
@@ -459,6 +550,30 @@ CREATE TABLE IF NOT EXISTS interview_preparation_state (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
 );
+"""
+
+
+_AGENT_RUN_SNAPSHOT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS agent_run_snapshots (
+    conversation_id INTEGER PRIMARY KEY,
+    snapshot_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+);
+"""
+
+
+_CAREER_WEEKLY_REPORT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS career_weekly_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    period_start TEXT NOT NULL,
+    period_end TEXT NOT NULL,
+    metrics_json TEXT NOT NULL DEFAULT '{}',
+    highlights_json TEXT NOT NULL DEFAULT '[]',
+    generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (period_start, period_end)
+);
+CREATE INDEX IF NOT EXISTS idx_career_weekly_reports_period ON career_weekly_reports(period_start DESC);
 """
 
 

@@ -6,11 +6,11 @@
 }
 
 .ui-panel-emphasis {
-  border: 1px solid #cce1d6;
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background:
-    radial-gradient(circle at 94% 6%, rgba(63, 148, 107, .13), transparent 34%),
-    linear-gradient(135deg, #f1faf5, #fff 68%);
+    radial-gradient(circle at 94% 6%, rgba(101, 87, 220, .13), transparent 34%),
+    linear-gradient(135deg, #f3f1ff, #fff 68%);
   box-shadow: var(--shadow-sm);
 }
 
@@ -43,7 +43,7 @@
   color: #fff;
   border-color: var(--color-brand);
   background: var(--color-brand);
-  box-shadow: 0 5px 14px rgba(31, 122, 87, .18);
+  box-shadow: 0 5px 14px rgba(78, 66, 186, .18);
 }
 
 .ui-button-primary:hover:not(:disabled) {
@@ -53,15 +53,15 @@
 }
 
 .ui-button-secondary {
-  color: #315246;
+  color: var(--color-text-secondary);
   border-color: var(--color-border-strong);
   background: var(--color-surface);
 }
 
 .ui-button-secondary:hover:not(:disabled) {
   color: var(--color-brand-strong);
-  border-color: #9ec8b5;
-  background: #f7fbf9;
+  border-color: #bbb4e6;
+  background: #f7f6ff;
 }
 
 .ui-button-ghost {
@@ -95,7 +95,7 @@
 
 .ui-icon-button:hover:not(:disabled) {
   color: var(--color-brand);
-  border-color: #acd0bf;
+  border-color: #bbb4e6;
 }
 
 .ui-status-badge {
@@ -213,7 +213,7 @@
 }
 
 .secondary-button {
-  color: #315246;
+  color: var(--color-text-secondary);
   border-color: var(--color-border-strong);
   background: var(--color-surface);
 }
@@ -284,7 +284,7 @@
 
 .job-stage-nav button { min-height: 44px; border-radius: var(--radius-sm); font-size: 13px; }
 .job-stage-nav button.active { box-shadow: var(--shadow-sm); }
-.job-stage-pending { width: 5px; height: 5px; border-radius: 50%; background: #c1cbc6; }
+.job-stage-pending { width: 5px; height: 5px; border-radius: 50%; background: #c4c0d8; }
 
 .job-next-action { min-height: 150px; padding: var(--space-6); }
 .job-next-action > .ui-section-header { width: 100%; align-items: center; }

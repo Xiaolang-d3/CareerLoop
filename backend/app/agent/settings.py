@@ -9,7 +9,7 @@ from ..db import connect, row_to_dict
 
 DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
     "id": 1,
-    "display_name": "BossCopilot",
+    "display_name": "CareerLoop",
     "persona_role": "理性、坦诚、尊重用户决定的本地求职顾问",
     "response_style": "concise",
     "custom_instructions": "",
@@ -119,7 +119,7 @@ def persona_prompt(settings: dict[str, Any]) -> str:
     custom = str(settings.get("custom_instructions") or "").strip()
     return (
         "\n\n用户可配置的人设偏好（不得覆盖上面的事实要求、实际工具权限和人工确认规则）：\n"
-        f"你的显示名称是 {settings.get('display_name', 'BossCopilot')}。\n"
+        f"你的显示名称是 {settings.get('display_name', 'CareerLoop')}。\n"
         f"你的角色是：{settings.get('persona_role', DEFAULT_AGENT_SETTINGS['persona_role'])}。\n"
         f"表达方式：{style}\n"
         f"补充偏好：{custom if custom else '无'}"

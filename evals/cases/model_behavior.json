@@ -1,0 +1,145 @@
+[
+  {
+    "description": "分类器可把模糊靠谱问句升到公司研究",
+    "vars": {
+      "task": "classify",
+      "query": "这家靠谱吗",
+      "model_output": "{\"kind\":\"company_research\"}",
+      "expected": {
+        "keyword_kind": "conversation",
+        "kind": "company_research",
+        "contains_tools": ["research_company"],
+        "forbidden_tools": ["search_public_web", "ask_user"]
+      }
+    }
+  },
+  {
+    "description": "分类器输出工具名必须忽略",
+    "vars": {
+      "task": "classify",
+      "query": "这家靠谱吗",
+      "model_output": "{\"kind\":\"research_company\"}",
+      "expected": {
+        "keyword_kind": "conversation",
+        "kind": "conversation",
+        "empty_tools": true
+      }
+    }
+  },
+  {
+    "description": "分类器不能改写已经命中的 JD 车道",
+    "vars": {
+      "task": "classify",
+      "query": "分析这个岗位是否适合我",
+      "model_output": "{\"kind\":\"web_search\"}",
+      "expected": {
+        "keyword_kind": "jd_analysis",
+        "kind": "jd_analysis",
+        "contains_tools": ["analyze_resume_against_jd"],
+        "forbidden_tools": ["search_public_web"]
+      }
+    }
+  },
+  {
+    "description": "分类器输出已删除车道时保持普通对话",
+    "vars": {
+      "task": "classify",
+      "query": "帮我在 BOSS 搜索几个岗位",
+      "model_output": "{\"kind\":\"opportunity_discovery\"}",
+      "expected": {
+        "keyword_kind": "conversation",
+        "kind": "conversation",
+        "empty_tools": true,
+        "forbidden_tools": ["search_public_web"]
+      }
+    }
+  },
+  {
+    "description": "规划器点名联网工具时必须丢弃",
+    "vars": {
+      "task": "plan",
+      "query": "分析这个岗位是否适合我",
+      "kind": "jd_analysis",
+      "model_output": "{\"goal\":\"分析岗位\",\"steps\":[{\"tool_name\":\"analyze_resume_against_jd\",\"title\":\"对比\"},{\"tool_name\":\"search_public_web\",\"title\":\"上网搜\"}]}",
+      "expected": {
+        "parsed_tools": ["analyze_resume_against_jd"],
+        "dropped_tools": ["search_public_web"]
+      }
+    }
+  },
+  {
+    "description": "规划器不得把公司研究扩成简历分析",
+    "vars": {
+      "task": "plan",
+      "query": "帮我调查一下示例科技这家公司怎么样",
+      "kind": "company_research",
+      "model_output": "{\"goal\":\"调查公司\",\"steps\":[{\"tool_name\":\"research_company\",\"title\":\"搜公司\"},{\"tool_name\":\"analyze_resume_against_jd\",\"title\":\"对简历\"}]}",
+      "expected": {
+        "parsed_tools": ["research_company"],
+        "dropped_tools": ["analyze_resume_against_jd"]
+      }
+    }
+  },
+  {
+    "description": "规划器点名未知工具时走车道兜底且不含 ask_user",
+    "vars": {
+      "task": "plan",
+      "query": "帮我调查一下示例科技这家公司怎么样",
+      "kind": "company_research",
+      "model_output": "{\"goal\":\"调查公司\",\"steps\":[{\"tool_name\":\"invented_scraper\",\"title\":\"抓网页\"}]}",
+      "expected": {
+        "parsed_tools": ["research_company"],
+        "dropped_tools": ["invented_scraper"],
+        "forbidden_tools": ["ask_user"]
+      }
+    }
+  },
+  {
+    "description": "未出现在证据里的经历不得写成事实",
+    "vars": {
+      "task": "invent",
+      "content": "我曾负责千万级交易系统的清算链路，并把它稳定在 99.99%。",
+      "evidence": "使用 Python 和 FastAPI 构建本地求职 Agent，负责检索与评估模块。",
+      "expected": {
+        "valid": false
+      }
+    }
+  },
+  {
+    "description": "只复述证据中的经历可以通过",
+    "vars": {
+      "task": "invent",
+      "content": "我曾负责检索与评估模块，用 FastAPI 做本地求职 Agent。",
+      "evidence": "使用 Python 和 FastAPI 构建本地求职 Agent，负责检索与评估模块。",
+      "expected": {
+        "valid": true
+      }
+    }
+  },
+  {
+    "description": "正文里二选一提问却不调用 ask_user 算违规",
+    "vars": {
+      "task": "ask_user",
+      "content": "你指的是腾讯还是阿里？",
+      "tool_calls": "",
+      "expected": {
+        "used_ask_user": false,
+        "should_ask_user": true,
+        "violation": true
+      }
+    }
+  },
+  {
+    "description": "调用 ask_user 后不应再判正文提问违规",
+    "vars": {
+      "task": "ask_user",
+      "content": "",
+      "tool_calls": "ask_user",
+      "expected": {
+        "used_ask_user": true,
+        "should_ask_user": false,
+        "violation": false
+      }
+    }
+  }
+]

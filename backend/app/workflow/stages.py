@@ -12,6 +12,7 @@ from __future__ import annotations
 # 有序阶段：(stage_id, 展示标题, 未完成时的提示语)
 STAGE_DEFS: tuple[tuple[str, str, str], ...] = (
     ("candidate_knowledge", "候选人画像与知识", "先补充经历与能力，后续分析都依赖这些已确认事实"),
+    # 工作台记账：岗位队列与来源备忘。对话不再注册发现工具或独立车道。
     ("opportunity_discovery", "机会发现", "发现值得投递的公司与岗位"),
     ("job_evaluation", "岗位评估与决策", "对目标岗位做匹配分析或完整决策报告"),
     ("material_preparation", "求职材料准备", "生成高匹配简历内容与自我介绍"),
@@ -42,7 +43,6 @@ ROUTE_STAGES: dict[str, str | None] = {
     "profile_enrichment": "candidate_knowledge",
     "career_strategy": "candidate_knowledge",
     "interview_debrief": "outcome_tracking",
-    "opportunity_discovery": "opportunity_discovery",
     "skill_growth": "candidate_knowledge",
     "job_evaluation": "job_evaluation",
 }
@@ -51,7 +51,8 @@ ROUTE_STAGES: dict[str, str | None] = {
 # 工具名 -> stage_id。键集合必须与 orchestration.TOOL_POLICIES 一致。
 # 只收录真实工具；runtime 发出的合成事件名（agent_thinking / agent_planner /
 # model_provider / citation_validator）不在此处，因而会被自动忽略。
-TOOL_STAGES: dict[str, str] = {
+# None 表示该工具不推进任何阶段（例如向用户确认）。
+TOOL_STAGES: dict[str, str | None] = {
     # 候选人画像与知识
     "search_resume_evidence": "candidate_knowledge",
     "get_candidate_context": "candidate_knowledge",
@@ -60,11 +61,6 @@ TOOL_STAGES: dict[str, str] = {
     "start_profile_interview": "candidate_knowledge",
     "record_profile_interview_answer": "candidate_knowledge",
     "pause_profile_interview": "candidate_knowledge",
-    # 机会发现
-    "discover_companies": "opportunity_discovery",
-    "discover_funded_companies": "opportunity_discovery",
-    "scan_career_sources": "opportunity_discovery",
-    "process_opportunity_pipeline": "opportunity_discovery",
     # 岗位评估与决策
     "analyze_resume_against_jd": "job_evaluation",
     "analyze_job_against_strategy": "job_evaluation",
@@ -73,7 +69,6 @@ TOOL_STAGES: dict[str, str] = {
     "create_job_evaluation": "job_evaluation",
     "get_job_evaluation": "job_evaluation",
     "review_job_evaluation": "job_evaluation",
-    "run_job_deep_research": "job_evaluation",
     "compare_job_evaluations": "job_evaluation",
     # 求职材料准备
     "generate_tailored_resume_content": "material_preparation",
@@ -82,6 +77,8 @@ TOOL_STAGES: dict[str, str] = {
     "generate_interview_advice": "interview_preparation",
     # 结果与复盘
     "record_interview_debrief": "outcome_tracking",
+    # 不推进阶段
+    "ask_user": None,
 }
 
 

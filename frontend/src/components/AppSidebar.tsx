@@ -3,15 +3,16 @@ import {
   ChevronsRight,
   FileSearch,
   Home,
+  Layers3,
   MessageCircle,
-  MoreHorizontal,
   Settings,
 } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode } from "react";
+import { sidebarHighlightForView } from "../constants";
 import type { ViewKey } from "../types";
-import type { PreparationPage, SettingsPage } from "../routing";
+import type { SettingsPage } from "../routing";
 
-type PrefetchPage = "chat" | "workbench" | "settings" | "account" | "dashboard";
+type PrefetchPage = "chat" | "workbench" | "project-lab" | "settings" | "account" | "dashboard";
 
 type SidebarItem = {
   key: string;
@@ -28,10 +29,8 @@ type AppSidebarProps = {
   onToggle: () => void;
   onGoHome: () => void;
   onPrefetchPage: (page: PrefetchPage) => void;
-  preparationPage?: PreparationPage;
   settingsPage?: SettingsPage;
   onSelectView: (view: ViewKey) => void;
-  onSelectPreparationPage?: (page: PreparationPage) => void;
   identity?: ReactNode;
 };
 
@@ -45,27 +44,21 @@ export function AppSidebar({
   onSelectView,
   identity
 }: AppSidebarProps) {
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const highlighted = sidebarHighlightForView(activeView);
   const navItems: SidebarItem[] = [
-    { key: "dashboard", label: "首页", icon: <Home size={18} />, active: activeView === "dashboard", prefetch: "dashboard", onClick: () => onSelectView("dashboard") },
-    { key: "workbench", label: "分析", icon: <FileSearch size={18} />, active: activeView === "workbench", prefetch: "workbench", onClick: () => onSelectView("workbench") },
-    { key: "chat", label: "对话", icon: <MessageCircle size={18} />, active: activeView === "chat", prefetch: "chat", onClick: () => onSelectView("chat") },
-    { key: "settings", label: "设置", icon: <Settings size={18} />, active: activeView === "settings" && settingsPage !== "profile" && settingsPage !== "account", prefetch: "settings", onClick: () => onSelectView("settings") }
+    { key: "dashboard", label: "首页", icon: <Home size={18} />, active: highlighted === "dashboard", prefetch: "dashboard", onClick: () => onSelectView("dashboard") },
+    { key: "workbench", label: "分析", icon: <FileSearch size={18} />, active: highlighted === "workbench", prefetch: "workbench", onClick: () => onSelectView("workbench") },
+    { key: "project-lab", label: "项目", icon: <Layers3 size={18} />, active: highlighted === "project-lab", prefetch: "project-lab", onClick: () => onSelectView("project-lab") },
+    { key: "chat", label: "对话", icon: <MessageCircle size={18} />, active: highlighted === "chat", prefetch: "chat", onClick: () => onSelectView("chat") },
+    { key: "settings", label: "设置", icon: <Settings size={18} />, active: highlighted === "settings" && settingsPage !== "profile" && settingsPage !== "account", prefetch: "settings", onClick: () => onSelectView("settings") }
   ];
-  const navByKey = new Map(navItems.map((item) => [item.key, item]));
-  const mobilePrimaryKeys = ["dashboard", "workbench"];
-  const mobileMoreKeys = ["chat", "settings"];
-  const mobileMoreActive = mobileMoreKeys.some((key) => navByKey.get(key)?.active);
 
   function renderItem(item: SidebarItem, extraClass = "") {
     return (
       <button
         className={`nav-item ${item.active ? "active" : ""} ${extraClass}`.trim()}
         key={item.key}
-        onClick={() => {
-          setMobileMenuOpen(false);
-          item.onClick();
-        }}
+        onClick={item.onClick}
         onMouseEnter={() => onPrefetchPage(item.prefetch)}
         onFocus={() => onPrefetchPage(item.prefetch)}
         aria-current={item.active ? "page" : undefined}
@@ -84,31 +77,17 @@ export function AppSidebar({
           <span className="brand-mark" aria-hidden="true">
             <img className="brand-mark-image" src="/careerloop-mark-v2.png" alt="" />
           </span>
-          <span className="brand-copy"><strong>CareerLoop</strong><small>Career, in motion</small></span>
+          <span className="brand-copy"><strong>CareerLoop</strong><small>求职，持续推进</small></span>
         </button>
       </div>
 
       <nav className="nav nav-desktop" aria-label="主导航">
+        <p className="nav-label">工作台</p>
         {navItems.map((item) => renderItem(item))}
       </nav>
 
       <nav className="nav nav-mobile" aria-label="移动端主导航">
-        {mobilePrimaryKeys.map((key) => navByKey.get(key)).filter((item): item is SidebarItem => Boolean(item)).map((item) => renderItem(item, "mobile-nav-item"))}
-        <button
-          className={`nav-item mobile-nav-item mobile-more-toggle ${mobileMoreActive ? "active" : ""}`}
-          type="button"
-          aria-expanded={mobileMenuOpen}
-          aria-controls="mobile-more-navigation"
-          aria-label="更多导航"
-          onClick={() => setMobileMenuOpen((open) => !open)}
-        >
-          <MoreHorizontal size={18} /><span>更多</span>
-        </button>
-        {mobileMenuOpen ? (
-          <div className="mobile-more-navigation" id="mobile-more-navigation" aria-label="更多工作区">
-            {mobileMoreKeys.map((key) => navByKey.get(key)).filter((item): item is SidebarItem => Boolean(item)).map((item) => renderItem(item, "mobile-more-item"))}
-          </div>
-        ) : null}
+        {navItems.map((item) => renderItem(item, "mobile-nav-item"))}
       </nav>
 
       {identity ? <div className="sidebar-identity-slot">{identity}</div> : null}

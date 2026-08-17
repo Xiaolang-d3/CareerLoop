@@ -18,7 +18,7 @@ export type WorkflowStatus = {
     interview_advice_generations: number;
     company_researches: number;
   };
-  /** 阶段 id -> 该阶段累计完成的工具调用次数 */
+  /** 阶段 id -> 该阶段累计触达的工具调用次数 */
   stage_counts?: Record<string, number>;
   nodes: WorkflowNode[];
   events?: Array<{
@@ -69,6 +69,8 @@ export type CareerProfileBundle = {
     statement: string;
     status: "pending" | "confirmed" | "disputed" | "retracted";
     value?: Record<string, unknown>;
+    source_kind?: string;
+    evidence?: Array<{ excerpt?: string; source_title?: string }>;
   }>;
   sources: Array<{
     id: number;
@@ -162,24 +164,6 @@ export type JobImportPreview = {
     status: "done" | "observed" | "blocked" | "failed";
     message: string;
   }>;
-};
-
-export type JobImportActivityEvent = {
-  type: "started" | "thinking" | "task" | "completed";
-  id: string;
-  round: number;
-  tool?: string;
-  status:
-    | "thinking"
-    | "running"
-    | "done"
-    | "observed"
-    | "blocked"
-    | "failed"
-    | "ready"
-    | "unsupported"
-    | "invalid";
-  message: string;
 };
 
 type JobRequirementStatus = "matched" | "partial" | "no_evidence";
@@ -282,16 +266,92 @@ export type JobEvaluation = {
 
 export type ResumeChangeDecision = "pending" | "accepted" | "rejected";
 export type ResumeTemplate = "classic" | "compact" | "minimal";
+export type ResumeStyle = "navy" | "forest" | "ink" | "wine";
+
+export type ResumeLayoutSettings = {
+  spacing: number;
+  one_page: boolean;
+};
+
+export type ResumeScanModule = { key: string; present: boolean };
+
+export type ResumeEvidenceRow = {
+  skill: string;
+  evidence: string;
+  strength: "proven" | "mentioned";
+  block_id?: string;
+};
+
+export type ResumeAnalysisIntent = "customize_resume" | "interview_prep" | "confirm_knowledge" | "edit_profile";
+
+export type ResumeChecklistItem = {
+  key: "direction" | "project_evidence" | "quantified" | "risks" | "next_step" | string;
+  title: string;
+  question: string;
+  status: "pass" | "warn" | "gap";
+  summary: string;
+  next_action: {
+    label: string;
+    intent: ResumeAnalysisIntent | string;
+    detail: string;
+  };
+  block_ids?: string[];
+  evidence?: string;
+};
 
 export type ResumeSelfAnalysis = {
   character_count: number;
   skills: string[];
-  headline?: { verdict: string; evidence: string };
-  strengths: Array<{ label: string; evidence: string }>;
+  headline?: { verdict: string; evidence: string; remember?: string; skip?: string; block_id?: string };
+  blocks?: Array<{ id: string; kind: string; title: string }>;
+  checklist?: ResumeChecklistItem[];
+  scan?: {
+    identity?: string;
+    target?: string;
+    headline_skills?: string[];
+    remember?: string[];
+    skip?: string[];
+    completeness?: {
+      present: number;
+      total: number;
+      modules: ResumeScanModule[];
+    };
+    proof?: {
+      label: string;
+      character_count: number;
+      metric_lines: number;
+      evidence_lines: number;
+      skill_dump_lines: number;
+    };
+  };
+  strengths: Array<{ label: string; evidence: string; skills?: string[]; block_id?: string }>;
+  evidence_matrix?: Array<{ bucket: string; rows: ResumeEvidenceRow[] }>;
   structure: { found: string[]; missing: string[] };
-  projects: Array<{ title: string; evidence: string; how_to_talk: string; weak: boolean }>;
+  talking_source?: "project" | "work" | "none";
+  projects: Array<{
+    title: string;
+    evidence: string;
+    how_to_talk: string;
+    weak: boolean;
+    holes?: string[];
+    rewrite?: { original: string; suggested: string; caveat: string };
+    source?: "project" | "work";
+    block_id?: string;
+    star?: { situation: string; task: string; action: string; result: string };
+  }>;
   gaps: string[];
-  next_actions?: Array<{ title: string; detail: string; evidence: string }>;
+  next_actions?: Array<{
+    title: string;
+    detail: string;
+    evidence: string;
+    kind?: "rewrite" | "profile";
+    intent?: ResumeAnalysisIntent | string;
+    patch?: { original: string; suggested: string } | null;
+    why?: string;
+    where?: string;
+    effect?: string;
+    block_id?: string;
+  }>;
 };
 
 export type QuickMatchResult = {
@@ -301,7 +361,7 @@ export type QuickMatchResult = {
     required_skills: string[];
     matched_skills: string[];
     missing_skills: string[];
-    evidence: Array<{ skills: string[]; text: string }>;
+    evidence: Array<{ skills: string[]; text: string; block_id?: string }>;
     skill_coverage: number | null;
     confidence: "high" | "limited";
     limitations: string[];
@@ -335,12 +395,14 @@ export type ResumeChange = {
 
 export type ResumeVersionSummary = {
   id: number;
-  job_id: number;
+  job_id: number | null;
   profile_id: number;
   evaluation_id: number | null;
   title: string;
   status: "draft" | "final";
   template_id: ResumeTemplate;
+  style_id: ResumeStyle;
+  layout: ResumeLayoutSettings;
   change_count: number;
   change_counts: Record<ResumeChangeDecision, number>;
   created_at: string;
@@ -354,6 +416,7 @@ export type ResumeVersion = ResumeVersionSummary & {
 };
 
 export type InterviewType = "general" | "hr" | "business" | "technical" | "final";
+export type InterviewQuestionCategory = "intro" | "project" | "skill" | "gap" | "behavioral";
 
 type InterviewTask = {
   id: number;
@@ -383,6 +446,7 @@ type InterviewKitContent = {
     answer_direction: string;
     evidence: string[];
     status: JobRequirementStatus;
+    category?: InterviewQuestionCategory;
   }>;
   star_stories: Array<{
     id: string;
@@ -543,9 +607,44 @@ export type ViewKey =
   | "opportunities"
   | "workbench"
   | "interview-prep"
+  | "project-lab"
   | "dashboard"
   | "chat"
   | "settings";
+
+export type ProjectBriefingLayer = {
+  name: string;
+  steps: Array<{ title: string; detail: string }>;
+};
+
+export type ProjectBriefing = {
+  source_kind: "description" | "code";
+  description: string;
+  code_excerpt: string;
+  situation: string;
+  core: string;
+  stack: string[];
+  layers: ProjectBriefingLayer[];
+  mermaid: string;
+  missing: string[];
+  generated_from: "rules" | "model";
+  status: "ready" | "needs_input";
+};
+
+export type ProjectStudioItem = {
+  id: string;
+  title: string;
+  evidence: string;
+  fields?: Array<{ label: string; value: string }>;
+  gap_count: number;
+  briefing: ProjectBriefing;
+};
+
+export type ProjectStudio = {
+  has_profile: boolean;
+  has_resume: boolean;
+  projects: ProjectStudioItem[];
+};
 
 export type OpportunityRunMode = "scan" | "discover" | "company_funded" | "pipeline" | "batch";
 type OpportunityRunStatus = "queued" | "running" | "waiting_for_user" | "completed" | "partial_failed" | "failed" | "cancelled" | "interrupted";
@@ -661,6 +760,26 @@ type ModelServiceEvent = {
   created_at: string;
 };
 
+export type ModelCapabilityStatus = "supported" | "unsupported" | "unknown";
+
+export type ModelCapabilityFlag = {
+  status: ModelCapabilityStatus;
+  source: "model_id" | "probe" | "client";
+  detail: string;
+};
+
+export type ModelCapabilityReport = {
+  model_name: string;
+  provider: string;
+  provider_label: string;
+  vision: ModelCapabilityFlag;
+  streaming: ModelCapabilityFlag;
+  tools: ModelCapabilityFlag;
+  probed: boolean;
+  probe_error: string | null;
+  attachment_vision_enabled?: boolean;
+};
+
 export type ModelServiceMonitor = {
   status: "healthy" | "degraded" | "unavailable" | "unknown";
   status_message: string;
@@ -677,6 +796,13 @@ export type ModelServiceMonitor = {
     p95_latency_ms: number | null;
     timeout_count: number;
     consecutive_failures: number;
+    total_tokens?: number;
+  };
+  usage?: {
+    window_hours: number;
+    total_tokens: number;
+    remaining_quota: number | null;
+    quota_available: boolean;
   };
   error_breakdown: Array<{
     code: string;

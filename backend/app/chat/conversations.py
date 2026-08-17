@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..agent.snapshots import clear_run_snapshot
 from ..db import connect, row_to_dict, rows_to_dicts
 
 
@@ -137,6 +138,7 @@ def reset_conversation_context(
             "SELECT * FROM conversations WHERE id = ?", (conversation_id,)
         ).fetchone()
     end_active_task(conversation_id, db_path)
+    clear_run_snapshot(conversation_id, db_path)
     return row_to_dict(row)
 
 

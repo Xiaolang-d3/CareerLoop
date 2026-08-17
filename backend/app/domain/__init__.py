@@ -1,9 +1,12 @@
 from .agent import (
+    AgentClarification,
     AgentMessage,
     AgentPlan,
     AgentPlanStep,
     AgentRunResult,
+    AgentRunSnapshot,
     AgentStreamEvent,
+    ClarificationOption,
     ModelRequest,
     ModelResponse,
     ModelStreamEvent,
@@ -16,11 +19,14 @@ from .agent import (
 )
 
 __all__ = [
+    "AgentClarification",
     "AgentMessage",
     "AgentPlan",
     "AgentPlanStep",
     "AgentRunResult",
+    "AgentRunSnapshot",
     "AgentStreamEvent",
+    "ClarificationOption",
     "ModelRequest",
     "ModelResponse",
     "ModelStreamEvent",

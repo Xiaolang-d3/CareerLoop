@@ -509,7 +509,7 @@ def _local_assessment(job: dict[str, Any], candidate: dict[str, Any]) -> dict[st
     description = str(job.get("description") or "")
     job_skills = extract_skills(description)
     fact_text = " ".join(str(item.get("statement") or "") for item in candidate.get("confirmed_facts") or [])
-    fact_skills = set(extract_skills(fact_text))
+    fact_skills = set(extract_skills(fact_text, blocked=candidate.get("blocked_claims")))
     matched = [skill for skill in job_skills if skill in fact_skills]
     gaps = [skill for skill in job_skills if skill not in fact_skills]
     strategy = candidate.get("strategy") or {}

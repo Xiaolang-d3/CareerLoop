@@ -41,6 +41,30 @@ describe("fetchJson", () => {
     );
   });
 
+  it("adds the plain-text body when the server did not return JSON", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      "Internal Server Error",
+      { status: 500, headers: { "Content-Type": "text/plain" } }
+    )));
+
+    const fetchJson = createApiClient("https://app.example.com");
+    await expect(fetchJson("/agent/models/discover", { method: "POST" })).rejects.toThrow(
+      "/agent/models/discover 请求失败（500）：Internal Server Error"
+    );
+  });
+
+  it("does not paste an HTML error page into the message", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      "<html><body>502 Bad Gateway</body></html>",
+      { status: 502, headers: { "Content-Type": "text/html" } }
+    )));
+
+    const fetchJson = createApiClient("https://app.example.com");
+    await expect(fetchJson("/agent/models/discover", { method: "POST" })).rejects.toThrow(
+      /^\/agent\/models\/discover 请求失败（502）$/
+    );
+  });
+
   it("keeps the status-code fallback when the detail array is empty", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(
       JSON.stringify({ detail: [] }),

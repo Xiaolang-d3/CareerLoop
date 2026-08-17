@@ -107,9 +107,12 @@ def test_preparation_only_lists_explicit_project_blocks_and_keeps_other_resume_l
 
     assert [item["title"] for item in preparation["experiences"]] == ["智能会议总结（Summary）"]
     assert "LLM 接入网关" in preparation["experiences"][0]["evidence"]
-    assert "求职方向：AI 应用工程师" in [item["text"] for item in preparation["unclassified_fragments"]]
-    assert "89Trillion｜AI 应用工程师｜2025.07 - 至今" in [item["text"] for item in preparation["unclassified_fragments"]]
-    assert "技能：Python、FastAPI" in [item["text"] for item in preparation["unclassified_fragments"]]
+    fragment_text = "\n".join(item["text"] for item in preparation["unclassified_fragments"])
+    assert "求职方向：AI 应用工程师" in fragment_text
+    assert "89Trillion｜AI 应用工程师｜2025.07 - 至今" in fragment_text
+    assert "技能：Python、FastAPI" in fragment_text
+    assert all(item["id"] for item in preparation["experiences"])
+    assert preparation["experiences"][0]["id"].startswith("project-")
 
 
 def test_preparation_falls_back_to_conservative_project_candidates_when_heading_is_missing(tmp_path: Path) -> None:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from html import escape
-from io import BytesIO
+import json
 from pathlib import Path
 from typing import Any, Literal
 
@@ -9,29 +8,100 @@ from ..db import connect, json_dump, row_to_dict
 from ..jobs.evaluations import get_latest_completed_job_evaluation
 from ..profile.candidate_core import get_candidate_context, verify_candidate_material
 from ..profile.intelligence import extract_skills
+from .export import build_docx, build_pdf
+from .layout import compose_rendered_sections, split_resume_layout
 
 
 ResumeDecision = Literal["pending", "accepted", "rejected"]
 ResumeVersionStatus = Literal["draft", "final"]
 ResumeExportFormat = Literal["docx", "pdf"]
 ResumeTemplate = Literal["classic", "compact", "minimal"]
+ResumeStyle = Literal["navy", "forest", "ink", "wine"]
 
 _RESUME_TEMPLATES = {"classic", "compact", "minimal"}
+_RESUME_STYLES: dict[str, dict[str, str | bool]] = {
+    "navy": {
+        "title": "17324D",
+        "heading": "2D5B7D",
+        "body": "283A31",
+        "accent": "3E8E6B",
+        "rule": "DCE5E0",
+        "chip": "EEF3F8",
+        "serif": False,
+    },
+    "forest": {
+        "title": "1A4D3A",
+        "heading": "2D7A5A",
+        "body": "24352C",
+        "accent": "1C6D4E",
+        "rule": "D5E4DB",
+        "chip": "E7F4EE",
+        "serif": False,
+    },
+    "ink": {
+        "title": "1A1F24",
+        "heading": "3D484E",
+        "body": "293136",
+        "accent": "4D575D",
+        "rule": "C8CDD0",
+        "chip": "EEF0F1",
+        "serif": True,
+    },
+    "wine": {
+        "title": "5C2433",
+        "heading": "8B3D52",
+        "body": "3A2A2E",
+        "accent": "A34E62",
+        "rule": "E4D4D8",
+        "chip": "F6EEF0",
+        "serif": False,
+    },
+}
+
+
+def _resume_style(style_id: str | None) -> dict[str, str | bool]:
+    return _RESUME_STYLES.get(style_id or "navy", _RESUME_STYLES["navy"])
+
+
+def _resume_layout(raw: Any) -> dict[str, Any]:
+    data = raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            data = {}
+    if not isinstance(data, dict):
+        data = {}
+    try:
+        spacing = int(data.get("spacing", 100))
+    except (TypeError, ValueError):
+        spacing = 100
+    return {
+        "spacing": max(70, min(130, spacing)),
+        "one_page": bool(data.get("one_page")),
+    }
+
+
+def _layout_scale(layout: dict[str, Any] | None) -> float:
+    settings = _resume_layout(layout)
+    scale = settings["spacing"] / 100
+    if settings["one_page"]:
+        scale = min(scale, 0.78)
+    return scale
 
 
 def create_resume_version(
-    job_id: int,
+    job_id: int | None = None,
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
+    if job_id is None:
+        return create_baseline_resume_version(db_path=db_path)
+
     with connect(db_path) as conn:
         job_row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         if job_row is None:
             raise ValueError("岗位项目不存在")
-        profile_row = conn.execute(
-            "SELECT * FROM profiles ORDER BY updated_at DESC, id DESC LIMIT 1"
-        ).fetchone()
-        if profile_row is None:
-            raise ValueError("请先保存人物画像和简历")
+        profile = _latest_profile(conn)
         version_number = conn.execute(
             "SELECT COUNT(*) AS count FROM resume_versions WHERE job_id = ?",
             (job_id,),
@@ -46,7 +116,6 @@ def create_resume_version(
         raise ValueError("岗位、候选人知识或职业策略已更新，请重新生成岗位评估")
 
     job = row_to_dict(job_row) or {}
-    profile = row_to_dict(profile_row) or {}
     resume_context = get_candidate_context(
         "resume", profile_id=int(profile["id"]),
         strategy_id=evaluation.get("strategy_id"), db_path=db_path,
@@ -62,67 +131,70 @@ def create_resume_version(
     title = " · ".join(part for part in title_parts if part)
     title = f"{title or '岗位'}定制简历 V{version_number}"
     material_view = _evaluation_material_view(evaluation, resume_context)
-    changes = _build_changes(job, material_view, resume_text)
+    return _persist_resume_version(
+        job_id=job_id,
+        profile_id=int(profile["id"]),
+        evaluation_id=int(evaluation["id"]),
+        title=title,
+        resume_text=resume_text,
+        changes=_build_changes(job, material_view, resume_text),
+        db_path=db_path,
+    )
 
+
+def create_baseline_resume_version(
+    db_path: str | Path | None = None,
+) -> dict[str, Any]:
     with connect(db_path) as conn:
-        cursor = conn.execute(
+        profile = _latest_profile(conn)
+        version_number = conn.execute(
             """
-            INSERT INTO resume_versions (
-                job_id, profile_id, evaluation_id, title, base_content
-            ) VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                job_id,
-                profile["id"],
-                evaluation["id"],
-                title[:200],
-                resume_text,
-            ),
-        )
-        version_id = cursor.lastrowid
-        for index, change in enumerate(changes, start=1):
-            conn.execute(
-                """
-                INSERT INTO resume_changes (
-                    version_id, change_type, section_key, before_text, after_text,
-                    rationale, evidence_json, sort_order
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    version_id,
-                    change["change_type"],
-                    change["section_key"],
-                    change["before_text"],
-                    change["after_text"],
-                    change["rationale"],
-                    json_dump(change["evidence"]),
-                    index,
-                ),
-            )
-        _refresh_rendered_content(conn, version_id)
+            SELECT COUNT(*) AS count FROM resume_versions
+            WHERE job_id IS NULL
+            """
+        ).fetchone()["count"] + 1
 
-    version = get_resume_version(version_id, db_path)
-    if version is None:
-        raise RuntimeError("定制简历版本创建后无法读取")
-    return version
+    resume_text = _saved_resume_text(profile, db_path=db_path)
+    if not resume_text:
+        raise ValueError("请先在个人资料中上传并保存简历")
+
+    name = str(profile.get("name") or "").strip()
+    title = f"{name or '简历'} V{version_number}"
+    return _persist_resume_version(
+        job_id=None,
+        profile_id=int(profile["id"]),
+        evaluation_id=None,
+        title=title,
+        resume_text=resume_text,
+        changes=_build_baseline_changes(profile, resume_text),
+        db_path=db_path,
+    )
 
 
 def list_resume_versions(
-    job_id: int,
+    job_id: int | None = None,
     db_path: str | Path | None = None,
 ) -> list[dict[str, Any]]:
     with connect(db_path) as conn:
-        job = conn.execute("SELECT id FROM jobs WHERE id = ?", (job_id,)).fetchone()
-        if job is None:
-            raise ValueError("岗位项目不存在")
-        rows = conn.execute(
-            """
-            SELECT * FROM resume_versions
-            WHERE job_id = ?
-            ORDER BY id DESC
-            """,
-            (job_id,),
-        ).fetchall()
+        if job_id is None:
+            rows = conn.execute(
+                """
+                SELECT * FROM resume_versions
+                ORDER BY id DESC
+                """
+            ).fetchall()
+        else:
+            job = conn.execute("SELECT id FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            if job is None:
+                raise ValueError("岗位项目不存在")
+            rows = conn.execute(
+                """
+                SELECT * FROM resume_versions
+                WHERE job_id = ?
+                ORDER BY id DESC
+                """,
+                (job_id,),
+            ).fetchall()
         return [_version_response(row, conn, include_changes=False) for row in rows]
 
 
@@ -146,6 +218,8 @@ def update_resume_version(
     title: str | None = None,
     status: ResumeVersionStatus | None = None,
     template_id: ResumeTemplate | None = None,
+    style_id: ResumeStyle | None = None,
+    layout: dict[str, Any] | None = None,
     db_path: str | Path | None = None,
 ) -> dict[str, Any] | None:
     updates: list[str] = []
@@ -162,7 +236,9 @@ def update_resume_version(
             if current is None:
                 return None
             gate = verify_candidate_material(
-                str(current.get("rendered_content") or ""), db_path=db_path
+                str(current.get("rendered_content") or ""),
+                extra_source=str(current.get("base_content") or ""),
+                db_path=db_path,
             )
             if not gate["can_finalize"]:
                 first = gate.get("issues", [{}])[0].get("message", "事实安全门未通过")
@@ -171,9 +247,19 @@ def update_resume_version(
         values.append(status)
     if template_id is not None:
         if template_id not in _RESUME_TEMPLATES:
-            raise ValueError("不支持的简历模板")
+            raise ValueError("不支持的简历类型")
         updates.append("template_id = ?")
         values.append(template_id)
+    if style_id is not None:
+        if style_id not in _RESUME_STYLES:
+            raise ValueError("不支持的简历模板")
+        updates.append("style_id = ?")
+        values.append(style_id)
+    if layout is not None:
+        current = get_resume_version(version_id, db_path) or {}
+        merged = _resume_layout({ **current.get("layout", {}), **layout })
+        updates.append("layout_json = ?")
+        values.append(json_dump(merged))
     with connect(db_path) as conn:
         existing = conn.execute(
             "SELECT id FROM resume_versions WHERE id = ?",
@@ -257,16 +343,38 @@ def export_resume_version(
     content = str(version.get("rendered_content") or "").strip()
     if not content:
         raise ValueError("当前版本没有可导出的简历内容")
-    gate = verify_candidate_material(content, db_path=db_path)
+    gate = verify_candidate_material(
+        content,
+        extra_source=str(version.get("base_content") or ""),
+        db_path=db_path,
+    )
     if not gate["can_finalize"]:
-        raise ValueError("事实安全门未通过，当前版本只能预览，不能导出为可信定稿")
+        first = gate.get("issues", [{}])[0].get("message", "事实安全门未通过")
+        raise ValueError(f"{first}。当前版本只能预览，不能导出为可信定稿")
+    template_id = version.get("template_id", "classic")
+    style_id = version.get("style_id", "navy")
+    palette = _resume_style(style_id)
+    scale = _layout_scale(version.get("layout"))
     if export_format == "docx":
-        payload = _build_docx(version["title"], content, version.get("template_id", "classic"))
+        payload = build_docx(
+            version["title"],
+            content,
+            template_id,
+            palette,
+            scale,
+        )
         media_type = (
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
     elif export_format == "pdf":
-        payload = _build_pdf(version["title"], content, version.get("template_id", "classic"))
+        payload = build_pdf(
+            version["title"],
+            content,
+            template_id,
+            palette,
+            scale,
+            version.get("layout"),
+        )
         media_type = "application/pdf"
     else:
         raise ValueError("仅支持导出 DOCX 或 PDF")
@@ -294,6 +402,7 @@ def _version_response(
     counts.update({item["decision"]: item["count"] for item in decision_rows})
     version["change_counts"] = counts
     version["change_count"] = sum(counts.values())
+    version["layout"] = _resume_layout(version.get("layout") or version.pop("layout_json", None))
     if include_changes:
         rows = conn.execute(
             """
@@ -308,6 +417,121 @@ def _version_response(
         version.pop("base_content", None)
         version.pop("rendered_content", None)
     return version
+
+
+def _latest_profile(conn) -> dict[str, Any]:
+    profile_row = conn.execute(
+        "SELECT * FROM profiles ORDER BY updated_at DESC, id DESC LIMIT 1"
+    ).fetchone()
+    profile = row_to_dict(profile_row)
+    if profile is None:
+        raise ValueError("请先保存人物画像和简历")
+    return profile
+
+
+def _saved_resume_text(
+    profile: dict[str, Any],
+    *,
+    db_path: str | Path | None = None,
+) -> str:
+    redacted = str(profile.get("resume_redacted_text") or "").strip()
+    raw = str(profile.get("resume_text") or "").strip()
+    if redacted or raw:
+        return redacted or raw
+    try:
+        context = get_candidate_context(
+            "resume",
+            profile_id=int(profile["id"]),
+            db_path=db_path,
+        )
+    except ValueError:
+        return ""
+    return "\n".join(
+        str(item.get("statement") or "").strip()
+        for item in context.get("confirmed_facts") or []
+        if str(item.get("statement") or "").strip()
+    )
+
+
+def _persist_resume_version(
+    *,
+    job_id: int | None,
+    profile_id: int,
+    evaluation_id: int | None,
+    title: str,
+    resume_text: str,
+    changes: list[dict[str, Any]],
+    db_path: str | Path | None,
+) -> dict[str, Any]:
+    with connect(db_path) as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO resume_versions (
+                job_id, profile_id, evaluation_id, title, base_content
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (job_id, profile_id, evaluation_id, title[:200], resume_text),
+        )
+        version_id = cursor.lastrowid
+        for index, change in enumerate(changes, start=1):
+            conn.execute(
+                """
+                INSERT INTO resume_changes (
+                    version_id, change_type, section_key, before_text, after_text,
+                    rationale, evidence_json, sort_order
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    version_id,
+                    change["change_type"],
+                    change["section_key"],
+                    change["before_text"],
+                    change["after_text"],
+                    change["rationale"],
+                    json_dump(change["evidence"]),
+                    index,
+                ),
+            )
+        _refresh_rendered_content(conn, version_id)
+
+    version = get_resume_version(version_id, db_path)
+    if version is None:
+        raise RuntimeError("定制简历版本创建后无法读取")
+    return version
+
+
+def _build_baseline_changes(
+    profile: dict[str, Any],
+    resume_text: str,
+) -> list[dict[str, Any]]:
+    name = str(profile.get("name") or "").strip()
+    title_text = f"# {name}" if name else "# 简历"
+    evidence = [
+        {
+            "source": "resume",
+            "requirement_id": "",
+            "requirement": "已保存简历",
+            "excerpt": resume_text[:280],
+        }
+    ]
+    return [
+        {
+            "change_type": "target",
+            "section_key": "target",
+            "before_text": "",
+            "after_text": title_text,
+            "rationale": "使用已保存资料中的姓名作为标题，未对照具体岗位",
+            "evidence": evidence,
+        },
+        {
+            "change_type": "reorder",
+            "section_key": "body",
+            "before_text": resume_text,
+            "after_text": resume_text,
+            "rationale": "按已保存简历原文排版，未新增未经证实的经历或能力",
+            "evidence": evidence,
+        },
+    ]
 
 
 def _evaluation_material_view(
@@ -507,188 +731,8 @@ def _refresh_rendered_content(conn, version_id: int) -> None:
         SET rendered_content = ?, status = 'draft', updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
-        ("\n\n".join(sections), version_id),
+        (compose_rendered_sections(sections), version_id),
     )
-
-
-def _build_docx(title: str, content: str, template_id: str = "classic") -> bytes:
-    from docx import Document
-    from docx.enum.section import WD_SECTION
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.oxml import OxmlElement
-    from docx.oxml.ns import qn
-    from docx.shared import Cm, Pt, RGBColor
-
-    document = Document()
-    section = document.sections[0]
-    compact = template_id == "compact"
-    minimal = template_id == "minimal"
-    section.top_margin = Cm(1.45 if compact else 1.8)
-    section.bottom_margin = Cm(1.45 if compact else 1.8)
-    section.left_margin = Cm(1.7 if compact else 2.0)
-    section.right_margin = Cm(1.7 if compact else 2.0)
-    section.start_type = WD_SECTION.NEW_PAGE
-
-    font_name = _document_font_name()
-    styles = document.styles
-    normal = styles["Normal"]
-    normal.font.name = font_name
-    normal.font.size = Pt(10.5)
-    normal._element.rPr.rFonts.set(qn("w:eastAsia"), font_name)
-    for style_name, size, color in (
-        ("Title", 20 if compact else 22, "1C2D3B" if minimal else "17324D"),
-        ("Heading 1", 13 if compact else 15, "1C2D3B" if minimal else "17324D"),
-        ("Heading 2", 11 if compact else 12, "4A5861" if minimal else "2D5B7D"),
-        ("List Bullet", 9.7 if compact else 10.5, "263746"),
-    ):
-        style = styles[style_name]
-        style.font.name = font_name
-        style.font.size = Pt(size)
-        style.font.color.rgb = RGBColor.from_string(color)
-        style._element.rPr.rFonts.set(qn("w:eastAsia"), font_name)
-
-    for line in content.splitlines():
-        text = line.strip()
-        if not text:
-            continue
-        if text.startswith("# "):
-            paragraph = document.add_paragraph(text[2:], style="Title")
-            paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
-        elif text.startswith("## "):
-            document.add_heading(text[3:], level=1)
-        elif text.startswith("- "):
-            paragraph = document.add_paragraph(text[2:], style="List Bullet")
-            paragraph.paragraph_format.space_after = Pt(3)
-        else:
-            paragraph = document.add_paragraph(text)
-            paragraph.paragraph_format.space_after = Pt(5)
-            paragraph.paragraph_format.line_spacing = 1.15
-
-    footer = section.footer.paragraphs[0]
-    footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    footer_run = footer.add_run("BossCopilot 定制简历 · ")
-    footer_run.font.name = font_name
-    footer_run._element.rPr.rFonts.set(qn("w:eastAsia"), font_name)
-    page_run = footer.add_run()
-    page_run.font.name = font_name
-    field_begin = OxmlElement("w:fldChar")
-    field_begin.set(qn("w:fldCharType"), "begin")
-    instruction = OxmlElement("w:instrText")
-    instruction.set(qn("xml:space"), "preserve")
-    instruction.text = " PAGE "
-    field_separator = OxmlElement("w:fldChar")
-    field_separator.set(qn("w:fldCharType"), "separate")
-    field_value = OxmlElement("w:t")
-    field_value.text = "1"
-    field_end = OxmlElement("w:fldChar")
-    field_end.set(qn("w:fldCharType"), "end")
-    page_run._r.extend(
-        (field_begin, instruction, field_separator, field_value, field_end)
-    )
-    document.core_properties.title = title
-    document.core_properties.subject = "岗位定制简历"
-
-    output = BytesIO()
-    document.save(output)
-    return output.getvalue()
-
-
-def _build_pdf(title: str, content: str, template_id: str = "classic") -> bytes:
-    try:
-        from reportlab.lib import colors
-        from reportlab.lib.pagesizes import A4
-        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-        from reportlab.lib.units import mm
-        from reportlab.pdfbase import pdfmetrics
-        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-        from reportlab.pdfbase.ttfonts import TTFont
-        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
-    except ImportError as exc:
-        raise RuntimeError("PDF 导出依赖未安装，请安装 reportlab") from exc
-
-    font_name = "STSong-Light"
-    for font_path in _pdf_font_candidates():
-        if not font_path.exists():
-            continue
-        try:
-            embedded_name = "BossCopilotResume"
-            pdfmetrics.registerFont(TTFont(embedded_name, str(font_path)))
-            font_name = embedded_name
-            break
-        except Exception:
-            continue
-    if font_name == "STSong-Light":
-        pdfmetrics.registerFont(UnicodeCIDFont(font_name))
-    compact = template_id == "compact"
-    minimal = template_id == "minimal"
-    output = BytesIO()
-    document = SimpleDocTemplate(
-        output,
-        pagesize=A4,
-        rightMargin=(14 if compact else 18) * mm,
-        leftMargin=(14 if compact else 18) * mm,
-        topMargin=(14 if compact else 17) * mm,
-        bottomMargin=(14 if compact else 17) * mm,
-        title=title,
-        author="BossCopilot",
-    )
-    base = getSampleStyleSheet()
-    body = ParagraphStyle(
-        "ResumeBody",
-        parent=base["BodyText"],
-        fontName=font_name,
-        fontSize=9.1 if compact else 9.8,
-        leading=13.5 if compact else 15,
-        textColor=colors.HexColor("#263746"),
-        spaceAfter=5,
-    )
-    title_style = ParagraphStyle(
-        "ResumeTitle",
-        parent=body,
-        fontSize=18 if compact else 20,
-        leading=22 if compact else 25,
-        textColor=colors.HexColor("#1C2D3B" if minimal else "#17324D"),
-        spaceAfter=12,
-    )
-    heading = ParagraphStyle(
-        "ResumeHeading",
-        parent=body,
-        fontSize=12 if compact else 13,
-        leading=16 if compact else 18,
-        textColor=colors.HexColor("#4A5861" if minimal else "#2D5B7D"),
-        spaceBefore=7 if compact else 9,
-        spaceAfter=5,
-    )
-    bullet = ParagraphStyle(
-        "ResumeBullet",
-        parent=body,
-        leftIndent=11,
-        firstLineIndent=-7,
-        bulletIndent=2,
-    )
-    story = []
-    for line in content.splitlines():
-        text = line.strip()
-        if not text:
-            story.append(Spacer(1, 3))
-        elif text.startswith("# "):
-            story.append(Paragraph(escape(text[2:]), title_style))
-        elif text.startswith("## "):
-            story.append(Paragraph(escape(text[3:]), heading))
-        elif text.startswith("- "):
-            story.append(Paragraph(f"• {escape(text[2:])}", bullet))
-        else:
-            story.append(Paragraph(escape(text), body))
-
-    def draw_footer(canvas, doc) -> None:
-        canvas.saveState()
-        canvas.setFont(font_name, 8)
-        canvas.setFillColor(colors.HexColor("#7A8793"))
-        canvas.drawCentredString(A4[0] / 2, 9 * mm, f"BossCopilot 定制简历 · {doc.page}")
-        canvas.restoreState()
-
-    document.build(story, onFirstPage=draw_footer, onLaterPages=draw_footer)
-    return output.getvalue()
 
 
 def _safe_filename(value: str) -> str:
@@ -698,24 +742,3 @@ def _safe_filename(value: str) -> str:
         if character not in '<>:"/\\|?*\0'
     )
     return (clean or "定制简历")[:100]
-
-
-def _document_font_name() -> str:
-    if Path("/System/Library/Fonts/Hiragino Sans GB.ttc").exists():
-        return "Hiragino Sans GB"
-    if Path("/Library/Fonts/Arial Unicode.ttf").exists():
-        return "Arial Unicode MS"
-    if Path("C:/Windows/Fonts/msyh.ttc").exists():
-        return "Microsoft YaHei"
-    return "Noto Sans CJK SC"
-
-
-def _pdf_font_candidates() -> tuple[Path, ...]:
-    return (
-        Path("/Library/Fonts/Arial Unicode.ttf"),
-        Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttf"),
-        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
-        Path("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"),
-        Path("C:/Windows/Fonts/msyh.ttf"),
-        Path("C:/Windows/Fonts/simhei.ttf"),
-    )

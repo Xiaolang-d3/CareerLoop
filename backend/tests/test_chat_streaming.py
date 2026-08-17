@@ -11,10 +11,19 @@ from app import db
 import app.main as main_module
 import app.api.resources as resources_module
 from app.chat.conversations import create_conversation, ensure_active_task
-from app.domain import AgentRunResult, AgentStreamEvent, ToolError
+from app.agent.snapshots import load_run_snapshot, save_run_snapshot
+from app.domain import (
+    AgentClarification,
+    AgentRunResult,
+    AgentRunSnapshot,
+    AgentStreamEvent,
+    ClarificationOption,
+    ToolError,
+)
 from app.jobs.service import create_job
 from app.main import (
     _active_chat_runs,
+    _chat_run_key,
     _is_workflow_status_query,
     app,
     cancel_current_agent_task,
@@ -134,8 +143,8 @@ class ChatStreamingApiTest(unittest.TestCase):
         conversation = self.client.post("/conversations", json={"title": "流式测试"}).json()
         events = self.run_ag_ui(conversation["id"], "查看当前进度", "run-local-status")
         snapshot = next(event["snapshot"] for event in events if event["type"] == "STATE_SNAPSHOT")
-        self.assertEqual(snapshot["bossCopilot"]["assistantMessage"]["role"], "assistant")
-        self.assertIn("当前工作流", snapshot["bossCopilot"]["assistantMessage"]["content"])
+        self.assertEqual(snapshot["careerLoop"]["assistantMessage"]["role"], "assistant")
+        self.assertIn("当前工作流", snapshot["careerLoop"]["assistantMessage"]["content"])
 
         messages = self.client.get(
             f"/chat/messages?conversation_id={conversation['id']}"
@@ -265,6 +274,38 @@ class ChatStreamingApiTest(unittest.TestCase):
         self.assertEqual(pdf.status_code, 200)
         self.assertTrue(pdf.content.startswith(b"%PDF"))
 
+    def test_baseline_resume_version_api_does_not_require_a_job(self) -> None:
+        self.seed_confirmed_career_profile(
+            name="基线简历用户",
+            resume_text="负责 Agent 产品规划和需求分析。\n使用 Python 完成内部工具。",
+        )
+
+        created = self.client.post("/resume-versions")
+        self.assertEqual(created.status_code, 200)
+        version = created.json()
+        self.assertIsNone(version["job_id"])
+        self.assertIn("负责 Agent 产品规划", version["base_content"])
+        self.assertEqual(self.client.get("/resume-versions").json()[0]["id"], version["id"])
+
+        compact = self.client.patch(
+            f"/resume-versions/{version['id']}",
+            json={"template_id": "compact"},
+        )
+        self.assertEqual(compact.status_code, 200)
+        self.assertEqual(compact.json()["template_id"], "compact")
+        self.assertEqual(compact.json()["style_id"], "navy")
+
+        wine = self.client.patch(
+            f"/resume-versions/{version['id']}",
+            json={"style_id": "wine"},
+        )
+        self.assertEqual(wine.status_code, 200)
+        self.assertEqual(wine.json()["style_id"], "wine")
+
+        docx = self.client.get(f"/resume-versions/{version['id']}/export?format=docx")
+        self.assertEqual(docx.status_code, 200)
+        self.assertIn("wordprocessingml", docx.headers["content-type"])
+
     def test_interview_workflow_api_persists_kit_rounds_and_timeline(self) -> None:
         self.seed_confirmed_career_profile(
             name="面试测试用户",
@@ -288,6 +329,9 @@ class ChatStreamingApiTest(unittest.TestCase):
         self.assertEqual(created.status_code, 200)
         kit = created.json()
         self.assertTrue(kit["content"]["questions"])
+        listed = self.client.get("/interview-kits")
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.json()[0]["id"], kit["id"])
         task = kit["tasks"][0]
         checked = self.client.patch(
             f"/interview-kits/{kit['id']}/tasks/{task['id']}",
@@ -354,8 +398,8 @@ class ChatStreamingApiTest(unittest.TestCase):
         )
         self.assertIn("当前工作流", text)
         snapshot = next(event["snapshot"] for event in events if event["type"] == "STATE_SNAPSHOT")
-        self.assertEqual(snapshot["bossCopilot"]["status"], "done")
-        self.assertEqual(snapshot["bossCopilot"]["assistantMessage"]["role"], "assistant")
+        self.assertEqual(snapshot["careerLoop"]["status"], "done")
+        self.assertEqual(snapshot["careerLoop"]["assistantMessage"]["role"], "assistant")
 
     def test_ag_ui_endpoint_requires_a_user_text_message(self) -> None:
         conversation = self.client.post("/conversations", json={"title": "AG-UI 空输入"}).json()
@@ -424,7 +468,7 @@ class ChatStreamingApiTest(unittest.TestCase):
         self.assertIn("RUN_ERROR", event_types)
         self.assertNotIn("RUN_FINISHED", event_types)
         snapshot = next(event["snapshot"] for event in events if event["type"] == "STATE_SNAPSHOT")
-        self.assertEqual(snapshot["bossCopilot"]["status"], "failed")
+        self.assertEqual(snapshot["careerLoop"]["status"], "failed")
         run_error = next(event for event in events if event["type"] == "RUN_ERROR")
         self.assertEqual(run_error["code"], "authentication_failed")
 
@@ -455,11 +499,88 @@ class ChatStreamingApiTest(unittest.TestCase):
         self.assertEqual(event_types[-1], "RUN_FINISHED")
         self.assertNotIn("RUN_ERROR", event_types)
         snapshot = next(event["snapshot"] for event in events if event["type"] == "STATE_SNAPSHOT")
-        self.assertEqual(snapshot["bossCopilot"]["status"], "waiting_user")
+        self.assertEqual(snapshot["careerLoop"]["status"], "waiting_user")
         self.assertEqual(
-            snapshot["bossCopilot"]["assistantMessage"]["payload"]["agent"]["status"],
+            snapshot["careerLoop"]["assistantMessage"]["payload"]["agent"]["status"],
             "waiting_user",
         )
+
+    def _seed_waiting_company_snapshot(self, conversation_id: int) -> None:
+        save_run_snapshot(
+            conversation_id,
+            AgentRunSnapshot(
+                route_kind="company_research",
+                needs_plan=True,
+                allowed_tools=["research_company"],
+                clarification=AgentClarification(
+                    question="你指的是哪家公司？",
+                    options=[
+                        ClarificationOption(id="opt_1", label="字节跳动", send="按字节跳动继续"),
+                        ClarificationOption(id="opt_2", label="字节跳动教育", send="按字节跳动教育继续"),
+                    ],
+                ),
+                rounds_used=1,
+            ),
+        )
+
+    def test_waiting_snapshot_is_dropped_when_user_changes_topic(self) -> None:
+        conversation = self.client.post("/conversations", json={"title": "换题"}).json()
+        self._seed_waiting_company_snapshot(conversation["id"])
+        captured: dict[str, object] = {}
+
+        class CaptureRuntime:
+            async def run_stream(self, *args, **kwargs):
+                captured["resume"] = kwargs.get("resume")
+                yield AgentStreamEvent(
+                    type="completed",
+                    result=AgentRunResult(
+                        content="好，我们先改简历。",
+                        provider="test",
+                        platform="manual",
+                        rounds=1,
+                        status="done",
+                    ),
+                )
+
+        original_get_agent_runtime = main_module.get_agent_runtime
+        main_module.get_agent_runtime = lambda: CaptureRuntime()
+        try:
+            self.run_ag_ui(conversation["id"], "先别管公司，帮我改简历", "run-abandon-topic")
+        finally:
+            main_module.get_agent_runtime = original_get_agent_runtime
+
+        self.assertIsNone(captured.get("resume"))
+        self.assertIsNone(load_run_snapshot(conversation["id"]))
+
+    def test_waiting_snapshot_is_passed_when_user_picks_an_option(self) -> None:
+        conversation = self.client.post("/conversations", json={"title": "点选继续"}).json()
+        self._seed_waiting_company_snapshot(conversation["id"])
+        captured: dict[str, object] = {}
+
+        class CaptureRuntime:
+            async def run_stream(self, *args, **kwargs):
+                captured["resume"] = kwargs.get("resume")
+                yield AgentStreamEvent(
+                    type="completed",
+                    result=AgentRunResult(
+                        content="已按字节跳动继续。",
+                        provider="test",
+                        platform="manual",
+                        rounds=1,
+                        status="done",
+                    ),
+                )
+
+        original_get_agent_runtime = main_module.get_agent_runtime
+        main_module.get_agent_runtime = lambda: CaptureRuntime()
+        try:
+            self.run_ag_ui(conversation["id"], "按字节跳动继续", "run-resume-option")
+        finally:
+            main_module.get_agent_runtime = original_get_agent_runtime
+
+        resume = captured.get("resume")
+        self.assertIsNotNone(resume)
+        self.assertEqual(resume.route_kind, "company_research")
 
     def test_external_platform_request_reaches_agent_runtime(self) -> None:
         conversation = self.client.post("/conversations", json={"title": "平台能力测试"}).json()
@@ -506,7 +627,7 @@ class ChatStreamingApiTest(unittest.TestCase):
             minio_endpoint="127.0.0.1:9000",
             minio_access_key="access",
             minio_secret_key="secret",
-            minio_bucket="bosscopilot-attachments",
+            minio_bucket="careerloop-attachments",
             minio_public_endpoint="https://files.example.test",
         )
         try:
@@ -550,7 +671,7 @@ class ChatStreamingApiTest(unittest.TestCase):
         conversation = self.client.post("/conversations", json={"title": "非法回退"}).json()
         events = self.run_ag_ui(conversation["id"], "查看当前状态", "run-invalid-rewind")
         snapshot = next(event["snapshot"] for event in events if event["type"] == "STATE_SNAPSHOT")
-        assistant = snapshot["bossCopilot"]["assistantMessage"]
+        assistant = snapshot["careerLoop"]["assistantMessage"]
 
         rewind = self.client.delete(
             f"/chat/messages/{assistant['id']}/tail?conversation_id={conversation['id']}"
@@ -580,7 +701,7 @@ class ChatCancellationTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.Event().wait()
 
         task = asyncio.create_task(wait_forever())
-        _active_chat_runs[conversation["id"]] = task
+        _active_chat_runs[_chat_run_key(conversation["id"])] = task
 
         result = await cancel_current_agent_task(conversation["id"])
         await asyncio.gather(task, return_exceptions=True)

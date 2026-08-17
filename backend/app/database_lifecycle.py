@@ -9,11 +9,19 @@ from typing import Any
 from . import db as db_module
 
 
-REBUILD_CONFIRMATION = "确认重建 BossCopilot 2.0 数据库"
+REBUILD_CONFIRMATION = "确认重建 CareerLoop 2.0 数据库"
+
+
+def _resolved_db_path(db_path: str | Path | None = None) -> Path:
+    if db_path is not None:
+        return Path(db_path)
+    from .workspace import current_workspace_db, resolve_db_path
+
+    return current_workspace_db() or resolve_db_path()
 
 
 def database_status(db_path: str | Path | None = None) -> dict[str, Any]:
-    path = Path(db_path) if db_path is not None else db_module.DB_PATH
+    path = _resolved_db_path(db_path)
     if not path.exists() or path.stat().st_size == 0:
         return {
             "status": "uninitialized",
@@ -49,19 +57,39 @@ def database_status(db_path: str | Path | None = None) -> dict[str, Any]:
         "schema_version": current or None,
         "required_schema_version": db_module.DB_SCHEMA_VERSION,
         "database_path": str(path),
-        "reason": "" if current >= db_module.DB_SCHEMA_VERSION else "检测到 BossCopilot 2.0 之前的本地数据库",
+        "reason": "" if current >= db_module.DB_SCHEMA_VERSION else "检测到 CareerLoop 2.0 之前的本地数据库",
     }
 
 
 def initialize_or_report(db_path: str | Path | None = None) -> dict[str, Any]:
-    status = database_status(db_path)
-    if status["status"] == "uninitialized":
-        db_module.init_db(db_path)
-        return database_status(db_path)
-    if status["status"] == "requires_rebuild" and status["schema_version"] is not None:
-        db_module.init_db(db_path)
-        return database_status(db_path)
-    return status
+    if db_path is not None:
+        status = database_status(db_path)
+        if status["status"] == "uninitialized":
+            db_module.init_db(db_path)
+            return database_status(db_path)
+        if status["status"] == "requires_rebuild" and status["schema_version"] is not None:
+            db_module.init_db(db_path)
+            return database_status(db_path)
+        return status
+
+    db_module.adopt_legacy_database()
+    from .workspace import auth_db_path, existing_workspace_roots, migrate_legacy_workspaces
+
+    migrate_legacy_workspaces()
+    roots = existing_workspace_roots()
+    if roots:
+        last = None
+        for root in roots:
+            last = initialize_or_report(root / "careerloop.db")
+        return last or database_status(roots[0] / "careerloop.db")
+    if db_module.DB_PATH.exists() and db_module.DB_PATH.resolve() != auth_db_path().resolve():
+        return initialize_or_report(db_module.DB_PATH)
+    return {
+        "status": "ready",
+        "schema_version": db_module.DB_SCHEMA_VERSION,
+        "required_schema_version": db_module.DB_SCHEMA_VERSION,
+        "database_path": str(auth_db_path()),
+    }
 
 
 def rebuild_database_v2(
@@ -70,7 +98,7 @@ def rebuild_database_v2(
 ) -> dict[str, Any]:
     if confirmation != REBUILD_CONFIRMATION:
         raise ValueError("需要明确确认后才能备份并重建数据库")
-    path = Path(db_path) if db_path is not None else db_module.DB_PATH
+    path = _resolved_db_path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     backup_path: Path | None = None
     if path.exists() and path.stat().st_size:

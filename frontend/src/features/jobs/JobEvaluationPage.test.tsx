@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JobEvaluation } from "../../types";
 import { JobEvaluationPage } from "./JobEvaluationPage";
@@ -28,7 +28,8 @@ function props(page: "evaluation" | "evaluation_section" = "evaluation") {
     apiBase: "http://127.0.0.1:8000", page, jobId: 4,
     job: { id: 4, job_title: "AI 产品经理", company_name: "示例科技" } as never,
     sectionKey: page === "evaluation_section" ? "g" as const : undefined,
-    onBack: vi.fn(), onOpenSection: vi.fn(), onOpenOverview: vi.fn(), onOpenDeep: vi.fn(),
+    onBack: vi.fn(), onOpenSection: vi.fn(), onOpenOverview: vi.fn(),
+    onOpenResume: vi.fn(), onOpenInterview: vi.fn(),
     onCreateInterviewKit: vi.fn()
   };
 }
@@ -51,9 +52,17 @@ describe("JobEvaluationPage", () => {
     const value = props();
     render(<JobEvaluationPage {...value} />);
     expect(await screen.findByRole("heading", { name: "AI 产品经理" })).toBeInTheDocument();
+    const modules = screen.getByRole("navigation", { name: "求职模块" });
+    expect(within(modules).getByRole("button", { name: "匹配分析" })).toHaveAttribute("aria-current", "page");
+    expect(within(modules).getByRole("button", { name: "定制简历" })).toBeInTheDocument();
+    expect(within(modules).getByRole("button", { name: "面试问答" })).toBeInTheDocument();
     expect(screen.getByText("匹配情况")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /真实性风险/ }));
     expect(value.onOpenSection).toHaveBeenCalledWith("g");
+    fireEvent.click(within(modules).getByRole("button", { name: "定制简历" }));
+    fireEvent.click(within(modules).getByRole("button", { name: "面试问答" }));
+    expect(value.onOpenResume).toHaveBeenCalledOnce();
+    expect(value.onOpenInterview).toHaveBeenCalledOnce();
   });
 
   it("blocks material creation when the report is stale", async () => {

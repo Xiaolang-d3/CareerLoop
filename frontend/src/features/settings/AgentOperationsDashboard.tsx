@@ -118,7 +118,6 @@ export function AgentOperationsDashboard({ snapshot, days, loading, onDaysChange
         <div className="settings-card-heading">
           <span><Bot size={18} /></span>
           <div>
-            <h3>Agent 执行记录</h3>
             <p>回看 Agent 做过的工作、使用的工具和需要处理的异常。</p>
           </div>
         </div>

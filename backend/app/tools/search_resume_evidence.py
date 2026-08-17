@@ -70,6 +70,8 @@ class SearchResumeEvidenceTool:
                 "excerpt": result.get("content"),
                 "similarity": result.get("similarity", 0.0),
                 "metadata": result.get("metadata", {}),
+                "block_id": (result.get("metadata") or {}).get("block_id") or "",
+                "block_kind": (result.get("metadata") or {}).get("kind") or "",
             }
             for result in results
         ]

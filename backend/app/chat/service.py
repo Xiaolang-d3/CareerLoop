@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from ..agent.settings import get_agent_settings
+from ..agent.snapshots import clear_run_snapshot, save_run_snapshot
 from ..attachments.service import get_attachment, prepare_attachment_vision_url
 from .conversations import create_conversation, list_conversations
 from ..db import connect, json_dump, row_to_dict
@@ -36,12 +37,17 @@ def save_chat_message(
 
 def workflow_summary(status: dict[str, Any]) -> str:
     nodes = status["nodes"]
-    done = sum(1 for node in nodes if node["status"] == "done")
     total = len(nodes)
-    pending_titles = [node["title"] for node in nodes if node["status"] != "done"]
+    touched = [node["title"] for node in nodes if node["status"] != "pending"]
+    pending_titles = [node["title"] for node in nodes if node["status"] == "pending"]
+    if not touched:
+        return f"当前工作流尚未触达任何阶段。待处理：{'、'.join(pending_titles)}。"
     if pending_titles:
-        return f"当前工作流 {done}/{total} 个节点完成。待处理：{'、'.join(pending_titles)}。"
-    return f"当前工作流 {done}/{total} 个节点完成。"
+        return (
+            f"当前工作流已触达 {len(touched)}/{total} 个阶段：{'、'.join(touched)}。"
+            f"尚未触达：{'、'.join(pending_titles)}。"
+        )
+    return f"当前工作流已触达 {total}/{total} 个阶段：{'、'.join(touched)}。"
 
 
 def is_workflow_status_query(content: str) -> bool:
@@ -275,7 +281,7 @@ def save_stream_result(
                 "stage_engaged",
                 f"本轮进入阶段：{STAGE_TITLES.get(primary_stage, primary_stage)}",
                 primary_stage,
-                {"route": _result_route(result)},
+                {"route": _result_route(result), "conversation_id": conversation_id},
             )
         )
 
@@ -301,16 +307,24 @@ def save_stream_result(
                 "tool_completed",
                 event.message,
                 stage_id,
-                {"tool_name": event.tool_name, "tool_call_id": event.tool_call_id},
+                {
+                    "tool_name": event.tool_name,
+                    "tool_call_id": event.tool_call_id,
+                    "conversation_id": conversation_id,
+                },
             )
         )
 
     record_events(run_id, pending_events)
+    if result.status == "waiting_user" and result.snapshot is not None:
+        save_run_snapshot(conversation_id, result.snapshot)
+    elif result.provider != "local_router":
+        clear_run_snapshot(conversation_id)
     workflow = refresh_workflow_status(conversation_id)
     assistant_message = save_chat_message(
         "assistant",
         result.content,
-        {"workflow": workflow, "agent": result.model_dump(mode="json")},
+        {"workflow": workflow, "agent": result.model_dump(mode="json", exclude={"snapshot"})},
         conversation_id,
         task_id,
     )

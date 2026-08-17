@@ -22,9 +22,6 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
-from .. import db as db_module
-
-
 DOCUMENT_NAME = "career-profile.md"
 DEFAULT_PROFILE_NAME = "候选人"
 
@@ -144,17 +141,9 @@ class ProfileDocument(BaseModel):
 
 def document_path(base_dir: str | Path | None = None) -> Path:
     """画像文档路径。``base_dir`` 便于测试隔离，语义对应原先的 ``db_path``。"""
-    if base_dir is None:
-        # DB_PATH can be redirected by tests and by a local data-directory
-        # override.  Resolve it at call time instead of capturing DATA_DIR
-        # during module import, so the profile and its SQLite records stay in
-        # the same private data directory.
-        return db_module.DB_PATH.parent / DOCUMENT_NAME
-    resolved = Path(base_dir)
-    # 允许直接传文件路径（含 .md 或 .db 后缀时取其所在目录）
-    if resolved.suffix:
-        return resolved.parent / DOCUMENT_NAME
-    return resolved / DOCUMENT_NAME
+    from ..workspace import resolve_document_dir
+
+    return resolve_document_dir(base_dir) / DOCUMENT_NAME
 
 
 def exists(base_dir: str | Path | None = None) -> bool:

@@ -91,6 +91,30 @@ class AgentPlan(BaseModel):
     requires_confirmation: bool = False
 
 
+class ClarificationOption(BaseModel):
+    id: str = ""
+    label: str = ""
+    send: str = ""
+
+
+class AgentClarification(BaseModel):
+    question: str = ""
+    options: list[ClarificationOption] = Field(default_factory=list)
+    allow_custom: bool = True
+
+
+class AgentRunSnapshot(BaseModel):
+    route_kind: str
+    needs_plan: bool
+    allowed_tools: list[str] = Field(default_factory=list)
+    plan: AgentPlan | None = None
+    messages: list[AgentMessage] = Field(default_factory=list)
+    replan_used: bool = False
+    citation_retry_used: bool = False
+    rounds_used: int = 0
+    clarification: AgentClarification | None = None
+
+
 class AgentRunResult(BaseModel):
     content: str
     provider: str
@@ -100,6 +124,7 @@ class AgentRunResult(BaseModel):
     error: ToolError | None = None
     events: list[ToolEvent] = Field(default_factory=list)
     plan: AgentPlan | None = None
+    snapshot: AgentRunSnapshot | None = None
 
 
 class AgentStreamEvent(BaseModel):

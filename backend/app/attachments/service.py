@@ -12,7 +12,8 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 
 from ..config import get_settings
-from ..db import DATA_DIR, connect, json_dump, row_to_dict, rows_to_dicts
+from ..db import connect, json_dump, row_to_dict, rows_to_dicts
+from ..workspace import attachments_dir
 
 AttachmentKind = Literal["job_screenshot", "resume"]
 
@@ -70,7 +71,7 @@ class AttachmentStore:
         storage: Literal["local", "minio"] | None = None,
     ) -> None:
         self.settings = get_settings()
-        self.local_root = local_root or DATA_DIR / "attachments"
+        self.local_root = local_root or attachments_dir()
         # Passing an explicit directory means the caller intentionally wants an
         # isolated local store (for example, a test or an offline operation).
         self.storage = storage or (
@@ -152,7 +153,7 @@ class AttachmentStore:
 
 
 def get_attachment_store() -> AttachmentStore:
-    return AttachmentStore()
+    return AttachmentStore(local_root=attachments_dir())
 
 
 def _safe_attachment(row: dict[str, Any]) -> dict[str, Any]:

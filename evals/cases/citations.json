@@ -1,0 +1,118 @@
+[
+  {
+    "description": "没有 Markdown 链接则引用失败",
+    "vars": {
+      "task": "citation",
+      "content": "示例科技最近完成了新一轮融资，但没有给出链接。",
+      "allowed_urls": "https://example.com/news",
+      "expected": {
+        "valid": false,
+        "error_contains": "没有使用 Markdown 链接"
+      }
+    }
+  },
+  {
+    "description": "本轮来源可以引用",
+    "vars": {
+      "task": "citation",
+      "content": "根据[融资公告](https://example.com/news)，示例科技完成新一轮融资。",
+      "allowed_urls": "https://example.com/news",
+      "expected": {
+        "valid": true
+      }
+    }
+  },
+  {
+    "description": "编造的网址不得引用",
+    "vars": {
+      "task": "citation",
+      "content": "根据[内部传闻](https://not-from-this-turn.example/rumor)，对方正在裁员。",
+      "allowed_urls": "https://example.com/news",
+      "expected": {
+        "valid": false,
+        "error_contains": "之外的网址"
+      }
+    }
+  },
+  {
+    "description": "混入未检索网址则失败",
+    "vars": {
+      "task": "citation",
+      "content": "见[公告](https://example.com/news)和[博客](https://other.example/post)。",
+      "allowed_urls": "https://example.com/news",
+      "expected": {
+        "valid": false,
+        "error_contains": "之外的网址"
+      }
+    }
+  },
+  {
+    "description": "多个本轮来源都可以引用",
+    "vars": {
+      "task": "citation",
+      "content": "见[公告](https://example.com/news)与[官网](https://example.com/about)。",
+      "allowed_urls": "https://example.com/news,https://example.com/about",
+      "expected": {
+        "valid": true
+      }
+    }
+  },
+  {
+    "description": "忽略结尾斜杠和片段",
+    "vars": {
+      "task": "citation",
+      "content": "来源是[公告](https://example.com/news/#section)。",
+      "allowed_urls": "https://example.com/news/",
+      "expected": {
+        "valid": true
+      }
+    }
+  },
+  {
+    "description": "主机名大小写不敏感",
+    "vars": {
+      "task": "citation",
+      "content": "见[公告](https://Example.COM/news)。",
+      "allowed_urls": "https://example.com/news",
+      "expected": {
+        "valid": true
+      }
+    }
+  },
+  {
+    "description": "查询参数必须一致",
+    "vars": {
+      "task": "citation",
+      "content": "见[公告](https://example.com/news?utm=1)。",
+      "allowed_urls": "https://example.com/news",
+      "expected": {
+        "valid": false,
+        "error_contains": "之外的网址"
+      }
+    }
+  },
+  {
+    "description": "scheme 不同不能算同一来源",
+    "vars": {
+      "task": "citation",
+      "content": "见[公告](http://example.com/news)。",
+      "allowed_urls": "https://example.com/news",
+      "expected": {
+        "valid": false,
+        "error_contains": "之外的网址"
+      }
+    }
+  },
+  {
+    "description": "空回答不能冒充已引用",
+    "vars": {
+      "task": "citation",
+      "content": "",
+      "allowed_urls": "https://example.com/news",
+      "expected": {
+        "valid": false,
+        "error_contains": "没有使用 Markdown 链接"
+      }
+    }
+  }
+]

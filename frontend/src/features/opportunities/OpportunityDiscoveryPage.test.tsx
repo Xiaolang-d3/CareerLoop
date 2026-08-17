@@ -18,14 +18,16 @@ const job = {
   updated_at: "2026-08-01"
 };
 
-function props(page: "index" | "pipeline" = "index") {
+function props(page: "index" | "pipeline" | "job" = "index") {
   return {
     apiBase: "http://127.0.0.1:8000",
     accessToken: "test-access-token",
     page,
-    onNavigateHome: vi.fn(), onNavigateNew: vi.fn(), onNavigatePipeline: vi.fn(),
+    discoveredJobId: page === "job" ? 9 : undefined,
+    onNavigateHome: vi.fn(), onNavigatePipeline: vi.fn(),
     onNavigateSources: vi.fn(), onNavigateRun: vi.fn(), onNavigateJob: vi.fn(),
-    onJobsChanged: vi.fn()
+    onJobsChanged: vi.fn(),
+    onOpenPreparedJob: vi.fn()
   };
 }
 
@@ -77,5 +79,53 @@ describe("OpportunityDiscoveryPage", () => {
       expect.stringContaining("/promote"),
       expect.anything()
     );
+  });
+
+  it("opens the prepared job after promote", async () => {
+    const shortlisted = { ...job, lifecycle_status: "shortlisted" };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const body = url.includes("/promote")
+        ? { id: 42, latest_evaluation_id: null }
+        : url.includes("/assessments") ? [shortlisted.assessment]
+          : url.endsWith("/career-profile") ? { profile: { id: 1 }, active_strategy: { id: 2, name: "AI 产品" }, facts: [], sources: [] }
+            : url.endsWith("/discovered-jobs") ? [shortlisted]
+              : url.includes("/opportunity-runs") ? [run]
+                : url.endsWith("/opportunity-sources") ? []
+                  : shortlisted;
+      return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+    }));
+
+    const value = props("job");
+    render(<OpportunityDiscoveryPage {...value} />);
+    fireEvent.click(await screen.findByRole("button", { name: /开始求职准备/ }));
+
+    await waitFor(() => expect(value.onJobsChanged).toHaveBeenCalled());
+    expect(value.onOpenPreparedJob).toHaveBeenCalledWith(42);
+    expect(screen.queryByText("保存成功")).not.toBeInTheDocument();
+    expect(await screen.findByText("已保存到分析")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "打开分析" }));
+    expect(value.onOpenPreparedJob).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets a saved job return to the opportunity hub when this session has no prepared id", async () => {
+    const saved = { ...job, lifecycle_status: "saved" };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const body = url.includes("/assessments") ? [saved.assessment]
+        : url.endsWith("/career-profile") ? { profile: { id: 1 }, active_strategy: { id: 2, name: "AI 产品" }, facts: [], sources: [] }
+          : url.endsWith("/discovered-jobs") ? [saved]
+            : url.includes("/opportunity-runs") ? [run]
+              : url.endsWith("/opportunity-sources") ? []
+                : saved;
+      return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+    }));
+
+    const value = props("job");
+    render(<OpportunityDiscoveryPage {...value} />);
+    expect(await screen.findByText("已保存到分析")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "回机会中心" }));
+    expect(value.onNavigateHome).toHaveBeenCalledOnce();
+    expect(value.onOpenPreparedJob).not.toHaveBeenCalled();
   });
 });

@@ -22,11 +22,8 @@ from ..jobs.evaluations import (
     create_job_evaluation,
     execute_job_evaluation,
     get_job_evaluation,
-    retry_job_evaluation,
     review_job_evaluation,
 )
-from ..opportunities.service import OpportunityScanError
-from ..opportunities.runs import create_discovery_run, execute_discovery_run
 from ..profile.intelligence import extract_skills
 from .base import ToolContext
 from .local_data import invalid_arguments, tool_error_boundary
@@ -176,7 +173,7 @@ class AnalyzeJobAgainstStrategyTool:
         candidate = get_candidate_context("match", strategy_id=payload.strategy_id, db_path=self._db_path)
         job_skills = extract_skills(payload.job_description)
         fact_text = " ".join(item["statement"] for item in candidate["confirmed_facts"])
-        fact_skills = set(extract_skills(fact_text))
+        fact_skills = set(extract_skills(fact_text, blocked=candidate.get("blocked_claims")))
         matched = [skill for skill in job_skills if skill in fact_skills]
         missing = [skill for skill in job_skills if skill not in fact_skills]
         score = round(len(matched) / len(job_skills) * 100) if job_skills else 0
@@ -269,124 +266,6 @@ class RecordInterviewDebriefTool:
         return ToolResult(ok=True, status="done", data={"debrief": debrief}, message="面试复盘已保存，新知识仍待确认")
 
 
-class DiscoverCompaniesArguments(BaseModel):
-    query: str = Field(min_length=1, max_length=500)
-    limit: int = Field(default=8, ge=1, le=20)
-
-
-class DiscoverCompaniesTool:
-    definition = ToolDefinition(
-        name="discover_companies",
-        description="联网发现适合的公司官网和招聘页，并保存来源证据；不会自动创建岗位项目。",
-        input_schema=DiscoverCompaniesArguments.model_json_schema(),
-    )
-
-    def __init__(self, db_path: str | Path | None = None) -> None:
-        self._db_path = db_path
-
-    async def execute(self, arguments: dict[str, Any], context: ToolContext) -> ToolResult:
-        try:
-            payload = DiscoverCompaniesArguments.model_validate(arguments)
-            run = create_discovery_run(
-                "discover", trigger="chat", config={"query": payload.query, "limit": payload.limit},
-                db_path=self._db_path,
-            )
-            result = await asyncio.to_thread(execute_discovery_run, int(run["id"]), db_path=self._db_path)
-        except (ValidationError, ValueError, OpportunityScanError) as exc:
-            return invalid_arguments("公司发现失败", exc)
-        return ToolResult(ok=True, status="done", data={"run": result}, message="公司发现任务已完成，结果已进入独立岗位发现模块")
-
-
-class ScanSourcesArguments(BaseModel):
-    source_id: int | None = Field(default=None, ge=1)
-
-
-class ScanCareerSourcesTool:
-    definition = ToolDefinition(
-        name="scan_career_sources",
-        description="只读扫描已配置的官方职位来源，结果进入发现岗位池，不自动创建岗位项目。",
-        input_schema=ScanSourcesArguments.model_json_schema(),
-    )
-
-    def __init__(self, db_path: str | Path | None = None) -> None:
-        self._db_path = db_path
-
-    async def execute(self, arguments: dict[str, Any], context: ToolContext) -> ToolResult:
-        try:
-            payload = ScanSourcesArguments.model_validate(arguments)
-            run = create_discovery_run(
-                "scan", trigger="chat",
-                config={"source_ids": [payload.source_id] if payload.source_id else []},
-                db_path=self._db_path,
-            )
-            result = await asyncio.to_thread(execute_discovery_run, int(run["id"]), db_path=self._db_path)
-        except (ValidationError, ValueError, OpportunityScanError) as exc:
-            return invalid_arguments("职位来源扫描失败", exc)
-        return ToolResult(ok=True, status="done", data={"run": result}, message="职位来源扫描完成，结果已进入岗位发现模块")
-
-
-class DiscoverFundedCompaniesArguments(BaseModel):
-    strategy_id: int | None = Field(default=None, ge=1)
-    regions: list[str] = Field(default_factory=lambda: ["中国"], max_length=20)
-    industries: list[str] = Field(default_factory=list, max_length=20)
-    funding_window_days: Literal[30, 90, 180] = 90
-    limit: int = Field(default=12, ge=1, le=30)
-
-
-class DiscoverFundedCompaniesTool:
-    definition = ToolDefinition(
-        name="discover_funded_companies",
-        description="从公开证据发现近期融资公司；融资只作为公司信号，不代表正在扩招。",
-        input_schema=DiscoverFundedCompaniesArguments.model_json_schema(),
-    )
-
-    def __init__(self, db_path: str | Path | None = None) -> None:
-        self._db_path = db_path
-
-    async def execute(self, arguments: dict[str, Any], context: ToolContext) -> ToolResult:
-        try:
-            payload = DiscoverFundedCompaniesArguments.model_validate(arguments)
-            run = create_discovery_run(
-                "company_funded", strategy_id=payload.strategy_id, trigger="chat",
-                config=payload.model_dump(exclude={"strategy_id"}), db_path=self._db_path,
-            )
-            result = await asyncio.to_thread(execute_discovery_run, int(run["id"]), db_path=self._db_path)
-        except (ValidationError, ValueError) as exc:
-            return invalid_arguments("融资公司发现失败", exc)
-        return ToolResult(ok=True, status="done", data={"run": result}, message="融资公司发现任务已完成，结果带来源证据保存")
-
-
-class ProcessOpportunityPipelineArguments(BaseModel):
-    strategy_id: int | None = Field(default=None, ge=1)
-    job_ids: list[int] = Field(default_factory=list, max_length=200)
-    batch: bool = False
-    deep_analysis: Literal["none", "top", "selected"] = "none"
-
-
-class ProcessOpportunityPipelineTool:
-    definition = ToolDefinition(
-        name="process_opportunity_pipeline",
-        description="批量评估已经导入的岗位；只给出推荐，不自动入围、忽略或创建岗位项目。",
-        input_schema=ProcessOpportunityPipelineArguments.model_json_schema(),
-    )
-
-    def __init__(self, db_path: str | Path | None = None) -> None:
-        self._db_path = db_path
-
-    async def execute(self, arguments: dict[str, Any], context: ToolContext) -> ToolResult:
-        try:
-            payload = ProcessOpportunityPipelineArguments.model_validate(arguments)
-            mode = "batch" if payload.batch else "pipeline"
-            run = create_discovery_run(
-                mode, strategy_id=payload.strategy_id, trigger="chat",
-                config={**payload.model_dump(exclude={"strategy_id", "deep_analysis"}), "deep_analysis": "none"}, db_path=self._db_path,
-            )
-            result = await asyncio.to_thread(execute_discovery_run, int(run["id"]), db_path=self._db_path)
-        except (ValidationError, ValueError) as exc:
-            return invalid_arguments("岗位队列评估失败", exc)
-        return ToolResult(ok=True, status="done", data={"run": result}, message="岗位队列评估完成；用户决策状态未被自动修改")
-
-
 class CreateJobEvaluationArguments(BaseModel):
     job_id: int = Field(ge=1)
     strategy_id: int | None = Field(default=None, ge=1)
@@ -474,6 +353,16 @@ class ReviewJobEvaluationTool:
             return ToolResult(
                 ok=False, status="waiting_approval", message=message,
                 error=ToolError(code="explicit_confirmation_required", message=message),
+                data={
+                    "clarification": {
+                        "question": message,
+                        "options": [
+                            {"id": "opt_1", "label": "确认审核", "send": "确认审核刚才的岗位评估"},
+                            {"id": "opt_2", "label": "先不改", "send": "先不审核，保持系统原判"},
+                        ],
+                        "allow_custom": True,
+                    }
+                },
             )
         try:
             result = review_job_evaluation(
@@ -484,35 +373,6 @@ class ReviewJobEvaluationTool:
         except ValueError as exc:
             return invalid_arguments("岗位审核保存失败", exc)
         return ToolResult(ok=True, status="done", data={"evaluation": result}, message="岗位审核已保存，系统原判仍可追溯")
-
-
-class RunJobDeepResearchArguments(BaseModel):
-    evaluation_id: int = Field(ge=1)
-
-
-class RunJobDeepResearchTool:
-    definition = ToolDefinition(
-        name="run_job_deep_research",
-        description="基于已完成评估创建深度研究版本；最多 8 次公开搜索并保留独立快照。",
-        input_schema=RunJobDeepResearchArguments.model_json_schema(),
-    )
-
-    def __init__(self, db_path: str | Path | None = None) -> None:
-        self._db_path = db_path
-
-    async def execute(self, arguments: dict[str, Any], context: ToolContext) -> ToolResult:
-        try:
-            payload = RunJobDeepResearchArguments.model_validate(arguments)
-            created = retry_job_evaluation(payload.evaluation_id, deep=True, db_path=self._db_path)
-            result = await asyncio.to_thread(
-                execute_job_evaluation, int(created["id"]), db_path=self._db_path,
-            )
-        except (ValidationError, ValueError) as exc:
-            return invalid_arguments("岗位深度研究失败", exc)
-        return ToolResult(
-            ok=result["status"] in {"completed", "partial_failed"}, status="done",
-            data={"evaluation": result}, message="岗位深度研究版本已保存",
-        )
 
 
 class CompareJobEvaluationsArguments(BaseModel):

@@ -1,0 +1,10 @@
+{
+  "name": "careerloop-evals",
+  "private": true,
+  "scripts": {
+    "eval": "PROMPTFOO_PYTHON=../backend/.venv/bin/python promptfoo eval --no-cache"
+  },
+  "devDependencies": {
+    "promptfoo": "^0.118.0"
+  }
+}

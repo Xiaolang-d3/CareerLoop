@@ -1,12 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("opportunity discovery keeps home, creation, pipeline, and detail levels separate", async ({ page }) => {
-  const runs = [{
-    id: 7, mode: "scan", trigger: "manual", strategy_id: 2, status: "completed",
-    config: {}, total_count: 1, completed_count: 1, succeeded_count: 1,
-    failed_count: 0, waiting_count: 0, error_message: "", created_at: "2026-08-01",
-    started_at: "2026-08-01", completed_at: "2026-08-01"
-  }];
+test("opportunity hub keeps queue and job detail, without discovery run modes", async ({ page }) => {
   const jobs = [{
     id: 9, source_id: null, canonical_url: "https://example.com/job/9",
     company_name: "示例科技", job_title: "AI 产品经理", location: "上海",
@@ -19,7 +13,7 @@ test("opportunity discovery keeps home, creation, pipeline, and detail levels se
   await page.route("http://127.0.0.1:8000/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/system/database-status") return route.fulfill({ json: { status: "ready", schema_version: 5, required_schema_version: 5 } });
-    if (path === "/opportunity-runs") return route.fulfill({ json: runs });
+    if (path === "/opportunity-runs") return route.fulfill({ json: [] });
     if (path === "/discovered-jobs") return route.fulfill({ json: jobs });
     if (path === "/discovered-jobs/9") return route.fulfill({ json: jobs[0] });
     if (path === "/discovered-jobs/9/assessments") return route.fulfill({ json: [jobs[0].assessment] });
@@ -34,17 +28,19 @@ test("opportunity discovery keeps home, creation, pipeline, and detail levels se
   });
 
   await page.goto("/#/opportunities");
-  await expect(page.getByRole("heading", { name: "把岗位发现和正式项目分开" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "值得优先查看" })).toBeVisible();
   await expect(page.getByText("完整岗位说明只在下一级详情页面展示。")).not.toBeVisible();
+  await expect(page.getByRole("button", { name: /新建发现任务/ })).toHaveCount(0);
+  await expect(page.getByText("近期融资公司")).toHaveCount(0);
+  await expect(page.getByText("识别公司 ATS")).toHaveCount(0);
 
-  await page.getByRole("button", { name: "新建发现任务" }).click();
-  await expect(page).toHaveURL(/#\/opportunities\/new$/);
-  await expect(page.getByRole("heading", { name: "选择发现方式" })).toBeVisible();
-  await page.getByRole("button", { name: /近期融资公司/ }).click();
-  await expect(page.getByText("融资是公司发现信号，不代表公司一定正在扩招。")).toBeVisible();
+  await page.goto("/#/opportunities/new");
+  await expect(page).toHaveURL(/#\/opportunities$/);
+  await expect(page.getByRole("heading", { name: "选择发现方式" })).toHaveCount(0);
 
   await page.goto("/#/opportunities/pipeline");
-  await expect(page.getByRole("heading", { name: "待评估岗位队列" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "决定哪些岗位值得推进" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /分析全部/ })).toHaveCount(0);
   await page.getByRole("button", { name: "示例科技 · AI 产品经理" }).click();
   await expect(page).toHaveURL(/#\/opportunities\/jobs\/9$/);
   await expect(page.getByText("完整岗位说明只在下一级详情页面展示。")).toBeVisible();

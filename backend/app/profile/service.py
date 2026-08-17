@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from ..privacy import scan_and_redact
-from .intelligence import extract_skills, suggest_profile_fields
+from .intelligence import extract_skill_tags, suggest_profile_fields
 from ..resume.parser import parse_resume_result
 
 
@@ -31,7 +31,7 @@ def parse_candidate_resume(
         "text": text,
         "redacted_text": redacted_text,
         "privacy_findings": findings,
-        "suggested_skills": extract_skills(text),
+        "suggested_skills": extract_skill_tags(text),
         "suggested_profile": suggest_profile_fields(text),
         "character_count": len(text),
         "parser": parser,

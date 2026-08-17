@@ -1,0 +1,400 @@
+[
+  {
+    "description": "JD 匹配走分析车道",
+    "vars": {
+      "task": "route",
+      "query": "分析这个岗位是否适合我",
+      "expected": {
+        "kind": "jd_analysis",
+        "contains_tools": ["analyze_resume_against_jd", "search_resume_evidence"],
+        "forbidden_tools": ["search_public_web", "research_company"]
+      }
+    }
+  },
+  {
+    "description": "换一种 JD 说法仍进分析车道",
+    "vars": {
+      "task": "route",
+      "query": "帮我看看这个 JD 和岗位要求的匹配度",
+      "expected": {
+        "kind": "jd_analysis",
+        "contains_tools": ["analyze_resume_against_jd"],
+        "forbidden_tools": ["search_public_web"]
+      }
+    }
+  },
+  {
+    "description": "未开联网时 JD 分析不得搜网",
+    "vars": {
+      "task": "route",
+      "query": "评估这个职位缺口，不要编造我没写过的经历",
+      "expected": {
+        "kind": "jd_analysis",
+        "forbidden_tools": ["search_public_web", "ask_user"]
+      }
+    }
+  },
+  {
+    "description": "公司调查只开放公开研究工具",
+    "vars": {
+      "task": "route",
+      "query": "帮我调查一下示例科技这家公司怎么样",
+      "expected": {
+        "kind": "company_research",
+        "allowed_tools": ["research_company"],
+        "forbidden_tools": ["search_public_web", "analyze_resume_against_jd"]
+      }
+    }
+  },
+  {
+    "description": "搜公司仍走公司研究而不是通用联网",
+    "vars": {
+      "task": "route",
+      "query": "帮我搜一下，蔻蔻琪生物科技公司",
+      "expected": {
+        "kind": "company_research",
+        "allowed_tools": ["research_company"],
+        "forbidden_tools": ["search_public_web"]
+      }
+    }
+  },
+  {
+    "description": "BOSS 搜岗没有本地抓取工具",
+    "vars": {
+      "task": "route",
+      "query": "帮我在 BOSS 搜索几个岗位",
+      "expected": {
+        "kind": "conversation",
+        "empty_tools": true,
+        "forbidden_tools": ["search_public_web"]
+      }
+    }
+  },
+  {
+    "description": "融资公司发现不再走独立车道",
+    "vars": {
+      "task": "route",
+      "query": "帮我看看近期融资公司",
+      "expected": {
+        "kind": "conversation",
+        "empty_tools": true
+      }
+    }
+  },
+  {
+    "description": "识别 ATS 不再走独立车道",
+    "vars": {
+      "task": "route",
+      "query": "帮我发现适合的公司",
+      "expected": {
+        "kind": "conversation",
+        "empty_tools": true
+      }
+    }
+  },
+  {
+    "description": "深度研究不再打开独立工具面",
+    "vars": {
+      "task": "route",
+      "query": "对这份岗位报告做深度研究",
+      "expected": {
+        "kind": "conversation",
+        "empty_tools": true
+      }
+    }
+  },
+  {
+    "description": "模糊靠谱询问保持普通对话",
+    "vars": {
+      "task": "route",
+      "query": "这家靠谱吗",
+      "expected": {
+        "kind": "conversation",
+        "empty_tools": true,
+        "forbidden_tools": ["search_public_web", "research_company"]
+      }
+    }
+  },
+  {
+    "description": "寒暄不打开工具面",
+    "vars": {
+      "task": "route",
+      "query": "你好，今晚想聊聊求职近况",
+      "expected": {
+        "kind": "conversation",
+        "empty_tools": true
+      }
+    }
+  },
+  {
+    "description": "优势分析检索简历证据",
+    "vars": {
+      "task": "route",
+      "query": "帮我分析一下我的优势",
+      "expected": {
+        "kind": "profile_analysis",
+        "contains_tools": ["search_resume_evidence"],
+        "forbidden_tools": ["search_public_web"]
+      }
+    }
+  },
+  {
+    "description": "简历诊断不要求先有 JD",
+    "vars": {
+      "task": "route",
+      "query": "请评估简历，告诉我有哪些优化方向",
+      "expected": {
+        "kind": "profile_analysis",
+        "contains_tools": ["search_resume_evidence"]
+      }
+    }
+  },
+  {
+    "description": "项目亮点读取候选人上下文",
+    "vars": {
+      "task": "route",
+      "query": "帮我梳理项目亮点",
+      "expected": {
+        "kind": "project_story",
+        "contains_tools": ["get_candidate_context", "search_resume_evidence"]
+      }
+    }
+  },
+  {
+    "description": "定制高匹配简历",
+    "vars": {
+      "task": "route",
+      "query": "帮我生成一份高匹配简历",
+      "expected": {
+        "kind": "tailored_resume",
+        "contains_tools": ["generate_tailored_resume_content", "search_resume_evidence"],
+        "forbidden_tools": ["search_public_web"]
+      }
+    }
+  },
+  {
+    "description": "面试准备打开建议工具",
+    "vars": {
+      "task": "route",
+      "query": "帮我准备面试，出几道面试题",
+      "expected": {
+        "kind": "interview_preparation",
+        "contains_tools": ["generate_interview_advice", "search_resume_evidence"]
+      }
+    }
+  },
+  {
+    "description": "简历加面试走完整求职包",
+    "vars": {
+      "task": "route",
+      "query": "定制简历并准备面试",
+      "expected": {
+        "kind": "career_package",
+        "contains_tools": ["generate_tailored_resume_content", "generate_interview_advice"]
+      }
+    }
+  },
+  {
+    "description": "简历证据检索",
+    "vars": {
+      "task": "route",
+      "query": "从简历里找能证明我做过检索的项目证据",
+      "expected": {
+        "kind": "resume_evidence",
+        "contains_tools": ["search_resume_evidence"],
+        "forbidden_tools": ["search_public_web", "analyze_resume_against_jd"]
+      }
+    }
+  },
+  {
+    "description": "打开联网开关后的通用搜索",
+    "vars": {
+      "task": "route",
+      "query": "最近有什么 AI Agent 新闻？",
+      "web_search": true,
+      "expected": {
+        "kind": "web_search",
+        "allowed_tools": ["search_public_web"]
+      }
+    }
+  },
+  {
+    "description": "联网开关会盖过 JD 分析",
+    "vars": {
+      "task": "route",
+      "query": "分析这个岗位是否适合我",
+      "web_search": true,
+      "expected": {
+        "kind": "web_search",
+        "allowed_tools": ["search_public_web"]
+      }
+    }
+  },
+  {
+    "description": "岗位评估不被联网开关改道",
+    "vars": {
+      "task": "route",
+      "query": "为已保存的岗位生成完整评估和岗位决策报告",
+      "web_search": true,
+      "expected": {
+        "kind": "job_evaluation",
+        "contains_tools": ["create_job_evaluation", "get_job_evaluation"],
+        "forbidden_tools": ["search_public_web"]
+      }
+    }
+  },
+  {
+    "description": "公司新闻加联网开关仍走公司研究",
+    "vars": {
+      "task": "route",
+      "query": "最近有什么公司新闻？",
+      "web_search": true,
+      "expected": {
+        "kind": "company_research",
+        "allowed_tools": ["research_company"],
+        "forbidden_tools": ["search_public_web"]
+      }
+    }
+  },
+  {
+    "description": "岗位截图确认打开最小分析面",
+    "vars": {
+      "task": "route",
+      "query": "帮我看看",
+      "job_screenshot": true,
+      "expected": {
+        "kind": "jd_analysis",
+        "contains_tools": ["analyze_resume_against_jd", "search_resume_evidence"]
+      }
+    }
+  },
+  {
+    "description": "完整岗位评估",
+    "vars": {
+      "task": "route",
+      "query": "为已保存的岗位生成完整评估和岗位决策报告",
+      "expected": {
+        "kind": "job_evaluation",
+        "allowed_tools": ["create_job_evaluation", "get_job_evaluation"]
+      }
+    }
+  },
+  {
+    "description": "比较岗位工具面",
+    "vars": {
+      "task": "route",
+      "query": "比较岗位，看看哪个更值得申请",
+      "expected": {
+        "kind": "job_evaluation",
+        "allowed_tools": ["compare_job_evaluations", "get_job_evaluation"]
+      }
+    }
+  },
+  {
+    "description": "审核评估工具面",
+    "vars": {
+      "task": "route",
+      "query": "请审核评估里的风险",
+      "expected": {
+        "kind": "job_evaluation",
+        "allowed_tools": ["review_job_evaluation", "get_job_evaluation"]
+      }
+    }
+  },
+  {
+    "description": "面试复盘",
+    "vars": {
+      "task": "route",
+      "query": "刚面试完，帮我复盘面试官问了什么",
+      "expected": {
+        "kind": "interview_debrief",
+        "contains_tools": ["record_interview_debrief", "get_candidate_context"]
+      }
+    }
+  },
+  {
+    "description": "建立画像",
+    "vars": {
+      "task": "route",
+      "query": "开始了解我，帮我建立画像",
+      "expected": {
+        "kind": "profile_onboarding",
+        "contains_tools": ["start_profile_interview", "propose_candidate_knowledge"],
+        "forbidden_tools": ["search_public_web"]
+      }
+    }
+  },
+  {
+    "description": "补充画像经历",
+    "vars": {
+      "task": "route",
+      "query": "补充我的项目经历到画像",
+      "expected": {
+        "kind": "profile_enrichment",
+        "contains_tools": ["propose_candidate_knowledge"]
+      }
+    }
+  },
+  {
+    "description": "进行中的画像访谈保持访谈工具",
+    "vars": {
+      "task": "route",
+      "query": "AI 产品经理，上海",
+      "profile_interview_active": true,
+      "expected": {
+        "kind": "profile_enrichment",
+        "contains_tools": [
+          "record_profile_interview_answer",
+          "pause_profile_interview",
+          "start_profile_interview"
+        ],
+        "forbidden_tools": ["search_public_web"]
+      }
+    }
+  },
+  {
+    "description": "求职策略维护",
+    "vars": {
+      "task": "route",
+      "query": "帮我更新求职策略和薪资目标",
+      "expected": {
+        "kind": "career_strategy",
+        "contains_tools": ["get_candidate_context", "propose_candidate_knowledge"]
+      }
+    }
+  },
+  {
+    "description": "能力成长学习计划",
+    "vars": {
+      "task": "route",
+      "query": "根据重复缺口给我一份能力成长学习计划",
+      "expected": {
+        "kind": "skill_growth",
+        "contains_tools": ["get_candidate_context", "search_candidate_evidence"]
+      }
+    }
+  },
+  {
+    "description": "岗位加公司尽调",
+    "vars": {
+      "task": "route",
+      "query": "分析这个岗位是否适合我，同时调查公司背景和风险",
+      "expected": {
+        "kind": "job_due_diligence",
+        "contains_tools": ["analyze_resume_against_jd", "search_resume_evidence", "research_company"],
+        "forbidden_tools": ["search_public_web"]
+      }
+    }
+  },
+  {
+    "description": "明确联网搜索但不提公司",
+    "vars": {
+      "task": "route",
+      "query": "帮我联网搜索一下今天的招聘市场新闻",
+      "expected": {
+        "kind": "web_search",
+        "allowed_tools": ["search_public_web"]
+      }
+    }
+  }
+]

@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { InterviewPreparation } from "../../types";
 import { InterviewPreparationPage } from "./InterviewPreparationPage";
@@ -51,31 +51,47 @@ describe("InterviewPreparationPage", () => {
 
     expect(screen.getByRole("heading", { name: "先建立候选人画像" })).toBeInTheDocument();
     expect(screen.queryByText("暂时无法加载面试准备")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "创建个人资料" }));
+    fireEvent.click(screen.getByRole("button", { name: "创建求职资料" }));
     expect(onOpenProfile).toHaveBeenCalledOnce();
   });
 
   it("shows a project-analysis workspace before deep AI analysis is available", async () => {
     render(<InterviewPreparationPage apiBase="http://localhost:8000" accessToken="token" onOpenProfile={vi.fn()} />);
 
-    expect(await screen.findByRole("heading", { name: "项目深度解析" })).toBeInTheDocument();
+    expect(await screen.findByText("这里拆项目，不出成套练习题。先核对可追溯证据，再逐步补全项目价值、技术决策和面试表达。")).toBeInTheDocument();
+    const areaNav = screen.getByRole("navigation", { name: "面试准备模块" });
+    expect(within(areaNav).getByRole("button", { name: "项目解析" })).toHaveAttribute("aria-current", "page");
+    expect(within(areaNav).getByRole("button", { name: "知识点回顾" })).toBeInTheDocument();
+    expect(within(areaNav).getByRole("button", { name: "面试记录" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "经历候选" })).toBeInTheDocument();
     expect(screen.getByText(/还有 1 条待归类内容/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "确认为项目" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "深度 AI 解析" })).not.toBeInTheDocument();
   });
 
+  it("switches preparation areas from the in-page tabs", async () => {
+    const onNavigate = vi.fn();
+    render(<InterviewPreparationPage apiBase="http://localhost:8000" accessToken="token" initialData={preparation} onNavigate={onNavigate} onOpenProfile={vi.fn()} />);
+
+    const areaNav = await screen.findByRole("navigation", { name: "面试准备模块" });
+    fireEvent.click(within(areaNav).getByRole("button", { name: "知识点回顾" }));
+    fireEvent.click(within(areaNav).getByRole("button", { name: "面试记录" }));
+
+    expect(onNavigate).toHaveBeenCalledWith({ area: "knowledge" });
+    expect(onNavigate).toHaveBeenCalledWith({ area: "records" });
+  });
+
   it("deduplicates the initial load in development strict mode", async () => {
     render(<StrictMode><InterviewPreparationPage apiBase="http://localhost:8000" accessToken="token" onOpenProfile={vi.fn()} /></StrictMode>);
 
-    await screen.findByRole("heading", { name: "项目深度解析" });
+    await screen.findByText("这里拆项目，不出成套练习题。先核对可追溯证据，再逐步补全项目价值、技术决策和面试表达。");
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("reuses preparation data provided by the app shell", async () => {
     render(<InterviewPreparationPage apiBase="http://localhost:8000" accessToken="token" initialData={preparation} onOpenProfile={vi.fn()} />);
 
-    expect(await screen.findByRole("heading", { name: "项目深度解析" })).toBeInTheDocument();
+    expect(await screen.findByText("这里拆项目，不出成套练习题。先核对可追溯证据，再逐步补全项目价值、技术决策和面试表达。")).toBeInTheDocument();
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -99,7 +115,7 @@ describe("InterviewPreparationPage", () => {
       onOpenProfile={vi.fn()}
     />);
 
-    await screen.findByRole("heading", { name: "项目深度解析" });
+    await screen.findByText("这里拆项目，不出成套练习题。先核对可追溯证据，再逐步补全项目价值、技术决策和面试表达。");
     await waitFor(() => expect(onAutoAnalysisStarted).not.toHaveBeenCalled());
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -185,6 +201,77 @@ describe("InterviewPreparationPage", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "你如何设计简历解析模块？ 的回答" }), { target: { value: "我先设计解析接口，再处理前端展示和失败回退。" } });
     fireEvent.click(screen.getByRole("button", { name: "获取反馈" }));
     expect(await screen.findByText("说明了范围")).toBeInTheDocument();
+  });
+
+  it("supports reading a JD practice question aloud and transcribing a spoken answer", async () => {
+    class FakeSpeechRecognition {
+      lang = "";
+      continuous = false;
+      interimResults = false;
+      onresult: ((event: unknown) => void) | null = null;
+      onerror: ((event: unknown) => void) | null = null;
+      onend: (() => void) | null = null;
+      start = vi.fn();
+      stop = vi.fn();
+      abort = vi.fn();
+      constructor() { recognitionInstances.push(this); }
+    }
+    class FakeUtterance {
+      lang = "";
+      onstart: (() => void) | null = null;
+      onend: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor(public text: string) {}
+    }
+    const recognitionInstances: FakeSpeechRecognition[] = [];
+    const speak = vi.fn();
+    const cancel = vi.fn();
+    vi.stubGlobal("SpeechRecognition", FakeSpeechRecognition);
+    vi.stubGlobal("speechSynthesis", { speak, cancel });
+    vi.stubGlobal("SpeechSynthesisUtterance", FakeUtterance);
+
+    render(<InterviewPreparationPage apiBase="http://localhost:8000" accessToken="token" onOpenProfile={vi.fn()} />);
+
+    await screen.findByRole("heading", { name: "AI 求职助手项目" });
+    vi.mocked(fetch).mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        return new Response(JSON.stringify({ ...preparation, selected_project_ids: ["experience-1"] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (String(_input).endsWith("/jd-analysis")) {
+        return new Response(JSON.stringify({
+          ...preparation,
+          selected_project_ids: ["experience-1"],
+          job_analysis: {
+            job_description: "负责 AI 应用后端服务与稳定性建设，熟悉 FastAPI 和 React。",
+            summary: { fit: "具备核心开发经历", matched: [], gaps: [] },
+            projects: [{ id: "experience-1", rewrite: "", questions: [{ id: "experience-1-jd-question-1", question: "你如何设计简历解析模块？", focus: "系统设计与取舍" }] }]
+          }
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify(preparation), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "用于本次投递" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "目标 JD" })).toBeEnabled());
+    fireEvent.change(screen.getByRole("textbox", { name: "目标 JD" }), { target: { value: "负责 AI 应用后端服务与稳定性建设，熟悉 FastAPI 和 React。" } });
+    fireEvent.click(screen.getByRole("button", { name: "生成改写与问题" }));
+    await screen.findByText("匹配判断：具备核心开发经历");
+    fireEvent.click(screen.getByRole("button", { name: "面试练习" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "朗读题目" }));
+    expect(speak).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "语音回答" }));
+    expect(recognitionInstances).toHaveLength(1);
+    expect(recognitionInstances[0].start).toHaveBeenCalledTimes(1);
+    act(() => {
+      recognitionInstances[0].onresult?.({
+        resultIndex: 0,
+        results: [{ isFinal: true, 0: { transcript: "我先设计解析接口" }, length: 1 }]
+      });
+    });
+
+    expect(screen.getByRole("textbox", { name: "你如何设计简历解析模块？ 的回答" })).toHaveValue("我先设计解析接口");
   });
 
   it("shows the JD analysis stage while the model is working", async () => {

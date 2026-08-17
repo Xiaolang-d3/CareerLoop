@@ -36,6 +36,7 @@ class ModelMonitorTest(unittest.TestCase):
         error_code: str = "",
         latency_ms: int = 100,
         response_id: str = "",
+        total_tokens: int = 0,
     ) -> None:
         record_model_service_event(
             request_kind="stream",
@@ -43,6 +44,7 @@ class ModelMonitorTest(unittest.TestCase):
             error_code=error_code,
             error_message="safe operational detail",
             latency_ms=latency_ms,
+            total_tokens=total_tokens,
             model_name="monitor-test-model",
             base_url="https://models.example.test/v1",
             response_id=response_id,
@@ -55,10 +57,13 @@ class ModelMonitorTest(unittest.TestCase):
         self.assertEqual(snapshot["status"], "unknown")
         self.assertEqual(snapshot["summary"]["total_requests"], 0)
         self.assertIsNone(snapshot["summary"]["success_rate"])
+        self.assertEqual(snapshot["usage"]["total_tokens"], 0)
+        self.assertIsNone(snapshot["usage"]["remaining_quota"])
+        self.assertFalse(snapshot["usage"]["quota_available"])
 
     def test_snapshot_aggregates_latency_and_error_types(self) -> None:
-        self.record("success", latency_ms=120)
-        self.record("success", latency_ms=280)
+        self.record("success", latency_ms=120, total_tokens=80)
+        self.record("success", latency_ms=280, total_tokens=120)
         self.record("error", error_code="request_timeout", latency_ms=60000)
 
         snapshot = get_model_monitor_snapshot(db_path=self.db_path)
@@ -71,6 +76,8 @@ class ModelMonitorTest(unittest.TestCase):
         self.assertEqual(snapshot["summary"]["p95_latency_ms"], 280)
         self.assertEqual(snapshot["summary"]["timeout_count"], 1)
         self.assertEqual(snapshot["error_breakdown"][0]["label"], "响应超时")
+        self.assertEqual(snapshot["usage"]["total_tokens"], 200)
+        self.assertIsNone(snapshot["usage"]["remaining_quota"])
 
     def test_response_id_is_persisted_for_traceability(self) -> None:
         self.record("success", response_id="chatcmpl-abc123")
