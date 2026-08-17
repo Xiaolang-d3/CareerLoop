@@ -1,5 +1,7 @@
 import type { JobProject } from "../../types";
 
+export const RESUME_PREP_JOB_TITLE = "按简历准备";
+
 const PROFILE_FIELDS = ["name", "targetRole", "targetCity", "skills", "resumeText"] as const;
 
 export function splitHomeTags(value: string) {
@@ -41,4 +43,12 @@ export function latestJobAnalysisAt(jobs: JobProject[]) {
     .filter((value): value is string => Boolean(value));
   if (!times.length) return null;
   return times.reduce((latest, current) => (current > latest ? current : latest));
+}
+
+export function jobLabel(job: JobProject) {
+  return [job.company_name.trim(), job.job_title.trim()].filter(Boolean).join(" · ") || "未命名岗位";
+}
+
+export function realJobs(jobs: JobProject[]) {
+  return jobs.filter((job) => job.job_title !== RESUME_PREP_JOB_TITLE);
 }

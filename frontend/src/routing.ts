@@ -2,12 +2,13 @@ import type { ViewKey } from "./types";
 
 export type SettingsPage = "overview" | "profile" | "model" | "agent";
 type OpportunitiesPage = "index" | "new" | "pipeline" | "sources" | "run" | "job";
+export type WorkbenchPage = "index" | "new" | "detail" | "resume" | "interview" | "evaluation" | "evaluation_section" | "evaluation_deep" | "comparison";
 export type PreparationPage = "projects" | "knowledge" | "records";
 export type PreparationFocus = "questions" | "knowledge" | "gaps";
 
 export type AppRoute =
   | { section: "opportunities"; page?: OpportunitiesPage; runId?: number; discoveredJobId?: number }
-  | { section: "workbench"; page?: "index" | "new" | "detail" | "evaluation" | "evaluation_section" | "evaluation_deep" | "comparison"; jobId?: number; sectionKey?: "a" | "b" | "c" | "d" | "e" | "f" | "g"; comparisonId?: number }
+  | { section: "workbench"; page?: WorkbenchPage; jobId?: number; sectionKey?: "a" | "b" | "c" | "d" | "e" | "f" | "g"; comparisonId?: number }
   | { section: "interview-prep"; page?: PreparationPage; experienceId?: string; focus?: PreparationFocus; nodeId?: string }
   | { section: "dashboard" }
   | { section: "chat"; conversationId?: number }
@@ -45,11 +46,17 @@ export function parseAppHash(hash: string): AppRoute | null {
   const discoveredJobMatch = path.match(/^opportunities\/jobs\/(\d+)$/);
   if (discoveredJobMatch) return { section: "opportunities", page: "job", discoveredJobId: Number(discoveredJobMatch[1]) };
   if (path === "workbench") return { section: "workbench", page: "index" };
-  if (path === "workbench/new") return { section: "workbench", page: "new" };
+  if (path === "workbench/new") return { section: "workbench", page: "index" };
+  if (path === "workbench/resume") return { section: "workbench", page: "resume" };
+  if (path === "workbench/interview") return { section: "workbench", page: "interview" };
+  const jobResumeMatch = path.match(/^workbench\/jobs\/(\d+)\/resume$/);
+  if (jobResumeMatch) return { section: "workbench", page: "resume", jobId: Number(jobResumeMatch[1]) };
+  const jobInterviewMatch = path.match(/^workbench\/jobs\/(\d+)\/interview$/);
+  if (jobInterviewMatch) return { section: "workbench", page: "interview", jobId: Number(jobInterviewMatch[1]) };
   const evaluationSectionMatch = path.match(/^workbench\/jobs\/(\d+)\/evaluation\/([a-g])$/);
   if (evaluationSectionMatch) return { section: "workbench", page: "evaluation_section", jobId: Number(evaluationSectionMatch[1]), sectionKey: evaluationSectionMatch[2] as "a" | "b" | "c" | "d" | "e" | "f" | "g" };
   const evaluationDeepMatch = path.match(/^workbench\/jobs\/(\d+)\/evaluation\/deep$/);
-  if (evaluationDeepMatch) return { section: "workbench", page: "evaluation_deep", jobId: Number(evaluationDeepMatch[1]) };
+  if (evaluationDeepMatch) return { section: "workbench", page: "evaluation", jobId: Number(evaluationDeepMatch[1]) };
   const evaluationMatch = path.match(/^workbench\/jobs\/(\d+)\/evaluation$/);
   if (evaluationMatch) return { section: "workbench", page: "evaluation", jobId: Number(evaluationMatch[1]) };
   const comparisonMatch = path.match(/^workbench\/comparisons\/(\d+)$/);
@@ -113,10 +120,14 @@ export function appRouteHash(route: AppRoute): string {
     return "#/opportunities";
   }
   if (route.section === "workbench") {
-    if (route.page === "new") return "#/workbench/new";
+    if (route.page === "new") return "#/workbench";
+    if (route.page === "resume" && route.jobId) return `#/workbench/jobs/${route.jobId}/resume`;
+    if (route.page === "resume") return "#/workbench/resume";
+    if (route.page === "interview" && route.jobId) return `#/workbench/jobs/${route.jobId}/interview`;
+    if (route.page === "interview") return "#/workbench/interview";
     if (route.page === "detail" && route.jobId) return `#/workbench/jobs/${route.jobId}`;
     if (route.page === "evaluation_section" && route.jobId && route.sectionKey) return `#/workbench/jobs/${route.jobId}/evaluation/${route.sectionKey}`;
-    if (route.page === "evaluation_deep" && route.jobId) return `#/workbench/jobs/${route.jobId}/evaluation/deep`;
+    if (route.page === "evaluation_deep" && route.jobId) return `#/workbench/jobs/${route.jobId}/evaluation`;
     if (route.page === "evaluation" && route.jobId) return `#/workbench/jobs/${route.jobId}/evaluation`;
     if (route.page === "comparison" && route.comparisonId) return `#/workbench/comparisons/${route.comparisonId}`;
     return "#/workbench";

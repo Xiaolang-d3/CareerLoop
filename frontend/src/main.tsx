@@ -1,7 +1,8 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { AgentSubscriber, HttpAgent as HttpAgentType } from "@ag-ui/client";
-import { createApiClient } from "./api/client";
+import { createApiClient, fetchWithTimeout } from "./api/client";
+import { readAnalysisRunStream, type AnalysisRunEvent } from "./features/jobs/analysis-run";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { AuthGate } from "./components/AuthGate";
 import { AppSidebar } from "./components/AppSidebar";
@@ -39,6 +40,8 @@ import type {
   JobProjectDraft,
   ResumeChangeDecision,
   ResumeProfileSuggestion,
+  ResumeLayoutSettings,
+  ResumeStyle,
   ResumeTemplate,
   ResumeVersion,
   ResumeVersionSummary,
@@ -64,6 +67,7 @@ import "./AppStyles";
 
 const loadChatWorkspace = () => import("./components/ChatWorkspace");
 const loadWorkspaceViews = () => import("./components/WorkspaceViews");
+const loadHomePage = () => import("./features/home/HomePage");
 const loadSettingsWorkspace = () => import("./features/settings/SettingsWorkspace");
 const loadProfileSettingsPage = () => import("./features/settings/ProfileSettingsPage");
 const loadInterviewPreparationPage = () => import("./features/interview/InterviewPreparationPage");
@@ -75,8 +79,8 @@ const WorkbenchView = lazy(() => loadWorkspaceViews().then((module) => ({
   default: module.WorkbenchView
 })));
 
-const DashboardView = lazy(() => loadWorkspaceViews().then((module) => ({
-  default: module.DashboardView
+const HomePage = lazy(() => loadHomePage().then((module) => ({
+  default: module.HomePage
 })));
 
 const AgentOperationsDashboard = lazy(() => import("./features/settings/AgentOperationsDashboard").then((module) => ({
@@ -120,7 +124,7 @@ const pagePrefetcher = createPagePrefetcher({
   records: loadInterviewPreparationPage,
   workbench: loadWorkspaceViews,
   opportunities: loadOpportunityDiscoveryPage,
-  dashboard: loadWorkspaceViews,
+  dashboard: loadHomePage,
   settings: loadSettingsWorkspace
 });
 
@@ -404,16 +408,50 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
     }
   }
 
-  async function runQuickMatch(payload: {
+  async function runQuickMatch(
+    payload: {
+      job_description: string;
+      job_title?: string;
+      company_name?: string;
+    },
+    onEvent?: (event: AnalysisRunEvent) => void
+  ): Promise<QuickMatchResult> {
+    if (!onEvent) {
+      return fetchJson<QuickMatchResult>("/quick-match", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+    }
+    const headers = new Headers({
+      "Content-Type": "application/json",
+      Accept: "text/event-stream"
+    });
+    if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
+    const response = await fetchWithTimeout(
+      `${apiBase}/quick-match/run`,
+      { method: "POST", headers, body: JSON.stringify(payload) },
+      90_000
+    );
+    return readAnalysisRunStream(response, onEvent);
+  }
+
+  async function applyResumeRewrite(payload: {
+    original: string;
+    suggested: string;
     job_description: string;
     job_title?: string;
     company_name?: string;
   }): Promise<QuickMatchResult> {
-    return fetchJson<QuickMatchResult>("/quick-match", {
+    const result = await fetchJson<QuickMatchResult & { resume_text?: string }>("/quick-match/apply-rewrite", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
+    if (result.resume_text) {
+      setCandidateEditor((current) => ({ ...current, resumeText: result.resume_text || current.resumeText }));
+    }
+    return result;
   }
 
   async function refreshResumeVersions(
@@ -434,16 +472,16 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
     return versions;
   }
 
-  async function createTailoredResumeVersion(job: JobProject): Promise<ResumeVersion> {
+  async function createTailoredResumeVersion(job?: JobProject): Promise<ResumeVersion> {
     setResumeVersionBusy(true);
     setErrorMessage("");
     try {
       const version = await fetchJson<ResumeVersion>(
-        `/jobs/${job.id}/resume-versions`,
+        job ? `/jobs/${job.id}/resume-versions` : "/resume-versions",
         { method: "POST" }
       );
       setResumeVersion(version);
-      await refreshResumeVersions(job.id, version.id);
+      if (job) await refreshResumeVersions(job.id, version.id);
       setNoticeMessage("简历已生成");
       return version;
     } catch (error) {
@@ -522,7 +560,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
 
   async function updateTailoredResumeVersion(
     versionId: number,
-    patch: { status?: "draft" | "final"; template_id?: ResumeTemplate }
+    patch: { status?: "draft" | "final"; template_id?: ResumeTemplate; style_id?: ResumeStyle; layout?: ResumeLayoutSettings }
   ) {
     setResumeVersionBusy(true);
     setErrorMessage("");
@@ -2034,17 +2072,23 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
         ) : null}
 
         {activeView === "dashboard" ? (
-          <Suspense fallback={<PageLoading label="正在加载数据看板…" />}>
-            <DashboardView
-              workflow={workflow}
-              conversations={conversations}
+          <Suspense fallback={<PageLoading label="正在加载首页…" />}>
+            <HomePage
+              apiBase={apiBase}
+              accessToken={accessToken}
+              profileName={candidateEditor.name}
+              targetRole={candidateEditor.targetRole}
+              targetCity={candidateEditor.targetCity}
+              resumeText={candidateEditor.resumeText}
+              resumeFilename={candidateEditor.resumeFilename}
+              skills={candidateEditor.skills}
+              profileLoaded={candidateProfileLoaded}
               jobs={jobs}
-              nextStep={nextStep}
-              onNextStep={handleNextStep}
-              onOpenConversation={(conversationId) => {
-                setCurrentConversationId(conversationId);
-                setActiveView("chat");
-              }}
+              jobsLoaded={databaseReady}
+              onOpenAnalysis={() => navigateRoute({ section: "workbench", page: "index" })}
+              onOpenResume={() => navigateRoute({ section: "workbench", page: "resume" })}
+              onOpenInterview={() => navigateRoute({ section: "workbench", page: "interview" })}
+              onOpenProfile={() => navigateRoute({ section: "settings", page: "profile" })}
             />
           </Suspense>
         ) : null}
@@ -2138,7 +2182,7 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
               />
             ) : (
             <WorkbenchView
-              viewMode={appRoute.section === "workbench" && ["index", "new", "detail"].includes(appRoute.page || "index") ? (appRoute.page || "index") as "index" | "new" | "detail" : "index"}
+              viewMode={appRoute.section === "workbench" && ["index", "new", "detail", "resume", "interview"].includes(appRoute.page || "index") ? (appRoute.page || "index") as "index" | "new" | "detail" | "resume" | "interview" : "index"}
               hasProfile={hasSavedResume}
               resumeFilename={candidateEditor.resumeFilename}
               resumeText={candidateEditor.resumeText}
@@ -2147,7 +2191,6 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
               chatBusy={chatBusy}
               jobBusy={jobBusy}
               jobImportBusy={jobImportBusy}
-              jobImportActivity={jobImportActivity}
               analysis={jobEvaluation}
               analysisBusy={jobEvaluationBusy}
               resumeVersions={resumeVersions}
@@ -2162,13 +2205,23 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
               selectedJobId={selectedJobId}
               onSelectJob={setSelectedJobId}
               onNavigateIndex={() => navigateRoute({ section: "workbench", page: "index" })}
-              onNavigateNew={() => navigateRoute({ section: "workbench", page: "new" })}
+              onNavigateNew={() => navigateRoute({ section: "workbench", page: "index" })}
               onNavigateDetail={(jobId) => navigateRoute({ section: "workbench", page: "detail", jobId })}
+              onNavigateResume={(jobId) => navigateRoute(
+                jobId
+                  ? { section: "workbench", page: "resume", jobId }
+                  : { section: "workbench", page: "resume" }
+              )}
+              onNavigateInterview={(jobId) => navigateRoute(
+                jobId
+                  ? { section: "workbench", page: "interview", jobId }
+                  : { section: "workbench", page: "interview" }
+              )}
               onNavigateEvaluation={(jobId) => navigateRoute({ section: "workbench", page: "evaluation", jobId })}
               onCreateComparison={createJobComparison}
               onQuickMatch={runQuickMatch}
+              onApplyResumeRewrite={applyResumeRewrite}
               onSaveJob={saveJobProject}
-              onPreviewJobUrl={previewJobLink}
               onPreviewJobText={previewJobText}
               onPreviewJobScreenshot={previewJobScreenshot}
               onDeleteJob={removeJobProject}
@@ -2184,6 +2237,11 @@ function App({ accessToken, onLogout }: { accessToken: string; onLogout: () => v
               onCreateInterviewRound={createInterviewSchedule}
               onUpdateInterviewRound={updateInterviewSchedule}
               onAddTimelineNote={addTimelineNote}
+              conversations={conversations}
+              onOpenChat={(conversationId) => {
+                setCurrentConversationId(conversationId);
+                navigateRoute({ section: "chat", conversationId });
+              }}
               onOpenProfile={() => navigateRoute({ section: "settings", page: "profile" })}
             />
             )}

@@ -12,12 +12,19 @@ describe("home route", () => {
 describe("workbench route hierarchy", () => {
   it("keeps the project index, creation page, and detail page distinct", () => {
     expect(parseAppHash("#/workbench")).toEqual({ section: "workbench", page: "index" });
-    expect(parseAppHash("#/workbench/new")).toEqual({ section: "workbench", page: "new" });
+    expect(parseAppHash("#/workbench/new")).toEqual({ section: "workbench", page: "index" });
+    expect(parseAppHash("#/workbench/resume")).toEqual({ section: "workbench", page: "resume" });
+    expect(parseAppHash("#/workbench/interview")).toEqual({ section: "workbench", page: "interview" });
+    expect(parseAppHash("#/workbench/jobs/42/resume")).toEqual({ section: "workbench", page: "resume", jobId: 42 });
+    expect(parseAppHash("#/workbench/jobs/42/interview")).toEqual({ section: "workbench", page: "interview", jobId: 42 });
+    expect(appRouteHash({ section: "workbench", page: "new" })).toBe("#/workbench");
+    expect(appRouteHash({ section: "workbench", page: "resume", jobId: 42 })).toBe("#/workbench/jobs/42/resume");
+    expect(appRouteHash({ section: "workbench", page: "interview" })).toBe("#/workbench/interview");
     expect(parseAppHash("#/workbench/jobs/42")).toEqual({ section: "workbench", page: "detail", jobId: 42 });
     expect(appRouteHash({ section: "workbench", page: "detail", jobId: 42 })).toBe("#/workbench/jobs/42");
     expect(parseAppHash("#/workbench/jobs/42/evaluation")).toEqual({ section: "workbench", page: "evaluation", jobId: 42 });
     expect(parseAppHash("#/workbench/jobs/42/evaluation/g")).toEqual({ section: "workbench", page: "evaluation_section", jobId: 42, sectionKey: "g" });
-    expect(parseAppHash("#/workbench/jobs/42/evaluation/deep")).toEqual({ section: "workbench", page: "evaluation_deep", jobId: 42 });
+    expect(parseAppHash("#/workbench/jobs/42/evaluation/deep")).toEqual({ section: "workbench", page: "evaluation", jobId: 42 });
     expect(parseAppHash("#/workbench/comparisons/8")).toEqual({ section: "workbench", page: "comparison", comparisonId: 8 });
   });
 
