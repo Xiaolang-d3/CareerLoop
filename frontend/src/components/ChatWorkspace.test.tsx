@@ -1,7 +1,7 @@
 import { createRef } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ChatWorkspace, type AgentRunResult, type ChatMessage } from "./ChatWorkspace";
+import { ChatWorkspace, interviewHintParts, interviewQuestionParts, type AgentRunResult, type ChatMessage } from "./ChatWorkspace";
 
 const mermaidMocks = vi.hoisted(() => ({
   initialize: vi.fn(),
@@ -108,38 +108,197 @@ describe("ChatWorkspace", () => {
     renderChat();
 
     expect(screen.getByLabelText("围绕一个项目追问我 · 对话操作")).toBeInTheDocument();
+    expect(screen.getByRole("toolbar", { name: "对话操作" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重命名对话" })).toHaveTextContent("围绕一个项目追问我");
     expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();
     expect(screen.queryByText("准备中")).not.toBeInTheDocument();
     expect(screen.queryByText("CareerLoop · 面试准备")).not.toBeInTheDocument();
   });
 
-  it("opens conversation history as a drawer instead of a persistent column", () => {
+  it("keeps session title and tools in the conversation rail instead of a second page heading", () => {
     renderChat();
 
-    expect(screen.queryByRole("button", { name: "新建对话" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "对话记录" }));
-
+    const header = screen.getByLabelText("围绕一个项目追问我 · 对话操作");
+    const thread = document.querySelector(".chat-thread");
+    expect(header.compareDocumentPosition(thread as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(header).toHaveClass("has-session");
+    expect(header.querySelector(".chat-session-title")).toHaveTextContent("围绕一个项目追问我");
+    expect(header.querySelector(".chat-session-mark")).toBeInTheDocument();
+    expect(header.querySelector(".chat-session-tools")).toBe(screen.getByRole("toolbar", { name: "对话操作" }));
     expect(screen.getByRole("button", { name: "新建对话" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "对话记录" })).toBeInTheDocument();
+    expect(header.querySelector(".chat-session-tools")).not.toHaveTextContent("新对话");
+    expect(header.querySelector(".chat-session-tools")).not.toHaveTextContent("历史");
+  });
+
+  it("recedes an untitled session so the welcome owns the empty canvas", () => {
+    render(
+      <ChatWorkspace
+        conversationTitle=""
+        messages={[]}
+        hiddenMessageCount={0}
+        chatBusy={false}
+        currentConversationId={null}
+        conversations={[]}
+        conversationBusy={false}
+        waitingForUser={false}
+        taskCancelBusy={false}
+        retryDraft={null}
+        chatEndRef={createRef<HTMLDivElement>()}
+        chatInputRef={createRef<HTMLTextAreaElement>()}
+        onLoadMore={vi.fn()}
+        onSelectConversation={vi.fn()}
+        onCreateConversation={vi.fn()}
+        onRenameConversation={vi.fn()}
+        onArchiveConversation={vi.fn()}
+        onRemoveConversation={vi.fn()}
+        attachmentBusy={false}
+        attachmentConfig={null}
+        webSearchAvailable={false}
+        onUploadAttachment={vi.fn()}
+        onRemoveAttachment={vi.fn()}
+        onAttachmentInvalid={vi.fn()}
+        onSuggestedAction={vi.fn()}
+        onCancelTask={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+        onEdit={vi.fn()}
+        onRegenerate={vi.fn()}
+      />
+    );
+
+    const header = screen.getByLabelText("新对话 · 对话操作");
+    expect(header).toHaveClass("is-untitled");
+    expect(header.querySelector(".chat-session-title")).toHaveClass("is-static");
+    expect(screen.getByRole("toolbar", { name: "对话操作" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "说说你现在卡在哪。" })).toBeInTheDocument();
+  });
+
+  it("recedes a default-titled empty session so the opening line owns the canvas", () => {
+    render(
+      <ChatWorkspace
+        conversationTitle="新对话"
+        messages={[]}
+        hiddenMessageCount={0}
+        chatBusy={false}
+        currentConversationId={1}
+        conversations={[{ ...conversation, title: "新对话" }]}
+        conversationBusy={false}
+        waitingForUser={false}
+        taskCancelBusy={false}
+        retryDraft={null}
+        chatEndRef={createRef<HTMLDivElement>()}
+        chatInputRef={createRef<HTMLTextAreaElement>()}
+        onLoadMore={vi.fn()}
+        onSelectConversation={vi.fn()}
+        onCreateConversation={vi.fn()}
+        onRenameConversation={vi.fn()}
+        onArchiveConversation={vi.fn()}
+        onRemoveConversation={vi.fn()}
+        attachmentBusy={false}
+        attachmentConfig={null}
+        webSearchAvailable={false}
+        onUploadAttachment={vi.fn()}
+        onRemoveAttachment={vi.fn()}
+        onAttachmentInvalid={vi.fn()}
+        onSuggestedAction={vi.fn()}
+        onCancelTask={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+        onEdit={vi.fn()}
+        onRegenerate={vi.fn()}
+      />
+    );
+
+    const header = screen.getByLabelText("新对话 · 对话操作");
+    expect(header).toHaveClass("is-untitled");
+    expect(header.querySelector(".chat-session-title")).toHaveTextContent("新对话");
+    expect(screen.getByRole("heading", { level: 2, name: "说说你现在卡在哪。" })).toBeInTheDocument();
+  });
+
+  it("renames the current conversation from the session title", () => {
+    const props = renderChat();
+
+    fireEvent.click(screen.getByRole("button", { name: "重命名对话" }));
+
+    expect(props.onRenameConversation).toHaveBeenCalledWith(conversation);
+  });
+
+  it("marks the history tool as open while the drawer is visible", () => {
+    renderChat();
+
+    const toggle = screen.getByRole("button", { name: "对话记录" });
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveClass("is-open");
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("complementary", { name: "对话记录" })).toBeInTheDocument();
   });
 
-  it("renders a quieter welcome with starter cards", () => {
-    renderChat([]);
+  it("opens conversation history as a drawer instead of a persistent column", () => {
+    renderChat();
 
-    expect(screen.getByText("面试准备")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "从一个具体问题开始。" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /梳理项目表达/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /复盘一次面试/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "新建对话" })).toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "对话记录" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "对话记录" }));
+
+    expect(screen.getAllByRole("button", { name: "新建对话" })).toHaveLength(2);
+    expect(screen.getByRole("complementary", { name: "对话记录" })).toBeInTheDocument();
   });
 
-  it("fills the composer from a starter card instead of sending", async () => {
+  it("creates a conversation from the session header", () => {
+    const props = renderChat();
+
+    fireEvent.click(screen.getByRole("button", { name: "新建对话" }));
+
+    expect(props.onCreateConversation).toHaveBeenCalledOnce();
+  });
+
+  it("closes the conversation drawer with Escape", () => {
+    renderChat();
+
+    fireEvent.click(screen.getByRole("button", { name: "对话记录" }));
+    expect(screen.getByRole("complementary", { name: "对话记录" })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(screen.queryByRole("complementary", { name: "对话记录" })).not.toBeInTheDocument();
+  });
+
+  it("renders an opening line with optional drafts below the composer", () => {
+    renderChat([]);
+
+    expect(screen.queryByText("准备与复盘")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "说说你现在卡在哪。" })).toBeInTheDocument();
+    expect(screen.queryByText("没有固定题目。想出题去面试问答，想拆项目去项目解析。")).not.toBeInTheDocument();
+    expect(screen.queryByText("面试问答")).not.toBeInTheDocument();
+    expect(screen.queryByText("项目解析")).not.toBeInTheDocument();
+    const drafts = screen.getByLabelText("可选草稿");
+    const welcome = document.querySelector(".chat-welcome");
+    const composer = document.querySelector(".chat-composer");
+    expect(composer?.contains(welcome as Node)).toBe(true);
+    expect(composer?.contains(drafts)).toBe(true);
+    expect(screen.queryByRole("button", { name: "看这份简历" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "对照一个岗位" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "复盘一场面试" })).toBeInTheDocument();
+    expect(screen.getByLabelText("输入消息")).toHaveAttribute("placeholder", "说说目标、卡点，或一段经历…");
+  });
+
+  it("hides starter prompts once the conversation has messages", () => {
+    renderChat();
+
+    expect(screen.queryByLabelText("可选草稿")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "对照一个岗位" })).not.toBeInTheDocument();
+  });
+
+  it("fills the composer from a draft instead of sending", async () => {
     const props = renderChat([]);
 
-    fireEvent.click(screen.getByRole("button", { name: /练习项目追问/ }));
+    fireEvent.click(screen.getByRole("button", { name: "对照一个岗位" }));
 
     expect(props.onSend).not.toHaveBeenCalled();
     await waitFor(() => {
-      expect(screen.getByLabelText("输入消息")).toHaveValue("围绕这个项目追问我。项目是：");
+      expect(screen.getByLabelText("输入消息")).toHaveValue("对照这个岗位看我适不适合。岗位是：");
     });
   });
 
@@ -186,16 +345,125 @@ describe("ChatWorkspace", () => {
     );
 
     const resume = screen.getByRole("button", { name: "查看已保存简历" });
-    expect(resume).toHaveTextContent("简历");
+    expect(resume).toHaveTextContent("已保存简历");
     expect(resume).toHaveAttribute("title", "查看已保存简历，提问时会自动参考");
-    expect(screen.getByText("分析")).toBeInTheDocument();
+    expect(screen.getByText("示例公司 · 后端")).toBeInTheDocument();
+    expect(screen.queryByText("分析")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /分析/ })).not.toBeInTheDocument();
     expect(screen.queryByText("参考简历原文")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "看这份简历" })).toBeInTheDocument();
 
     fireEvent.click(resume);
     expect(onOpenResume).toHaveBeenCalledOnce();
     expect(onSend).not.toHaveBeenCalled();
     expect(screen.getByLabelText("输入消息")).toHaveValue("");
+  });
+
+  it("shows clarification choices in the composer and sends the selected option", async () => {
+    const onSend = vi.fn();
+    const onSuggestedAction = vi.fn();
+    render(
+      <ChatWorkspace
+        {...{
+          conversationTitle: conversation.title,
+          messages: [message, {
+            id: 12,
+            role: "assistant",
+            content: "你指的是哪家公司？",
+            created_at: "2026-08-11T00:01:00Z",
+            payload: {
+              agent: {
+                provider: "test",
+                platform: "local",
+                rounds: 1,
+                status: "waiting_user",
+                events: [{
+                  round: 1,
+                  tool_call_id: "ask-1",
+                  tool_name: "ask_user",
+                  status: "waiting_approval",
+                  message: "你指的是哪家公司？",
+                  data: {
+                    clarification: {
+                      question: "你指的是哪家公司？",
+                      options: [
+                        { id: "opt_1", label: "字节跳动", send: "按字节跳动继续" },
+                        { id: "opt_2", label: "字节跳动教育", send: "按字节跳动教育继续" }
+                      ],
+                      allow_custom: true
+                    }
+                  }
+                }]
+              }
+            }
+          }],
+          hiddenMessageCount: 0,
+          chatBusy: false,
+          currentConversationId: conversation.id,
+          conversations: [conversation],
+          conversationBusy: false,
+          waitingForUser: true,
+          latestAgent: {
+            provider: "test",
+            platform: "local",
+            rounds: 1,
+            status: "waiting_user",
+            events: [{
+              round: 1,
+              tool_call_id: "ask-1",
+              tool_name: "ask_user",
+              status: "waiting_approval",
+              message: "你指的是哪家公司？",
+              data: {
+                clarification: {
+                  question: "你指的是哪家公司？",
+                  options: [
+                    { id: "opt_1", label: "字节跳动", send: "按字节跳动继续" },
+                    { id: "opt_2", label: "字节跳动教育", send: "按字节跳动教育继续" }
+                  ],
+                  allow_custom: true
+                }
+              }
+            }]
+          },
+          taskCancelBusy: false,
+          retryDraft: null,
+          chatEndRef: createRef<HTMLDivElement>(),
+          chatInputRef: createRef<HTMLTextAreaElement>(),
+          onLoadMore: vi.fn(),
+          onSelectConversation: vi.fn(),
+          onCreateConversation: vi.fn(),
+          onRenameConversation: vi.fn(),
+          onArchiveConversation: vi.fn(),
+          onRemoveConversation: vi.fn(),
+          attachmentBusy: false,
+          attachmentConfig: null,
+          webSearchAvailable: false,
+          onUploadAttachment: vi.fn(),
+          onRemoveAttachment: vi.fn(),
+          onAttachmentInvalid: vi.fn(),
+          onSuggestedAction,
+          onCancelTask: vi.fn(),
+          onSend,
+          onStop: vi.fn(),
+          onEdit: vi.fn(),
+          onRegenerate: vi.fn()
+        }}
+      />
+    );
+
+    const clarifier = screen.getByLabelText("需要你确认后继续");
+    expect(clarifier).toHaveTextContent("你指的是哪家公司？");
+    expect(screen.getByLabelText("输入消息")).toHaveAttribute("placeholder", "回答上面的问题，或直接说下一件…");
+    expect(clarifier).toHaveTextContent("答当前问题则继续");
+    expect(screen.queryByRole("button", { name: /继续处理/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("已暂停，等待你的操作")).not.toBeInTheDocument();
+    expect(document.querySelector(".agent-result-note")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("输出结果")).toHaveTextContent("你指的是哪家公司？");
+
+    fireEvent.click(screen.getByRole("button", { name: "字节跳动" }));
+    expect(onSend).toHaveBeenCalledWith("按字节跳动继续");
+    expect(onSuggestedAction).not.toHaveBeenCalled();
   });
 
   it("collapses the thinking process until expanded", () => {
@@ -306,8 +574,8 @@ describe("ChatWorkspace", () => {
       }
     ], { chatBusy: true });
 
-    const toggle = screen.getByRole("button", { name: "正在整理要点" });
-    fireEvent.click(toggle);
+    expect(screen.getByText("正在整理要点")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "正在整理要点" })).not.toBeInTheDocument();
     expect(screen.queryByText(/已识别为/)).not.toBeInTheDocument();
     expect(document.querySelector(".thinking-process-scroll")).not.toBeInTheDocument();
   });
@@ -362,6 +630,7 @@ describe("ChatWorkspace", () => {
     renderChat([message], { chatBusy: true });
 
     expect(screen.getByText("正在整理要点")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "正在整理要点" })).not.toBeInTheDocument();
     expect(screen.queryByText("正在思考")).not.toBeInTheDocument();
   });
 
@@ -580,6 +849,62 @@ describe("ChatWorkspace", () => {
     expect(fallback).toHaveTextContent("暂时无法显示这张图");
     expect(fallback.querySelector("code.language-mermaid")?.textContent).toBe(source);
     expect(screen.getByRole("button", { name: "复制源码" })).toBeInTheDocument();
+  });
+
+  it("splits interview question stems and hints out of a long assistant answer", () => {
+    renderChat([
+      message,
+      assistantMessage([
+        "可以。先从检索质量开始。",
+        "",
+        "**Q1 | RAG 会议问答：检索到了，但答案仍偏泛，你怎么收？**",
+        "",
+        "追问：你怎么判断召回够不够用。",
+        "",
+        "Hint：先讲判断标准，再讲你改过的一处。"
+      ].join("\n"))
+    ]);
+
+    const stem = document.querySelector(".interview-question-stem");
+    expect(stem).toBeInTheDocument();
+    expect(stem?.querySelector(".interview-question-index")).toHaveTextContent("Q1");
+    expect(stem).toHaveTextContent("RAG 会议问答：检索到了，但答案仍偏泛，你怎么收？");
+    expect(stem).not.toHaveTextContent("Q1 |");
+    expect(document.querySelector(".interview-hint-label")).toHaveTextContent("Hint");
+    expect(screen.getByText("先讲判断标准，再讲你改过的一处。")).toBeInTheDocument();
+    expect(document.querySelector(".interview-followup-label")).toHaveTextContent("追问");
+    expect(document.querySelector(".message-markdown")).toHaveClass("interview-drill");
+
+    const dialog = screen.getByLabelText("输出结果");
+    const copy = screen.getByLabelText("复制回答");
+    const regenerate = screen.getByLabelText("重新生成回答");
+    expect(dialog).toHaveClass("message-dialog");
+    expect(dialog.contains(copy)).toBe(false);
+    expect(dialog.compareDocumentPosition(copy) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(regenerate).toBeInTheDocument();
+  });
+
+  it("keeps user copy and edit under the cue bubble", () => {
+    renderChat();
+
+    const bubble = document.querySelector(".message.user .message-dialog");
+    const copy = screen.getByLabelText("复制消息");
+    const edit = screen.getByLabelText("编辑消息");
+    expect(bubble).toHaveTextContent("围绕一个项目追问我");
+    expect(bubble?.contains(copy)).toBe(false);
+    expect(copy.compareDocumentPosition(edit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("parses Q-index and hint lines used in interview drills", () => {
+    expect(interviewQuestionParts("Q1 | RAG 会议问答：检索到了，但答案仍偏泛，你怎么收？")).toEqual({
+      index: "Q1",
+      title: "RAG 会议问答：检索到了，但答案仍偏泛，你怎么收？"
+    });
+    expect(interviewHintParts("Hint：先讲判断标准，再讲你改过的一处。")).toEqual({
+      label: "Hint",
+      body: "先讲判断标准，再讲你改过的一处。"
+    });
+    expect(interviewQuestionParts("可以。先从检索质量开始。")).toBeNull();
   });
 
   it("leaves non-Mermaid code blocks unchanged", () => {

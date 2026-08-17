@@ -4,6 +4,7 @@ import { ConversationHistoryPanel } from "./ConversationHistoryPanel";
 import { ChatWorkspaceMermaid } from "./ChatWorkspaceMermaid";
 import { ChatWorkspaceMindmap } from "./ChatWorkspaceMindmap";
 import { isMermaidMindmap } from "./mindmap-source";
+import "./ChatWorkspace.css";
 import {
   ActionBarPrimitive,
   AssistantRuntimeProvider,
@@ -22,24 +23,21 @@ import {
   ArrowUpRight,
   Check,
   CheckCircle2,
-  ClipboardCheck,
+  CircleHelp,
   Copy,
   ChevronDown,
   FileText,
   History,
   ImagePlus,
-  Layers,
   LoaderCircle,
-  MessagesSquare,
   Pencil,
+  Plus,
   RefreshCw,
   Search,
   Send,
-  Sparkles,
   Square,
   TriangleAlert,
-  X,
-  type LucideIcon
+  X
 } from "lucide-react";
 
 export type AgentRunResult = {
@@ -110,6 +108,47 @@ export type ChatRetryDraft = {
   webSearch: boolean;
 };
 
+export type ChatClarificationOption = {
+  id: string;
+  label: string;
+  send: string;
+};
+
+export type ChatClarification = {
+  question: string;
+  options: ChatClarificationOption[];
+  allowCustom: boolean;
+};
+
+function asClarificationOption(value: unknown, index: number): ChatClarificationOption | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const label = typeof record.label === "string" ? record.label.trim() : "";
+  if (!label) return null;
+  const id = typeof record.id === "string" && record.id.trim() ? record.id.trim() : `opt_${index + 1}`;
+  const send = typeof record.send === "string" && record.send.trim() ? record.send.trim() : label;
+  return { id, label, send };
+}
+
+export function clarificationFromAgent(run?: AgentRunResult): ChatClarification | null {
+  if (!run || run.status !== "waiting_user") return null;
+  for (const event of [...run.events].reverse()) {
+    const raw = event.data?.clarification;
+    if (!raw || typeof raw !== "object") continue;
+    const record = raw as Record<string, unknown>;
+    const question = typeof record.question === "string" ? record.question.trim() : "";
+    const options = Array.isArray(record.options)
+      ? record.options.flatMap((item, index) => {
+        const option = asClarificationOption(item, index);
+        return option ? [option] : [];
+      })
+      : [];
+    if (!question && !options.length) continue;
+    return { question, options, allowCustom: record.allow_custom !== false };
+  }
+  return null;
+}
+
 export type ChatSessionContext = {
   resumeLabel?: string | null;
   analysisLabel?: string | null;
@@ -118,12 +157,11 @@ export type ChatSessionContext = {
 const STARTER_PROMPTS: Array<{
   draft: string;
   title: string;
-  description: string;
-  icon: LucideIcon;
+  needsResume?: boolean;
 }> = [
-  { draft: "帮我梳理这个项目的亮点。项目是：", title: "梳理项目表达", description: "把经历变成可讲的亮点", icon: Layers },
-  { draft: "围绕这个项目追问我。项目是：", title: "练习项目追问", description: "从细节到取舍反复演练", icon: MessagesSquare },
-  { draft: "帮我复盘刚结束的这场面试。岗位和主要问题是：", title: "复盘一次面试", description: "把反馈变成下一步准备", icon: ClipboardCheck }
+  { draft: "帮我看看这份已保存的简历，先说方向和缺口。", title: "看这份简历", needsResume: true },
+  { draft: "对照这个岗位看我适不适合。岗位是：", title: "对照一个岗位" },
+  { draft: "帮我复盘刚结束的这场面试。岗位和主要问题是：", title: "复盘一场面试" }
 ];
 
 type ChatWorkspaceProps = {
@@ -186,21 +224,19 @@ function textFromAppendMessage(message: AppendMessage): string {
 function AgentResultNote({ run }: { run?: AgentRunResult }) {
   if (!run?.events.length) return null;
   const failed = run.status === "failed" || run.events.some((event) => event.status === "failed");
-  const waiting = run.status === "waiting_user";
   const cancelled = run.status === "cancelled";
-  const waitingForManualImport = run.error?.code === "manual_job_import_required";
+  if (!failed && !cancelled) return null;
   const profileRequired = run.error?.code === "profile_required";
-  if (!failed && !waiting && !cancelled) return null;
   const failureHint = profileRequired
     ? "说“开始画像访谈”，我会创建画像并开始补充信息。"
     : run.error?.retryable === false
       ? "请先检查设置或输入后再继续。"
       : "可以修改输入或直接点击下方重试。";
   return (
-    <div className={`agent-result-note ${cancelled ? "cancelled" : failed ? "failed" : "waiting"}`}>
-      {failed || waiting ? <TriangleAlert size={14} /> : <CheckCircle2 size={14} />}
+    <div className={`agent-result-note ${cancelled ? "cancelled" : "failed"}`}>
+      {failed ? <TriangleAlert size={14} /> : <CheckCircle2 size={14} />}
       <span>
-        <strong>{cancelled ? "任务已结束" : failed ? (profileRequired ? "还需要先建立画像" : "执行已终止") : waitingForManualImport ? "等待你补充资料" : "已暂停，等待你的操作"}</strong>
+        <strong>{cancelled ? "任务已结束" : profileRequired ? "还需要先建立画像" : "执行已终止"}</strong>
         {run.error?.message ? <small>{run.error.message}</small> : null}
         {failed ? <small>{failureHint}</small> : null}
       </span>
@@ -217,6 +253,7 @@ type WebSource = {
 function childrenToText(children: ReactNode): string {
   if (typeof children === "string" || typeof children === "number") return String(children);
   if (Array.isArray(children)) return children.map(childrenToText).join("");
+  if (isValidElement<{ children?: ReactNode }>(children)) return childrenToText(children.props.children);
   return "";
 }
 
@@ -335,10 +372,90 @@ function MarkdownPreRenderer({
   return containsMermaid ? children : <pre {...props}>{children}</pre>;
 }
 
+const INTERVIEW_QUESTION_RE = /^(Q\d+)\s*[|｜]\s*(.+)$/s;
+const INTERVIEW_HINT_RE = /^(Hint|提示)\s*[:：]\s*(.+)$/s;
+const INTERVIEW_FOLLOWUP_RE = /^(追问|跟进|继续问)\s*[:：]\s*(.+)$/s;
+const INTERVIEW_DRILL_RE = /(?:^|\n)(?:\*\*)?Q\d+\s*[|｜]|(?:^|\n)(?:\*\*)?(?:Hint|提示)\s*[:：]/;
+
+export function interviewQuestionParts(text: string): { index: string; title: string } | null {
+  const match = INTERVIEW_QUESTION_RE.exec(text.trim());
+  return match ? { index: match[1], title: match[2].trim() } : null;
+}
+
+export function interviewHintParts(text: string): { label: string; body: string } | null {
+  const match = INTERVIEW_HINT_RE.exec(text.trim());
+  return match ? { label: match[1], body: match[2].trim() } : null;
+}
+
+function InterviewQuestionStem({
+  index,
+  title,
+  as: Tag = "p"
+}: {
+  index: string;
+  title: string;
+  as?: "p" | "h2" | "h3";
+}) {
+  return (
+    <Tag className="interview-question-stem">
+      <span className="interview-question-index">{index}</span>
+      <strong>{title}</strong>
+    </Tag>
+  );
+}
+
+function MarkdownParagraph({
+  children,
+  node: _node,
+  ...props
+}: ComponentPropsWithoutRef<"p"> & ExtraProps) {
+  const text = childrenToText(children);
+  const question = interviewQuestionParts(text);
+  if (question) {
+    return <InterviewQuestionStem index={question.index} title={question.title} />;
+  }
+  const hint = interviewHintParts(text);
+  if (hint) {
+    return (
+      <aside className="interview-hint">
+        <span className="interview-hint-label">{hint.label}</span>
+        <p>{hint.body}</p>
+      </aside>
+    );
+  }
+  const followup = INTERVIEW_FOLLOWUP_RE.exec(text.trim());
+  if (followup) {
+    return (
+      <p className="interview-followup" {...props}>
+        <span className="interview-followup-label">{followup[1]}</span>
+        {followup[2]}
+      </p>
+    );
+  }
+  return <p {...props}>{children}</p>;
+}
+
+function MarkdownHeading({
+  children,
+  node,
+  ...props
+}: ComponentPropsWithoutRef<"h2"> & ExtraProps) {
+  const text = childrenToText(children);
+  const question = interviewQuestionParts(text);
+  const Tag = node?.tagName === "h3" ? "h3" : "h2";
+  if (question) {
+    return <InterviewQuestionStem as={Tag} index={question.index} title={question.title} />;
+  }
+  return <Tag {...props}>{children}</Tag>;
+}
+
 const MARKDOWN_COMPONENTS: Components = {
   a: MarkdownLinkRenderer,
   code: MarkdownCodeRenderer,
-  pre: MarkdownPreRenderer
+  pre: MarkdownPreRenderer,
+  p: MarkdownParagraph,
+  h2: MarkdownHeading,
+  h3: MarkdownHeading
 };
 
 function MarkdownContent({
@@ -351,8 +468,9 @@ function MarkdownContent({
   streaming?: boolean;
 }) {
   const projectAnalysisAnswer = /(项目(?:经历|经验|解析|背景|亮点)|技术深度|证据完整度|简历版|面试版)/.test(children);
+  const interviewDrill = INTERVIEW_DRILL_RE.test(children);
   return (
-    <div className={`message-markdown ${projectAnalysisAnswer ? "project-analysis-answer" : ""}`}>
+    <div className={`message-markdown${projectAnalysisAnswer ? " project-analysis-answer" : ""}${interviewDrill ? " interview-drill" : ""}`}>
       <MarkdownRenderContext.Provider value={{ sources, streaming }}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
@@ -401,12 +519,7 @@ const TOOL_ACTIVITY_LABELS: Record<string, string> = {
   create_job_evaluation: "正在生成岗位评估",
   get_job_evaluation: "正在读取岗位评估",
   review_job_evaluation: "正在审核岗位评估",
-  run_job_deep_research: "正在做岗位深度研究",
   compare_job_evaluations: "正在比较岗位评估",
-  discover_companies: "正在发现适合的公司",
-  discover_funded_companies: "正在检索融资公司",
-  scan_career_sources: "正在扫描职位来源",
-  process_opportunity_pipeline: "正在整理岗位队列",
   propose_candidate_knowledge: "正在补充候选人信息",
   start_profile_interview: "正在开始画像访谈",
   record_profile_interview_answer: "正在记录访谈回答",
@@ -416,6 +529,7 @@ const TOOL_ACTIVITY_LABELS: Record<string, string> = {
   agent_planner: "正在规划步骤",
   model_provider: "正在生成回答",
   citation_validator: "正在核对引用",
+  ask_user: "需要你确认",
   agent_tool: "正在执行任务"
 };
 
@@ -589,7 +703,7 @@ function ThinkingMark({ size = 12 }: { size?: number }) {
       />
       <path
         d="M12.55 7.05a5.55 5.55 0 0 1 .05 2.2"
-        stroke="#5EE0B8"
+        stroke="#6557dc"
         strokeWidth="1.75"
         strokeLinecap="round"
       />
@@ -632,21 +746,32 @@ function ThoughtProcess({
   const { thoughts, steps, sources } = thoughtProcessContent(agent);
   const hasBody = thoughts.length + steps.length + sources.length > 0;
   if (!hasBody && !streaming) return null;
+  const headerCopy = (
+    <>
+      <span className="thinking-process-icon"><ThinkingMark /></span>
+      <span className="thinking-process-copy">
+        <strong><span className="thinking-process-title">{title}</span></strong>
+        {currentTask ? <small className="thinking-process-current" title={currentTask}>{currentTask}</small> : null}
+      </span>
+    </>
+  );
   return (
-    <section className={`thinking-process ${expanded ? "expanded" : ""} ${streaming ? "streaming" : "complete"}`} aria-label="思考过程">
-      <button
-        type="button"
-        className="thinking-process-header"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((value) => !value)}
-      >
-        <span className="thinking-process-icon"><ThinkingMark /></span>
-        <span className="thinking-process-copy">
-          <strong><span className="thinking-process-title">{title}</span></strong>
-          {currentTask ? <small className="thinking-process-current" title={currentTask}>{currentTask}</small> : null}
-        </span>
-        <ChevronDown className="thinking-process-chevron" size={14} />
-      </button>
+    <section className={`thinking-process ${expanded ? "expanded" : ""} ${streaming ? "streaming" : "complete"} ${hasBody ? "has-body" : "is-status"}`} aria-label="思考过程">
+      {hasBody ? (
+        <button
+          type="button"
+          className="thinking-process-header"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {headerCopy}
+          <ChevronDown className="thinking-process-chevron" size={14} />
+        </button>
+      ) : (
+        <div className="thinking-process-header is-static">
+          {headerCopy}
+        </div>
+      )}
       {hasBody ? (
         <div className="thinking-process-collapse">
           <div className="thinking-process-scroll">
@@ -684,19 +809,64 @@ function ThoughtProcess({
   );
 }
 
-function StarterPromptList({ onFill }: { onFill: (draft: string) => void }) {
+function ComposerClarification({
+  clarification,
+  busy,
+  onChoose,
+  onCancel
+}: {
+  clarification: ChatClarification;
+  busy: boolean;
+  onChoose: (text: string) => void;
+  onCancel: () => void;
+}) {
   return (
-    <div className="starter-prompt-list" aria-label="快捷开始">
-      {STARTER_PROMPTS.map(({ draft, title, description, icon: Icon }) => (
-        <button key={draft} type="button" onClick={() => onFill(draft)}>
-          <span className="starter-prompt-icon" aria-hidden="true">
-            <Icon size={16} strokeWidth={1.8} />
-          </span>
-          <span className="starter-prompt-copy">
-            <strong>{title}</strong>
-            <small>{description}</small>
-          </span>
-          <ArrowUpRight className="starter-prompt-arrow" size={14} aria-hidden="true" />
+    <section className="composer-clarification" aria-label="需要你确认后继续">
+      <div className="composer-clarification-head">
+        <span className="composer-clarification-icon"><CircleHelp size={16} /></span>
+        <div className="composer-clarification-copy">
+          <span>需要你确认</span>
+          <strong>{clarification.question || "选一项后继续，或直接说下一件"}</strong>
+        </div>
+        <button className="task-cancel-button" type="button" onClick={onCancel} disabled={busy}>
+          {busy ? "结束中…" : "结束任务"}
+        </button>
+      </div>
+      {clarification.options.length ? (
+        <div className="composer-clarification-options" role="group" aria-label="可选回复">
+          {clarification.options.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              disabled={busy}
+              onClick={() => onChoose(option.send)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {clarification.allowCustom ? (
+        <p className="composer-clarification-hint">答当前问题则继续；换一件事直接说，或点结束任务</p>
+      ) : null}
+    </section>
+  );
+}
+
+function StarterPromptList({
+  onFill,
+  hasResume
+}: {
+  onFill: (draft: string) => void;
+  hasResume: boolean;
+}) {
+  const prompts = STARTER_PROMPTS.filter((item) => !item.needsResume || hasResume);
+  if (!prompts.length) return null;
+  return (
+    <div className="composer-drafts" aria-label="可选草稿">
+      {prompts.map(({ draft, title }) => (
+        <button key={title} type="button" onClick={() => onFill(draft)}>
+          {title}
         </button>
       ))}
     </div>
@@ -718,19 +888,22 @@ function ChatContextChips({
       {resumeLabel ? (
         <button
           type="button"
-          className="composer-context-status"
+          className="composer-context-status is-resume"
           onClick={onOpenResume}
           title="查看已保存简历，提问时会自动参考"
           aria-label="查看已保存简历"
         >
           <FileText size={15} aria-hidden="true" />
-          <span>简历</span>
+          <span>已保存简历</span>
         </button>
       ) : null}
       {analysisLabel ? (
-        <span className="composer-context-status" role="status" title={`提问时会自动参考：${analysisLabel}`}>
-          <Sparkles size={15} aria-hidden="true" />
-          <span>分析</span>
+        <span
+          className="composer-context-status is-analysis"
+          role="status"
+          title={`提问时会参考：${analysisLabel}`}
+        >
+          <span>{analysisLabel}</span>
         </span>
       ) : null}
     </span>
@@ -780,10 +953,10 @@ function UserMessageContent({ content }: { content: string }) {
   const hasJobContext = /以下内容来自我保存的岗位项目|岗位项目上下文|目标岗位[:：]|岗位描述[:：]/.test(content);
   const collapsible = content.length > 600 || hasJobContext;
   const [expanded, setExpanded] = useState(false);
-  if (!collapsible) return <p>{content}</p>;
+  if (!collapsible) return <p className="message-dialog">{content}</p>;
   const preview = content.replace(/\s+/g, " ").trim().slice(0, 180);
   return (
-    <section className={`user-message-summary ${expanded ? "expanded" : ""}`}>
+    <section className={`user-message-summary message-dialog ${expanded ? "expanded" : ""}`}>
       <div className="user-message-summary-meta">
         <span>{hasJobContext ? "岗位项目上下文" : "长请求"}</span>
         <em>{content.length.toLocaleString()} 字</em>
@@ -824,19 +997,19 @@ function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: boolean 
         {source.role === "assistant" ? (
           <>
             <ThoughtProcess streaming={isActiveAssistant} agent={source.payload?.agent} />
-            <section className="message-result" aria-label="输出结果">
+            <section className="message-result message-dialog" aria-label="输出结果">
               <MarkdownContent sources={webSources} streaming={isActiveAssistant}>{resultContent}</MarkdownContent>
               <AgentResultNote run={source.payload?.agent} />
-              <ActionBarPrimitive.Root className="message-actions" hideWhenRunning>
-                <ActionBarPrimitive.Copy aria-label="复制回答">
-                  {isCopied ? <Check size={12} /> : <Copy size={12} />}
-                  {isCopied ? "已复制" : "复制"}
-                </ActionBarPrimitive.Copy>
-                <ActionBarPrimitive.Reload aria-label={failed ? "重试回答" : "重新生成回答"}>
-                  <RefreshCw size={12} />{failed ? "重试" : "重新生成"}
-                </ActionBarPrimitive.Reload>
-              </ActionBarPrimitive.Root>
             </section>
+            <ActionBarPrimitive.Root className="message-actions" hideWhenRunning>
+              <ActionBarPrimitive.Copy aria-label="复制回答">
+                {isCopied ? <Check size={12} /> : <Copy size={12} />}
+                {isCopied ? "已复制" : "复制"}
+              </ActionBarPrimitive.Copy>
+              <ActionBarPrimitive.Reload aria-label={failed ? "重试回答" : "重新生成回答"}>
+                <RefreshCw size={12} />{failed ? "重试" : "重新生成"}
+              </ActionBarPrimitive.Reload>
+            </ActionBarPrimitive.Root>
             <WebSourcesPanel sources={webSources} />
           </>
         ) : (
@@ -881,9 +1054,14 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const aui = useAui();
   const placeholderThinking = thinkingHeaderCopy(props.latestAgent, true);
+  const clarification = clarificationFromAgent(props.latestAgent);
   const [isDraggingAttachment, setIsDraggingAttachment] = useState(false);
   const [expandedPreview, setExpandedPreview] = useState<{ filename: string; url: string } | null>(null);
   const [conversationListOpen, setConversationListOpen] = useState(false);
+  const currentConversation = props.conversations.find((item) => item.id === props.currentConversationId);
+  const sessionTitle = props.conversationTitle?.trim() || currentConversation?.title || "新对话";
+  const showStarters = props.messages.length === 0 && !props.chatBusy && !clarification;
+  const isFreshUntitled = props.messages.length === 0 && (!currentConversation || sessionTitle === "新对话");
 
   function fillComposer(draft: string) {
     aui.composer().setText(draft);
@@ -899,6 +1077,12 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
     setExpandedPreview(null);
     setConversationListOpen(false);
   }, [props.currentConversationId]);
+
+  useEffect(() => {
+    if (props.messages.length > 0 || props.chatBusy || !props.currentConversationId) return;
+    const timer = window.setTimeout(() => props.chatInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(timer);
+  }, [props.chatBusy, props.chatInputRef, props.currentConversationId, props.messages.length]);
 
   useEffect(() => {
     if (!conversationListOpen) return;
@@ -959,17 +1143,53 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   return (
     <section className={`chat-workspace ${props.messages.length ? "has-history" : "is-empty"} ${props.chatBusy ? "is-running" : ""}`}>
       <ThreadPrimitive.Root className="chat-main">
-        <header className="chat-session-header" aria-label={`${props.conversationTitle || "新对话"} · 对话操作`}>
-          <button
-            className="chat-history-toggle"
-            type="button"
-            onClick={() => setConversationListOpen((open) => !open)}
-            aria-label="对话记录"
-            aria-expanded={conversationListOpen}
-            aria-controls="conversation-history-drawer"
-          >
-            <History size={16} />
-          </button>
+        <header
+          className={`chat-session-header${isFreshUntitled ? " is-untitled" : " has-session"}`}
+          aria-label={`${sessionTitle} · 对话操作`}
+        >
+          <div className="chat-session-identity">
+            {currentConversation ? (
+              <button
+                type="button"
+                className="chat-session-title"
+                onClick={() => props.onRenameConversation(currentConversation)}
+                aria-label="重命名对话"
+                title="重命名对话"
+              >
+                <span className="chat-session-mark" aria-hidden="true" />
+                <span>{sessionTitle}</span>
+                <Pencil size={13} aria-hidden="true" />
+              </button>
+            ) : (
+              <p className="chat-session-title is-static">
+                <span className="chat-session-mark" aria-hidden="true" />
+                <span>{sessionTitle}</span>
+              </p>
+            )}
+          </div>
+          <div className="chat-session-tools" role="toolbar" aria-label="对话操作">
+            <button
+              className="chat-session-tool"
+              type="button"
+              onClick={props.onCreateConversation}
+              disabled={props.conversationBusy}
+              aria-label="新建对话"
+              title="新建对话"
+            >
+              <Plus size={16} />
+            </button>
+            <button
+              className={`chat-session-tool chat-history-toggle${conversationListOpen ? " is-open" : ""}`}
+              type="button"
+              onClick={() => setConversationListOpen((open) => !open)}
+              aria-label="对话记录"
+              aria-expanded={conversationListOpen}
+              aria-controls="conversation-history-drawer"
+              title="对话记录"
+            >
+              <History size={16} />
+            </button>
+          </div>
         </header>
         <ThreadPrimitive.Viewport className="chat-thread" role="log" aria-live="polite" aria-relevant="additions">
           {props.hiddenMessageCount > 0 ? (
@@ -978,13 +1198,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             </button>
           ) : null}
 
-          {props.messages.length === 0 ? (
-            <div className="chat-welcome">
-              <p className="welcome-kicker">面试准备</p>
-              <h2>从一个具体问题开始。</h2>
-              <p>围绕真实经历练表达、补知识点，或复盘一次面试。</p>
-            </div>
-          ) : (
+          {props.messages.length === 0 ? null : (
             <ThreadPrimitive.Messages>
               {({ message }) => message.composer.isEditing
                 ? <EditMessageComposer />
@@ -1012,7 +1226,19 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
         </ThreadPrimitive.Viewport>
 
         <div className="chat-composer">
-          {props.waitingForUser ? (
+          {props.messages.length === 0 ? (
+            <div className="chat-welcome">
+              <h2>说说你现在卡在哪。</h2>
+            </div>
+          ) : null}
+          {clarification && !props.chatBusy ? (
+            <ComposerClarification
+              clarification={clarification}
+              busy={props.taskCancelBusy}
+              onChoose={(text) => { void props.onSend(text); }}
+              onCancel={props.onCancelTask}
+            />
+          ) : props.waitingForUser ? (
             <section className="task-prompt attention" aria-label="当前任务提醒">
               <span className="task-prompt-icon"><TriangleAlert size={16} /></span>
               <div className="task-prompt-copy">
@@ -1061,7 +1287,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                 rows={1}
                 maxLength={1000}
                 aria-label="输入消息"
-                placeholder="输入一个项目、知识点，或一场需要复盘的面试…"
+                placeholder={clarification ? "回答上面的问题，或直接说下一件…" : "说说目标、卡点，或一段经历…"}
                 submitMode="enter"
                 onPaste={handleComposerPaste}
               />
@@ -1086,11 +1312,11 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                   <ChatContextChips context={props.sessionContext} onOpenResume={props.onOpenResume} />
                 </div>
                 {props.chatBusy ? (
-                  <ComposerPrimitive.Cancel className="send-button stop-button" disabled={props.taskCancelBusy}>
+                  <ComposerPrimitive.Cancel className="send-button stop-button" disabled={props.taskCancelBusy} aria-label="停止">
                     <Square size={14} fill="currentColor" /><span>停止</span>
                   </ComposerPrimitive.Cancel>
                 ) : (
-                  <ComposerPrimitive.Send className="send-button">
+                  <ComposerPrimitive.Send className="send-button" aria-label="发送">
                     <Send size={16} /><span>发送</span>
                   </ComposerPrimitive.Send>
                 )}
@@ -1130,7 +1356,12 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             ) : null}
             {isDraggingAttachment ? <div className="composer-drop-hint" aria-live="polite">松开即可添加图片或文档</div> : null}
           </div>
-          {props.messages.length === 0 ? <StarterPromptList onFill={fillComposer} /> : null}
+          {showStarters ? (
+            <StarterPromptList
+              onFill={fillComposer}
+              hasResume={Boolean(props.sessionContext?.resumeLabel?.trim())}
+            />
+          ) : null}
           {expandedPreview ? (
             <div className="attachment-preview-dialog" role="dialog" aria-modal="true" aria-label={`${expandedPreview.filename} 预览`} onClick={() => setExpandedPreview(null)}>
               <img src={expandedPreview.url} alt={`${expandedPreview.filename} 大图预览`} onClick={(event) => event.stopPropagation()} />
