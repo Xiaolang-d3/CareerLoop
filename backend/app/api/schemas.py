@@ -162,9 +162,10 @@ class InterviewPreparationFeedbackIn(BaseModel):
 
 
 class ProjectBriefingIn(BaseModel):
-    source_kind: Literal["description", "code"] = "description"
+    source_kind: Literal["description", "code", "repo"] = "description"
     description: str = Field(default="", max_length=8_000)
     code_excerpt: str = Field(default="", max_length=20_000)
+    repo_url: str = Field(default="", max_length=500)
     use_model: bool = False
 
 

@@ -56,6 +56,7 @@ class Settings(BaseModel):
     agent_search_token: str | None = None
     web_research_timeout_seconds: float = Field(default=25, gt=0, le=120)
     web_research_max_sources: int = Field(default=10, ge=3, le=20)
+    github_token: str | None = None
 
     @property
     def is_loopback_only(self) -> bool:
@@ -111,4 +112,5 @@ def get_settings() -> Settings:
         agent_search_token=os.getenv("AGENT_SEARCH_TOKEN") or None,
         web_research_timeout_seconds=os.getenv("WEB_RESEARCH_TIMEOUT_SECONDS", "25"),
         web_research_max_sources=os.getenv("WEB_RESEARCH_MAX_SOURCES", "10"),
+        github_token=os.getenv("GITHUB_TOKEN") or None,
     )

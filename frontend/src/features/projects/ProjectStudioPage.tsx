@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronRight, CircleAlert, FileCode2, FileText, Layers3, LoaderCircle, RefreshCw, UserRound } from "lucide-react";
+import { ChevronRight, CircleAlert, FileCode2, FileText, Github, Layers3, LoaderCircle, RefreshCw, UserRound } from "lucide-react";
 import { fetchWithTimeout } from "../../api/client";
 import { ChatWorkspaceMermaid } from "../../components/ChatWorkspaceMermaid";
-import type { ProjectBriefing, ProjectStudio, ProjectStudioItem } from "../../types";
+import type { ProjectBriefing, ProjectBriefingSource, ProjectStudio, ProjectStudioItem } from "../../types";
 import "./project-studio.css";
 
 type Props = {
@@ -28,9 +28,10 @@ export function ProjectStudioPage({ apiBase, accessToken, projectId, onOpenProje
   const [data, setData] = useState<ProjectStudio | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [sourceKind, setSourceKind] = useState<"description" | "code">("description");
+  const [sourceKind, setSourceKind] = useState<ProjectBriefingSource>("description");
   const [description, setDescription] = useState("");
   const [codeExcerpt, setCodeExcerpt] = useState("");
+  const [repoUrl, setRepoUrl] = useState("");
 
   const selected = useMemo(
     () => data?.projects.find((item) => item.id === projectId) ?? data?.projects[0] ?? null,
@@ -59,6 +60,7 @@ export function ProjectStudioPage({ apiBase, accessToken, projectId, onOpenProje
     setSourceKind(selected.briefing.source_kind);
     setDescription(selected.briefing.description || selected.evidence);
     setCodeExcerpt(selected.briefing.code_excerpt);
+    setRepoUrl(selected.briefing.repo_url || "");
   }, [selected?.id]);
 
   async function submitBriefing(useModel = false) {
@@ -73,6 +75,7 @@ export function ProjectStudioPage({ apiBase, accessToken, projectId, onOpenProje
           source_kind: sourceKind,
           description,
           code_excerpt: codeExcerpt,
+          repo_url: repoUrl,
           use_model: useModel
         })
       });
@@ -136,7 +139,7 @@ export function ProjectStudioPage({ apiBase, accessToken, projectId, onOpenProje
               onClick={() => onOpenProject(item.id)}
             >
               <strong>{item.title}</strong>
-              <small>{item.briefing.source_kind === "code" ? "代码" : "描述"} · {item.briefing.layers.length} 层</small>
+              <small>{sourceKindLabel(item.briefing.source_kind)} · {item.briefing.layers.length} 层</small>
             </button>
           )) : <p>还没有识别到可梳理的项目。</p>}
         </aside>
@@ -147,11 +150,13 @@ export function ProjectStudioPage({ apiBase, accessToken, projectId, onOpenProje
             sourceKind={sourceKind}
             description={description}
             codeExcerpt={codeExcerpt}
+            repoUrl={repoUrl}
             busy={busy}
             error={error}
             onSourceKind={setSourceKind}
             onDescription={setDescription}
             onCodeExcerpt={setCodeExcerpt}
+            onRepoUrl={setRepoUrl}
             onSubmit={() => void submitBriefing(false)}
             onModelSubmit={() => void submitBriefing(true)}
           />
@@ -163,38 +168,62 @@ export function ProjectStudioPage({ apiBase, accessToken, projectId, onOpenProje
   );
 }
 
+function sourceKindLabel(kind: ProjectBriefingSource) {
+  if (kind === "code") return "代码";
+  if (kind === "repo") return "仓库";
+  return "描述";
+}
+
+function sourceKindHint(kind: ProjectBriefingSource) {
+  if (kind === "code") return "当前按代码拆链路";
+  if (kind === "repo") return "当前按仓库目录拆链路";
+  return "当前按描述梳理";
+}
+
 function ProjectDossier({
   project,
   sourceKind,
   description,
   codeExcerpt,
+  repoUrl,
   busy,
   error,
   onSourceKind,
   onDescription,
   onCodeExcerpt,
+  onRepoUrl,
   onSubmit,
   onModelSubmit
 }: {
   project: ProjectStudioItem;
-  sourceKind: "description" | "code";
+  sourceKind: ProjectBriefingSource;
   description: string;
   codeExcerpt: string;
+  repoUrl: string;
   busy: boolean;
   error: string;
-  onSourceKind: (kind: "description" | "code") => void;
+  onSourceKind: (kind: ProjectBriefingSource) => void;
   onDescription: (value: string) => void;
   onCodeExcerpt: (value: string) => void;
+  onRepoUrl: (value: string) => void;
   onSubmit: () => void;
   onModelSubmit: () => void;
 }) {
   const briefing = project.briefing;
+  const repoHref = briefing.repo_owner && briefing.repo_name
+    ? `https://github.com/${briefing.repo_owner}/${briefing.repo_name}`
+    : briefing.repo_url || "";
   return (
     <main>
       <header className="project-studio-detail-header">
         <div>
           <h3>{project.title}</h3>
-          <p>{briefing.source_kind === "code" ? "当前按代码拆链路" : "当前按描述梳理"}</p>
+          <p>{sourceKindHint(briefing.source_kind)}</p>
+          {repoHref ? (
+            <a className="project-studio-repo-link" href={repoHref} target="_blank" rel="noreferrer">
+              {briefing.repo_owner && briefing.repo_name ? `${briefing.repo_owner}/${briefing.repo_name}` : repoHref}
+            </a>
+          ) : null}
         </div>
         {briefing.missing.length ? <span><CircleAlert size={14} />缺 {briefing.missing.join("、")}</span> : <span>可回顾</span>}
       </header>
@@ -228,6 +257,9 @@ function ProjectDossier({
           <button type="button" className={sourceKind === "code" ? "is-active" : undefined} onClick={() => onSourceKind("code")}>
             <FileCode2 size={14} />从代码分析
           </button>
+          <button type="button" className={sourceKind === "repo" ? "is-active" : undefined} onClick={() => onSourceKind("repo")}>
+            <Github size={14} />从仓库分析
+          </button>
         </div>
         {sourceKind === "description" ? (
           <label>
@@ -240,7 +272,7 @@ function ProjectDossier({
               placeholder="补充背景、职责、方案和结果。只写你能讲清楚的事实。"
             />
           </label>
-        ) : (
+        ) : sourceKind === "code" ? (
           <label>
             代码或文件路径
             <textarea
@@ -249,6 +281,17 @@ function ProjectDossier({
               onChange={(event) => onCodeExcerpt(event.target.value)}
               rows={8}
               placeholder={"frontend/src/audio/capture.ts\nbackend/app/asr.py\n也可以粘贴关键实现。"}
+            />
+          </label>
+        ) : (
+          <label>
+            GitHub 仓库
+            <input
+              type="url"
+              aria-label="GitHub 仓库"
+              value={repoUrl}
+              onChange={(event) => onRepoUrl(event.target.value)}
+              placeholder="https://github.com/owner/repo"
             />
           </label>
         )}

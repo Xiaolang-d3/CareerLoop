@@ -13,10 +13,17 @@ from ..interview.preparation import _get_state, _save_state, get_interview_prepa
 from ..models import ModelProviderError, OpenAICompatibleProvider
 from ..profile.candidate_core import ProfileNotInitializedError
 from ..profile.intelligence import extract_skills
+from .github_repo import (
+    fetch_github_repo_snapshot,
+    parse_github_repo_url,
+    path_on_tree,
+    representative_paths,
+)
 
 
 _BRIEFINGS_STATE_KEY = "_project_briefings"
-_SOURCE_KINDS = {"description", "code"}
+_SOURCE_KINDS = {"description", "code", "repo"}
+_README_NOISE = re.compile(r"!\[.*?\]\(.*?\)|^\s*\[!\[.*?\]\(.*?\)\]\(.*?\)\s*$")
 _CLIENT_HINTS = (
     "麦克风", "pcm", "采集", "编码", "opus", "ogg", "分片", "客户端", "上行",
     "frontend", "react", "vue", "tsx", "microphone", "audio",
@@ -49,8 +56,12 @@ def build_project_briefing(
     fields: list[dict[str, str]] | None = None,
     description: str = "",
     code_excerpt: str = "",
-    source_kind: Literal["description", "code"] | str = "description",
+    source_kind: Literal["description", "code", "repo"] | str = "description",
     generated_from: Literal["rules", "model"] = "rules",
+    repo_url: str = "",
+    repo_owner: str = "",
+    repo_name: str = "",
+    default_branch: str = "",
 ) -> dict[str, Any]:
     """Turn resume text and optional code into a reviewable project briefing."""
     kind = source_kind if source_kind in _SOURCE_KINDS else ("code" if code_excerpt.strip() else "description")
@@ -59,6 +70,7 @@ def build_project_briefing(
     situation = _first_text(
         _field_values(fields, _INPUT_FIELD),
         _matching_clauses(evidence or description, ("背景", "目标", "面向", "为了")),
+        _readme_situation(description) if kind == "repo" else "",
         _first_sentence(evidence or description),
     )
     core = _first_text(
@@ -66,15 +78,17 @@ def build_project_briefing(
         _matching_clauses(evidence or description, ("负责", "核心", "主导")),
     )
     layers = (
-        _layers_from_code(code_excerpt)
-        or _layers_from_client_server(corpus)
-        or _layers_from_fields(fields or [], evidence, title)
-    )
+        _layers_from_repo_excerpt(code_excerpt) if kind == "repo" else _layers_from_code(code_excerpt)
+    ) or _layers_from_client_server(corpus) or _layers_from_fields(fields or [], evidence, title)
     missing = _missing_parts(situation, core, stack, layers)
     return {
         "source_kind": kind,
         "description": description.strip()[:8_000],
         "code_excerpt": code_excerpt.strip()[:20_000],
+        "repo_url": repo_url.strip()[:500],
+        "repo_owner": repo_owner.strip()[:100],
+        "repo_name": repo_name.strip()[:100],
+        "default_branch": default_branch.strip()[:100],
         "situation": situation[:240],
         "core": core[:240],
         "stack": stack,
@@ -125,6 +139,7 @@ async def analyze_project_briefing(
     source_kind: str = "description",
     description: str = "",
     code_excerpt: str = "",
+    repo_url: str = "",
     use_model: bool = False,
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
@@ -137,8 +152,21 @@ async def analyze_project_briefing(
     kind = source_kind if source_kind in _SOURCE_KINDS else ("code" if code_excerpt.strip() else "description")
     notes = description.strip()
     code = code_excerpt.strip()
+    snapshot: dict[str, Any] | None = None
+    repo_meta = {"repo_url": "", "repo_owner": "", "repo_name": "", "default_branch": ""}
     if kind == "code" and not code:
         raise ValueError("从代码梳理时，请粘贴文件路径或关键代码")
+    if kind == "repo":
+        owner, name = parse_github_repo_url(repo_url)
+        snapshot = await fetch_github_repo_snapshot(owner, name)
+        notes = notes or snapshot["readme"]
+        code = "\n".join(representative_paths(snapshot["paths"]))
+        repo_meta = {
+            "repo_url": repo_url.strip()[:500] or snapshot["html_url"],
+            "repo_owner": snapshot["owner"],
+            "repo_name": snapshot["repo"],
+            "default_branch": snapshot["default_branch"],
+        }
     briefing = build_project_briefing(
         title=project["title"],
         evidence=project["evidence"],
@@ -146,16 +174,27 @@ async def analyze_project_briefing(
         description=notes,
         code_excerpt=code,
         source_kind=kind,
+        **repo_meta,
     )
     if use_model:
-        briefing = await _model_briefing(
-            project=project,
-            source_kind=kind,
-            description=notes,
-            code_excerpt=code,
-            fallback=briefing,
-            db_path=db_path,
-        )
+        if kind == "repo" and snapshot is not None:
+            briefing = await _model_repo_briefing(
+                project=project,
+                description=notes,
+                code_excerpt=code,
+                snapshot=snapshot,
+                fallback=briefing,
+                db_path=db_path,
+            )
+        else:
+            briefing = await _model_briefing(
+                project=project,
+                source_kind=kind,
+                description=notes,
+                code_excerpt=code,
+                fallback=briefing,
+                db_path=db_path,
+            )
     briefing["updated_at"] = datetime.now(timezone.utc).isoformat()
     _persist_briefing(project_id, briefing, db_path)
     return get_project_studio(db_path)
@@ -240,17 +279,45 @@ def _clean_clause(text: str) -> str:
     return re.sub(r"^[-•*·\s]+", "", text).strip()
 
 
+def _readme_situation(readme: str) -> str:
+    lines: list[str] = []
+    for raw in (readme or "").splitlines():
+        line = _README_NOISE.sub("", raw).strip()
+        if line.startswith("#"):
+            line = line.lstrip("#").strip()
+        if not line or line.startswith("[") and "](" in line:
+            continue
+        lines.append(line)
+        if len(lines) >= 2:
+            break
+    return _first_sentence(" ".join(lines))
+
+
+def _layers_from_repo_excerpt(code_excerpt: str) -> list[dict[str, Any]]:
+    paths = [line.strip() for line in (code_excerpt or "").splitlines() if _normalize_repo_line(line)]
+    return _layers_from_paths(paths)
+
+
+def _normalize_repo_line(line: str) -> str:
+    return line.strip().replace("\\", "/")
+
+
 def _layers_from_code(code_excerpt: str) -> list[dict[str, Any]]:
     paths = [match.group(1) for match in _PATH_RE.finditer(code_excerpt or "")]
-    if not paths:
-        return []
+    return _layers_from_paths(paths)
+
+
+def _layers_from_paths(paths: list[str]) -> list[dict[str, Any]]:
     buckets: dict[str, list[dict[str, str]]] = {}
-    for path in paths[:12]:
-        layer = _layer_for_path(path)
+    for path in paths[:16]:
+        cleaned = path.strip()
+        if not cleaned:
+            continue
+        layer = _layer_for_path(cleaned)
         buckets.setdefault(layer, [])
         if len(buckets[layer]) >= 4:
             continue
-        buckets[layer].append({"title": _path_step(path), "detail": path})
+        buckets[layer].append({"title": _path_step(cleaned), "detail": cleaned})
     return [{"name": name, "steps": steps} for name, steps in buckets.items() if steps]
 
 
@@ -435,6 +502,123 @@ async def _model_briefing(
         return fallback
     grounded = _ground_model_briefing(payload, source, fallback, source_kind, description, code_excerpt)
     return grounded
+
+
+async def _model_repo_briefing(
+    *,
+    project: dict[str, Any],
+    description: str,
+    code_excerpt: str,
+    snapshot: dict[str, Any],
+    fallback: dict[str, Any],
+    db_path: str | Path | None,
+) -> dict[str, Any]:
+    connection = get_model_connection(db_path)
+    if not connection["api_key"]:
+        raise ValueError("请先在 Agent 设置中配置模型，再做深度梳理")
+    tree_text = "\n".join(snapshot["paths"][:400])
+    materials = "\n".join(part for part in (
+        project.get("title") or "",
+        project.get("evidence") or "",
+        json.dumps(project.get("fields") or [], ensure_ascii=False),
+        description,
+        f"仓库：{snapshot['owner']}/{snapshot['repo']}",
+        f"目录：\n{tree_text}",
+    ) if part)
+    provider = OpenAICompatibleProvider(
+        api_key=connection["api_key"],
+        model=connection["model_name"],
+        base_url=connection["model_base_url"] or None,
+        timeout_seconds=min(get_settings().model_timeout_seconds, 30),
+    )
+    try:
+        overview = await provider.generate(ModelRequest(messages=[
+            AgentMessage(role="system", content=(
+                "你是项目梳理助手。只根据仓库目录和 README 归纳，不补写未出现的技术。"
+                "只返回 JSON。"
+            )),
+            AgentMessage(role="user", content=(
+                "整理这个仓库，返回 JSON：{situation,core,stack:[string]}。"
+                "stack 只能使用材料里出现的技术名。"
+                f"材料：\n{materials[:16_000]}"
+            )),
+        ]))
+        overview_payload = _decode_json(overview.content)
+    except ModelProviderError:
+        return fallback
+    try:
+        graph = await provider.generate(ModelRequest(messages=[
+            AgentMessage(role="system", content=(
+                "你是架构图助手。每个步骤必须带仓库里真实存在的 path。"
+                "不要发明目录。只返回 JSON。"
+            )),
+            AgentMessage(role="user", content=(
+                "按目录分层，返回 JSON："
+                "{layers:[{name,steps:[{title,detail,path}]}]}。"
+                "path 必须是下列目录中的文件或目录前缀。"
+                f"目录：\n{tree_text[:12_000]}"
+            )),
+        ]))
+        graph_payload = _decode_json(graph.content)
+    except ModelProviderError:
+        graph_payload = {}
+    layers = _layers_from_model_paths(graph_payload.get("layers"), snapshot["paths"]) or fallback["layers"]
+    lowered = materials.lower()
+    stack = [
+        item.strip()
+        for item in overview_payload.get("stack") or []
+        if isinstance(item, str) and item.strip() and item.strip().lower() in lowered
+    ][:12] or fallback["stack"]
+    situation = str(overview_payload.get("situation") or "").strip()
+    if situation and situation[:8].lower() not in lowered:
+        situation = fallback["situation"]
+    core = str(overview_payload.get("core") or "").strip()
+    if core and core[:8].lower() not in lowered:
+        core = fallback["core"]
+    return {
+        **fallback,
+        "source_kind": "repo",
+        "description": description[:8_000],
+        "code_excerpt": code_excerpt[:20_000],
+        "situation": (situation or fallback["situation"])[:240],
+        "core": (core or fallback["core"])[:240],
+        "stack": stack,
+        "layers": layers,
+        "mermaid": _mermaid_from_layers(project.get("title") or snapshot["repo"], layers),
+        "missing": _missing_parts(
+            situation or fallback["situation"],
+            core or fallback["core"],
+            stack,
+            layers,
+        ),
+        "generated_from": "model",
+        "status": "needs_input" if _missing_parts(
+            situation or fallback["situation"],
+            core or fallback["core"],
+            stack,
+            layers,
+        ) else "ready",
+    }
+
+
+def _layers_from_model_paths(raw_layers: Any, tree_paths: list[str]) -> list[dict[str, Any]]:
+    layers: list[dict[str, Any]] = []
+    for item in raw_layers or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()[:20]
+        steps = []
+        for step in item.get("steps") or []:
+            if not isinstance(step, dict):
+                continue
+            path = str(step.get("path") or step.get("detail") or "").strip()
+            if not path_on_tree(path, tree_paths):
+                continue
+            title = str(step.get("title") or _path_step(path))[:18]
+            steps.append({"title": title, "detail": path[:80]})
+        if name and steps:
+            layers.append({"name": name, "steps": steps[:4]})
+    return layers
 
 
 def _decode_json(content: str) -> dict[str, Any]:

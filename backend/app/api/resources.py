@@ -372,6 +372,7 @@ async def project_studio_briefing(
             source_kind=payload.source_kind,
             description=payload.description,
             code_excerpt=payload.code_excerpt,
+            repo_url=payload.repo_url,
             use_model=payload.use_model,
         )
     except (ValueError, ModelProviderError) as exc:
