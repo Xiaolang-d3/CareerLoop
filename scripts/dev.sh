@@ -45,7 +45,7 @@ else
   env -u PYTHONPATH -u VIRTUAL_ENV -u PYTHONHOME \
     "$BACKEND_DIR/.venv/bin/pip" install -q -r "$BACKEND_DIR/requirements.txt"
   # env -u clears any inherited PYTHONPATH/VIRTUAL_ENV that would shadow .venv.
-  screen -dmS bosscopilot-backend zsh -lc \
+  screen -dmS careerloop-backend zsh -lc \
     "cd '$BACKEND_DIR' && env -u PYTHONPATH -u VIRTUAL_ENV -u PYTHONHOME .venv/bin/uvicorn app.main:app --host '$BIND_HOST' --port 8000 > '$LOG_DIR/backend.log' 2>&1"
   echo "Started backend at http://$BIND_HOST:8000"
 fi
@@ -56,13 +56,13 @@ else
   if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
     npm --prefix "$FRONTEND_DIR" install
   fi
-  screen -dmS bosscopilot-frontend zsh -lc \
+  screen -dmS careerloop-frontend zsh -lc \
     "cd '$FRONTEND_DIR' && BIND_HOST='$BIND_HOST' PUBLIC_HOSTS='$PUBLIC_HOSTS' npm run dev > '$LOG_DIR/frontend.log' 2>&1"
   echo "Started frontend at http://$BIND_HOST:5173"
 fi
 
 if [ "$EXPOSED" = "1" ]; then
-  echo "BossCopilot is reachable from other devices on this network."
+  echo "CareerLoop is reachable from other devices on this network."
 else
-  echo "BossCopilot is listening on this machine only."
+  echo "CareerLoop is listening on this machine only."
 fi

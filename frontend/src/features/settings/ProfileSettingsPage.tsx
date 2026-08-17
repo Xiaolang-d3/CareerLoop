@@ -11,7 +11,8 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CandidateEditor, ResumeProfileSuggestion } from "../../types";
-import { parseResumePreview, skillTags, type ResumePreviewSection } from "./resume-preview";
+import { ActionButton } from "../../components/ui/ActionButton";
+import { parseResumePreview, projectOrdinalLabel, skillTags, type ResumePreviewSection } from "./resume-preview";
 
 type PrivacyFinding = { entity_type: string; preview: string };
 
@@ -53,10 +54,41 @@ type Props = {
 };
 
 function ResumePreview({ editor, sections }: { editor: CandidateEditor; sections: ResumePreviewSection[] }) {
-  return <div className="profile-resume-preview" aria-label="简历预览">
-    <header className="resume-preview-profile"><div><strong>{editor.name || "我的简历"}</strong><span>{[editor.targetRole, editor.targetCity].filter(Boolean).join(" · ") || "补充准备方向和意向城市"}</span></div><span>{editor.resumeText.length.toLocaleString()} 字</span></header>
-    <div className="resume-preview-sections">{sections.map((section) => <section key={section.kind} className={`resume-preview-section ${section.kind}`}><h4>{section.label}</h4>{section.kind === "skills" ? <div className="resume-skill-tags">{skillTags(section.entries).map((tag, index) => <span key={`${tag}-${index}`}>{tag}</span>)}</div> : <div className="resume-preview-entry-list">{section.entries.map((entry, index) => <article key={`${section.kind}-${index}`}><strong>{entry[0]}</strong>{entry.slice(1).map((line, lineIndex) => <p key={lineIndex}>{line}</p>)}</article>)}</div>}</section>)}</div>
-  </div>;
+  return (
+    <div className="profile-resume-preview" aria-label="简历预览">
+      <header className="resume-preview-profile">
+        <div>
+          <strong>{editor.name || "我的简历"}</strong>
+          <span>{[editor.targetRole, editor.targetCity].filter(Boolean).join(" · ") || "补充准备方向和意向城市"}</span>
+        </div>
+        <span>{editor.resumeText.length.toLocaleString()} 字</span>
+      </header>
+      <div className="resume-preview-sections">
+        {sections.map((section) => (
+          <section key={section.kind} className={`resume-preview-section ${section.kind}`}>
+            <h4>{section.label}</h4>
+            {section.kind === "skills" ? (
+              <div className="resume-skill-tags">
+                {skillTags(section.entries).map((tag, index) => <span key={`${tag}-${index}`}>{tag}</span>)}
+              </div>
+            ) : (
+              <div className="resume-preview-entry-list">
+                {section.entries.map((entry, index) => (
+                  <article key={`${section.kind}-${index}`}>
+                    {section.kind === "projects" && section.entries.length > 1 ? (
+                      <span className="resume-preview-kicker">{projectOrdinalLabel(index)}</span>
+                    ) : null}
+                    <strong>{entry[0]}</strong>
+                    {entry.slice(1).map((line, lineIndex) => <p key={lineIndex}>{line}</p>)}
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export function ProfileSettingsPage({
@@ -140,16 +172,15 @@ export function ProfileSettingsPage({
   return (
     <section className="profile-settings-page profile-simplified-page">
       <header className="profile-page-heading">
-        <h2>个人信息</h2>
         <div className="profile-heading-actions">
           <span className={`profile-status ${hasResume ? "ready" : "pending"}`}><i />{hasResume ? "简历已导入" : "待导入简历"}</span>
-          {returnToWorkbench ? <button className="secondary-button" type="button" onClick={onReturnToWorkbench}><ArrowLeft size={15} />返回简历分析</button> : null}
+          {returnToWorkbench ? <ActionButton variant="secondary" type="button" onClick={onReturnToWorkbench}><ArrowLeft size={15} />返回分析</ActionButton> : null}
         </div>
       </header>
 
       <section className="profile-linear-layout">{informationCard}{resumeWorkspace}</section>
 
-      {hasUnsavedChanges ? <footer className="profile-save-bar profile-simplified-save"><span>{ready ? <ShieldCheck size={15} /> : <UserRound size={15} />}{ready ? "保存后用于后续准备" : "填写称呼后即可保存"}</span><button className="primary-button" type="button" onClick={() => void saveChanges()} disabled={busy || resumeBusy || !ready}>{busy ? <LoaderCircle className="spinning" size={16} /> : <Save size={16} />}{busy ? "保存中…" : "保存"}</button></footer> : null}
+      {hasUnsavedChanges ? <footer className="profile-save-bar profile-simplified-save"><span>{ready ? <ShieldCheck size={15} /> : <UserRound size={15} />}{ready ? "保存后用于后续准备" : "填写称呼后即可保存"}</span><ActionButton variant="primary" type="button" onClick={() => void saveChanges()} disabled={busy || resumeBusy || !ready}>{busy ? <LoaderCircle className="spinning" size={16} /> : <Save size={16} />}{busy ? "保存中…" : "保存"}</ActionButton></footer> : null}
     </section>
   );
 }

@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import json
-import queue
-import threading
 from typing import Any, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
 
+from ..workspace import bind_workspace
 from ..agent import get_agent_capabilities
 from ..agent.bootstrap import reload_agent_components
+from ..agent.model_capabilities import (
+    build_model_list,
+    infer_model_capabilities,
+)
 from ..agent.settings import (
     get_agent_settings,
     get_model_connection,
@@ -25,6 +28,7 @@ from ..attachments.service import (
     parse_attachment,
 )
 from ..config import get_settings
+from ..agent.snapshots import clear_run_snapshot
 from ..chat.conversations import (
     create_conversation,
     delete_conversation,
@@ -35,6 +39,7 @@ from ..chat.conversations import (
 from ..db import connect
 from ..profile.candidate_core import (
     create_candidate_source,
+    clear_candidate_resume,
     add_writing_sample,
     create_or_update_profile,
     create_story,
@@ -45,6 +50,8 @@ from ..profile.candidate_core import (
     get_or_start_profile_interview,
     get_voice_profile,
     ingest_resume_knowledge,
+    blocked_skill_names,
+    resolved_skill_names,
     list_candidate_sources,
     list_candidate_narratives,
     list_facts,
@@ -70,11 +77,12 @@ from ..profile.career_feedback import (
     record_interview_debrief,
     skill_growth_map,
 )
+from ..profile.intelligence import filter_blocked_skills
+from ..profile.skill_tags import resolve_home_skill_tags, skill_tag_source
 from ..opportunities.service import (
     OpportunityScanError,
     add_opportunity_source,
     create_or_update_company,
-    discover_companies,
     get_discovered_job,
     list_companies,
     list_discovered_jobs,
@@ -96,14 +104,13 @@ from ..opportunities.runs import (
     retry_discovery_run,
 )
 from ..jobs.service import create_job, delete_job, get_job, list_jobs, update_job
-from ..jobs.import_agent import JobImportAgent
 from ..jobs.imports import (
     JobImportError,
     preview_job_screenshot,
     preview_job_text,
-    preview_job_url,
 )
-from ..jobs.quick_match import analyze_job_description
+from ..jobs.quick_match import analyze_job_description, apply_resume_rewrite_and_analyze
+from ..profile.analysis_run import encode_sse, iter_analysis_run_events
 from ..jobs.evaluations import (
     cancel_job_evaluation,
     create_job_comparison,
@@ -144,7 +151,9 @@ from ..interview.preparation import (
     start_interview_preparation_resume_analysis,
     update_interview_preparation_node,
 )
+from ..projects.briefing import analyze_project_briefing, get_project_studio
 from ..resume.versions import (
+    create_baseline_resume_version,
     create_resume_version,
     delete_resume_version,
     export_resume_version,
@@ -154,7 +163,7 @@ from ..resume.versions import (
     update_resume_version,
 )
 from ..profile import service as profile_service
-from ..workflow.engine import refresh_workflow_status
+from ..workflow.engine import record_stage_activity, refresh_workflow_status
 from .dependencies import require_conversation
 from .schemas import (
     AgentSettingsIn,
@@ -184,17 +193,17 @@ from .schemas import (
     InterviewPreparationNodeUpdate,
     InterviewPreparationProjectSelectionIn,
     InterviewPreparationRecordIn,
+    ProjectBriefingIn,
     JobCreate,
     JobComparisonIn,
     JobEvaluationCreateIn,
     JobEvaluationReviewIn,
-    JobImportPreviewIn,
     JobImportTextPreviewIn,
     JobEventCreate,
     JobUpdate,
+    ModelCapabilitiesIn,
     ModelDiscoveryIn,
     MaterialVerifyIn,
-    OpportunityDiscoveryIn,
     DiscoveryRunIn,
     OpportunitySourceIn,
     OpportunitySourceUpdateIn,
@@ -205,6 +214,7 @@ from .schemas import (
     DiscoveredJobUpdateIn,
     InterviewDebriefIn,
     ResumeChangeUpdate,
+    QuickMatchApplyRewriteIn,
     QuickMatchIn,
     ResumeVersionUpdate,
     VoiceProfileIn,
@@ -216,11 +226,49 @@ from .schemas import (
 router = APIRouter()
 
 
+def _record_workbench_stage(stage_id: str, message: str, **payload: Any) -> None:
+    record_stage_activity(stage_id, "stage_engaged", message, payload or None)
+
+
 @router.post("/quick-match")
 def quick_match(payload: QuickMatchIn) -> dict[str, Any]:
     try:
         return analyze_job_description(
             payload.job_description,
+            job_title=payload.job_title,
+            company_name=payload.company_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/quick-match/run")
+async def quick_match_run(payload: QuickMatchIn) -> StreamingResponse:
+    async def stream():
+        try:
+            async for event in iter_analysis_run_events(
+                payload.job_description,
+                job_title=payload.job_title,
+                company_name=payload.company_name,
+            ):
+                yield encode_sse(event)
+        except ValueError as exc:
+            yield encode_sse({"type": "error", "message": str(exc)})
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post("/quick-match/apply-rewrite")
+def quick_match_apply_rewrite(payload: QuickMatchApplyRewriteIn) -> dict[str, Any]:
+    try:
+        return apply_resume_rewrite_and_analyze(
+            payload.original,
+            payload.suggested,
+            job_description=payload.job_description,
             job_title=payload.job_title,
             company_name=payload.company_name,
         )
@@ -239,7 +287,9 @@ def interview_preparation_get() -> dict[str, Any]:
 @router.post("/interview-preparation/analyze")
 async def interview_preparation_analyze() -> dict[str, Any]:
     try:
-        return await start_interview_preparation_resume_analysis()
+        result = await start_interview_preparation_resume_analysis()
+        _record_workbench_stage("interview_preparation", "工作台已开始面试准备分析")
+        return result
     except (ValueError, ModelProviderError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -259,7 +309,9 @@ async def interview_preparation_jd_analyze(
     payload: InterviewPreparationJdIn,
 ) -> dict[str, Any]:
     try:
-        return await analyze_interview_preparation_jd(payload.job_description)
+        result = await analyze_interview_preparation_jd(payload.job_description)
+        _record_workbench_stage("interview_preparation", "工作台已按 JD 分析面试准备")
+        return result
     except (ValueError, ModelProviderError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -298,6 +350,31 @@ def interview_preparation_node_update(
             note=payload.note,
         )
     except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/project-studio")
+def project_studio_get() -> dict[str, Any]:
+    try:
+        return get_project_studio()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/project-studio/{project_id}/briefing")
+async def project_studio_briefing(
+    project_id: str,
+    payload: ProjectBriefingIn,
+) -> dict[str, Any]:
+    try:
+        return await analyze_project_briefing(
+            project_id,
+            source_kind=payload.source_kind,
+            description=payload.description,
+            code_excerpt=payload.code_excerpt,
+            use_model=payload.use_model,
+        )
+    except (ValueError, ModelProviderError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
@@ -348,6 +425,7 @@ def conversations_delete(conversation_id: int) -> dict[str, Any]:
             status_code=503,
             detail=f"对话附件清理失败，已保留对话记录：{exc}",
         ) from exc
+    clear_run_snapshot(conversation_id)
     if not delete_conversation(conversation_id):
         raise HTTPException(status_code=404, detail="对话不存在")
     with connect() as conn:
@@ -385,14 +463,6 @@ def jobs_create(payload: JobCreate) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.post("/job-imports/preview")
-def job_import_preview(payload: JobImportPreviewIn) -> dict[str, Any]:
-    try:
-        return preview_job_url(payload.url)
-    except JobImportError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
 @router.post("/job-imports/text-preview")
 def job_import_text_preview(payload: JobImportTextPreviewIn) -> dict[str, Any]:
     try:
@@ -416,45 +486,6 @@ async def job_import_screenshot_preview(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     finally:
         await file.close()
-
-
-@router.post("/job-imports/preview/stream")
-def job_import_preview_stream(payload: JobImportPreviewIn) -> StreamingResponse:
-    def stream():
-        event_queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
-
-        def publish(event: dict[str, Any]) -> None:
-            event_queue.put(event)
-
-        def execute() -> None:
-            try:
-                preview = JobImportAgent(event_callback=publish).run(payload.url)
-                event_queue.put({"type": "result", "preview": preview})
-            except Exception as exc:
-                event_queue.put(
-                    {
-                        "type": "error",
-                        "message": f"岗位导入智能体执行异常：{type(exc).__name__}",
-                    }
-                )
-            finally:
-                event_queue.put(None)
-
-        threading.Thread(target=execute, daemon=True).start()
-        while True:
-            event = event_queue.get()
-            if event is None:
-                break
-            yield json.dumps(event, ensure_ascii=False) + "\n"
-
-    return StreamingResponse(
-        stream(),
-        media_type="application/x-ndjson",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
-    )
 
 
 @router.get("/jobs/{job_id}")
@@ -494,7 +525,8 @@ def job_evaluation_create(
         )
     except ValueError as exc:
         raise HTTPException(status_code=404 if str(exc) == "岗位项目不存在" else 422, detail=str(exc)) from exc
-    background_tasks.add_task(execute_job_evaluation, int(evaluation["id"]))
+    _record_workbench_stage("job_evaluation", "工作台已创建岗位评估", job_id=job_id)
+    background_tasks.add_task(bind_workspace(execute_job_evaluation, int(evaluation["id"])))
     return evaluation
 
 
@@ -528,24 +560,17 @@ def job_evaluation_retry(evaluation_id: int, background_tasks: BackgroundTasks) 
         evaluation = retry_job_evaluation(evaluation_id)
     except ValueError as exc:
         raise HTTPException(status_code=404 if "不存在" in str(exc) else 422, detail=str(exc)) from exc
-    background_tasks.add_task(execute_job_evaluation, int(evaluation["id"]))
-    return evaluation
-
-
-@router.post("/job-evaluations/{evaluation_id}/deep-research", status_code=status.HTTP_202_ACCEPTED)
-def job_evaluation_deep(evaluation_id: int, background_tasks: BackgroundTasks) -> dict[str, Any]:
-    try:
-        evaluation = retry_job_evaluation(evaluation_id, deep=True)
-    except ValueError as exc:
-        raise HTTPException(status_code=404 if "不存在" in str(exc) else 422, detail=str(exc)) from exc
-    background_tasks.add_task(execute_job_evaluation, int(evaluation["id"]))
+    _record_workbench_stage("job_evaluation", "工作台已重试岗位评估", evaluation_id=evaluation_id)
+    background_tasks.add_task(bind_workspace(execute_job_evaluation, int(evaluation["id"])))
     return evaluation
 
 
 @router.post("/job-evaluations/{evaluation_id}/reviews")
 def job_evaluation_review(evaluation_id: int, payload: JobEvaluationReviewIn) -> dict[str, Any]:
     try:
-        return review_job_evaluation(evaluation_id, **payload.model_dump())
+        result = review_job_evaluation(evaluation_id, **payload.model_dump())
+        _record_workbench_stage("job_evaluation", "工作台已审核岗位评估", evaluation_id=evaluation_id)
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=404 if "不存在" in str(exc) else 422, detail=str(exc)) from exc
 
@@ -594,6 +619,21 @@ def job_comparison_get(comparison_id: int) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.get("/resume-versions")
+def resume_versions_all() -> list[dict[str, Any]]:
+    return list_resume_versions()
+
+
+@router.post("/resume-versions")
+def resume_versions_create_baseline() -> dict[str, Any]:
+    try:
+        result = create_baseline_resume_version()
+        _record_workbench_stage("material_preparation", "工作台已生成简历版本")
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.get("/jobs/{job_id}/resume-versions")
 def resume_versions_index(job_id: int) -> list[dict[str, Any]]:
     try:
@@ -605,7 +645,9 @@ def resume_versions_index(job_id: int) -> list[dict[str, Any]]:
 @router.post("/jobs/{job_id}/resume-versions")
 def resume_versions_create(job_id: int) -> dict[str, Any]:
     try:
-        return create_resume_version(job_id)
+        result = create_resume_version(job_id)
+        _record_workbench_stage("material_preparation", "工作台已生成岗位简历版本", job_id=job_id)
+        return result
     except ValueError as exc:
         message = str(exc)
         status_code = 404 if message == "岗位项目不存在" else 422
@@ -631,6 +673,8 @@ def resume_versions_update(
             title=payload.title,
             status=payload.status,
             template_id=payload.template_id,
+            style_id=payload.style_id,
+            layout=payload.layout.model_dump(exclude_none=True) if payload.layout else None,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -688,6 +732,11 @@ def resume_versions_export(
             )
         },
     )
+
+
+@router.get("/interview-kits")
+def interview_kits_all() -> list[dict[str, Any]]:
+    return list_interview_kits()
 
 
 @router.get("/jobs/{job_id}/interview-kits")
@@ -1002,16 +1051,83 @@ async def discover_models(payload: ModelDiscoveryIn) -> dict[str, Any]:
             status_code=503 if exc.retryable else 400,
             detail=str(exc),
         ) from exc
+    except Exception as exc:
+        # 识别模型是配置类操作，未预期异常也要给出可读原因，不能冒泡成 500。
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"读取模型目录 {provider.models_url} 时发生未预期异常，"
+                "请确认 Base URL 与 API Key 后重试"
+            ),
+        ) from exc
     if not models:
         raise HTTPException(
             status_code=404,
-            detail="服务已连接，但 /v1/models 没有返回可用模型；请继续手动填写模型名称",
+            detail=(
+                f"服务已连接，但 {provider.models_url} 没有返回可用模型；"
+                "请继续手动填写模型名称"
+            ),
         )
+    provider_name = get_settings().model_provider
+    normalized_base = OpenAICompatibleProvider._normalize_base_url(base_url) or ""
     return {
         "models": models,
         "count": len(models),
         "base_url": OpenAICompatibleProvider._normalize_base_url(base_url),
+        "provider": provider_name,
+        "items": build_model_list(
+            connection["model_name"],
+            models,
+            provider=provider_name,
+            base_url=normalized_base,
+        ),
     }
+
+
+@router.get("/agent/models/capabilities")
+def model_capabilities_get(model_name: str = "") -> dict[str, Any]:
+    connection = get_model_connection()
+    settings = get_settings()
+    return infer_model_capabilities(
+        model_name.strip() or connection["model_name"],
+        provider=settings.model_provider,
+        base_url=connection["model_base_url"],
+    )
+
+
+@router.post("/agent/models/capabilities")
+async def model_capabilities_probe(payload: ModelCapabilitiesIn) -> dict[str, Any]:
+    connection = get_model_connection()
+    settings = get_settings()
+    model_name = payload.model_name.strip() or connection["model_name"]
+    base_url = payload.model_base_url.strip() or connection["model_base_url"]
+    report = infer_model_capabilities(
+        model_name,
+        provider=settings.model_provider,
+        base_url=base_url,
+    )
+    if not payload.probe:
+        return report
+
+    api_key = payload.api_key.strip() or connection["api_key"]
+    if not api_key:
+        report["probe_error"] = "请先填写或保存 API Key"
+        return report
+
+    provider = OpenAICompatibleProvider(
+        api_key=api_key,
+        model=model_name,
+        base_url=base_url or None,
+        timeout_seconds=min(settings.model_timeout_seconds, 20),
+    )
+    try:
+        report["vision"] = await provider.probe_vision()
+        report["probed"] = True
+        report["probe_error"] = None
+    except ModelProviderError as exc:
+        report["probed"] = False
+        report["probe_error"] = str(exc)
+    return report
 
 
 @router.get("/agent/model-monitor")
@@ -1078,7 +1194,9 @@ async def parse_candidate_resume(
     filename = (file.filename or "resume").strip()
     try:
         content = await file.read()
-        return profile_service.parse_candidate_resume(filename, content, mode)
+        result = profile_service.parse_candidate_resume(filename, content, mode)
+        _record_workbench_stage("candidate_knowledge", "工作台已解析简历")
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
@@ -1090,6 +1208,14 @@ async def parse_candidate_resume(
         await file.close()
 
 
+@router.delete("/career-profile/resume")
+def career_profile_resume_delete() -> dict[str, Any]:
+    try:
+        return {"profile": clear_candidate_resume()}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.post("/career-profile/privacy/scan")
 def scan_candidate_privacy(payload: PrivacyScanIn) -> dict[str, Any]:
     return profile_service.scan_candidate_privacy(payload.text)
@@ -1098,6 +1224,31 @@ def scan_candidate_privacy(payload: PrivacyScanIn) -> dict[str, Any]:
 @router.get("/career-profile")
 def career_profile_get() -> dict[str, Any]:
     return get_career_profile()
+
+
+@router.get("/career-profile/skill-tags")
+async def career_profile_skill_tags() -> dict[str, Any]:
+    bundle = get_career_profile()
+    profile = bundle.get("profile") or {}
+    facts = bundle.get("facts") or []
+    confirmed_tags = resolved_skill_names()
+    blocked = blocked_skill_names()
+    skills_text = "\n".join(
+        str((item.get("value") or {}).get("name") or item.get("statement") or "")
+        for item in facts
+        if item.get("category") == "skill" and item.get("status") == "confirmed"
+    )
+    result = await resolve_home_skill_tags(
+        skill_tag_source(
+            skills_text="\n".join([*confirmed_tags, skills_text]),
+            resume_text=str(profile.get("resume_text") or ""),
+        )
+    )
+    result["skills"] = filter_blocked_skills(
+        [*confirmed_tags, *(result.get("skills") or [])],
+        blocked,
+    )
+    return result
 
 
 @router.put("/career-profile")
@@ -1176,7 +1327,10 @@ def career_profile_fact_review(
         "retract": "retracted",
     }[payload.action]
     try:
-        return review_fact(fact_id, status=status_value, statement=payload.statement)
+        result = review_fact(fact_id, status=status_value, statement=payload.statement)
+        if status_value == "confirmed":
+            _record_workbench_stage("candidate_knowledge", "工作台已确认画像事实", fact_id=fact_id)
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=404 if "不存在" in str(exc) else 422, detail=str(exc)) from exc
 
@@ -1449,13 +1603,15 @@ def career_profile_export(
 @router.post("/interviews/{job_id}/debrief")
 def interview_debrief_post(job_id: int, payload: InterviewDebriefIn) -> dict[str, Any]:
     try:
-        return record_interview_debrief(
+        result = record_interview_debrief(
             job_id,
             round_id=payload.interview_round_id,
             summary=payload.source_text,
             questions=payload.questions,
             feedback_verbatim=payload.raw_feedback,
         )
+        _record_workbench_stage("outcome_tracking", "工作台已记录面试复盘", job_id=job_id)
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=404 if "不存在" in str(exc) else 422, detail=str(exc)) from exc
 
@@ -1492,22 +1648,6 @@ def companies_post(payload: CompanyIn) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.post("/opportunities/discover")
-async def opportunities_discover(payload: OpportunityDiscoveryIn) -> dict[str, Any]:
-    query = payload.query.strip()
-    if not query:
-        try:
-            context = get_candidate_context("discovery", strategy_id=payload.strategy_id)
-            strategy = context.get("strategy") or {}
-            query = " ".join((strategy.get("target_roles") or []) + (strategy.get("locations") or []))
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-    try:
-        return await discover_companies(query, count=payload.limit)
-    except OpportunityScanError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-
 @router.get("/opportunity-sources")
 @router.get("/opportunities/sources")
 def opportunity_sources_get(enabled_only: bool = False) -> list[dict[str, Any]]:
@@ -1542,7 +1682,9 @@ def opportunity_source_patch(source_id: int, payload: OpportunitySourceUpdateIn)
 @router.post("/opportunities/sources/{source_id}/scan")
 def opportunity_source_scan(source_id: int) -> dict[str, Any]:
     try:
-        return scan_opportunity_source(source_id, trigger="manual")
+        result = scan_opportunity_source(source_id, trigger="manual")
+        _record_workbench_stage("opportunity_discovery", "工作台已扫描职位来源", source_id=source_id)
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except OpportunityScanError as exc:
@@ -1551,7 +1693,9 @@ def opportunity_source_scan(source_id: int) -> dict[str, Any]:
 
 @router.post("/opportunities/sources/scan")
 def opportunity_sources_scan() -> list[dict[str, Any]]:
-    return scan_followed_sources(trigger="manual")
+    result = scan_followed_sources(trigger="manual")
+    _record_workbench_stage("opportunity_discovery", "工作台已扫描已关注来源")
+    return result
 
 
 @router.get("/discovered-jobs")
@@ -1601,7 +1745,8 @@ def opportunity_run_create(payload: DiscoveryRunIn, background_tasks: Background
         config=config,
         trigger="manual",
     )
-    background_tasks.add_task(execute_discovery_run, int(run["id"]))
+    _record_workbench_stage("opportunity_discovery", "工作台已创建机会发现任务", run_id=int(run["id"]))
+    background_tasks.add_task(bind_workspace(execute_discovery_run, int(run["id"])))
     return run
 
 
@@ -1639,7 +1784,8 @@ def opportunity_run_retry(run_id: int, background_tasks: BackgroundTasks) -> dic
         run = retry_discovery_run(run_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    background_tasks.add_task(execute_discovery_run, int(run["id"]))
+    _record_workbench_stage("opportunity_discovery", "工作台已重试机会发现任务", run_id=int(run["id"]))
+    background_tasks.add_task(bind_workspace(execute_discovery_run, int(run["id"])))
     return run
 
 

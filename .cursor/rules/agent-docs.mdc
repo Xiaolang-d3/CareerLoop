@@ -1,0 +1,19 @@
+---
+description: 智能体行为变更必须同步维护 docs/agent.md
+globs: backend/app/agent/**/*.py,backend/app/domain/agent.py,backend/app/tools/**/*.py,backend/app/models/**/*.py,backend/app/chat/**/*.py,backend/app/workflow/**/*.py,backend/app/profile/candidate_memory.py,frontend/src/features/settings/AgentOperationsDashboard.tsx
+alwaysApply: false
+---
+
+# 智能体文档同步
+
+`docs/agent.md` 是智能体层的维护文档。改上述文件中的行为时，在同一变更中更新该文档。
+
+必须同步的典型改动：新增/删除/改名工具或路由、改变 runtime 循环或失败策略、改变记忆与人审、改变工作流阶段、改变系统提示中的能力原则。
+
+更新时：
+
+- 写清意图和边界，不要把愿望写成现状。
+- 工具与路由的权威列表以 `orchestration.py` 的 `TOOL_POLICIES` / `ROUTE_LABELS` 和 `bootstrap.py` 注册表为准；文档表格与之一致。
+- 新增工具必须同时改实现、注册、`TOOL_POLICIES`、`TOOL_STAGES` 和文档。
+- 新增路由必须同时改 `ROUTE_LABELS`、`ROUTE_STAGES`、文档，以及运营看板标签。
+- 机械一致性测试是 `tests/test_workflow_stages.py`；测试通过不代替更新文档。

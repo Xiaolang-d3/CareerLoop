@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProfileSettingsPage } from "./ProfileSettingsPage";
 import type { CandidateEditor } from "../../types";
@@ -49,7 +50,7 @@ describe("ProfileSettingsPage 2.0", () => {
 
   it("keeps a single, concise personal-information heading", () => {
     render(<ProfileSettingsPage {...props()} />);
-    expect(screen.getByRole("heading", { name: "个人信息" })).toBeInTheDocument();
+    expect(screen.getByText("简历已导入")).toBeInTheDocument();
     expect(screen.queryByText("JOB SEARCH")).not.toBeInTheDocument();
     expect(screen.queryByText("我的求职资料")).not.toBeInTheDocument();
     expect(screen.queryByText("我的亮点")).not.toBeInTheDocument();
@@ -60,7 +61,7 @@ describe("ProfileSettingsPage 2.0", () => {
     const onReturnToWorkbench = vi.fn();
     render(<ProfileSettingsPage {...props()} returnToWorkbench onReturnToWorkbench={onReturnToWorkbench} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "返回简历分析" }));
+    fireEvent.click(screen.getByRole("button", { name: "返回分析" }));
 
     expect(onReturnToWorkbench).toHaveBeenCalledOnce();
   });
@@ -94,6 +95,92 @@ describe("ProfileSettingsPage 2.0", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "编辑原文" }));
     expect(screen.getByRole("textbox", { name: "简历内容" })).toBeInTheDocument();
+  });
+
+  it("renders education like other preview sections: full-width card with heading and award lines", () => {
+    render(<ProfileSettingsPage {...props()} editor={{
+      ...editor,
+      resumeText: `项目经历
+CareerLoop 求职助手
+完成简历解析与岗位匹配
+
+教育经历
+复旦大学｜计算机科学与技术｜2018.09-2022.06
+国家奖学金、校级优秀毕业生`
+    }} />);
+
+    const preview = screen.getByLabelText("简历预览");
+    const education = preview.querySelector("section.resume-preview-section.education");
+    const projects = preview.querySelector("section.resume-preview-section.projects");
+    expect(education).toBeTruthy();
+    expect(projects).toBeTruthy();
+    expect(education?.parentElement).toHaveClass("resume-preview-sections");
+    expect(projects?.parentElement).toBe(education?.parentElement);
+    expect(education?.querySelector(".resume-preview-entry-list")).toBeTruthy();
+    expect(projects?.querySelector(".resume-preview-entry-list")).toBeTruthy();
+    expect(education?.querySelector("strong")).toHaveTextContent("复旦大学｜计算机科学与技术｜2018.09-2022.06");
+    expect([...education?.querySelectorAll("p") || []].map((node) => node.textContent)).toEqual([
+      "国家奖学金",
+      "校级优秀毕业生"
+    ]);
+  });
+
+  it("renders three titled capabilities as 个人优势 entries, not summary", () => {
+    render(<ProfileSettingsPage {...props()} editor={{
+      ...editor,
+      resumeText: `陈露鑫｜AI 应用工程师
+GitHub：https://github.com/example
+电话：13800138000
+
+「AIGC 与大模型落地能力」：熟练掌握 LangChain、Prompt 工程与多模型协同。
+「AI 工程化全栈交付能力」：能独立完成从接口、编排到前端工作台的交付。
+「产品从 0 到 1 落地迭代能力」：从需求拆解到上线闭环，带过完整产品。
+
+工作经历
+示例科技｜AI 应用工程师`
+    }} />);
+
+    const preview = screen.getByLabelText("简历预览");
+    const strengths = preview.querySelector("section.resume-preview-section.strengths");
+    const summary = preview.querySelector("section.resume-preview-section.summary");
+    const articles = [...strengths?.querySelectorAll(".resume-preview-entry-list article") || []];
+    expect(strengths?.querySelector("h4")).toHaveTextContent("个人优势");
+    expect(articles).toHaveLength(3);
+    expect(articles.map((node) => node.querySelector("strong")?.textContent)).toEqual([
+      "「AIGC 与大模型落地能力」",
+      "「AI 工程化全栈交付能力」",
+      "「产品从 0 到 1 落地迭代能力」"
+    ]);
+    expect(articles.map((node) => node.querySelector("p")?.textContent)).toEqual([
+      "熟练掌握 LangChain、Prompt 工程与多模型协同。",
+      "能独立完成从接口、编排到前端工作台的交付。",
+      "从需求拆解到上线闭环，带过完整产品。"
+    ]);
+    expect(summary?.textContent || "").not.toContain("AIGC 与大模型落地能力");
+    expect(summary?.querySelectorAll("article")).not.toHaveLength(3);
+  });
+
+  it("clears the resume workspace after 清除", () => {
+    function Harness() {
+      const [current, setCurrent] = useState(editor);
+      return (
+        <ProfileSettingsPage
+          {...props()}
+          editor={current}
+          onClearResume={() => setCurrent({ ...current, resumeText: "", resumeFilename: "", resumeRedactedText: "" })}
+        />
+      );
+    }
+    render(<Harness />);
+    expect(screen.getByText("简历已导入")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "清除" }));
+
+    expect(screen.getByText("导入简历")).toBeInTheDocument();
+    expect(screen.getByText("待导入简历")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "清除" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("简历预览")).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("小林")).toBeInTheDocument();
   });
 
   it("only shows save after the profile is edited", async () => {

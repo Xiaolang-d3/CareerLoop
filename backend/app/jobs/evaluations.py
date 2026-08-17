@@ -7,7 +7,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal
 
-from ..profile.candidate_core import get_candidate_context
+from ..profile.candidate_core import get_candidate_context, resolved_skill_names
 from ..config import get_settings
 from ..db import connect, json_dump, row_to_dict, rows_to_dicts
 from ..profile.intelligence import extract_skills
@@ -131,7 +131,7 @@ def create_job_evaluation(
         "match", profile_id=int(profile["id"]), strategy_id=resolved_strategy_id,
         db_path=db_path,
     )
-    if not context.get("confirmed_facts"):
+    if not context.get("confirmed_facts") and not resolved_skill_names(db_path=db_path):
         raise ValueError("当前画像没有已确认事实，请先确认候选人知识")
     weights = validate_evaluation_weights((context.get("strategy") or {}).get("evaluation_weights"))
     job_fp = _job_fingerprint(dict(job))
@@ -593,10 +593,11 @@ def _extract_requirements(description: str) -> list[dict[str, Any]]:
 
 def _analyze_requirements(job: dict[str, Any], context: dict[str, Any]) -> list[dict[str, Any]]:
     facts = context.get("confirmed_facts") or []
+    blocked = context.get("blocked_claims") or []
     result: list[dict[str, Any]] = []
     for index, requirement in enumerate(_extract_requirements(str(job.get("description") or "")), start=1):
         text = requirement["text"]
-        required_skills = set(extract_skills(text))
+        required_skills = set(extract_skills(text, blocked=blocked))
         ascii_terms = {
             item.lower() for item in re.findall(r"[A-Za-z][A-Za-z0-9.+#-]{1,30}", text)
             if item.lower() not in {"and", "with", "the", "plus", "or"}
@@ -607,7 +608,7 @@ def _analyze_requirements(job: dict[str, Any], context: dict[str, Any]) -> list[
         covered_ascii: set[str] = set()
         for fact in facts:
             statement = str(fact.get("statement") or "")
-            fact_skills = set(extract_skills(statement))
+            fact_skills = set(extract_skills(statement, blocked=blocked))
             skill_overlap = required_skills & fact_skills
             ascii_overlap = {term for term in ascii_terms if _contains_term(statement.lower(), term)}
             if skill_overlap or ascii_overlap:

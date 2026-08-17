@@ -45,12 +45,15 @@ describe("responsive application shell styles", () => {
     expect(desktopTopbar).toContain("height: var(--app-topbar-height)");
   });
 
-  it("removes the application top bar and its spacing at the mobile breakpoint", () => {
+  it("hides only titleless application top bars at the mobile breakpoint", () => {
     const mobileStyles = mediaBlocks(careerloopStyles, "(max-width: 820px)").join("\n");
-    const mobileTopbarRules = [...mobileStyles.matchAll(/\.app-topbar\s*\{([^}]*)\}/g)]
+    const mobileTopbarRules = [...mobileStyles.matchAll(/\.app-topbar[^{]*\{([^}]*)\}/g)]
       .map((match) => match[1].trim().replace(/\s+/g, " "));
 
-    expect(mobileTopbarRules).toEqual(["display: none;"]);
+    expect(mobileTopbarRules.some((rule) => rule.includes("display: none"))).toBe(true);
+    expect(mobileStyles).toMatch(/\.app-topbar\.is-titleless/);
+    expect(mobileStyles).toMatch(/\.app-topbar:not\(:has\(\.app-topbar-context\)\)/);
+    expect(mobileStyles).not.toMatch(/^\s*\.app-topbar\s*\{[^}]*display:\s*none/m);
   });
 
   it("sizes page and chat content from the fixed mobile navigation only", () => {

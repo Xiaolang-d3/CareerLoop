@@ -6,7 +6,11 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from ..profile.candidate_core import ProfileNotInitializedError
+from ..profile.candidate_core import (
+    ProfileNotInitializedError,
+    blocked_skill_names,
+    resolved_skill_names,
+)
 from ..db import connect, row_to_dict
 from ..agent.settings import get_agent_settings
 from ..domain import ToolError, ToolResult
@@ -35,7 +39,15 @@ def resolve_profile(
             "SELECT * FROM preferences WHERE profile_id = ?",
             (profile_row["id"],),
         ).fetchone()
-    return row_to_dict(profile_row), row_to_dict(preference_row)
+    profile = row_to_dict(profile_row)
+    if profile is not None:
+        try:
+            profile["skills"] = resolved_skill_names(db_path=db_path)
+            profile["blocked_skills"] = blocked_skill_names(db_path=db_path)
+        except ProfileNotInitializedError:
+            profile["skills"] = []
+            profile["blocked_skills"] = []
+    return profile, row_to_dict(preference_row)
 
 
 def profile_for_agent(profile: dict[str, Any]) -> dict[str, Any]:

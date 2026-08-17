@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
+from app import db as db_module
 from app.database_lifecycle import (
     REBUILD_CONFIRMATION,
     database_status,
@@ -48,6 +49,30 @@ def test_legacy_database_requires_confirmation_then_is_backed_up_and_rebuilt() -
             }
         assert "candidate_memory_items" in tables
         assert "legacy_marker" not in tables
+
+
+def test_legacy_bosscopilot_database_is_renamed_on_adoption(monkeypatch: pytest.MonkeyPatch) -> None:
+    with TemporaryDirectory() as directory:
+        legacy_path = Path(directory) / "bosscopilot.db"
+        new_path = Path(directory) / "careerloop.db"
+        with sqlite3.connect(legacy_path) as conn:
+            conn.execute("CREATE TABLE marker (value TEXT NOT NULL)")
+            conn.execute("INSERT INTO marker (value) VALUES ('legacy data')")
+        Path(f"{legacy_path}-wal").touch()
+
+        monkeypatch.setattr(db_module, "LEGACY_DB_PATH", legacy_path)
+        monkeypatch.setattr(db_module, "DB_PATH", new_path)
+        db_module.adopt_legacy_database()
+
+        assert not legacy_path.exists()
+        assert not Path(f"{legacy_path}-wal").exists()
+        assert Path(f"{new_path}-wal").exists()
+        with sqlite3.connect(new_path) as conn:
+            assert conn.execute("SELECT value FROM marker").fetchone()[0] == "legacy data"
+
+        # Re-running after adoption must be a no-op.
+        db_module.adopt_legacy_database()
+        assert new_path.exists()
 
 
 def test_existing_migration_ledger_receives_additive_upgrade() -> None:

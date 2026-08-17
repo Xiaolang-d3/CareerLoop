@@ -2,11 +2,13 @@
 
 个人求职助手Agent。帮助整理简历与岗位材料，完成匹配分析、定制简历和面试准备。
 
+智能体层的架构、工具、路由与维护约定见 [docs/agent.md](docs/agent.md)。改智能体行为时必须同步更新该文档。
+
 ## 技术栈
 
 - 前端：React 19、TypeScript、Vite
 - 后端：Python 3.11+、FastAPI、Pydantic、OpenAI Python SDK
-- 数据：SQLite、sqlite-vec、本地附件
+- 数据：SQLite、sqlite-vec、FastEmbed 本地向量、本地附件
 
 开发需要 Python 3.11+、Node.js 20 LTS+ 与 npm。`scripts/dev.sh` 还依赖 `lsof` 和 `screen`。
 
@@ -24,6 +26,8 @@ CareerLoop/
 │   ├── src/
 │   ├── e2e/
 │   └── package.json
+├── docs/
+│   └── agent.md        # 智能体层维护文档
 └── scripts/            # 本地启动与停止
 ```
 

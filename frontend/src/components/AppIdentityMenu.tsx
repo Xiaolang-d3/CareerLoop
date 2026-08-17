@@ -75,14 +75,23 @@ export function AppIdentityMenu({
         aria-controls={menuId}
       >
         <span className="sidebar-identity-avatar" aria-hidden="true">
-          {avatarUrl ? <img src={avatarUrl} alt="" /> : identityInitial(accountName, userEmail)}
+          {avatarUrl ? <img src={avatarUrl} alt="" /> : (
+            <span className="sidebar-identity-glyph">{identityInitial(accountName, userEmail)}</span>
+          )}
         </span>
       </button>
       {open ? (
         <div className="app-identity-menu" id={menuId} role="menu" aria-label="账号菜单">
           <div className="app-identity-summary">
-            <strong>{displayName}</strong>
-            {accountName?.trim() ? <small>{userEmail}</small> : null}
+            <span className="sidebar-identity-avatar" aria-hidden="true">
+              {avatarUrl ? <img src={avatarUrl} alt="" /> : (
+                <span className="sidebar-identity-glyph">{identityInitial(accountName, userEmail)}</span>
+              )}
+            </span>
+            <div>
+              <strong>{displayName}</strong>
+              {accountName?.trim() ? <small>{userEmail}</small> : null}
+            </div>
           </div>
           <button
             type="button"
@@ -93,7 +102,7 @@ export function AppIdentityMenu({
             onFocus={() => onPrefetchPage?.("profile")}
           >
             <UserRound size={15} />
-            个人资料
+            求职资料
           </button>
           {onOpenAccount ? (
             <button

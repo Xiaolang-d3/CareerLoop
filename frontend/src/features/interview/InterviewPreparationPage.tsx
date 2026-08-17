@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BookOpenCheck, ChevronRight, CircleAlert, FileText, Layers3, Lightbulb, LoaderCircle, MessageSquareText, RefreshCw, Save, ShieldCheck, Sparkles, UserRound, X } from "lucide-react";
+import { BookOpenCheck, ChevronRight, CircleAlert, FileText, Layers3, Lightbulb, LoaderCircle, MessageSquareText, Mic, MicOff, RefreshCw, Save, ShieldCheck, Sparkles, UserRound, Volume2, X } from "lucide-react";
 import type { InterviewPreparation, InterviewPreparationExperience, InterviewPreparationNode } from "../../types";
 import { fetchWithTimeout } from "../../api/client";
 import { useAsyncPolling } from "../../hooks/useAsyncPolling";
+import { useVoiceAnswer } from "../../hooks/useVoiceAnswer";
 import "./interview-preparation.css";
 
 export type PreparationArea = "projects" | "knowledge" | "records";
@@ -119,13 +120,29 @@ function JdQuestionPractice({ question, busy, onFeedback }: { question: { id: st
   const [feedback, setFeedback] = useState<{ strengths: string[]; gaps: string[]; next_attempt: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const voice = useVoiceAnswer((finalText) => {
+    setAnswer((current) => (current.trim() ? `${current.trim()} ${finalText}` : finalText));
+  });
   async function requestFeedback() {
     setLoading(true); setError("");
     try { setFeedback((await onFeedback(question.id, answer)).feedback); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "获取反馈失败，请稍后重试"); }
     finally { setLoading(false); }
   }
-  return <article className="jd-question-card"><strong>{question.question}</strong>{question.focus ? <small>考察：{question.focus}</small> : null}<textarea aria-label={`${question.question} 的回答`} value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="写下你的回答…" rows={4} /><button type="button" onClick={() => void requestFeedback()} disabled={busy || loading || answer.trim().length < 10}>{loading ? "正在反馈…" : "获取反馈"}</button>{error ? <p className="inline-error" role="alert">{error}</p> : null}{feedback ? <div className="jd-feedback"><p><b>做得好：</b>{feedback.strengths.join("；") || "—"}</p><p><b>待补充：</b>{feedback.gaps.join("；") || "—"}</p><p><b>下一次尝试：</b>{feedback.next_attempt || "补充更具体的项目证据。"}</p></div> : null}</article>;
+  return <article className="jd-question-card">
+    <strong>{question.question}</strong>
+    {question.focus ? <small>考察：{question.focus}</small> : null}
+    {voice.synthesisSupported || voice.recognitionSupported ? <div className="jd-question-voice-row">
+      {voice.synthesisSupported ? <button type="button" className="voice-btn" onClick={() => (voice.speaking ? voice.stopSpeaking() : voice.speak(question.question))} aria-pressed={voice.speaking}><Volume2 size={13} />{voice.speaking ? "停止朗读" : "朗读题目"}</button> : null}
+      {voice.recognitionSupported ? <button type="button" className={`voice-btn ${voice.listening ? "recording" : ""}`} onClick={() => (voice.listening ? voice.stopListening() : voice.startListening())} aria-pressed={voice.listening}>{voice.listening ? <MicOff size={13} /> : <Mic size={13} />}{voice.listening ? "停止语音回答" : "语音回答"}</button> : null}
+    </div> : null}
+    {voice.listening && voice.interimTranscript ? <p className="jd-question-voice-interim" aria-live="polite">正在识别：{voice.interimTranscript}</p> : null}
+    {voice.error ? <p className="inline-error" role="alert">{voice.error}</p> : null}
+    <textarea aria-label={`${question.question} 的回答`} value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="写下你的回答，或点击“语音回答”口述…" rows={4} />
+    <button type="button" onClick={() => void requestFeedback()} disabled={busy || loading || answer.trim().length < 10}>{loading ? "正在反馈…" : "获取反馈"}</button>
+    {error ? <p className="inline-error" role="alert">{error}</p> : null}
+    {feedback ? <div className="jd-feedback"><p><b>做得好：</b>{feedback.strengths.join("；") || "—"}</p><p><b>待补充：</b>{feedback.gaps.join("；") || "—"}</p><p><b>下一次尝试：</b>{feedback.next_attempt || "补充更具体的项目证据。"}</p></div> : null}
+  </article>;
 }
 
 function ProjectDetail({ selected, targetRoles, focus, busy, onOpenNode, onSave, jdProjectAnalysis, onFeedback, onEditResume }: { selected: InterviewPreparationExperience; targetRoles: string[]; focus?: FocusGroup; busy: boolean; onOpenNode: (nodeId: string) => void; onSave: (node: InterviewPreparationNode, patch: { note?: string; completed?: boolean }) => void; jdProjectAnalysis?: { rewrite: string; questions: Array<{ id: string; question: string; focus: string }> } | null; onFeedback: (questionId: string, answer: string) => Promise<{ feedback: { strengths: string[]; gaps: string[]; next_attempt: string } }> ; onEditResume: () => void }) {
@@ -159,7 +176,7 @@ function InterviewRecords({ data, busy, onCreate }: { data: InterviewPreparation
 }
 
 const areaCopy: Record<PreparationArea, { title: string; description: string }> = {
-  projects: { title: "项目深度解析", description: "先核对可追溯证据，再逐步补全项目价值、技术决策和面试表达。" },
+  projects: { title: "项目解析", description: "这里拆项目，不出成套练习题。先核对可追溯证据，再逐步补全项目价值、技术决策和面试表达。" },
   knowledge: { title: "知识点回顾", description: "回到真实项目，确认概念、用法与取舍。" },
   records: { title: "面试记录", description: "保留关键问题、你的回答与下一次改进。" },
 };
@@ -309,11 +326,24 @@ export function InterviewPreparationPage({ apiBase, accessToken, initialData = n
 
   if ((busy || initialDataLoading) && !data) return <div className="interview-prep-loading"><LoaderCircle className="spinning" size={18} />正在整理你的面试准备内容…</div>;
   if (!data) return <section className="interview-prep-empty"><h2>暂时无法加载面试准备</h2><p>{error || "请稍后重试。"}</p><button className="ui-button ui-button-secondary ui-button-md" type="button" onClick={() => void load()}><RefreshCw size={15} />重新加载</button></section>;
-  if (data.has_profile === false) return <section className="interview-prep-empty"><UserRound size={27} /><h2>先建立候选人画像</h2><p>项目解析、知识回顾和面试练习都需要基于你的真实经历。先填写称呼，再上传或粘贴简历即可开始。</p><button className="ui-button ui-button-primary ui-button-md" type="button" onClick={onOpenProfile}>创建个人资料<ChevronRight size={15} /></button></section>;
-  if (!data.has_resume) return <section className="interview-prep-empty"><FileText size={27} /><h2>从个人经历开始</h2><p>上传或粘贴简历后，系统会从真实经历中整理项目证据、文字追问和知识点。</p><button className="ui-button ui-button-primary ui-button-md" type="button" onClick={onOpenProfile}>完善个人信息<ChevronRight size={15} /></button></section>;
+  if (data.has_profile === false) return <section className="interview-prep-empty"><UserRound size={27} /><h2>先建立候选人画像</h2><p>项目解析、知识回顾和面试练习都需要基于你的真实经历。先填写称呼，再上传或粘贴简历即可开始。</p><button className="ui-button ui-button-primary ui-button-md" type="button" onClick={onOpenProfile}>创建求职资料<ChevronRight size={15} /></button></section>;
+  if (!data.has_resume) return <section className="interview-prep-empty"><FileText size={27} /><h2>从个人经历开始</h2><p>上传或粘贴简历后，系统会从真实经历中整理项目证据、文字追问和知识点。</p><button className="ui-button ui-button-primary ui-button-md" type="button" onClick={onOpenProfile}>完善求职资料<ChevronRight size={15} /></button></section>;
 
   return <section className="interview-prep-page">
-    <header className="interview-prep-intro"><div><h2>{areaCopy[area].title}</h2>{data.overview.target_roles.length ? <span className="prep-target">准备方向：{data.overview.target_roles.join("、")}</span> : null}</div>{area === "projects" ? <div className="project-analysis-actions"><button type="button" onClick={() => void load()} disabled={busy}><RefreshCw size={14} />刷新内容</button></div> : null}</header>
+    <nav className="workbench-module-nav" aria-label="面试准备模块">
+      {(["projects", "knowledge", "records"] as const).map((key) => (
+        <button
+          key={key}
+          type="button"
+          className={area === key ? "active" : ""}
+          aria-current={area === key ? "page" : undefined}
+          onClick={() => onNavigate?.({ area: key })}
+        >
+          {areaCopy[key].title}
+        </button>
+      ))}
+    </nav>
+    <header className="interview-prep-intro"><div><p>{areaCopy[area].description}</p>{data.overview.target_roles.length ? <span className="prep-target">准备方向：{data.overview.target_roles.join("、")}</span> : null}</div>{area === "projects" ? <div className="project-analysis-actions"><button type="button" onClick={() => void load()} disabled={busy}><RefreshCw size={14} />刷新内容</button></div> : null}</header>
     {area === "knowledge" ? <KnowledgeReview experiences={data.experiences} generalKnowledge={data.general_knowledge} experienceId={experienceId} nodeId={nodeId} busy={busy} onOpenNode={(nextExperienceId, nextNodeId) => onNavigate?.({ area: "knowledge", experienceId: nextExperienceId, nodeId: nextNodeId })} onSave={saveNode} /> : null}
     {area === "records" ? <InterviewRecords data={data} busy={busy} onCreate={createRecord} /> : null}
     {area === "projects" ? <ProjectAnalysisWorkspace data={data} selected={selected} focus={focus} busy={busy} structureAnalysis={structureAnalysis} analysisError={analysisError} jdAnalysisStage={jdAnalysisStage} onSelect={(experience) => openProject(experience)} onRefresh={() => void analyzeResume()} onOpenNode={(nextNodeId) => selected && openProject(selected, "questions", nextNodeId)} onSave={saveNode} onReviewFragment={(fragmentId, action) => void reviewFragment(fragmentId, action)} onSelectProjects={(projectIds) => void selectProjects(projectIds)} onAnalyzeJd={(jobDescription) => void analyzeJd(jobDescription)} onFeedback={requestFeedback} onEditResume={onOpenProfile} /> : null}

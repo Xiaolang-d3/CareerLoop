@@ -44,9 +44,10 @@ export function createApiClient(apiBase: string, accessToken?: string) {
     if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
     const response = await fetchWithTimeout(`${apiBase}${path}`, { ...options, headers });
     if (!response.ok) {
+      const body = await response.text().catch(() => "");
       let message = `${path} 请求失败（${response.status}）`;
       try {
-        const payload = await response.json() as {
+        const payload = JSON.parse(body) as {
           detail?: string | { message?: string } | ValidationErrorItem[];
         };
         if (typeof payload.detail === "string") message = payload.detail;
@@ -57,7 +58,11 @@ export function createApiClient(apiBase: string, accessToken?: string) {
           message = payload.detail.message;
         }
       } catch {
-        // 服务端未返回 JSON 时保留包含状态码的错误信息。
+        // 未捕获异常会返回纯文本响应，附上正文片段比只给状态码更可诊断。
+        const plain = body.trim();
+        if (plain && !plain.startsWith("<") && plain.length <= 200) {
+          message = `${message}：${plain}`;
+        }
       }
       throw new Error(message);
     }

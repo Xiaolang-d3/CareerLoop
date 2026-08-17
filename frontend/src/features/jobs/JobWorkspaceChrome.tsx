@@ -19,7 +19,7 @@ export const priorityLabels: Record<JobProject["priority"], string> = {
 const workbenchStages = [
   { key: "analysis", title: "匹配分析", shortTitle: "分析", icon: Target },
   { key: "resume", title: "定制简历", shortTitle: "简历", icon: FileText },
-  { key: "interview", title: "面试准备", shortTitle: "面试", icon: UsersRound }
+  { key: "interview", title: "面试问答", shortTitle: "面试", icon: UsersRound }
 ] as const;
 
 type JobStageNavProps = {

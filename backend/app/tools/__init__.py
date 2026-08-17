@@ -1,4 +1,5 @@
 from .analyze_resume_against_jd import AnalyzeResumeAgainstJdTool
+from .ask_user import AskUserTool
 from .base import ToolContext, ToolHandler, ToolRegistry
 from .generate_interview_advice import GenerateInterviewAdviceTool
 from .generate_tailored_resume_content import GenerateTailoredResumeContentTool
@@ -9,17 +10,12 @@ from .career_os import (
     AnalyzeJobAgainstStrategyTool,
     CompareJobEvaluationsTool,
     CreateJobEvaluationTool,
-    DiscoverCompaniesTool,
-    DiscoverFundedCompaniesTool,
     GenerateCandidateMaterialTool,
     GetCandidateContextTool,
     GetJobEvaluationTool,
     ProposeCandidateKnowledgeTool,
-    ProcessOpportunityPipelineTool,
     RecordInterviewDebriefTool,
     ReviewJobEvaluationTool,
-    RunJobDeepResearchTool,
-    ScanCareerSourcesTool,
     SearchCandidateEvidenceTool,
 )
 from .profile_interview import (
@@ -30,6 +26,7 @@ from .profile_interview import (
 
 __all__ = [
     "AnalyzeResumeAgainstJdTool",
+    "AskUserTool",
     "GenerateInterviewAdviceTool",
     "GenerateTailoredResumeContentTool",
     "SearchResumeEvidenceTool",
@@ -38,17 +35,12 @@ __all__ = [
     "AnalyzeJobAgainstStrategyTool",
     "CompareJobEvaluationsTool",
     "CreateJobEvaluationTool",
-    "DiscoverCompaniesTool",
-    "DiscoverFundedCompaniesTool",
     "GenerateCandidateMaterialTool",
     "GetCandidateContextTool",
     "GetJobEvaluationTool",
     "ProposeCandidateKnowledgeTool",
-    "ProcessOpportunityPipelineTool",
     "RecordInterviewDebriefTool",
     "ReviewJobEvaluationTool",
-    "RunJobDeepResearchTool",
-    "ScanCareerSourcesTool",
     "SearchCandidateEvidenceTool",
     "StartProfileInterviewTool",
     "RecordProfileInterviewAnswerTool",

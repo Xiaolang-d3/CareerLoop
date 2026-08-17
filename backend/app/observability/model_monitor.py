@@ -84,6 +84,7 @@ def get_model_monitor_snapshot(
 
     events = [row_to_dict(row) for row in rows]
     total = len(events)
+    total_tokens = sum(int(event.get("total_tokens") or 0) for event in events)
     successful = sum(event["status"] == "success" for event in events)
     failed = total - successful
     success_rate = round(successful / total * 100, 1) if total else None
@@ -138,6 +139,13 @@ def get_model_monitor_snapshot(
             "p95_latency_ms": p95_latency,
             "timeout_count": error_counts.get("request_timeout", 0),
             "consecutive_failures": consecutive_failures,
+            "total_tokens": total_tokens,
+        },
+        "usage": {
+            "window_hours": window_hours,
+            "total_tokens": total_tokens,
+            "remaining_quota": None,
+            "quota_available": False,
         },
         "error_breakdown": [
             {

@@ -53,8 +53,10 @@ def _response(row: Any, evidence: list[dict[str, Any]] | None = None) -> dict[st
         "proposed": "pending",
         "rejected": "disputed",
     }.get(item.get("status") or "proposed", item.get("status") or "proposed")
-    item["value"] = _loads(item.pop("value_json", "{}"), {})
-    item["metadata"] = _loads(item.pop("metadata_json", "{}"), {})
+    if not isinstance(item.get("value"), dict):
+        item["value"] = _loads(item.pop("value_json", None), {})
+    if not isinstance(item.get("metadata"), dict):
+        item["metadata"] = _loads(item.pop("metadata_json", None), {})
     item["evidence"] = evidence or []
     return item
 
@@ -79,13 +81,40 @@ def propose_memory(
         raise ValueError("记忆内容不能为空")
     if sensitivity not in {"public", "private", "sensitive"}:
         raise ValueError("记忆敏感级别不合法")
+    clean_key = canonical_key.strip()[:200]
     with connect(db_path) as conn:
+        if clean_key:
+            keyed = conn.execute(
+                """
+                SELECT * FROM candidate_memory_items
+                WHERE profile_id = ? AND canonical_key = ?
+                  AND status IN ('proposed', 'confirmed', 'rejected', 'retracted')
+                ORDER BY CASE status
+                    WHEN 'confirmed' THEN 0
+                    WHEN 'proposed' THEN 1
+                    WHEN 'rejected' THEN 2
+                    WHEN 'retracted' THEN 3
+                    ELSE 4
+                END, id DESC
+                LIMIT 1
+                """,
+                (profile_id, clean_key),
+            ).fetchone()
+            if keyed is not None:
+                return get_memory_item(_external_id(int(keyed["id"])), db_path=db_path) or {}
         duplicate = conn.execute(
             """
             SELECT * FROM candidate_memory_items
             WHERE profile_id = ? AND category = ? AND statement = ?
-              AND status IN ('proposed', 'confirmed')
-            ORDER BY id DESC LIMIT 1
+              AND status IN ('proposed', 'confirmed', 'rejected', 'retracted')
+            ORDER BY CASE status
+                WHEN 'confirmed' THEN 0
+                WHEN 'proposed' THEN 1
+                WHEN 'rejected' THEN 2
+                WHEN 'retracted' THEN 3
+                ELSE 4
+            END, id DESC
+            LIMIT 1
             """,
             (profile_id, category.strip()[:50], clean_statement),
         ).fetchone()

@@ -15,7 +15,7 @@ from .local_data import invalid_arguments
 class SearchPublicWebArguments(BaseModel):
     query: str = Field(min_length=2, max_length=500)
     category: Literal["general", "news", "company"] = "general"
-    count: int = Field(default=6, ge=3, le=10)
+    count: int = Field(default=8, ge=3, le=10)
 
 
 class SearchPublicWebTool:

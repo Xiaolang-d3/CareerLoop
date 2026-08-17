@@ -39,6 +39,21 @@ describe("AppTopBar", () => {
     expect(screen.queryByText("对话")).not.toBeInTheDocument();
   });
 
+  it("renames the current conversation from the chat title", () => {
+    const onTitleClick = vi.fn();
+    renderTopBar({
+      section: topbarSectionForPage("chat", "新对话"),
+      title: "新对话",
+      onTitleClick,
+      titleClickLabel: "重命名对话"
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "重命名对话" }));
+
+    expect(onTitleClick).toHaveBeenCalledOnce();
+    expect(screen.getByRole("heading", { level: 1, name: "新对话" })).toBeInTheDocument();
+  });
+
   it("uses the analysis metadata title on the workbench landing page", () => {
     renderTopBar({
       section: topbarSectionForPage("workbench", pageMeta.workbench.title),
@@ -64,7 +79,7 @@ describe("AppTopBar", () => {
     expect(screen.getByText("小林")).toBeInTheDocument();
     expect(screen.getByText("owner@example.com")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("menuitem", { name: "个人资料" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "求职资料" }));
     expect(props.onOpenProfile).toHaveBeenCalledOnce();
 
     fireEvent.click(screen.getByRole("button", { name: "账号菜单" }));
@@ -112,7 +127,7 @@ describe("AppTopBar", () => {
       <section className="resume-module-shell">
         <header className="topbar ui-section-header">
           <nav aria-label="求职模块">
-            <button type="button">简历分析</button>
+            <button type="button">匹配分析</button>
           </nav>
         </header>
       </section>
@@ -120,7 +135,7 @@ describe("AppTopBar", () => {
 
     const { rerender } = render(
       <section className="content">
-        <AppTopBar title="首页" {...identity} />
+        <AppTopBar {...identity} />
         {home}
       </section>
     );
@@ -128,22 +143,21 @@ describe("AppTopBar", () => {
     const homeBar = document.querySelector("header.app-topbar");
     const homeTrigger = screen.getByRole("button", { name: "账号菜单" });
     expect(homeBar).toBeTruthy();
-    expect(screen.getByRole("heading", { level: 1, name: "首页" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 1, name: "首页" })).not.toBeInTheDocument();
     expect(homeTrigger.closest(".app-topbar")).toBe(homeBar);
     expect(screen.getByRole("heading", { name: "你好，张三" }).closest(".app-topbar")).toBeNull();
 
     rerender(
       <section className="content">
-        <AppTopBar section={topbarSectionForPage("workbench", "简历分析")} title="简历分析" {...identity} />
+        <AppTopBar {...identity} />
         {workbench}
       </section>
     );
 
     const workbenchBar = document.querySelector("header.app-topbar");
     expect(workbenchBar).toBeTruthy();
-    expect(screen.getByText("分析")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 1, name: "简历分析" })).toBeInTheDocument();
-    expect(document.querySelectorAll("h1")).toHaveLength(1);
+    expect(screen.queryByRole("heading", { level: 1, name: "匹配分析" })).not.toBeInTheDocument();
+    expect(document.querySelectorAll("h1")).toHaveLength(0);
     expect(screen.getByRole("button", { name: "账号菜单" }).closest(".app-topbar")).toBe(workbenchBar);
     expect(screen.getByRole("navigation", { name: "求职模块" }).closest(".app-topbar")).toBeNull();
     expect(document.querySelectorAll("header.app-topbar")).toHaveLength(1);

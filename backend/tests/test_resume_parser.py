@@ -5,7 +5,7 @@ from io import BytesIO
 
 from docx import Document
 
-from app.resume.parser import parse_resume
+from app.resume.parser import normalize_resume_text, parse_resume
 from app.profile.service import parse_candidate_resume
 
 
@@ -50,6 +50,38 @@ class ResumeParserTest(unittest.TestCase):
         self.assertIn("- 基于 LangChain 搭建统一网关", text)
         self.assertNotIn("\uf0b7", text)
         self.assertNotIn("\u200b", text)
+
+    def test_unwraps_pdf_visual_line_breaks_without_merging_headings(self) -> None:
+        text = normalize_resume_text(
+            "个人优势\n"
+            "- 熟悉 Python / FastAPI / Docker 等技术栈，\n"
+            "擅长实时语音链路与多模型协同。\n"
+            "- 独立完成业务内容生产链路，有效提升业务内容产出效\n"
+            "率 60%+\n"
+            "工作经历\n"
+            "某公司\n"
+            "AI 应用工程师\n"
+        )
+
+        self.assertIn("Docker 等技术栈，擅长实时语音链路与多模型协同。", text)
+        self.assertIn("产出效率 60%+", text)
+        self.assertIn("\n工作经历\n", text)
+        self.assertIn("\n某公司\n", text)
+        self.assertIn("AI 应用工程师", text)
+        self.assertNotIn("某公司AI 应用工程师", text)
+
+    def test_splits_jammed_contact_and_certificate_fields(self) -> None:
+        text = normalize_resume_text(
+            "小程\n"
+            "邮箱: [邮箱已隐藏] 英语: CET-6GitHub: https://github.com/Xiaolang-d3\n"
+            "求职意向：后端工程师\n"
+        )
+
+        self.assertIn("邮箱: [邮箱已隐藏]", text)
+        self.assertIn("英语: CET-6", text)
+        self.assertIn("GitHub: https://github.com/Xiaolang-d3", text)
+        self.assertNotIn("CET-6GitHub", text)
+        self.assertIn("\n求职意向：后端工程师", text)
 
     def test_rejects_unsupported_or_empty_files(self) -> None:
         with self.assertRaises(ValueError):

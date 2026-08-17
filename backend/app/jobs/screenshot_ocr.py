@@ -29,7 +29,7 @@ def extract_screenshot_text(filename: str, content: bytes) -> str:
     try:
         from docling.document_converter import DocumentConverter
 
-        with TemporaryDirectory(prefix="bosscopilot-ocr-") as directory:
+        with TemporaryDirectory(prefix="careerloop-ocr-") as directory:
             path = Path(directory) / f"image{suffix}"
             path.write_bytes(content)
             result = DocumentConverter().convert(path)

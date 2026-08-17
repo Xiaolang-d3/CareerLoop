@@ -10,6 +10,7 @@ export type RouteDataKey =
   | "interviewPreparation"
   | "jobs"
   | "modelMonitor"
+  | "modelCapabilities"
   | "workflow";
 
 export function requiredDataForRoute(route: AppRoute): RouteDataKey[] {
@@ -17,15 +18,18 @@ export function requiredDataForRoute(route: AppRoute): RouteDataKey[] {
     case "chat":
       return ["conversations", "capabilities", "attachmentConfig"];
     case "dashboard":
-      return ["conversations", "jobs", "workflow"];
+      return ["candidateProfile"];
     case "workbench":
       return ["jobs", "candidateProfile", "workflow"];
     case "settings":
       if (route.page === "agent") return ["agentOperations"];
-      if (route.page === "model") return ["agentSettings", "modelMonitor"];
+      if (route.page === "model") return ["agentSettings", "modelMonitor", "modelCapabilities"];
+      if (route.page === "overview") return ["candidateProfile", "agentSettings"];
       return ["candidateProfile"];
     case "interview-prep":
       return ["interviewPreparation"];
+    case "project-lab":
+      return [];
     case "opportunities":
       return [];
   }
@@ -54,8 +58,12 @@ export function createRouteDataCache<Key>(maxAgeMs: number, now = () => Date.now
     const request = loader();
     inFlight.set(key, request);
     void request.then(
-      () => completedAt.set(key, now()),
-      () => completedAt.delete(key)
+      () => {
+        if (inFlight.get(key) === request) completedAt.set(key, now());
+      },
+      () => {
+        if (inFlight.get(key) === request) completedAt.delete(key);
+      }
     ).finally(() => {
       if (inFlight.get(key) === request) inFlight.delete(key);
     });
@@ -63,7 +71,10 @@ export function createRouteDataCache<Key>(maxAgeMs: number, now = () => Date.now
   }
 
   function invalidate(...keys: Key[]) {
-    for (const key of keys) completedAt.delete(key);
+    for (const key of keys) {
+      completedAt.delete(key);
+      inFlight.delete(key);
+    }
   }
 
   return { load, invalidate };

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from functools import lru_cache
 from typing import Any
 
 from .settings import get_model_connection
@@ -8,6 +7,7 @@ from ..config import get_settings
 from ..models import ModelProviderRegistry, OpenAICompatibleProvider
 from ..tools import (
     AnalyzeResumeAgainstJdTool,
+    AskUserTool,
     GenerateInterviewAdviceTool,
     GenerateTailoredResumeContentTool,
     SearchResumeEvidenceTool,
@@ -16,17 +16,12 @@ from ..tools import (
     AnalyzeJobAgainstStrategyTool,
     CompareJobEvaluationsTool,
     CreateJobEvaluationTool,
-    DiscoverCompaniesTool,
-    DiscoverFundedCompaniesTool,
     GenerateCandidateMaterialTool,
     GetCandidateContextTool,
     GetJobEvaluationTool,
     ProposeCandidateKnowledgeTool,
-    ProcessOpportunityPipelineTool,
     RecordInterviewDebriefTool,
     ReviewJobEvaluationTool,
-    RunJobDeepResearchTool,
-    ScanCareerSourcesTool,
     SearchCandidateEvidenceTool,
     StartProfileInterviewTool,
     RecordProfileInterviewAnswerTool,
@@ -34,9 +29,22 @@ from ..tools import (
     ToolRegistry,
 )
 from .runtime import AgentRuntime
+from ..workspace import current_user_id
 
 
-@lru_cache
+_components: dict[tuple[Any, ...], tuple[AgentRuntime, dict[str, Any]]] = {}
+
+
+def _runtime_cache_key() -> tuple[Any, ...]:
+    connection = get_model_connection()
+    return (
+        current_user_id(),
+        connection["model_name"],
+        connection["model_base_url"],
+        connection["api_key"],
+    )
+
+
 def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
     settings = get_settings()
     model_connection = get_model_connection()
@@ -56,6 +64,7 @@ def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
 
     tools = ToolRegistry()
     tools.register_handler(AnalyzeResumeAgainstJdTool())
+    tools.register_handler(AskUserTool())
     tools.register_handler(SearchResumeEvidenceTool())
     tools.register_handler(GenerateTailoredResumeContentTool())
     tools.register_handler(GenerateInterviewAdviceTool())
@@ -72,14 +81,9 @@ def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
     tools.register_handler(AnalyzeJobAgainstStrategyTool())
     tools.register_handler(GenerateCandidateMaterialTool())
     tools.register_handler(RecordInterviewDebriefTool())
-    tools.register_handler(DiscoverCompaniesTool())
-    tools.register_handler(DiscoverFundedCompaniesTool())
-    tools.register_handler(ScanCareerSourcesTool())
-    tools.register_handler(ProcessOpportunityPipelineTool())
     tools.register_handler(CreateJobEvaluationTool())
     tools.register_handler(GetJobEvaluationTool())
     tools.register_handler(ReviewJobEvaluationTool())
-    tools.register_handler(RunJobDeepResearchTool())
     tools.register_handler(CompareJobEvaluationsTool())
 
     runtime = AgentRuntime(
@@ -105,19 +109,33 @@ def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
     return runtime, capabilities
 
 
-@lru_cache
+def _cached_components() -> tuple[AgentRuntime, dict[str, Any]]:
+    key = _runtime_cache_key()
+    cached = _components.get(key)
+    if cached is None:
+        cached = _build_components()
+        _components[key] = cached
+    return cached
+
+
 def get_agent_runtime() -> AgentRuntime:
-    runtime, _ = _build_components()
+    runtime, _ = _cached_components()
     return runtime
 
 
-@lru_cache
 def get_agent_capabilities() -> dict[str, Any]:
-    _, capabilities = _build_components()
+    _, capabilities = _cached_components()
     return capabilities
 
 
 def reload_agent_components() -> None:
-    _build_components.cache_clear()
-    get_agent_runtime.cache_clear()
-    get_agent_capabilities.cache_clear()
+    user_id = current_user_id()
+    if user_id is None:
+        _components.clear()
+        return
+    for key in [item for item in _components if item[0] == user_id]:
+        del _components[key]
+
+
+get_agent_runtime.cache_clear = reload_agent_components
+get_agent_capabilities.cache_clear = reload_agent_components

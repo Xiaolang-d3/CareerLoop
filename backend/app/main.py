@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -28,7 +27,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from ag_ui.encoder import EventEncoder
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -38,16 +37,29 @@ from pydantic import ValidationError
 from .agent import get_agent_runtime
 from .api import resources_router
 from .api.dependencies import require_conversation
-from .api.schemas import ChatMessageIn
-from .api.schemas import LoginIn
+from .api.schemas import AccountUpdateIn, ChatMessageIn, LoginIn, PasswordChangeIn
 from .config import get_settings
 from .auth import (
     authenticate,
+    avatar_path,
     captcha_svg,
+    change_password,
     create_captcha,
     create_initial_user,
     current_user,
+    delete_avatar,
+    get_account,
     public_auth_config,
+    register_user,
+    save_avatar,
+    update_account,
+)
+from .workspace import (
+    current_user_id,
+    ensure_workspace,
+    list_user_ids,
+    spawn_thread,
+    use_workspace,
 )
 from .chat.conversations import (
     end_active_task,
@@ -61,6 +73,8 @@ from .database_lifecycle import (
     rebuild_database_v2,
 )
 from .domain import AgentRunResult, ToolError, ToolEvent
+from .agent.resume_policy import should_abandon_snapshot
+from .agent.snapshots import clear_run_snapshot, load_run_snapshot
 from .chat.service import (
     agent_history as _agent_history,
     attachment_context as _attachment_context,
@@ -73,12 +87,7 @@ from .chat.service import (
     workflow_summary as _workflow_summary,
 )
 from .workflow.engine import refresh_workflow_status
-from .opportunities.runs import (
-    create_discovery_run,
-    execute_discovery_run,
-    interrupt_active_runs,
-    startup_scan_source_ids,
-)
+from .opportunities.runs import interrupt_active_runs
 from .jobs.evaluations import interrupt_active_evaluations
 from .profile.candidate_core import ensure_resume_knowledge_indexed
 
@@ -104,9 +113,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-_active_chat_runs: dict[int, asyncio.Task[None]] = {}
+_active_chat_runs: dict[tuple[int, int], asyncio.Task[None]] = {}
 
-_OPEN_AUTH_PATHS = {"/health", "/auth/config", "/auth/captcha", "/auth/bootstrap", "/auth/login"}
+_OPEN_AUTH_PATHS = {
+    "/health",
+    "/auth/config",
+    "/auth/captcha",
+    "/auth/bootstrap",
+    "/auth/login",
+    "/auth/register",
+}
 _DOC_PATHS = {"/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"}
 # Docs are protected by token when disabled, so they stay out of the open list.
 _REQUIRE_LOGIN_WHITELIST = _OPEN_AUTH_PATHS | (_DOC_PATHS if _settings.api_docs_enabled else set())
@@ -130,10 +146,12 @@ async def require_login(request: Request, call_next: Any) -> Any:
             response.headers["Cache-Control"] = cache_control
         return response
     try:
-        current_user(request.headers.get("Authorization"))
+        user = current_user(request.headers.get("Authorization"))
     except HTTPException as exc:
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-    return await call_next(request)
+    root = ensure_workspace(int(user["id"]))
+    with use_workspace(int(user["id"]), root):
+        return await call_next(request)
 
 app.add_middleware(
     CORSMiddleware,
@@ -173,44 +191,96 @@ def login(payload: LoginIn, request: Request) -> dict[str, Any]:
         payload.captcha_code,
         client=request.client.host if request.client else None,
     )
-    return {"access_token": token, "token_type": "bearer", "user": current_user(f"Bearer {token}")}
+    user = current_user(f"Bearer {token}")
+    return {"access_token": token, "token_type": "bearer", "user": get_account(int(user["id"]))}
+
+
+@app.post("/auth/register")
+def register(payload: LoginIn) -> dict[str, Any]:
+    token = register_user(payload.email, payload.password, payload.captcha_id, payload.captcha_code)
+    user = current_user(f"Bearer {token}")
+    return {"access_token": token, "token_type": "bearer", "user": get_account(int(user["id"]))}
 
 
 @app.post("/auth/bootstrap")
 def bootstrap_admin(payload: LoginIn) -> dict[str, Any]:
     token = create_initial_user(payload.email, payload.password, payload.captcha_id, payload.captcha_code)
-    return {"access_token": token, "token_type": "bearer", "user": current_user(f"Bearer {token}")}
+    user = current_user(f"Bearer {token}")
+    return {"access_token": token, "token_type": "bearer", "user": get_account(int(user["id"]))}
 
 
 @app.get("/auth/me")
 def get_current_user(request: Request) -> dict[str, Any]:
-    return {"user": current_user(request.headers.get("Authorization"))}
+    user = current_user(request.headers.get("Authorization"))
+    return {"user": get_account(int(user["id"]))}
+
+
+@app.patch("/auth/me")
+def patch_current_user(payload: AccountUpdateIn, request: Request) -> dict[str, Any]:
+    user = current_user(request.headers.get("Authorization"))
+    return {"user": update_account(int(user["id"]), payload.display_name)}
+
+
+@app.post("/auth/me/password")
+def change_current_password(payload: PasswordChangeIn, request: Request) -> dict[str, Any]:
+    user = current_user(request.headers.get("Authorization"))
+    token = change_password(int(user["id"]), payload.current_password, payload.new_password)
+    refreshed = current_user(f"Bearer {token}")
+    return {"access_token": token, "token_type": "bearer", "user": get_account(int(refreshed["id"]))}
+
+
+@app.get("/auth/me/avatar")
+def get_current_avatar(request: Request) -> Response:
+    user = current_user(request.headers.get("Authorization"))
+    path = avatar_path(int(user["id"]))
+    if path is None:
+        raise HTTPException(status_code=404, detail="还没有上传头像")
+    return Response(content=path.read_bytes(), media_type="image/jpeg", headers={"Cache-Control": "private, no-cache"})
+
+
+@app.post("/auth/me/avatar")
+async def upload_current_avatar(request: Request, file: UploadFile = File(...)) -> dict[str, Any]:
+    user = current_user(request.headers.get("Authorization"))
+    try:
+        content = await file.read()
+        account = save_avatar(int(user["id"]), file.filename or "avatar.jpg", content)
+    finally:
+        await file.close()
+    return {"user": account}
+
+
+@app.delete("/auth/me/avatar")
+def remove_current_avatar(request: Request) -> dict[str, Any]:
+    user = current_user(request.headers.get("Authorization"))
+    return {"user": delete_avatar(int(user["id"]))}
+
+
+def _chat_run_key(conversation_id: int) -> tuple[int, int]:
+    return (current_user_id() or 0, conversation_id)
+
+
+def _startup_workspace(user_id: int, root: Path) -> None:
+    with use_workspace(user_id, root):
+        interrupt_active_runs()
+        interrupt_active_evaluations()
+        try:
+            ensure_resume_knowledge_indexed()
+        except Exception:
+            pass
 
 
 def startup() -> None:
     state = initialize_or_report()
     if state["status"] != "ready":
         return
-    interrupt_active_runs()
-    interrupt_active_evaluations()
-    # 索引逻辑上线前保存的简历没有证据索引，启动时补一次。
-    # 画像文档可手改，解析失败不应阻断启动，坏文档交由画像页面处理。
-    try:
-        ensure_resume_knowledge_indexed()
-    except Exception:
-        pass
-    # Only previously verified and explicitly followed public sources are
-    # rechecked. Startup never performs broad company discovery.
-    source_ids = startup_scan_source_ids()
-    if not source_ids:
+    user_ids = list_user_ids()
+    if not user_ids:
+        interrupt_active_runs()
+        interrupt_active_evaluations()
         return
-    run = create_discovery_run("scan", trigger="startup", config={"source_ids": source_ids})
-    threading.Thread(
-        target=execute_discovery_run,
-        args=(int(run["id"]),),
-        daemon=True,
-        name="career-source-startup-scan",
-    ).start()
+    for user_id in user_ids:
+        root = ensure_workspace(user_id)
+        _startup_workspace(user_id, root)
 
 
 @app.get("/health")
@@ -248,7 +318,7 @@ def rewind_chat_messages(message_id: int, conversation_id: int | None = None) ->
     """Remove a user turn and everything after it before editing or regenerating."""
     resolved_id = conversation_id or _default_conversation_id()
     require_conversation(resolved_id)
-    active = _active_chat_runs.get(resolved_id)
+    active = _active_chat_runs.get(_chat_run_key(resolved_id))
     if active is not None and not active.done():
         raise HTTPException(status_code=409, detail="请先停止当前生成任务")
 
@@ -281,6 +351,7 @@ def rewind_chat_messages(message_id: int, conversation_id: int | None = None) ->
         )
 
     end_active_task(resolved_id)
+    clear_run_snapshot(resolved_id)
     _refresh_conversation_summary(resolved_id)
     return {
         "rewound": True,
@@ -294,7 +365,7 @@ async def cancel_current_agent_task(conversation_id: int | None = None) -> dict[
     resolved_id = conversation_id or _default_conversation_id()
     require_conversation(resolved_id)
     cancelled = False
-    active_task = _active_chat_runs.get(resolved_id)
+    active_task = _active_chat_runs.get(_chat_run_key(resolved_id))
     if active_task is not None and not active_task.done():
         active_task.cancel()
         cancelled = True
@@ -323,12 +394,12 @@ async def cancel_current_agent_task(conversation_id: int | None = None) -> dict[
             UPDATE workflow_nodes
             SET status = 'pending', detail = '上一任务已由用户结束', updated_at = CURRENT_TIMESTAMP
             WHERE status IN ('running', 'blocked') AND run_id = (
-                SELECT id FROM workflow_runs WHERE name = ? ORDER BY id DESC LIMIT 1
+                SELECT id FROM workflow_runs WHERE name = 'default' ORDER BY id DESC LIMIT 1
             )
             """,
-            (f"conversation-{resolved_id}",),
         )
     end_active_task(resolved_id)
+    clear_run_snapshot(resolved_id)
     return {"cancelled": cancelled, "workflow": refresh_workflow_status(resolved_id)}
 
 
@@ -378,7 +449,7 @@ async def _stream_chat_message_response(
 ) -> StreamingResponse:
     conversation_id = payload.conversation_id or _default_conversation_id()
     require_conversation(conversation_id)
-    active = _active_chat_runs.get(conversation_id)
+    active = _active_chat_runs.get(_chat_run_key(conversation_id))
     if active is not None and not active.done():
         raise HTTPException(status_code=409, detail="当前对话已有正在执行的任务")
 
@@ -437,6 +508,14 @@ async def _stream_chat_message_response(
                     for item in attachment_summaries
                 ):
                     trusted_routing_content += "\n[系统确认：本轮请求分析岗位截图]"
+                resume_snapshot = load_run_snapshot(conversation_id)
+                if resume_snapshot is not None and should_abandon_snapshot(
+                    payload.content,
+                    resume_snapshot,
+                    routing_text=trusted_routing_content,
+                ):
+                    clear_run_snapshot(conversation_id)
+                    resume_snapshot = None
                 async for stream_event in get_agent_runtime().run_stream(
                     agent_input,
                     history=history,
@@ -444,6 +523,7 @@ async def _stream_chat_message_response(
                     task_id=task_id,
                     image_urls=image_urls,
                     routing_content=trusted_routing_content,
+                    resume=resume_snapshot,
                 ):
                     if stream_event.type == "text_delta":
                         partial_content += stream_event.delta
@@ -498,12 +578,12 @@ async def _stream_chat_message_response(
             completed = _save_stream_result(conversation_id, task_id, user_message, failed_result)
             await queue.put(("error", {**completed, "message": str(exc)}))
         finally:
-            if _active_chat_runs.get(conversation_id) is current_task:
-                _active_chat_runs.pop(conversation_id, None)
+            if _active_chat_runs.get(_chat_run_key(conversation_id)) is current_task:
+                _active_chat_runs.pop(_chat_run_key(conversation_id), None)
             await queue.put(None)
 
     worker = asyncio.create_task(execute())
-    _active_chat_runs[conversation_id] = worker
+    _active_chat_runs[_chat_run_key(conversation_id)] = worker
 
     async def ag_ui_event_stream():
         encoder = EventEncoder(accept=accept)
@@ -568,6 +648,7 @@ async def _stream_chat_message_response(
                             ))
                         yield encode(ReasoningMessageEndEvent(messageId=reasoning_id))
                         yield encode(ReasoningEndEvent(messageId=reasoning_id))
+                        yield encode(CustomEvent(name="careerloop.agent_event", value=tool_event))
                         continue
                     if tool_call_id not in started_tool_calls:
                         started_tool_calls.add(tool_call_id)
@@ -588,6 +669,7 @@ async def _stream_chat_message_response(
                             content=json.dumps(tool_event, ensure_ascii=False),
                             role="tool",
                         ))
+                    yield encode(CustomEvent(name="careerloop.agent_event", value=tool_event))
                     continue
                 if event_name in {"completed", "cancelled", "error"}:
                     if text_started:

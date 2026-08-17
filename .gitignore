@@ -32,8 +32,18 @@ frontend/playwright-report/
 .idea/
 .vscode/
 
+# Promptfoo eval artifacts
+evals/.promptfoo/
+evals/promptfoo-errors.log
+
 # Isolated feature worktrees
 .worktrees/
+
+# Local agent / editor tooling — do not commit
+.agents/
+.hermes/
+.codex/
+.impeccable/
 
 # Playwright CLI local session artifacts
 .playwright-cli/

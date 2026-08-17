@@ -17,9 +17,17 @@ from .candidate_memory import (
     review_memory,
 )
 from ..db import connect, json_dump, row_to_dict, rows_to_dicts
-from ..knowledge import delete_document, index_document
+from ..knowledge import delete_document, index_chunks, index_document
+from ..resume.blocks import parse_resume_blocks
 from ..privacy import scan_and_redact
-from .intelligence import extract_skills, suggest_profile_fields
+from .intelligence import (
+    extract_skill_tags,
+    extract_skills,
+    filter_blocked_skills,
+    short_skill_tag,
+    skill_is_blocked,
+    suggest_profile_fields,
+)
 from ..resume.parser import normalize_resume_text
 
 
@@ -198,13 +206,36 @@ def _sync_resume_knowledge(
     straight to the model.
     """
     if redacted_text.strip():
-        index_document(
-            "resume",
-            PROFILE_ID,
-            "候选人简历",
-            redacted_text,
-            db_path=db_path,
-        )
+        blocks = parse_resume_blocks(redacted_text)
+        structured = [block for block in blocks if block.kind in {"project", "work", "education"}]
+        if structured:
+            index_chunks(
+                "resume",
+                PROFILE_ID,
+                [
+                    {
+                        "title": block.title or "简历片段",
+                        "content": block.evidence,
+                        "metadata": {
+                            "block_id": block.id,
+                            "kind": block.kind,
+                            "section": block.section,
+                            "start_date": block.start_date,
+                        },
+                    }
+                    for block in blocks
+                    if block.evidence.strip()
+                ],
+                db_path=db_path,
+            )
+        else:
+            index_document(
+                "resume",
+                PROFILE_ID,
+                "候选人简历",
+                redacted_text,
+                db_path=db_path,
+            )
     else:
         delete_document("resume", PROFILE_ID, db_path=db_path)
 
@@ -330,6 +361,14 @@ def create_candidate_source(
     return _source_response(document, source_type=source_type, title=title)
 
 
+def clear_candidate_resume(db_path: str | Path | None = None) -> dict[str, Any]:
+    """Wipe the stored resume document without deleting the career profile."""
+    _require_document(db_path)
+    document = profile_document.update(db_path, resume_text="")
+    _sync_profile_compat(document, db_path)
+    return _profile_response(document)
+
+
 def _source_response(
     document: profile_document.ProfileDocument,
     *,
@@ -383,6 +422,192 @@ def update_candidate_source_access(
     return _source_response(document, title="简历原文")
 
 
+def fact_skill_name(item: dict[str, Any]) -> str:
+    value = item.get("value") if isinstance(item.get("value"), dict) else {}
+    raw = str((value or {}).get("name") or "").strip()
+    if not raw:
+        raw = str(item.get("statement") or "").strip()
+    tag = short_skill_tag(raw)
+    if tag:
+        return tag
+    found = extract_skills(raw)
+    if len(found) == 1:
+        return found[0]
+    return raw
+
+
+def _entry_key(line: str) -> str:
+    return " ".join(str(line or "").split()).casefold()
+
+
+def _section_has_entry(document: profile_document.ProfileDocument, field: str, line: str) -> bool:
+    target = _entry_key(line)
+    skill_target = (short_skill_tag(line) or line).casefold()
+    for entry in document.entries(field):
+        if _entry_key(entry) == target:
+            return True
+        if field == "skills" and (short_skill_tag(entry) or entry).casefold() == skill_target:
+            return True
+    return False
+
+
+def _write_section_entries(
+    field: str,
+    entries: list[str],
+    db_path: str | Path | None = None,
+) -> profile_document.ProfileDocument:
+    document = _require_document(db_path)
+    saved = profile_document.save(
+        document.model_copy(update={field: "\n".join(f"- {item}" for item in entries)}),
+        db_path,
+    )
+    _sync_profile_compat(saved, db_path)
+    return saved
+
+
+def _append_document_entry(
+    field: str,
+    line: str,
+    db_path: str | Path | None = None,
+) -> bool:
+    clean = " ".join(str(line or "").split())
+    if not clean:
+        return False
+    document = _require_document(db_path)
+    if _section_has_entry(document, field, clean):
+        return False
+    _write_section_entries(field, [*document.entries(field), clean], db_path)
+    return True
+
+
+def _remove_document_entry(
+    field: str,
+    line: str,
+    db_path: str | Path | None = None,
+) -> bool:
+    document = _require_document(db_path)
+    target = _entry_key(line)
+    skill_target = (short_skill_tag(line) or line).casefold()
+    kept: list[str] = []
+    for entry in document.entries(field):
+        if _entry_key(entry) == target:
+            continue
+        if field == "skills" and (short_skill_tag(entry) or entry).casefold() == skill_target:
+            continue
+        kept.append(entry)
+    if len(kept) == len(document.entries(field)):
+        return False
+    _write_section_entries(field, kept, db_path)
+    return True
+
+
+def _persist_confirmed_fact(item: dict[str, Any], db_path: str | Path | None = None) -> bool:
+    category = str(item.get("category") or "")
+    if category == "skill":
+        tag = fact_skill_name(item)
+        return bool(tag) and _append_document_entry("skills", tag, db_path)
+    if category == "achievement":
+        statement = " ".join(str(item.get("statement") or "").split())
+        return bool(statement) and _append_document_entry("achievements", statement, db_path)
+    return False
+
+
+def _remove_blocked_fact_from_document(item: dict[str, Any], db_path: str | Path | None = None) -> bool:
+    category = str(item.get("category") or "")
+    if category == "skill":
+        tag = fact_skill_name(item)
+        return bool(tag) and _remove_document_entry("skills", tag, db_path)
+    if category == "achievement":
+        statement = " ".join(str(item.get("statement") or "").split())
+        return bool(statement) and _remove_document_entry("achievements", statement, db_path)
+    return False
+
+
+def _blocked_memory_items(db_path: str | Path | None = None) -> list[dict[str, Any]]:
+    if _load_or_migrate_profile(db_path) is None:
+        return []
+    items: list[dict[str, Any]] = []
+    for status in ("rejected", "retracted"):
+        items.extend(list_memory_items(profile_id=PROFILE_ID, status=status, db_path=db_path))
+    return items
+
+
+def blocked_skill_names(db_path: str | Path | None = None) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for item in _blocked_memory_items(db_path):
+        if item.get("category") != "skill":
+            continue
+        name = fact_skill_name(item)
+        key = name.casefold()
+        if name and key not in seen:
+            seen.add(key)
+            names.append(name)
+    return names
+
+
+def blocked_claim_texts(db_path: str | Path | None = None) -> list[str]:
+    claims: list[str] = []
+    seen: set[str] = set()
+    for item in _blocked_memory_items(db_path):
+        texts = [str(item.get("statement") or "").strip()]
+        if item.get("category") == "skill":
+            texts.append(fact_skill_name(item))
+        for text in texts:
+            key = _entry_key(text)
+            if text and key not in seen:
+                seen.add(key)
+                claims.append(text)
+    return claims
+
+
+def resolved_skill_names(db_path: str | Path | None = None) -> list[str]:
+    document = _load_or_migrate_profile(db_path)
+    if document is None:
+        return []
+    tags: list[str] = []
+    for entry in document.entries("skills"):
+        tags.append(short_skill_tag(entry) or entry.strip())
+    for item in list_memory_items(
+        profile_id=PROFILE_ID, status="confirmed", category="skill", db_path=db_path
+    ):
+        tags.append(fact_skill_name(item))
+    return filter_blocked_skills(tags, blocked_skill_names(db_path))
+
+
+def _is_review_inbox_item(
+    item: dict[str, Any],
+    document: profile_document.ProfileDocument,
+) -> bool:
+    category = item.get("category")
+    if category == "skill":
+        value = item.get("value") if isinstance(item.get("value"), dict) else {}
+        raw = str((value or {}).get("name") or item.get("statement") or "").strip()
+        tag = short_skill_tag(raw)
+        if not tag:
+            return False
+        if _section_has_entry(document, "skills", tag):
+            return False
+        if any(skill.casefold() == tag.casefold() for skill in extract_skills(document.resume_text)):
+            return False
+        return True
+    if category == "achievement":
+        statement = " ".join(str(item.get("statement") or "").split())
+        if not statement:
+            return False
+        return not _section_has_entry(document, "achievements", statement)
+    return True
+
+
+def list_review_inbox(db_path: str | Path | None = None) -> list[dict[str, Any]]:
+    document = _require_document(db_path)
+    return [
+        item
+        for item in list_facts(status="pending", db_path=db_path)
+        if _is_review_inbox_item(item, document)
+    ]
+
+
 def propose_fact(
     *,
     category: str,
@@ -428,35 +653,56 @@ def ingest_resume_knowledge(
     )
     suggestions = suggest_profile_fields(text)
     proposed: list[dict[str, Any]] = []
-    for skill in extract_skills(text):
-        proposed.append(
-            propose_fact(
-                category="skill",
-                statement=f"具备 {skill} 相关经验",
-                value={"name": skill},
-                source_id=source_id,
-                excerpt=skill,
-                extraction_method="resume_parser",
-                confidence=0.8,
-                db_path=db_path,
-            )
+    blocked_skills = {name.casefold() for name in blocked_skill_names(db_path)}
+    resume_dictionary = {skill.casefold() for skill in extract_skills(text)}
+    for skill in extract_skill_tags(text):
+        tag = short_skill_tag(skill) or skill.strip()
+        if not tag or "具备" in tag or "擅长" in tag:
+            continue
+        key = tag.casefold()
+        if key in blocked_skills or _section_has_entry(document, "skills", tag):
+            continue
+        if key in resume_dictionary:
+            continue
+        item = propose_fact(
+            category="skill",
+            statement=tag,
+            canonical_key=f"skill:{key}",
+            value={"name": tag},
+            source_id=source_id,
+            excerpt=skill,
+            extraction_method="resume_parser",
+            confidence=0.8,
+            db_path=db_path,
         )
+        if item.get("status") == "pending" and _is_review_inbox_item(item, document):
+            proposed.append(item)
+    blocked_achievements = {
+        _entry_key(item.get("statement") or "")
+        for item in _blocked_memory_items(db_path)
+        if item.get("category") == "achievement"
+    }
     for line in text.splitlines():
         clean = " ".join(line.strip(" -•\t").split())
         if len(clean) < 12 or len(clean) > 500:
             continue
         if re.search(r"\d+(?:\.\d+)?\s*%|[$￥¥€£]\s*\d|\d+\s*[万亿千kKmM+]", clean):
-            proposed.append(
-                propose_fact(
-                    category="achievement",
-                    statement=clean,
-                    source_id=source_id,
-                    excerpt=clean,
-                    extraction_method="resume_parser",
-                    confidence=0.8,
-                    db_path=db_path,
-                )
+            if _entry_key(clean) in blocked_achievements or _section_has_entry(
+                document, "achievements", clean
+            ):
+                continue
+            item = propose_fact(
+                category="achievement",
+                statement=clean,
+                canonical_key=f"achievement:{_entry_key(clean)[:180]}",
+                source_id=source_id,
+                excerpt=clean,
+                extraction_method="resume_parser",
+                confidence=0.8,
+                db_path=db_path,
             )
+            if item.get("status") == "pending" and _is_review_inbox_item(item, document):
+                proposed.append(item)
     if suggestions.get("target_roles"):
         ensure_default_strategy(
             PROFILE_ID, target_roles=suggestions["target_roles"], db_path=db_path
@@ -564,8 +810,15 @@ def review_fact(
         )
         before_confirmed = bool(before and before.get("status") == "confirmed")
         after_confirmed = reviewed.get("status") == "confirmed"
-        if before_confirmed != after_confirmed or (
-            before_confirmed and after_confirmed and action == "edit"
+        wrote_document = False
+        if after_confirmed:
+            wrote_document = _persist_confirmed_fact(reviewed, db_path)
+        elif action in {"reject", "retract"}:
+            wrote_document = _remove_blocked_fact_from_document(reviewed, db_path)
+        if not wrote_document and (
+            before_confirmed != after_confirmed
+            or (before_confirmed and after_confirmed and action == "edit")
+            or action in {"reject", "retract"}
         ):
             _touch_profile_revision(db_path)
         return reviewed
@@ -1156,8 +1409,15 @@ def get_candidate_context(
     profile = _profile_response(document)
     strategy = row_to_dict(strategy_row) if strategy_row else None
     confirmed = list_facts(profile_id=resolved, status="confirmed", db_path=db_path)
-    pending = list_facts(profile_id=resolved, status="pending", db_path=db_path)
-    retracted = list_facts(profile_id=resolved, status="retracted", db_path=db_path)
+    pending = list_review_inbox(db_path=db_path)
+    blocked_names = blocked_skill_names(db_path)
+    blocked_claims = blocked_claim_texts(db_path)
+    confirmed = [
+        item for item in confirmed
+        if not (
+            item.get("category") == "skill" and skill_is_blocked(fact_skill_name(item), blocked_names)
+        )
+    ]
 
     def fact_item(item: dict[str, Any], include_evidence: bool = True) -> dict[str, Any]:
         result = {
@@ -1197,7 +1457,7 @@ def get_candidate_context(
         "scope": scope,
         "strategy": strategy,
         "confirmed_facts": [fact_item(item, scope not in {"triage", "discovery"}) for item in selected],
-        "blocked_claims": [item["statement"] for item in retracted],
+        "blocked_claims": blocked_claims,
     }
     if scope in {"coaching", "match"}:
         context["pending_hints"] = [fact_item(item) for item in pending[:30]]
@@ -1232,12 +1492,76 @@ _METRIC_PATTERNS = (
     re.compile(r"\b\d+(?:\.\d+)?\s*[xX倍]\b"),
     re.compile(r"\b\d[\d,.]*\s*(?:用户|客户|团队|项目|人|万元|亿元|小时|天|年|stars?)\b", re.IGNORECASE),
 )
+_DATE_CLAIM_RE = re.compile(r"(?:19|20)\d{2}(?:[年./-]\d{1,2}(?:月|[./-]\d{1,2})?)?")
+_CERTIFICATE_CLAIM_RE = re.compile(r"[A-Za-z0-9+.#\u4e00-\u9fff -]{2,40}(?:认证|证书)")
+_SECTION_CERTIFICATE_TITLES = {
+    "荣誉证书",
+    "荣誉奖项",
+    "所获荣誉",
+    "获奖经历",
+    "证书奖项",
+    "相关证书",
+    "资格证书",
+    "技能证书",
+    "获奖证书",
+    "证书",
+    "认证",
+    "专业认证",
+}
+
+
+def _normalize_date_forms(claim: str) -> set[str]:
+    """Let 2020年7月 / 2020.07 / 2020-07 count as the same evidence."""
+    compact = claim.lower().replace(" ", "")
+    forms = {compact}
+    matched = re.fullmatch(
+        r"((?:19|20)\d{2})(?:[年./-](\d{1,2})(?:月|[./-](\d{1,2}))?)?",
+        compact,
+    )
+    if not matched:
+        return forms
+    year, month, day = matched.group(1), matched.group(2), matched.group(3)
+    if month:
+        month_n = int(month)
+        forms.update({
+            f"{year}.{month_n}",
+            f"{year}.{month_n:02d}",
+            f"{year}-{month_n}",
+            f"{year}-{month_n:02d}",
+            f"{year}/{month_n}",
+            f"{year}/{month_n:02d}",
+            f"{year}年{month_n}月",
+        })
+        if day:
+            day_n = int(day)
+            forms.add(f"{year}.{month_n:02d}.{day_n:02d}")
+            forms.add(f"{year}-{month_n:02d}-{day_n:02d}")
+    return forms
+
+
+def _claim_in_source(claim: str, normalized_source: str) -> bool:
+    compact = claim.lower().replace(" ", "")
+    if compact and compact in normalized_source:
+        return True
+    return any(form in normalized_source for form in _normalize_date_forms(claim))
+
+
+def _is_section_certificate_title(claim: str) -> bool:
+    compact = claim.lower().replace(" ", "").strip("#").strip()
+    if compact in _SECTION_CERTIFICATE_TITLES:
+        return True
+    return (
+        len(compact) <= 6
+        and compact.endswith(("证书", "认证"))
+        and not re.search(r"\d|[A-Za-z]", compact)
+    )
 
 
 def verify_candidate_material(
     text: str,
     *,
     profile_id: int | None = None,
+    extra_source: str = "",
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
     resolved = _require_profile(profile_id, db_path)
@@ -1245,11 +1569,16 @@ def verify_candidate_material(
     # 事实门比对整份画像文档：声称的数字、日期、证书必须在用户自己写下的内容里
     # 出现过。这条保护不依赖事实状态机，所以文档模型下依然成立。
     source_text = "\n".join(
-        [document.section_text(), *[item["statement"] for item in list_facts(
-            profile_id=resolved, status="confirmed", db_path=db_path
-        )]]
+        [
+            document.section_text(),
+            extra_source,
+            *[item["statement"] for item in list_facts(
+                profile_id=resolved, status="confirmed", db_path=db_path
+            )],
+        ]
     ).lower()
-    retracted: list[dict[str, Any]] = []
+    retracted = list_facts(profile_id=resolved, status="retracted", db_path=db_path)
+    retracted.extend(list_facts(profile_id=resolved, status="disputed", db_path=db_path))
     target = text.strip()
     metrics = {
         match.group(0).lower().replace(" ", "")
@@ -1257,20 +1586,38 @@ def verify_candidate_material(
         for match in pattern.finditer(target)
     }
     normalized_source = source_text.replace(" ", "")
-    unsupported_metrics = sorted(metric for metric in metrics if metric not in normalized_source)
+    unsupported_metrics = sorted(
+        metric for metric in metrics if not _claim_in_source(metric, normalized_source)
+    )
     date_claims = {
         match.group(0).lower().replace(" ", "")
-        for match in re.finditer(r"(?:19|20)\d{2}(?:[年./-]\d{1,2}(?:月|[./-]\d{1,2})?)?", target)
+        for match in _DATE_CLAIM_RE.finditer(target)
     }
     certificate_claims = {
         " ".join(match.group(0).split()).lower()
-        for match in re.finditer(r"[A-Za-z0-9+.#\u4e00-\u9fff -]{2,40}(?:认证|证书)", target)
+        for match in _CERTIFICATE_CLAIM_RE.finditer(target)
+        if not _is_section_certificate_title(match.group(0))
     }
-    unsupported_dates = sorted(claim for claim in date_claims if claim not in normalized_source)
-    unsupported_certificates = sorted(
-        claim for claim in certificate_claims if claim.replace(" ", "") not in normalized_source
+    unsupported_dates = sorted(
+        claim for claim in date_claims if not _claim_in_source(claim, normalized_source)
     )
-    retracted_hits = [item["statement"] for item in retracted if item["statement"].lower() in target.lower()]
+    unsupported_certificates = sorted(
+        claim for claim in certificate_claims if not _claim_in_source(claim, normalized_source)
+    )
+    retracted_hits: list[str] = []
+    seen_hits: set[str] = set()
+    for item in retracted:
+        statement = str(item.get("statement") or "").strip()
+        candidates = [statement]
+        if item.get("category") == "skill":
+            name = fact_skill_name(item)
+            if name:
+                candidates.append(name)
+        for claim in candidates:
+            key = claim.casefold()
+            if claim and key not in seen_hits and claim.lower() in target.lower():
+                seen_hits.add(key)
+                retracted_hits.append(claim)
     voice = get_voice_profile(resolved, db_path)
     forbidden = [
         phrase for phrase in (voice or {}).get("banned_phrases", [])
@@ -1549,11 +1896,16 @@ def get_career_profile(db_path: str | Path | None = None) -> dict[str, Any]:
     document = _require_document(db_path)
     strategies = list_strategies(profile_id, db_path)
     active_strategy = next((item for item in strategies if item.get("is_active")), strategies[0] if strategies else None)
+    facts = [
+        item
+        for item in list_facts(profile_id=profile_id, db_path=db_path)
+        if item.get("status") != "pending" or _is_review_inbox_item(item, document)
+    ]
     return {
         "profile": _profile_response(document),
         "strategies": strategies,
         "active_strategy": active_strategy,
-        "facts": list_facts(profile_id=profile_id, db_path=db_path),
+        "facts": facts,
         "stories": list_stories(profile_id=profile_id, db_path=db_path),
         "sources": list_candidate_sources(profile_id, db_path),
         "voice": get_voice_profile(profile_id, db_path),
@@ -1577,7 +1929,7 @@ def export_career_profile(db_path: str | Path | None = None) -> dict[str, Any]:
         raise ValueError("尚未创建候选人画像")
     profile = bundle["profile"]
     export_payload = {
-        "schema_version": "bosscopilot-career-profile-v2",
+        "schema_version": "careerloop-career-profile-v2",
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "profile": {
             "name": profile.get("name"),

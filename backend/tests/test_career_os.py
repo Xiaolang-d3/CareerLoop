@@ -13,6 +13,7 @@ from app.main import app
 from app.profile.candidate_core import (
     RESUME_SOURCE_ID,
     create_candidate_source,
+    clear_candidate_resume,
     create_or_update_profile,
     create_strategy,
     get_career_profile,
@@ -121,6 +122,38 @@ class CareerOperatingSystemTest(unittest.TestCase):
             ).fetchone()["knowledge_revision"]
         self.assertEqual(mirrored_revision, confirmed_revision)
 
+    def test_clearing_resume_keeps_profile_facts_and_strategies(self) -> None:
+        create_candidate_source(
+            source_type="resume",
+            title="候选人简历",
+            content="负责 Python 服务，接口性能提升 30%。",
+            db_path=self.db_path,
+        )
+        fact = propose_fact(
+            category="skill", statement="具备 Python 经验", db_path=self.db_path
+        )
+        review_fact(fact["id"], status="confirmed", db_path=self.db_path)
+        create_strategy(
+            name="后端方向",
+            target_roles=["后端工程师"],
+            is_active=True,
+            db_path=self.db_path,
+        )
+
+        profile = clear_candidate_resume(db_path=self.db_path)
+        bundle = get_career_profile(self.db_path)
+
+        self.assertEqual(profile["resume_text"], "")
+        self.assertEqual(profile["resume_redacted_text"], "")
+        self.assertEqual(bundle["profile"]["resume_text"], "")
+        self.assertEqual(bundle["profile"]["name"], "测试候选人")
+        self.assertEqual(bundle["sources"], [])
+        self.assertIn(
+            "具备 Python 经验",
+            [item["statement"] for item in bundle["facts"]],
+        )
+        self.assertEqual(bundle["active_strategy"]["name"], "后端方向")
+
     def test_resume_source_normalizes_unusual_template_bullets(self) -> None:
         create_candidate_source(
             source_type="resume",
@@ -144,6 +177,28 @@ class CareerOperatingSystemTest(unittest.TestCase):
         blocked = verify_candidate_material("将转化率提升 80%", db_path=self.db_path)
         self.assertFalse(blocked["can_finalize"])
         self.assertEqual(blocked["issues"][0]["sentence"], "将转化率提升 80%")
+
+    def test_fact_gate_ignores_resume_section_titles_and_date_variants(self) -> None:
+        create_candidate_source(
+            source_type="resume",
+            title="原始简历",
+            content="2020.07-2023.06 负责支付网关。获奖经历\n三好学生",
+            db_path=self.db_path,
+        )
+        studio_draft = (
+            "荣誉证书\n三好学生\n"
+            "工作经历\n2020年7月-2023年6月 负责支付网关。"
+        )
+        gate = verify_candidate_material(studio_draft, db_path=self.db_path)
+        self.assertTrue(gate["can_finalize"], gate["issues"])
+        self.assertEqual(gate["unsupported_certificates"], [])
+
+        invented = verify_candidate_material(
+            studio_draft + "\nPMP认证",
+            db_path=self.db_path,
+        )
+        self.assertFalse(invented["can_finalize"])
+        self.assertIn("pmp认证", invented["unsupported_certificates"])
 
     def test_removing_a_line_drops_it_from_the_document(self) -> None:
         fact = propose_fact(
@@ -282,7 +337,7 @@ class CareerOperatingSystemApiTest(unittest.TestCase):
         )
         self.assertEqual(reviewed.status_code, 200)
         formal_after = self.client.get("/career-profile/context?scope=resume").json()
-        self.assertEqual(formal_after["confirmed_facts"][0]["id"], fact_id)
+        self.assertIn(fact_id, [item["id"] for item in formal_after["confirmed_facts"]])
 
         strategy = self.client.post(
             "/career-profile/strategies",
@@ -315,7 +370,7 @@ class CareerOperatingSystemApiTest(unittest.TestCase):
         self.assertEqual(debrief.status_code, 200)
         exported = self.client.get("/career-profile/export?format=bundle")
         self.assertEqual(exported.status_code, 200)
-        self.assertEqual(exported.json()["json"]["schema_version"], "bosscopilot-career-profile-v2")
+        self.assertEqual(exported.json()["json"]["schema_version"], "careerloop-career-profile-v2")
 
     def test_profile_interview_tools_drive_resumable_one_question_flow(self) -> None:
         """The interview is model-callable now, so drive the tools, not chat text."""

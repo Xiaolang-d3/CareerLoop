@@ -63,9 +63,9 @@ def test_unlisted_origin_is_not_allowed(monkeypatch) -> None:
 
 def test_explicit_allowed_origins_are_honoured(monkeypatch) -> None:
     monkeypatch.delenv("BIND_HOST", raising=False)
-    monkeypatch.setenv("ALLOWED_ORIGINS", "https://bosscopilot.example.com")
+    monkeypatch.setenv("ALLOWED_ORIGINS", "https://careerloop.example.com")
 
-    assert "https://bosscopilot.example.com" in get_settings().allowed_origins
+    assert "https://careerloop.example.com" in get_settings().allowed_origins
 
 
 def test_login_locks_out_after_repeated_failures(monkeypatch) -> None:

@@ -17,7 +17,7 @@ describe("JobStageNav", () => {
     );
 
     expect(screen.getByRole("navigation", { name: "岗位工作流" })).toBeInTheDocument();
-    for (const stage of ["匹配分析", "定制简历", "面试准备"]) {
+    for (const stage of ["匹配分析", "定制简历", "面试问答"]) {
       expect(screen.getByRole("button", { name: stage })).toBeInTheDocument();
     }
   });

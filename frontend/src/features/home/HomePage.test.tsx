@@ -1,12 +1,16 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppTopBar } from "../../components/AppTopBar";
 import type { JobProject } from "../../types";
+import type { Conversation } from "../../types";
 import { HomePage } from "./HomePage";
-import { isSettingsProfileReady, latestJobAnalysisAt, profileCompleteness, splitHomeTags } from "./home-metrics";
+import { homeActionQueue, homeContinueItems, homeInboxItems, homeJobProgress, homeNextStep, homeProjectReviews, homeSkillTags, inboxFactLabel, isSettingsProfileReady, latestJobAnalysisAt, profileCompleteness, splitHomeTags } from "./home-metrics";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 function sampleJob(overrides: Partial<JobProject> = {}): JobProject {
   return {
@@ -23,6 +27,20 @@ function sampleJob(overrides: Partial<JobProject> = {}): JobProject {
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     latest_evaluation_at: "2026-08-10T08:30:00Z",
+    ...overrides
+  };
+}
+
+function sampleConversation(overrides: Partial<Conversation> = {}): Conversation {
+  return {
+    id: 3,
+    title: "对照字节后端",
+    status: "active",
+    summary: "",
+    message_count: 4,
+    task_status: "active",
+    updated_at: "2026-08-14T09:00:00Z",
+    last_message_at: "2026-08-14T09:10:00Z",
     ...overrides
   };
 }
@@ -44,6 +62,9 @@ function renderHome(overrides: Partial<ComponentProps<typeof HomePage>> = {}) {
     onOpenResume: vi.fn(),
     onOpenInterview: vi.fn(),
     onOpenProfile: vi.fn(),
+    onOpenJob: vi.fn(),
+    onOpenChat: vi.fn(),
+    onOpenOpportunities: vi.fn(),
     ...overrides
   };
   render(<HomePage {...props} />);
@@ -53,6 +74,43 @@ function renderHome(overrides: Partial<ComponentProps<typeof HomePage>> = {}) {
 describe("home-metrics", () => {
   it("counts filled profile fields without inventing a score", () => {
     expect(splitHomeTags("Python，FastAPI, React")).toEqual(["Python", "FastAPI", "React"]);
+    expect(homeSkillTags(
+      "Python，FastAPI，熟练掌握 LangChain、RAG 检索增强、Prompt 工程、多模态 AI 开发，具备 LLM 模型接入、微调优化、结构化输出约束能力。"
+    )).toEqual(expect.arrayContaining(["Python", "FastAPI", "LangChain", "Prompt 工程"]));
+    expect(homeSkillTags(
+      "Python，FastAPI，熟练掌握 LangChain、RAG 检索增强、Prompt 工程、多模态 AI 开发"
+    ).some((tag) => tag.includes("熟练掌握"))).toBe(false);
+    expect(inboxFactLabel({ statement: "具备 Redis 相关经验", value: { name: "Redis" } })).toBe("Redis");
+    expect(inboxFactLabel({ statement: "具备 Redis 相关经验", value: { name: "具备 Redis 相关经验" } })).toBe("Redis");
+    expect(inboxFactLabel({ statement: "具备 实时语音链路 相关经验" })).toBe("实时语音链路");
+    expect(homeInboxItems([
+      { id: 1, statement: "具备 Redis 相关经验", category: "skill", value: { name: "Redis" } },
+      { id: 2, statement: "具备 FastAPI 相关经验", category: "skill", value: { name: "FastAPI" } },
+      {
+        id: 3,
+        statement: "具备 擅长实时语音链路、分布式服务架构、缓存优化与任务调度。 相关经验",
+        category: "skill",
+        value: { name: "擅长实时语音链路、分布式服务架构、缓存优化与任务调度。" }
+      },
+      {
+        id: 4,
+        statement: "接口性能提升 30%",
+        category: "achievement",
+        sourceKind: "resume_parser",
+        evidence: [{ excerpt: "负责支付网关，接口性能提升 30%。" }]
+      }
+    ], {
+      resumeText: "专业技能\nPython、Redis、FastAPI\n负责支付网关，接口性能提升 30%。",
+      knownSkills: ["Python", "Redis", "FastAPI"]
+    })).toEqual([
+      expect.objectContaining({
+        id: 4,
+        title: "接口性能提升 30%",
+        consequence: "确认后会把这条成果写入画像，并参与岗位评分",
+        source: "负责支付网关，接口性能提升 30%。",
+        sourceLabel: "简历原句"
+      })
+    ]);
     expect(profileCompleteness({
       name: "张三",
       targetRole: "后端工程师",
@@ -76,6 +134,100 @@ describe("home-metrics", () => {
     ])).toBe("2026-08-12T12:00:00Z");
     expect(latestJobAnalysisAt([])).toBeNull();
   });
+
+  it("picks one next step from resume and analysis state", () => {
+    expect(homeNextStep({
+      profileLoaded: false,
+      hasResume: false,
+      completeness: null,
+      lastAnalysis: null
+    }).label).toBe("完善求职资料");
+    expect(homeNextStep({
+      profileLoaded: true,
+      hasResume: false,
+      completeness: 20,
+      lastAnalysis: null
+    }).label).toBe("先保存简历");
+    expect(homeNextStep({
+      profileLoaded: true,
+      hasResume: true,
+      completeness: 100,
+      lastAnalysis: null
+    }).label).toBe("去分析简历");
+    expect(homeNextStep({
+      profileLoaded: true,
+      hasResume: true,
+      completeness: 100,
+      lastAnalysis: "2026-08-12T12:00:00Z"
+    }).label).toBe("继续分析");
+  });
+
+  it("orders the home queue by resume, review, then an unevaluated job", () => {
+    const queue = homeActionQueue({
+      profileLoaded: true,
+      hasResume: true,
+      completeness: 100,
+      lastAnalysis: "2026-08-12T12:00:00Z",
+      pendingFactCount: 2,
+      jobs: [sampleJob({ latest_evaluation_at: null })],
+      conversations: [sampleConversation()]
+    });
+    expect(queue.map((item) => item.kind)).toEqual(["review", "analysis", "chat", "resume", "interview"]);
+    expect(queue[1].label).toBe("评估 示例 · 后端工程师");
+    expect(homeJobProgress([
+      sampleJob(),
+      sampleJob({ id: 8, latest_evaluation_at: null, priority: "medium" }),
+      sampleJob({ id: 9, job_title: "按简历准备", latest_evaluation_at: null })
+    ])).toEqual({
+      total: 2,
+      analyzed: 1,
+      unevaluated: 1,
+      highPriority: 1,
+      nextUnevaluated: expect.objectContaining({ id: 8 })
+    });
+  });
+
+  it("lists unfinished jobs and chats without repeating the primary next step", () => {
+    const items = homeContinueItems({
+      jobs: [sampleJob({ conversation_id: 3 })],
+      conversations: [sampleConversation(), sampleConversation({ id: 4, title: "今天的准备" })],
+      excludeJobId: 7,
+      excludeConversationId: 3
+    });
+    expect(items.map((item) => item.title)).toEqual(["今天的准备"]);
+  });
+
+  it("turns project fields into a three-stage review chain", () => {
+    expect(homeProjectReviews([{
+      id: "project-1",
+      title: "智能会议总结",
+      evidence: "智能会议总结\n- 基于 LangChain 搭建统一 LLM 接入网关。",
+      fields: [
+        { label: "个人职责", value: "负责统一 LLM 接入网关" },
+        { label: "技术方案", value: "LangChain + 多厂商模型路由" },
+        { label: "结果", value: "新模型接入周期由 3 天缩短至 4 小时" }
+      ],
+      gaps: [{ completed: false }]
+    }])).toEqual([{
+      id: "project-1",
+      title: "智能会议总结",
+      gapCount: 1,
+      lanes: [
+        { key: "input", index: 1, label: "职责", value: "负责统一 LLM 接入网关", empty: false },
+        { key: "process", index: 2, label: "方案", value: "LangChain + 多厂商模型路由", empty: false },
+        { key: "output", index: 3, label: "结果", value: "新模型接入周期由 3 天缩短至 4 小时", empty: false }
+      ]
+    }]);
+    expect(homeProjectReviews([{
+      id: "project-2",
+      title: "AI 求职助手项目",
+      evidence: "AI 求职助手项目\n- 使用 FastAPI 和 React 完成简历解析模块。\n- 将人工整理时间降低 35%。"
+    }])[0].lanes.map((lane) => lane.value)).toEqual([
+      "使用 FastAPI 和 React 完成简历解析模块。",
+      "",
+      "将人工整理时间降低 35%。"
+    ]);
+  });
 });
 
 describe("HomePage", () => {
@@ -83,27 +235,49 @@ describe("HomePage", () => {
     renderHome();
 
     expect(screen.getByRole("heading", { name: "你好，张三" })).toBeInTheDocument();
-    expect(screen.getByText("目标方向：后端工程师")).toBeInTheDocument();
+    expect(screen.getByText("目标方向：后端工程师 · 上海")).toBeInTheDocument();
+    expect(screen.getByText("先看这份简历给人的印象、证据和下一步。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "去分析简历" })).toBeInTheDocument();
     expect(screen.getByText("简历")).toBeInTheDocument();
-    expect(screen.getByText(String("一段已保存的简历文本。".length))).toBeInTheDocument();
-    expect(screen.getByText("cv.pdf · 字")).toBeInTheDocument();
-    expect(screen.getByText("岗位项目")).toBeInTheDocument();
+    expect(screen.getByText("已保存")).toBeInTheDocument();
+    expect(screen.getByText("cv.pdf")).toBeInTheDocument();
+    expect(screen.getByText("岗位推进")).toBeInTheDocument();
     expect(screen.getByText("0")).toBeInTheDocument();
     expect(screen.getByText("还没有岗位")).toBeInTheDocument();
+    expect(screen.getByLabelText("接下来还可以")).toBeInTheDocument();
+    expect(screen.getByLabelText("接下来还可以")).not.toHaveTextContent("去分析简历");
+    expect(screen.getAllByRole("button", { name: "去分析简历" })).toHaveLength(1);
     expect(screen.getByText("最近分析")).toBeInTheDocument();
     expect(screen.getByText("暂无")).toBeInTheDocument();
-    expect(screen.getAllByText("资料完整度").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("100%")).not.toHaveLength(0);
+    expect(screen.queryByText("资料完整度")).not.toBeInTheDocument();
     expect(screen.getByText("Python")).toBeInTheDocument();
     expect(screen.getByText("FastAPI")).toBeInTheDocument();
     expect(screen.queryByText("求职流程阶段")).not.toBeInTheDocument();
     expect(screen.queryByText("最近任务")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("技能标签")).toBeInTheDocument();
+    expect(screen.queryByLabelText("项目全链路")).not.toBeInTheDocument();
+  });
+
+  it("shows extracted skill chips instead of resume sentences", () => {
+    renderHome({
+      skills: "Python，FastAPI，熟练掌握 LangChain、RAG 检索增强、Prompt 工程、多模态 AI 开发，具备 LLM 模型接入、微调优化、结构化输出约束能力。"
+    });
+
+    const card = screen.getByLabelText("技能标签");
+    expect(card).toHaveClass("home-skill-card");
+    expect(screen.getByRole("heading", { name: "技能" })).toBeInTheDocument();
+    expect(card).toHaveTextContent("Python");
+    expect(card).toHaveTextContent("LangChain");
+    expect(card).toHaveTextContent("Prompt 工程");
+    expect(card).not.toHaveTextContent("熟练掌握");
+    expect(card).not.toHaveTextContent("具备 LLM");
   });
 
   it("uses a calm empty state when profile and jobs are not ready yet", () => {
     renderHome({
       profileName: "",
       targetRole: "",
+      targetCity: "",
       resumeText: "",
       skills: "",
       profileLoaded: false,
@@ -112,13 +286,14 @@ describe("HomePage", () => {
     });
 
     expect(screen.getByRole("heading", { name: "你好，小林" })).toBeInTheDocument();
-    expect(screen.getByText("完善个人资料后，这里会显示你的求职方向。")).toBeInTheDocument();
+    expect(screen.getByText("完善求职资料后，这里会显示你的求职方向。")).toBeInTheDocument();
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(3);
     expect(screen.getByText("资料尚未读取")).toBeInTheDocument();
     expect(screen.getByText("计数稍后更新")).toBeInTheDocument();
-    expect(screen.getByText("资料读取后会显示完整度。")).toBeInTheDocument();
+    expect(screen.queryByText("资料读取后会显示完整度。")).not.toBeInTheDocument();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(screen.queryByText("正在加载")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("技能标签")).not.toBeInTheDocument();
   });
 
   it("keeps the global top bar above the home greeting", () => {
@@ -141,69 +316,192 @@ describe("HomePage", () => {
     };
     render(
       <section className="content">
-        <AppTopBar title="首页" userEmail={props.email} onOpenProfile={props.onOpenProfile} onLogout={vi.fn()} />
+        <AppTopBar userEmail={props.email} onOpenProfile={props.onOpenProfile} onLogout={vi.fn()} />
         <HomePage {...props} />
       </section>
     );
 
     const bar = document.querySelector("header.app-topbar");
     expect(bar).toBeTruthy();
-    expect(screen.getByRole("heading", { level: 1, name: "首页" })).toBeInTheDocument();
-    expect(document.querySelectorAll("h1")).toHaveLength(1);
+    expect(screen.queryByRole("heading", { level: 1, name: "首页" })).not.toBeInTheDocument();
+    expect(document.querySelectorAll("h1")).toHaveLength(0);
     expect(screen.getByRole("button", { name: "账号菜单" }).closest(".app-topbar")).toBe(bar);
     expect(screen.getByRole("heading", { name: "你好，张三" }).closest(".app-topbar")).toBeNull();
   });
 
-  it("only renders the weekly report card once an authenticated api context is available", async () => {
-    renderHome();
-    expect(screen.queryByText("本周求职进展")).not.toBeInTheDocument();
-
-    const emptyMetrics = {
-      discovered_jobs: 0,
-      top_companies: [],
-      saved_jobs: 0,
-      applications_submitted: 0,
-      entered_interview: 0,
-      offers: 0,
-      rejections: 0,
-      evaluations_completed: 0,
-      average_match_score: null,
-      scans_completed: 0
-    };
-    const overview = {
-      current: {
-        period_start: "2026-08-10",
-        period_end: "2026-08-17",
-        metrics: emptyMetrics,
-        highlights: ["本周没有新的求职活动记录，可以启用机会来源自动扫描或手动添加岗位。"],
-        is_partial: true,
-        generated_at: null
-      },
-      history: []
-    };
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(overview), {
-      status: 200,
-      headers: { "Content-Type": "application/json" }
-    })));
+  it("does not show a weekly report", () => {
     renderHome({ apiBase: "http://localhost:8000", accessToken: "token" });
-    expect(screen.getByText("本周求职进展")).toBeInTheDocument();
-    expect(await screen.findByText(/本周没有新的求职活动记录/)).toBeInTheDocument();
-    vi.unstubAllGlobals();
+    expect(screen.queryByText("本周求职进展")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("求职周报")).not.toBeInTheDocument();
   });
 
   it("links to the three workspaces and profile settings", () => {
     const props = renderHome({ jobs: [sampleJob()] });
 
-    fireEvent.click(screen.getAllByRole("button", { name: /去分析简历/ })[0]);
+    fireEvent.click(screen.getByRole("button", { name: /继续分析/ }));
     fireEvent.click(screen.getByRole("button", { name: /去定制简历/ }));
     fireEvent.click(screen.getByRole("button", { name: /去面试问答/ }));
-    fireEvent.click(screen.getByRole("button", { name: "完善个人资料" }));
+
+    expect(screen.queryByRole("button", { name: /机会中心/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /项目解析/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("项目全链路")).not.toBeInTheDocument();
 
     expect(props.onOpenAnalysis).toHaveBeenCalledOnce();
     expect(props.onOpenResume).toHaveBeenCalledOnce();
     expect(props.onOpenInterview).toHaveBeenCalledOnce();
-    expect(props.onOpenProfile).toHaveBeenCalledOnce();
-    expect(screen.getByText("1")).toBeInTheDocument();
-    expect(screen.getByText("1 个高优先级")).toBeInTheDocument();
+    expect(screen.getByText("1/1")).toBeInTheDocument();
+    expect(screen.getByText("1 个已分析 · 1 个高优先级")).toBeInTheDocument();
+  });
+
+  it("sends the job-progress snapshot to opportunities and the resume snapshot to the studio", () => {
+    const props = renderHome({ jobs: [sampleJob()] });
+    const snapshot = screen.getByLabelText("资料快照");
+
+    fireEvent.click(within(snapshot).getByRole("button", { name: /岗位推进/ }));
+    fireEvent.click(within(snapshot).getByRole("button", { name: /简历/ }));
+    fireEvent.click(within(snapshot).getByRole("button", { name: /最近分析/ }));
+
+    expect(props.onOpenOpportunities).toHaveBeenCalledOnce();
+    expect(props.onOpenResume).toHaveBeenCalledOnce();
+    expect(props.onOpenAnalysis).toHaveBeenCalledOnce();
+  });
+
+  it("surfaces unfinished work and lets the user confirm pending knowledge", () => {
+    const props = renderHome({
+      jobs: [sampleJob({ latest_evaluation_at: null })],
+      conversations: [sampleConversation()],
+      pendingFacts: [{ id: 21, statement: "主导过检索评测", category: "project" }]
+    });
+
+    expect(screen.getByRole("button", { name: "确认 1 条待审知识" })).toBeInTheDocument();
+    expect(screen.getByLabelText("接下来还可以")).not.toHaveTextContent("确认 1 条待审知识");
+    expect(screen.getByLabelText("接下来还可以")).toHaveTextContent("评估 示例 · 后端工程师");
+    expect(screen.getByLabelText("续上未完成")).toHaveTextContent("对照字节后端");
+    expect(screen.getByLabelText("待确认")).toHaveTextContent("主导过检索评测");
+    expect(screen.getByLabelText("待确认")).toHaveTextContent("确认后会把这个项目写入已确认知识，并参与岗位评分");
+
+    fireEvent.click(screen.getByRole("button", { name: /评估 示例 · 后端工程师/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: /对照字节后端/ })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "确认" }));
+
+    expect(props.onOpenJob).toHaveBeenCalledWith(7);
+    expect(props.onOpenChat).toHaveBeenCalledWith(3);
+    expect(screen.queryByText("主导过检索评测")).not.toBeInTheDocument();
+  });
+
+  it("shows source, consequence, and at most three reviewable inbox items", () => {
+    const props = renderHome({
+      skills: "Python",
+      resumeText: "专业技能 Python、Redis\n实时语音链路项目\n负责支付网关，接口性能提升 30%。",
+      pendingFacts: [
+        { id: 21, statement: "具备 Redis 相关经验", category: "skill", value: { name: "Redis" }, sourceKind: "resume_parser" },
+        { id: 22, statement: "实时语音链路", category: "skill", value: { name: "实时语音链路" } },
+        { id: 23, statement: "接口性能提升 30%", category: "achievement", evidence: [{ excerpt: "负责支付网关，接口性能提升 30%。" }] },
+        { id: 24, statement: "分布式服务架构", category: "skill", value: { name: "分布式服务架构" } }
+      ]
+    });
+
+    expect(screen.getByRole("button", { name: "确认 4 条待审知识" })).toBeInTheDocument();
+    const inbox = screen.getByLabelText("待确认");
+    expect(inbox).toHaveTextContent("Redis");
+    expect(inbox).toHaveTextContent("确认后会把「Redis」写入画像技能，并参与岗位评分");
+    expect(inbox).toHaveTextContent("简历原句");
+    expect(inbox).toHaveTextContent("专业技能 Python、Redis");
+    expect(inbox).toHaveTextContent("实时语音链路");
+    expect(inbox).toHaveTextContent("接口性能提升 30%");
+    expect(inbox).not.toHaveTextContent("分布式服务架构");
+    expect(inbox).not.toHaveTextContent("具备 Redis 相关经验");
+    fireEvent.click(screen.getByRole("button", { name: "查看其余 1 条" }));
+    expect(inbox).toHaveTextContent("分布式服务架构");
+
+    fireEvent.click(screen.getByRole("button", { name: "确认 4 条待审知识" }));
+    expect(props.onOpenProfile).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(inbox);
+  });
+
+  it("hides the inbox when leftover items are chips or garbled skill wrappers", () => {
+    renderHome({
+      skills: "Python，Redis，FastAPI",
+      resumeText: "专业技能\nPython、Redis、FastAPI\n擅长实时语音链路、分布式服务架构、缓存优化与任务调度。",
+      pendingFacts: [
+        { id: 1, statement: "具备 Redis 相关经验", category: "skill", value: { name: "Redis" } },
+        { id: 2, statement: "具备 FastAPI 相关经验", category: "skill", value: { name: "FastAPI" } },
+        {
+          id: 3,
+          statement: "具备 擅长实时语音链路、分布式服务架构、缓存优化与任务调度。 相关经验",
+          category: "skill",
+          value: { name: "擅长实时语音链路、分布式服务架构、缓存优化与任务调度。" }
+        }
+      ]
+    });
+
+    expect(screen.queryByLabelText("待确认")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /待审知识/ })).not.toBeInTheDocument();
+  });
+
+  it("puts a project review chain on the home page", () => {
+    const props = renderHome({
+      projects: [{
+        id: "project-1",
+        title: "智能会议总结",
+        evidence: "智能会议总结\n- 基于 LangChain 搭建统一 LLM 接入网关。",
+        fields: [
+          { label: "个人职责", value: "负责统一 LLM 接入网关" },
+          { label: "技术方案", value: "LangChain + 多厂商模型路由" },
+          { label: "结果", value: "新模型接入周期由 3 天缩短至 4 小时" }
+        ],
+        gaps: [{ completed: false }]
+      }],
+      onOpenProject: vi.fn()
+    });
+
+    const map = screen.getByLabelText("项目全链路");
+    expect(map).toHaveTextContent("讲述链路 · 智能会议总结");
+    expect(map).toHaveTextContent("职责");
+    expect(map).toHaveTextContent("负责统一 LLM 接入网关");
+    expect(map).toHaveTextContent("方案");
+    expect(map).toHaveTextContent("LangChain + 多厂商模型路由");
+    expect(map).toHaveTextContent("结果");
+    expect(map).toHaveTextContent("新模型接入周期由 3 天缩短至 4 小时");
+    expect(map).toHaveTextContent("1 项待补充");
+
+    fireEvent.click(screen.getByRole("button", { name: /继续梳理/ }));
+    expect(props.onOpenProject).toHaveBeenCalledWith("project-1");
+  });
+
+  it("loads the project chain from interview preparation", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/interview-preparation")) {
+        return new Response(JSON.stringify({
+          experiences: [{
+            id: "project-9",
+            title: "实时语音链路",
+            evidence: "麦克风采集后做 Opus 编码并流式上行。",
+            fields: [
+              { label: "个人职责", value: "音频采集与分片上行" },
+              { label: "技术方案", value: "Ogg/Opus 编码与流控重连" },
+              { label: "结果", value: "首字时延控制在 800ms 内" }
+            ],
+            gaps: []
+          }]
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response("{}", { status: 404 });
+    }));
+
+    const props = renderHome({
+      apiBase: "http://localhost:8000",
+      accessToken: "token",
+      onOpenProject: vi.fn()
+    });
+
+    const map = await screen.findByLabelText("项目全链路");
+    expect(map).toHaveTextContent("实时语音链路");
+    expect(map).toHaveTextContent("音频采集与分片上行");
+    expect(map).toHaveTextContent("Ogg/Opus 编码与流控重连");
+    expect(map).toHaveTextContent("首字时延控制在 800ms 内");
+
+    fireEvent.click(screen.getByRole("button", { name: /职责/ }));
+    expect(props.onOpenProject).toHaveBeenCalledWith("project-9");
   });
 });

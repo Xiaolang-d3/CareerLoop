@@ -16,6 +16,15 @@ class LoginIn(BaseModel):
     captcha_code: str = Field(min_length=5, max_length=12)
 
 
+class AccountUpdateIn(BaseModel):
+    display_name: str = Field(default="", max_length=40)
+
+
+class PasswordChangeIn(BaseModel):
+    current_password: str = Field(min_length=1, max_length=500)
+    new_password: str = Field(min_length=8, max_length=500)
+
+
 class ChatMessageIn(BaseModel):
     content: str = Field(min_length=1)
     conversation_id: int | None = None
@@ -56,10 +65,6 @@ class JobUpdate(BaseModel):
     priority: Literal["low", "medium", "high"] | None = None
 
 
-class JobImportPreviewIn(BaseModel):
-    url: str = Field(min_length=1, max_length=2_000)
-
-
 class JobImportTextPreviewIn(BaseModel):
     text: str = Field(min_length=1, max_length=50_000)
     source_url: str = Field(default="", max_length=2_000)
@@ -82,13 +87,28 @@ class JobComparisonIn(BaseModel):
     evaluation_ids: list[int] = Field(min_length=2, max_length=10)
 
 
+class ResumeLayoutSettings(BaseModel):
+    spacing: int | None = Field(default=None, ge=70, le=130)
+    one_page: bool | None = None
+
+
 class ResumeVersionUpdate(BaseModel):
     title: str | None = Field(default=None, max_length=200)
     status: Literal["draft", "final"] | None = None
     template_id: Literal["classic", "compact", "minimal"] | None = None
+    style_id: Literal["navy", "forest", "ink", "wine"] | None = None
+    layout: ResumeLayoutSettings | None = None
 
 
 class QuickMatchIn(BaseModel):
+    job_description: str = Field(default="", max_length=50_000)
+    job_title: str = Field(default="", max_length=200)
+    company_name: str = Field(default="", max_length=200)
+
+
+class QuickMatchApplyRewriteIn(BaseModel):
+    original: str = Field(min_length=1, max_length=2_000)
+    suggested: str = Field(min_length=1, max_length=2_000)
     job_description: str = Field(default="", max_length=50_000)
     job_title: str = Field(default="", max_length=200)
     company_name: str = Field(default="", max_length=200)
@@ -141,6 +161,13 @@ class InterviewPreparationFeedbackIn(BaseModel):
     answer: str = Field(min_length=10, max_length=5_000)
 
 
+class ProjectBriefingIn(BaseModel):
+    source_kind: Literal["description", "code"] = "description"
+    description: str = Field(default="", max_length=8_000)
+    code_excerpt: str = Field(default="", max_length=20_000)
+    use_model: bool = False
+
+
 class InterviewRoundCreate(BaseModel):
     kit_id: int | None = Field(default=None, ge=1)
     round_type: Literal["general", "hr", "business", "technical", "final"] = "general"
@@ -183,6 +210,13 @@ class AgentSettingsIn(BaseModel):
 class ModelDiscoveryIn(BaseModel):
     model_base_url: str = Field(default="", max_length=500)
     api_key: str = Field(default="", max_length=500)
+
+
+class ModelCapabilitiesIn(BaseModel):
+    model_name: str = Field(default="", max_length=120)
+    model_base_url: str = Field(default="", max_length=500)
+    api_key: str = Field(default="", max_length=500)
+    probe: bool = False
 
 
 # CareerLoop 2.0 career operating system

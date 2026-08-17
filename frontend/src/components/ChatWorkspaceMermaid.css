@@ -1,4 +1,4 @@
-.chat-workspace .chat-mermaid {
+:is(.chat-workspace, .project-studio) .chat-mermaid {
   width: 100%;
   min-width: 0;
   margin: 12px 0;
@@ -10,7 +10,7 @@
   white-space: normal;
 }
 
-.chat-workspace .chat-mermaid-canvas {
+:is(.chat-workspace, .project-studio) .chat-mermaid-canvas {
   width: 100%;
   min-height: 120px;
   padding: 18px;
@@ -21,18 +21,18 @@
   -webkit-overflow-scrolling: touch;
 }
 
-.chat-workspace .chat-mermaid-canvas:empty {
+:is(.chat-workspace, .project-studio) .chat-mermaid-canvas:empty {
   display: none;
 }
 
-.chat-workspace .chat-mermaid-canvas svg {
+:is(.chat-workspace, .project-studio) .chat-mermaid-canvas svg {
   display: block;
   min-width: 100%;
   height: auto;
   margin: 0 auto;
 }
 
-.chat-workspace .chat-mermaid-pending {
+:is(.chat-workspace, .project-studio) .chat-mermaid-pending {
   display: flex;
   min-height: 72px;
   align-items: center;
@@ -42,7 +42,7 @@
   font-size: 12px;
 }
 
-.chat-workspace .chat-mermaid.is-loading .chat-mermaid-pending::before {
+:is(.chat-workspace, .project-studio) .chat-mermaid.is-loading .chat-mermaid-pending::before {
   width: 13px;
   height: 13px;
   margin-right: 8px;
@@ -53,35 +53,35 @@
   animation: chat-mermaid-spin .8s linear infinite;
 }
 
-.chat-workspace .chat-mermaid-fallback {
+:is(.chat-workspace, .project-studio) .chat-mermaid-fallback {
   display: grid;
   gap: 10px;
   padding: 14px;
 }
 
-.chat-workspace .chat-mermaid-fallback-header {
+:is(.chat-workspace, .project-studio) .chat-mermaid-fallback-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
-.chat-workspace .chat-mermaid-fallback-header > span {
+:is(.chat-workspace, .project-studio) .chat-mermaid-fallback-header > span {
   display: grid;
   gap: 2px;
 }
 
-.chat-workspace .chat-mermaid-fallback-header strong {
+:is(.chat-workspace, .project-studio) .chat-mermaid-fallback-header strong {
   color: #423d59;
   font-size: 12px;
 }
 
-.chat-workspace .chat-mermaid-fallback-header small {
+:is(.chat-workspace, .project-studio) .chat-mermaid-fallback-header small {
   color: #817b92;
   font-size: 11px;
 }
 
-.chat-workspace .chat-mermaid-fallback button {
+:is(.chat-workspace, .project-studio) .chat-mermaid-fallback button {
   flex: 0 0 auto;
   min-height: 30px;
   padding: 0 10px;
@@ -95,14 +95,14 @@
   cursor: pointer;
 }
 
-.chat-workspace .chat-mermaid-fallback button:hover,
-.chat-workspace .chat-mermaid-fallback button:focus-visible {
+:is(.chat-workspace, .project-studio) .chat-mermaid-fallback button:hover,
+:is(.chat-workspace, .project-studio) .chat-mermaid-fallback button:focus-visible {
   border-color: #aaa0df;
   outline: none;
   background: #f5f2ff;
 }
 
-.chat-workspace .chat-mermaid-fallback pre {
+:is(.chat-workspace, .project-studio) .chat-mermaid-fallback pre {
   max-width: 100%;
   margin: 0;
   padding: 10px 12px;
@@ -113,7 +113,7 @@
   white-space: pre;
 }
 
-.chat-workspace .chat-mermaid-fallback pre code {
+:is(.chat-workspace, .project-studio) .chat-mermaid-fallback pre code {
   padding: 0;
   color: #4a4657;
   background: transparent;
@@ -127,22 +127,22 @@
 }
 
 @media (max-width: 600px) {
-  .chat-workspace .chat-mermaid {
+  :is(.chat-workspace, .project-studio) .chat-mermaid {
     margin: 10px 0;
     border-radius: 10px;
   }
 
-  .chat-workspace .chat-mermaid-canvas {
+  :is(.chat-workspace, .project-studio) .chat-mermaid-canvas {
     padding: 12px;
   }
 
-  .chat-workspace .chat-mermaid-fallback-header {
+  :is(.chat-workspace, .project-studio) .chat-mermaid-fallback-header {
     align-items: flex-start;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chat-workspace .chat-mermaid.is-loading .chat-mermaid-pending::before {
+  :is(.chat-workspace, .project-studio) .chat-mermaid.is-loading .chat-mermaid-pending::before {
     animation: none;
   }
 }

@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-import hashlib
-import math
 import re
 from pathlib import Path
 from typing import Any
 
 from ..db import connect, json_dump, row_to_dict
-
-
-EMBEDDING_DIMENSIONS = 256
+from .embeddings import EmbeddingSpec, get_embedder
 
 
 def index_document(
@@ -20,17 +16,11 @@ def index_document(
     metadata: dict[str, Any] | None = None,
     db_path: str | Path | None = None,
 ) -> int:
-    """Index redacted/local text using a deterministic on-device hash vector."""
+    """Index redacted/local text with the current on-device embedder."""
     chunks = _chunk_text(content)
+    embedder = get_embedder()
     with connect(db_path) as conn:
-        try:
-            _load_vec(conn)
-            vectors_available = True
-        except Exception:
-            # Mirrors search_knowledge and delete_document: the text rows stay
-            # authoritative so keyword fallback search still has data to read
-            # when the optional native vector extension is unavailable.
-            vectors_available = False
+        vectors_available = _ensure_vectors(conn)
         existing = conn.execute(
             "SELECT id FROM knowledge_chunks WHERE source_type = ? AND source_id = ?",
             (source_type, str(source_id)),
@@ -42,7 +32,8 @@ def index_document(
             "DELETE FROM knowledge_chunks WHERE source_type = ? AND source_id = ?",
             (source_type, str(source_id)),
         )
-        for chunk in chunks:
+        vectors = embedder.embed_many(chunks) if vectors_available else []
+        for chunk, vector in zip(chunks, vectors or [None] * len(chunks)):
             cursor = conn.execute(
                 """
                 INSERT INTO knowledge_chunks (source_type, source_id, title, content, metadata_json)
@@ -50,12 +41,64 @@ def index_document(
                 """,
                 (source_type, str(source_id), title, chunk, json_dump(metadata or {})),
             )
-            if vectors_available:
+            if vectors_available and vector is not None:
                 conn.execute(
                     "INSERT INTO vec_knowledge(rowid, embedding) VALUES (?, ?)",
-                    (cursor.lastrowid, _serialize(_embed(chunk))),
+                    (cursor.lastrowid, _serialize(vector)),
                 )
     return len(chunks)
+
+
+def index_chunks(
+    source_type: str,
+    source_id: str | int,
+    chunks: list[dict[str, Any]],
+    db_path: str | Path | None = None,
+) -> int:
+    """Index pre-cut text blocks, preserving caller metadata such as block_id."""
+    items = [
+        item for item in chunks
+        if str(item.get("content") or "").strip()
+    ]
+    if not items:
+        delete_document(source_type, source_id, db_path)
+        return 0
+    embedder = get_embedder()
+    with connect(db_path) as conn:
+        vectors_available = _ensure_vectors(conn)
+        existing = conn.execute(
+            "SELECT id FROM knowledge_chunks WHERE source_type = ? AND source_id = ?",
+            (source_type, str(source_id)),
+        ).fetchall()
+        if vectors_available:
+            for row in existing:
+                conn.execute("DELETE FROM vec_knowledge WHERE rowid = ?", (row["id"],))
+        conn.execute(
+            "DELETE FROM knowledge_chunks WHERE source_type = ? AND source_id = ?",
+            (source_type, str(source_id)),
+        )
+        contents = [str(item["content"]) for item in items]
+        vectors = embedder.embed_many(contents) if vectors_available else []
+        for item, vector in zip(items, vectors or [None] * len(items)):
+            cursor = conn.execute(
+                """
+                INSERT INTO knowledge_chunks (source_type, source_id, title, content, metadata_json)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    source_type,
+                    str(source_id),
+                    str(item.get("title") or "")[:200],
+                    str(item["content"]),
+                    json_dump(item.get("metadata") or {}),
+                ),
+            )
+            if vectors_available and vector is not None:
+                conn.execute(
+                    "INSERT INTO vec_knowledge(rowid, embedding) VALUES (?, ?)",
+                    (cursor.lastrowid, _serialize(vector)),
+                )
+    return len(items)
 
 
 def search_knowledge(
@@ -68,7 +111,8 @@ def search_knowledge(
         return []
     with connect(db_path) as conn:
         try:
-            _load_vec(conn)
+            if not _ensure_vectors(conn):
+                raise RuntimeError("vector extension unavailable")
             candidates = conn.execute(
                 """
                 SELECT chunks.*, v.distance
@@ -76,7 +120,7 @@ def search_knowledge(
                 WHERE v.embedding MATCH ? AND k = ?
                 ORDER BY v.distance
                 """,
-                (_serialize(_embed(query)), max(limit * 4, 12)),
+                (_serialize(get_embedder().embed(query)), max(limit * 4, 12)),
             ).fetchall()
         except Exception:
             # Safe fallback for environments where native extension loading is disabled.
@@ -131,7 +175,7 @@ def delete_document(
         row_ids = [row["id"] for row in rows]
         if row_ids:
             try:
-                _load_vec(conn)
+                _load_sqlite_vec(conn)
                 conn.executemany(
                     "DELETE FROM vec_knowledge WHERE rowid = ?",
                     ((row_id,) for row_id in row_ids),
@@ -147,15 +191,145 @@ def delete_document(
     return len(row_ids)
 
 
-def _load_vec(conn) -> None:
+def rebuild_knowledge_index(db_path: str | Path | None = None) -> dict[str, Any]:
+    """Drop and rebuild vec_knowledge from stored chunk text."""
+    spec = get_embedder().spec
+    with connect(db_path) as conn:
+        try:
+            _load_sqlite_vec(conn)
+        except Exception as exc:
+            return {
+                "rebuilt": False,
+                "reason": str(exc),
+                "chunks": 0,
+                **_spec_payload(spec),
+            }
+        conn.execute("DROP TABLE IF EXISTS knowledge_index_meta")
+        conn.execute("DROP TABLE IF EXISTS vec_knowledge")
+        rebuilt = _ensure_vectors(conn)
+        chunks = conn.execute("SELECT COUNT(*) AS count FROM knowledge_chunks").fetchone()["count"]
+    return {
+        "rebuilt": rebuilt,
+        "reason": "" if rebuilt else "vector extension unavailable",
+        "chunks": int(chunks),
+        **_spec_payload(spec),
+    }
+
+
+def knowledge_index_info(db_path: str | Path | None = None) -> dict[str, Any]:
+    spec = get_embedder().spec
+    with connect(db_path) as conn:
+        stored = None
+        try:
+            stored = _read_meta(conn)
+        except Exception:
+            stored = None
+        return {
+            **_spec_payload(spec),
+            "stored": stored,
+            "table_dimensions": _vec_table_dimensions(conn),
+        }
+
+
+def _ensure_vectors(conn) -> bool:
+    try:
+        _load_sqlite_vec(conn)
+    except Exception:
+        return False
+    spec = get_embedder().spec
+    _ensure_meta_table(conn)
+    existing_dim = _vec_table_dimensions(conn)
+    stored = _read_meta(conn)
+    needs_rebuild = (
+        existing_dim != spec.dimensions
+        or stored is None
+        or stored["backend"] != spec.backend
+        or stored["model"] != spec.model
+        or int(stored["dimensions"]) != spec.dimensions
+    )
+    if needs_rebuild:
+        if existing_dim is not None:
+            conn.execute("DROP TABLE IF EXISTS vec_knowledge")
+        conn.execute(
+            f"CREATE VIRTUAL TABLE vec_knowledge USING vec0(embedding float[{spec.dimensions}])"
+        )
+        _reembed_all(conn, spec)
+        _write_meta(conn, spec)
+    return True
+
+
+def _reembed_all(conn, spec: EmbeddingSpec) -> None:
+    rows = conn.execute("SELECT id, content FROM knowledge_chunks").fetchall()
+    if not rows:
+        return
+    vectors = get_embedder().embed_many([row["content"] for row in rows])
+    if len(vectors) != len(rows):
+        raise RuntimeError("embedding count does not match knowledge chunks")
+    if any(len(vector) != spec.dimensions for vector in vectors):
+        raise RuntimeError("embedding dimension does not match the current index")
+    for row, vector in zip(rows, vectors):
+        conn.execute(
+            "INSERT INTO vec_knowledge(rowid, embedding) VALUES (?, ?)",
+            (row["id"], _serialize(vector)),
+        )
+
+
+def _load_sqlite_vec(conn) -> None:
     import sqlite_vec
 
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
+
+
+def _ensure_meta_table(conn) -> None:
     conn.execute(
-        f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_knowledge USING vec0(embedding float[{EMBEDDING_DIMENSIONS}])"
+        """
+        CREATE TABLE IF NOT EXISTS knowledge_index_meta (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            backend TEXT NOT NULL,
+            model TEXT NOT NULL,
+            dimensions INTEGER NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
     )
+
+
+def _read_meta(conn) -> dict[str, Any] | None:
+    try:
+        row = conn.execute(
+            "SELECT backend, model, dimensions FROM knowledge_index_meta WHERE id = 1"
+        ).fetchone()
+    except Exception:
+        return None
+    return dict(row) if row else None
+
+
+def _write_meta(conn, spec: EmbeddingSpec) -> None:
+    _ensure_meta_table(conn)
+    conn.execute(
+        """
+        INSERT INTO knowledge_index_meta (id, backend, model, dimensions, updated_at)
+        VALUES (1, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET
+            backend = excluded.backend,
+            model = excluded.model,
+            dimensions = excluded.dimensions,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (spec.backend, spec.model, spec.dimensions),
+    )
+
+
+def _vec_table_dimensions(conn) -> int | None:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE name = 'vec_knowledge'"
+    ).fetchone()
+    if not row or not row["sql"]:
+        return None
+    match = re.search(r"float\[(\d+)\]", row["sql"])
+    return int(match.group(1)) if match else None
 
 
 def _serialize(vector: list[float]) -> bytes:
@@ -164,16 +338,12 @@ def _serialize(vector: list[float]) -> bytes:
     return sqlite_vec.serialize_float32(vector)
 
 
-def _embed(text: str) -> list[float]:
-    vector = [0.0] * EMBEDDING_DIMENSIONS
-    terms = re.findall(r"[a-zA-Z][a-zA-Z0-9.+#-]*|[\u4e00-\u9fff]{1,4}", text.lower())
-    for term in terms:
-        digest = hashlib.blake2b(term.encode("utf-8"), digest_size=8).digest()
-        index = int.from_bytes(digest[:4], "little") % EMBEDDING_DIMENSIONS
-        sign = 1.0 if digest[4] % 2 == 0 else -1.0
-        vector[index] += sign
-    norm = math.sqrt(sum(value * value for value in vector)) or 1.0
-    return [value / norm for value in vector]
+def _spec_payload(spec: EmbeddingSpec) -> dict[str, Any]:
+    return {
+        "backend": spec.backend,
+        "model": spec.model,
+        "dimensions": spec.dimensions,
+    }
 
 
 def _chunk_text(text: str, max_chars: int = 900) -> list[str]:

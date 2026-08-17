@@ -13,12 +13,24 @@ describe("requiredDataForRoute", () => {
       "capabilities",
       "attachmentConfig"
     ]);
+    expect(requiredDataForRoute({ section: "settings", page: "overview" })).toEqual([
+      "candidateProfile",
+      "agentSettings"
+    ]);
     expect(requiredDataForRoute({ section: "settings", page: "model" })).toEqual([
       "agentSettings",
-      "modelMonitor"
+      "modelMonitor",
+      "modelCapabilities"
     ]);
     expect(requiredDataForRoute({ section: "settings", page: "agent" })).toEqual([
       "agentOperations"
+    ]);
+    expect(requiredDataForRoute({ section: "dashboard" })).toEqual(["candidateProfile"]);
+    expect(requiredDataForRoute({ section: "project-lab" })).toEqual([]);
+    expect(requiredDataForRoute({ section: "workbench", page: "index" })).toEqual([
+      "jobs",
+      "candidateProfile",
+      "workflow"
     ]);
   });
 });
@@ -35,6 +47,18 @@ describe("createRouteDataCache", () => {
 
     time += 30_001;
     await cache.load("conversations", loader);
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it("reloads immediately after invalidate even inside the cache window", async () => {
+    let time = 1_000;
+    const loader = vi.fn(async () => undefined);
+    const cache = createRouteDataCache<string>(30_000, () => time);
+
+    await cache.load("candidateProfile", loader);
+    cache.invalidate("candidateProfile");
+    await cache.load("candidateProfile", loader);
+
     expect(loader).toHaveBeenCalledTimes(2);
   });
 
