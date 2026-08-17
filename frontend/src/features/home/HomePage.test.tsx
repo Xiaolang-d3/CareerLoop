@@ -92,8 +92,7 @@ describe("HomePage", () => {
     expect(screen.getByText("还没有岗位")).toBeInTheDocument();
     expect(screen.getByText("最近分析")).toBeInTheDocument();
     expect(screen.getByText("暂无")).toBeInTheDocument();
-    expect(screen.getAllByText("资料完整度").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("100%")).not.toHaveLength(0);
+    expect(screen.queryByText("资料完整度")).not.toBeInTheDocument();
     expect(screen.getByText("Python")).toBeInTheDocument();
     expect(screen.getByText("FastAPI")).toBeInTheDocument();
     expect(screen.queryByText("求职流程阶段")).not.toBeInTheDocument();
@@ -116,7 +115,7 @@ describe("HomePage", () => {
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(3);
     expect(screen.getByText("资料尚未读取")).toBeInTheDocument();
     expect(screen.getByText("计数稍后更新")).toBeInTheDocument();
-    expect(screen.getByText("资料读取后会显示完整度。")).toBeInTheDocument();
+    expect(screen.queryByText("资料读取后会显示完整度。")).not.toBeInTheDocument();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(screen.queryByText("正在加载")).not.toBeInTheDocument();
   });
@@ -154,41 +153,10 @@ describe("HomePage", () => {
     expect(screen.getByRole("heading", { name: "你好，张三" }).closest(".app-topbar")).toBeNull();
   });
 
-  it("only renders the weekly report card once an authenticated api context is available", async () => {
-    renderHome();
-    expect(screen.queryByText("本周求职进展")).not.toBeInTheDocument();
-
-    const emptyMetrics = {
-      discovered_jobs: 0,
-      top_companies: [],
-      saved_jobs: 0,
-      applications_submitted: 0,
-      entered_interview: 0,
-      offers: 0,
-      rejections: 0,
-      evaluations_completed: 0,
-      average_match_score: null,
-      scans_completed: 0
-    };
-    const overview = {
-      current: {
-        period_start: "2026-08-10",
-        period_end: "2026-08-17",
-        metrics: emptyMetrics,
-        highlights: ["本周没有新的求职活动记录，可以启用机会来源自动扫描或手动添加岗位。"],
-        is_partial: true,
-        generated_at: null
-      },
-      history: []
-    };
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(overview), {
-      status: 200,
-      headers: { "Content-Type": "application/json" }
-    })));
+  it("does not restore the weekly report card", () => {
     renderHome({ apiBase: "http://localhost:8000", accessToken: "token" });
-    expect(screen.getByText("本周求职进展")).toBeInTheDocument();
-    expect(await screen.findByText(/本周没有新的求职活动记录/)).toBeInTheDocument();
-    vi.unstubAllGlobals();
+    expect(screen.queryByText("本周求职进展")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("求职周报")).not.toBeInTheDocument();
   });
 
   it("links to the three workspaces and profile settings", () => {

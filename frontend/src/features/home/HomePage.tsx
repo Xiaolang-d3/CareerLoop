@@ -4,13 +4,11 @@ import {
   CalendarDays,
   FileText,
   MessageCircle,
-  Target,
   UserRound
 } from "lucide-react";
 import { ActionButton } from "../../components/ui/ActionButton";
 import type { JobProject } from "../../types";
-import { latestJobAnalysisAt, profileCompleteness, splitHomeTags } from "./home-metrics";
-import { WeeklyReportCard } from "./WeeklyReportCard";
+import { latestJobAnalysisAt, splitHomeTags } from "./home-metrics";
 
 export type HomePageProps = {
   apiBase?: string;
@@ -48,8 +46,6 @@ function metricValue(ready: boolean, value: string) {
 }
 
 export function HomePage({
-  apiBase,
-  accessToken,
   displayName,
   email,
   profileName,
@@ -69,9 +65,6 @@ export function HomePage({
   const greetingName = profileName?.trim() || displayName?.trim() || email?.split("@")[0] || "";
   const resumeChars = (resumeText || "").trim().length;
   const skillTags = splitHomeTags(skills || "");
-  const completeness = profileLoaded
-    ? profileCompleteness({ name: profileName, targetRole, targetCity, skills, resumeText })
-    : null;
   const lastAnalysis = jobsLoaded ? latestJobAnalysisAt(jobs) : null;
 
   const cards = [
@@ -92,12 +85,6 @@ export function HomePage({
       value: metricValue(jobsLoaded, lastAnalysis ? formatAnalysisTime(lastAnalysis) : "暂无"),
       icon: <CalendarDays size={18} />,
       note: !jobsLoaded ? "时间稍后更新" : lastAnalysis ? "最近一次岗位分析" : "完成分析后会出现在这里"
-    },
-    {
-      label: "资料完整度",
-      value: metricValue(profileLoaded, completeness == null ? "—" : `${completeness}%`),
-      icon: <Target size={18} />,
-      note: !profileLoaded ? "完整度稍后更新" : completeness === 100 ? "五项资料都已填写" : "称呼、方向、城市、技能、简历"
     }
   ];
 
@@ -134,19 +121,6 @@ export function HomePage({
       <section className="home-charts" aria-label="资料概览">
         <article className="home-chart-card">
           <div className="section-heading">
-            <div><div><h3>资料完整度</h3></div></div>
-            <small>{completeness == null ? "—" : `${completeness}%`}</small>
-          </div>
-          {completeness == null ? (
-            <p className="home-chart-empty">资料读取后会显示完整度。</p>
-          ) : (
-            <div className="home-completeness-bar" role="meter" aria-label="资料完整度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={completeness}>
-              <i style={{ width: `${completeness}%` }} />
-            </div>
-          )}
-        </article>
-        <article className="home-chart-card">
-          <div className="section-heading">
             <div><div><h3>技能标签</h3></div></div>
             <small>{profileLoaded ? `${skillTags.length} 个` : "—"}</small>
           </div>
@@ -160,7 +134,6 @@ export function HomePage({
             <p className="home-chart-empty">还没有技能标签，可在个人资料里补充。</p>
           )}
         </article>
-        {apiBase && accessToken ? <WeeklyReportCard apiBase={apiBase} accessToken={accessToken} /> : null}
       </section>
 
       <section className="home-next-actions" aria-label="下一步">
