@@ -617,10 +617,16 @@ export type ProjectBriefingLayer = {
   steps: Array<{ title: string; detail: string }>;
 };
 
+export type ProjectBriefingSource = "description" | "code" | "repo";
+
 export type ProjectBriefing = {
-  source_kind: "description" | "code";
+  source_kind: ProjectBriefingSource;
   description: string;
   code_excerpt: string;
+  repo_url?: string;
+  repo_owner?: string;
+  repo_name?: string;
+  default_branch?: string;
   situation: string;
   core: string;
   stack: string[];

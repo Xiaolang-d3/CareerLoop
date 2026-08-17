@@ -103,3 +103,106 @@ def test_studio_lists_resume_projects_and_can_save_a_code_briefing(tmp_path: Pat
 
     reloaded = get_project_studio(db_path)
     assert reloaded["projects"][0]["briefing"]["code_excerpt"].startswith("frontend/src/audio/capture.ts")
+
+
+def test_repo_briefing_uses_real_tree_paths() -> None:
+    briefing = build_project_briefing(
+        title="实时语音链路",
+        evidence="实时语音转写与问答。",
+        description="# Voice\n麦克风 PCM 采集后做 Opus 编码。",
+        code_excerpt="frontend/src/audio/capture.ts\nbackend/app/asr.py",
+        source_kind="repo",
+        repo_url="https://github.com/acme/voice",
+        repo_owner="acme",
+        repo_name="voice",
+        default_branch="main",
+    )
+
+    assert briefing["source_kind"] == "repo"
+    assert briefing["repo_name"] == "voice"
+    assert [layer["name"] for layer in briefing["layers"]] == ["客户端", "服务端"]
+    assert [step["detail"] for step in briefing["layers"][0]["steps"]] == ["frontend/src/audio/capture.ts"]
+    assert "Opus" in briefing["stack"]
+    assert "Kafka" not in briefing["stack"]
+
+
+def test_studio_saves_repo_briefing_from_mocked_github(tmp_path: Path, monkeypatch) -> None:
+    db_path = _profile(tmp_path)
+    snapshot = {
+        "owner": "acme",
+        "repo": "voice",
+        "default_branch": "main",
+        "html_url": "https://github.com/acme/voice",
+        "paths": ["frontend/src/audio/capture.ts", "backend/app/asr.py"],
+        "readme": "# Voice\n麦克风 PCM 采集后做 Opus 编码。",
+    }
+
+    async def fake_fetch(owner: str, repo: str, **_kwargs):
+        assert (owner, repo) == ("acme", "voice")
+        return snapshot
+
+    monkeypatch.setattr("app.projects.briefing.fetch_github_repo_snapshot", fake_fetch)
+
+    studio = get_project_studio(db_path)
+    project_id = studio["projects"][0]["id"]
+    updated = asyncio.run(analyze_project_briefing(
+        project_id,
+        source_kind="repo",
+        repo_url="https://github.com/acme/voice",
+        db_path=db_path,
+    ))
+    briefing = next(item["briefing"] for item in updated["projects"] if item["id"] == project_id)
+    assert briefing["source_kind"] == "repo"
+    assert briefing["repo_owner"] == "acme"
+    details = [step["detail"] for layer in briefing["layers"] for step in layer["steps"]]
+    assert details == ["backend/app/asr.py", "frontend/src/audio/capture.ts"]
+
+
+def test_repo_model_drops_invented_paths(tmp_path: Path, monkeypatch) -> None:
+    db_path = _profile(tmp_path)
+    snapshot = {
+        "owner": "acme",
+        "repo": "voice",
+        "default_branch": "main",
+        "html_url": "https://github.com/acme/voice",
+        "paths": ["frontend/src/audio/capture.ts", "backend/app/asr.py"],
+        "readme": "# Voice\n麦克风 PCM 采集后做 Opus 编码。",
+    }
+    async def fake_fetch(*_args, **_kwargs):
+        return snapshot
+
+    monkeypatch.setattr("app.projects.briefing.fetch_github_repo_snapshot", fake_fetch)
+    monkeypatch.setattr("app.projects.briefing.get_model_connection", lambda db_path=None: {
+        "api_key": "sk-test",
+        "model_name": "test-model",
+        "model_base_url": "",
+    })
+
+    class FakeProvider:
+        def __init__(self, **_kwargs) -> None:
+            self.calls = 0
+
+        async def generate(self, _request):
+            self.calls += 1
+            if self.calls == 1:
+                return type("R", (), {"content": '{"situation":"麦克风 PCM 采集后做 Opus 编码","core":"采集","stack":["Opus","Kafka"]}'})()
+            return type("R", (), {"content": '{"layers":[{"name":"客户端","steps":[{"title":"采集","path":"frontend/src/audio/capture.ts"},{"title":"虚构","path":"secret/vault.py"}]}]}'})()
+
+    monkeypatch.setattr("app.projects.briefing.OpenAICompatibleProvider", FakeProvider)
+
+    studio = get_project_studio(db_path)
+    project_id = studio["projects"][0]["id"]
+    updated = asyncio.run(analyze_project_briefing(
+        project_id,
+        source_kind="repo",
+        repo_url="acme/voice",
+        use_model=True,
+        db_path=db_path,
+    ))
+    briefing = next(item["briefing"] for item in updated["projects"] if item["id"] == project_id)
+    assert briefing["generated_from"] == "model"
+    assert "Opus" in briefing["stack"]
+    assert "Kafka" not in briefing["stack"]
+    paths = [step["detail"] for layer in briefing["layers"] for step in layer["steps"]]
+    assert "frontend/src/audio/capture.ts" in paths
+    assert "secret/vault.py" not in paths

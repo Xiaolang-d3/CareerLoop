@@ -34,16 +34,20 @@ describe("ProjectStudioPage", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input).endsWith("/project-studio/project-1/briefing") && init?.method === "POST") {
-        const body = JSON.parse(String(init.body || "{}")) as { source_kind?: string };
+        const body = JSON.parse(String(init.body || "{}")) as { source_kind?: string; repo_url?: string };
+        const kind = body.source_kind === "code" || body.source_kind === "repo" ? body.source_kind : "description";
         return new Response(JSON.stringify({
           ...studio,
           projects: [{
             ...studio.projects[0],
             briefing: {
               ...studio.projects[0].briefing,
-              source_kind: body.source_kind === "code" ? "code" : "description",
-              code_excerpt: body.source_kind === "code" ? "frontend/src/audio/capture.ts" : "",
-              layers: body.source_kind === "code"
+              source_kind: kind,
+              code_excerpt: kind === "code" ? "frontend/src/audio/capture.ts" : studio.projects[0].briefing.code_excerpt,
+              repo_url: kind === "repo" ? body.repo_url : "",
+              repo_owner: kind === "repo" ? "acme" : "",
+              repo_name: kind === "repo" ? "voice" : "",
+              layers: kind === "code" || kind === "repo"
                 ? [{ name: "客户端", steps: [{ title: "capture", detail: "frontend/src/audio/capture.ts" }] }]
                 : studio.projects[0].briefing.layers
             }
@@ -88,6 +92,25 @@ describe("ProjectStudioPage", () => {
     });
     expect(vi.mocked(fetch).mock.calls.some(([input, init]) => (
       String(input).endsWith("/project-studio/project-1/briefing") && String(init?.body || "").includes("code")
+    ))).toBe(true);
+  });
+
+  it("rebuilds the chain from a pasted GitHub repo", async () => {
+    render(<ProjectStudioPage apiBase="http://localhost:8000" accessToken="token" projectId="project-1" onOpenProject={vi.fn()} onOpenProfile={vi.fn()} />);
+
+    await screen.findByRole("heading", { name: "实时语音链路" });
+    fireEvent.click(screen.getByRole("button", { name: "从仓库分析" }));
+    fireEvent.change(screen.getByLabelText("GitHub 仓库"), {
+      target: { value: "https://github.com/acme/voice" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "按当前材料重梳" }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("项目架构")).toHaveTextContent("capture");
+      expect(screen.getByRole("link", { name: "acme/voice" })).toHaveAttribute("href", "https://github.com/acme/voice");
+    });
+    expect(vi.mocked(fetch).mock.calls.some(([input, init]) => (
+      String(input).endsWith("/project-studio/project-1/briefing") && String(init?.body || "").includes("repo")
     ))).toBe(true);
   });
 });
