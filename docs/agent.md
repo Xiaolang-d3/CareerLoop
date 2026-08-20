@@ -2,7 +2,7 @@
 
 本文是 CareerLoop **智能体层的维护文档**。代码是行为的事实来源；本文记录意图、边界和同步点。改智能体行为时必须在同一变更中更新本文。
 
-最近校准：2026-08-16（waiting_user 恢复：选项继续，改口清快照）。
+最近校准：2026-08-17（联网搜索按语言走 general/news/company 策略）。
 
 ## 定位
 
@@ -82,7 +82,9 @@ backend/app/
 
 前端：`frontend/src/components/ChatWorkspace.tsx` 消费流式事件；`frontend/src/features/settings/AgentOperationsDashboard.tsx` 展示运营快照。
 
-外部感知：`agent-search/` 是独立仓库，对话里的 `research_company` / `search_public_web` 会调用它。它不是 CareerLoop runtime 的一部分。
+外部感知：`agent-search/` 是独立仓库，对话里的 `research_company` / `search_public_web` 会调用它。它不是 CareerLoop runtime 的一部分，`scripts/dev.sh` 不负责启动它。`search_public_web` 按 `category` 走 `general` / `news` / `company` 策略；`research_company` 与岗位评估走 `company` 策略，因此配套 AgentSearch 必须支持 `/search?...&mode=company`。AgentSearch 可配置 Brave / 博查作为主检索，未配置时仍走 SearXNG；中文查询会再融合国内搜索源。部署、环境变量和健康检查步骤见根目录 `README.md`。
+
+运行边界：AgentSearch 默认地址是 `http://127.0.0.1:3939`，由 `WEB_RESEARCH_ENABLED`、`AGENT_SEARCH_BASE_URL` 和可选的 `AGENT_SEARCH_TOKEN` 控制。单个上游引擎失败可以让 `/health` 显示 `degraded`，不能仅据此判定全部搜索不可用，应以实际 `/search` 结果为准。连接失败、超时或所有查询均失败时，工具必须返回“联网服务暂不可用”的可重试结论，不能把它解释为公司名称不完整、公司不存在或招聘平台没有岗位。
 
 ## 对话运行时
 
@@ -171,8 +173,8 @@ backend/app/
 | `search_resume_evidence` | read_only | 检索本地脱敏简历证据 |
 | `generate_tailored_resume_content` | derived_analysis | 生成可复制的高匹配简历文本 |
 | `generate_interview_advice` | derived_analysis | 生成个人化面试建议上下文 |
-| `research_company` | external_read | 核验指定公司的公开资料 |
-| `search_public_web` | external_read | 本轮用户打开联网开关后的公开搜索 |
+| `research_company` | external_read | 核验指定公司的公开资料，走 AgentSearch `company` 策略 |
+| `search_public_web` | external_read | 本轮用户打开联网开关后的公开搜索；`news` / `company` 会换对应策略 |
 | `get_candidate_context` | read_only | 按任务装配最小已确认上下文 |
 | `search_candidate_evidence` | read_only | 检索已确认事实与摘录 |
 | `propose_candidate_knowledge` | local_pending_write | 创建待确认知识，不自动确认 |
