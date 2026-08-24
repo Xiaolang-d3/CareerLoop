@@ -12,7 +12,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT_DIR / "data"
 DB_PATH = DATA_DIR / "careerloop.db"
 LEGACY_DB_PATH = DATA_DIR / "bosscopilot.db"
-DB_SCHEMA_VERSION = 18
+DB_SCHEMA_VERSION = 19
 
 
 def adopt_legacy_database() -> None:
@@ -451,6 +451,11 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         (16, "agent_run_snapshots", _AGENT_RUN_SNAPSHOT_SCHEMA),
         (17, "drop_career_weekly_reports", "DROP TABLE IF EXISTS career_weekly_reports;"),
         (18, "drop_application_stage_events", "DROP TABLE IF EXISTS application_stage_events;"),
+        (19, "drop_v1_candidate_fact_tables", """
+DROP TABLE IF EXISTS candidate_context_briefs;
+DROP TABLE IF EXISTS candidate_fact_evidence;
+DROP TABLE IF EXISTS candidate_facts;
+"""),
     ]
     applied = {
         int(row["version"])
@@ -597,7 +602,6 @@ CREATE TABLE IF NOT EXISTS strategy_evidence (
     note TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (strategy_id) REFERENCES career_strategies(id) ON DELETE CASCADE,
-    FOREIGN KEY (fact_id) REFERENCES candidate_facts(id) ON DELETE CASCADE,
     CHECK (relationship IN ('supports', 'gap', 'risk')),
     UNIQUE(strategy_id, fact_id, relationship)
 );
@@ -640,8 +644,7 @@ CREATE TABLE IF NOT EXISTS candidate_story_facts (
     story_id INTEGER NOT NULL,
     fact_id INTEGER NOT NULL,
     PRIMARY KEY (story_id, fact_id),
-    FOREIGN KEY (story_id) REFERENCES candidate_stories(id) ON DELETE CASCADE,
-    FOREIGN KEY (fact_id) REFERENCES candidate_facts(id) ON DELETE CASCADE
+    FOREIGN KEY (story_id) REFERENCES candidate_stories(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS voice_profiles (
