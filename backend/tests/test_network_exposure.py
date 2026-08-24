@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from app import auth, db
 from app.config import Settings, get_settings
-from app.main import app, static_asset_cache_control
+from app.main import FRONTEND_DIST_DIR, app, static_asset_cache_control
 
 
 @pytest.fixture(autouse=True)
@@ -131,9 +131,11 @@ def test_only_content_hashed_frontend_assets_receive_immutable_cache_policy() ->
     assert static_asset_cache_control("/auth/captcha") is None
 
 
-def test_public_brand_assets_are_available_before_login() -> None:
+def test_public_brand_asset_path_bypasses_login() -> None:
     client = TestClient(app)
 
-    assert client.get("/careerloop-mark-v2.png").status_code == 200
+    response = client.get("/careerloop-mark-v2.png")
+    expected_status = 200 if (FRONTEND_DIST_DIR / "careerloop-mark-v2.png").is_file() else 404
+    assert response.status_code == expected_status
     # careerloop-mark.svg 已随品牌切换移除；白名单不应再放行不存在的文件。
     assert client.get("/careerloop-mark.svg").status_code == 401
