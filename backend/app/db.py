@@ -12,7 +12,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT_DIR / "data"
 DB_PATH = DATA_DIR / "careerloop.db"
 LEGACY_DB_PATH = DATA_DIR / "bosscopilot.db"
-DB_SCHEMA_VERSION = 17
+DB_SCHEMA_VERSION = 18
 
 
 def adopt_legacy_database() -> None:
@@ -450,6 +450,7 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         (14, "resume_versions_optional_job", _migrate_resume_versions_optional_job),
         (16, "agent_run_snapshots", _AGENT_RUN_SNAPSHOT_SCHEMA),
         (17, "drop_career_weekly_reports", "DROP TABLE IF EXISTS career_weekly_reports;"),
+        (18, "drop_application_stage_events", "DROP TABLE IF EXISTS application_stage_events;"),
     ]
     applied = {
         int(row["version"])
@@ -682,21 +683,6 @@ CREATE TABLE IF NOT EXISTS profile_interview_sessions (
     UNIQUE(profile_id, conversation_id)
 );
 
-CREATE TABLE IF NOT EXISTS application_stage_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    job_id INTEGER NOT NULL,
-    strategy_id INTEGER,
-    from_stage TEXT NOT NULL DEFAULT '',
-    to_stage TEXT NOT NULL,
-    source TEXT NOT NULL DEFAULT 'user',
-    note TEXT NOT NULL DEFAULT '',
-    feedback_verbatim TEXT NOT NULL DEFAULT '',
-    occurred_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
-    FOREIGN KEY (strategy_id) REFERENCES career_strategies(id) ON DELETE SET NULL
-);
-
 CREATE TABLE IF NOT EXISTS interview_debriefs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id INTEGER NOT NULL,
@@ -811,7 +797,6 @@ CREATE TABLE IF NOT EXISTS discovered_job_occurrences (
 
 CREATE INDEX IF NOT EXISTS idx_career_strategies_profile ON career_strategies(profile_id, priority DESC, id);
 CREATE INDEX IF NOT EXISTS idx_candidate_stories_profile ON candidate_stories(profile_id, status);
-CREATE INDEX IF NOT EXISTS idx_application_stage_job ON application_stage_events(job_id, occurred_at, id);
 CREATE INDEX IF NOT EXISTS idx_discovered_jobs_status ON discovered_jobs(lifecycle_status, posting_status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_opportunity_sources_enabled ON opportunity_sources(enabled, last_scanned_at);
 """

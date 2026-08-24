@@ -72,11 +72,7 @@ from ..profile.candidate_core import (
     update_strategy,
     verify_candidate_material,
 )
-from ..profile.career_feedback import (
-    career_patterns,
-    record_interview_debrief,
-    skill_growth_map,
-)
+from ..profile.career_feedback import record_interview_debrief
 from ..profile.intelligence import filter_blocked_skills
 from ..profile.skill_tags import resolve_home_skill_tags, skill_tag_source
 from ..opportunities.service import (
@@ -212,7 +208,6 @@ from .schemas import (
     ProfileInterviewStartIn,
     DiscoveredJobPromoteIn,
     DiscoveredJobUpdateIn,
-    InterviewDebriefIn,
     ResumeChangeUpdate,
     QuickMatchApplyRewriteIn,
     QuickMatchIn,
@@ -1599,32 +1594,6 @@ def career_profile_export(
         media_type=media,
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
     )
-
-
-@router.post("/interviews/{job_id}/debrief")
-def interview_debrief_post(job_id: int, payload: InterviewDebriefIn) -> dict[str, Any]:
-    try:
-        result = record_interview_debrief(
-            job_id,
-            round_id=payload.interview_round_id,
-            summary=payload.source_text,
-            questions=payload.questions,
-            feedback_verbatim=payload.raw_feedback,
-        )
-        _record_workbench_stage("outcome_tracking", "工作台已记录面试复盘", job_id=job_id)
-        return result
-    except ValueError as exc:
-        raise HTTPException(status_code=404 if "不存在" in str(exc) else 422, detail=str(exc)) from exc
-
-
-@router.get("/career-insights/patterns")
-def career_patterns_get() -> dict[str, Any]:
-    return career_patterns()
-
-
-@router.get("/career-insights/skill-growth")
-def career_skill_growth_get() -> dict[str, Any]:
-    return skill_growth_map()
 
 
 @router.get("/companies")
