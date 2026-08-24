@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 import httpx
 
 from ..config import get_settings
+from ..version import USER_AGENT
 
 
 MAX_TREE_PATHS = 400
@@ -109,7 +110,7 @@ async def fetch_github_repo_snapshot(
 ) -> dict[str, Any]:
     headers = {
         "Accept": "application/vnd.github+json",
-        "User-Agent": "CareerLoop",
+        "User-Agent": USER_AGENT,
         "X-GitHub-Api-Version": "2022-11-28",
     }
     resolved_token = (token if token is not None else get_settings().github_token or "").strip()

@@ -11,6 +11,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import ProxyHandler, Request, build_opener
 
+from ..version import USER_AGENT
+
 PROXY_FAKE_IP_NETWORK = ipaddress.ip_network("198.18.0.0/15")
 
 
@@ -226,7 +228,7 @@ class AgentSearchClient:
 
     def _request(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
         url = f"{self.base_url}{path}?{urlencode(params)}" if params else f"{self.base_url}{path}"
-        headers = {"Accept": "application/json", "User-Agent": "CareerLoop/0.1"}
+        headers = {"Accept": "application/json", "User-Agent": USER_AGENT}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
         request = Request(url, headers=headers)
