@@ -731,7 +731,7 @@ async def _research_job(
     for category, query in pending_queries[: max(0, min(budget, 8))]:
         attempted += 1
         try:
-            batch = await search_client.search(query, 4)
+            batch = await search_client.search(query, 4, mode="company")
         except WebResearchError as exc:
             warnings.append(f"公开搜索失败：{exc}")
             continue

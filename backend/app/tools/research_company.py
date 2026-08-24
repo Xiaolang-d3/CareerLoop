@@ -115,7 +115,7 @@ class ResearchCompanyTool:
             if index:
                 await asyncio.sleep(0.2)
             try:
-                batch = await client.search(query, per_query)
+                batch = await client.search(query, per_query, mode="company")
             except WebResearchError as exc:
                 first_web_error = first_web_error or exc
                 search_warnings.append(

@@ -58,12 +58,14 @@ class SearchPublicWebTool:
             timeout_seconds=self._settings.web_research_timeout_seconds,
         )
         query = payload.query
-        if payload.category == "news":
-            query = f"{query} 最新消息 2025 2026"
+        mode = {"news": "news", "company": "company"}.get(payload.category, "general")
+        if payload.category == "news" and not any(token in query for token in ("最新", "新闻", "动态")):
+            query = f"{query} 最新"
         try:
             sources = await client.search(
                 query,
                 min(payload.count, self._settings.web_research_max_sources),
+                mode=mode,
             )
         except WebResearchError as exc:
             if not exc.retryable:
@@ -78,6 +80,7 @@ class SearchPublicWebTool:
                 sources = await client.search(
                     payload.query,
                     min(payload.count, self._settings.web_research_max_sources),
+                    mode=mode,
                 )
             except WebResearchError as retry_exc:
                 return ToolResult(
