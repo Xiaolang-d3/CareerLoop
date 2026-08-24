@@ -1,0 +1,27 @@
+# 更新日志
+
+本文件记录 CareerLoop 的用户可见变更。版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)，条目结构参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
+
+## [Unreleased]
+
+### 移除
+
+- 清理从未接线的周报功能（`career_weekly_reports` 表与生成逻辑）、职业洞察与投递追踪接口（`/career-insights`、`/interviews/{id}/debrief`、`application_stage_events` 表），以及 v1 遗留的候选人事实空表。相关功能均无前端入口且从未产生数据；对话工具 `record_interview_debrief` 不受影响。数据库通过 drop 迁移（17–19 号）自动清理，无需手动操作。
+
+## [2.0.0] - 2026-08-24
+
+当前版本为开发预览版，尚未发布稳定的 GitHub Release。
+
+### 新增
+
+- 职业画像、证据账本、待确认事实与多用户本地工作区。
+- 机会中心、岗位 A–G 评估、岗位比较和推进记录。
+- 简历工作室、项目解析、面试问答、知识点回顾与复盘记录。
+- 从公开 GitHub 仓库生成项目 briefing 的项目工作室。
+- 受控求职 Agent 的任务路由、计划约束、引用校验、等待恢复和一次同车道重规划。
+
+### 变更
+
+- 产品品牌由 BossCopilot 统一为 CareerLoop，同时保留旧数据库和浏览器偏好的兼容迁移。
+- 联网研究改为可选的独立 AgentSearch 服务，并按 general、news、company 场景选择策略。
+- 应用版本、API 元数据和网络请求 User-Agent 统一为 2.0.0。
