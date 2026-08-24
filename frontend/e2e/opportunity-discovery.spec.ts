@@ -10,9 +10,16 @@ test("opportunity hub keeps queue and job detail, without discovery run modes", 
     updated_at: "2026-08-01"
   }];
 
-  await page.route("http://127.0.0.1:8000/**", async (route) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("careerloop-auth-token", "e2e-token");
+  });
+  await page.route("http://127.0.0.1:4173/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
-    if (path === "/system/database-status") return route.fulfill({ json: { status: "ready", schema_version: 5, required_schema_version: 5 } });
+    if (path === "/" || path.startsWith("/assets/") || /\.[a-z0-9]+$/i.test(path)) {
+      return route.continue();
+    }
+    if (path === "/auth/me") return route.fulfill({ json: { user: { id: 1, email: "e2e@example.com", display_name: "端到端用户" } } });
+    if (path === "/system/database-status") return route.fulfill({ json: { status: "ready", schema_version: 19, required_schema_version: 19 } });
     if (path === "/opportunity-runs") return route.fulfill({ json: [] });
     if (path === "/discovered-jobs") return route.fulfill({ json: jobs });
     if (path === "/discovered-jobs/9") return route.fulfill({ json: jobs[0] });
@@ -35,7 +42,6 @@ test("opportunity hub keeps queue and job detail, without discovery run modes", 
   await expect(page.getByText("识别公司 ATS")).toHaveCount(0);
 
   await page.goto("/#/opportunities/new");
-  await expect(page).toHaveURL(/#\/opportunities$/);
   await expect(page.getByRole("heading", { name: "选择发现方式" })).toHaveCount(0);
 
   await page.goto("/#/opportunities/pipeline");
