@@ -12,7 +12,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT_DIR / "data"
 DB_PATH = DATA_DIR / "careerloop.db"
 LEGACY_DB_PATH = DATA_DIR / "bosscopilot.db"
-DB_SCHEMA_VERSION = 16
+DB_SCHEMA_VERSION = 17
 
 
 def adopt_legacy_database() -> None:
@@ -448,8 +448,8 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         (12, "local_user_authentication", _LOCAL_USER_AUTH_SCHEMA),
         (13, "interview_preparation_state", _INTERVIEW_PREPARATION_SCHEMA),
         (14, "resume_versions_optional_job", _migrate_resume_versions_optional_job),
-        (15, "career_weekly_reports", _CAREER_WEEKLY_REPORT_SCHEMA),
         (16, "agent_run_snapshots", _AGENT_RUN_SNAPSHOT_SCHEMA),
+        (17, "drop_career_weekly_reports", "DROP TABLE IF EXISTS career_weekly_reports;"),
     ]
     applied = {
         int(row["version"])
@@ -560,20 +560,6 @@ CREATE TABLE IF NOT EXISTS agent_run_snapshots (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 );
-"""
-
-
-_CAREER_WEEKLY_REPORT_SCHEMA = """
-CREATE TABLE IF NOT EXISTS career_weekly_reports (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    period_start TEXT NOT NULL,
-    period_end TEXT NOT NULL,
-    metrics_json TEXT NOT NULL DEFAULT '{}',
-    highlights_json TEXT NOT NULL DEFAULT '[]',
-    generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (period_start, period_end)
-);
-CREATE INDEX IF NOT EXISTS idx_career_weekly_reports_period ON career_weekly_reports(period_start DESC);
 """
 
 
