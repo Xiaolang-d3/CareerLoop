@@ -80,6 +80,7 @@ describe("ProjectStudioPage", () => {
     render(<ProjectStudioPage apiBase="http://localhost:8000" accessToken="token" projectId="project-1" onOpenProject={onOpenProject} onOpenProfile={vi.fn()} />);
 
     await screen.findByRole("heading", { name: "实时语音链路" });
+    await screen.findByLabelText("项目描述");
     fireEvent.click(screen.getByRole("button", { name: "从代码分析" }));
     fireEvent.change(screen.getByLabelText("代码或文件路径"), {
       target: { value: "frontend/src/audio/capture.ts" }
@@ -99,6 +100,7 @@ describe("ProjectStudioPage", () => {
     render(<ProjectStudioPage apiBase="http://localhost:8000" accessToken="token" projectId="project-1" onOpenProject={vi.fn()} onOpenProfile={vi.fn()} />);
 
     await screen.findByRole("heading", { name: "实时语音链路" });
+    await screen.findByLabelText("项目描述");
     fireEvent.click(screen.getByRole("button", { name: "从仓库分析" }));
     fireEvent.change(screen.getByLabelText("GitHub 仓库"), {
       target: { value: "https://github.com/acme/voice" }
