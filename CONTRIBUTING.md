@@ -83,20 +83,20 @@ fix bug
 
 ## 分支策略
 
-仓库只有一名活跃开发者时，经过验证的小提交可以直接进入 `main`。开始多人协作或远程自动化后：
+`main` 是受保护分支。所有合入内容必须通过 GitHub Actions 的 `backend-tests` 与 `frontend-checks`；功能、修复和高风险维护通过 Pull Request 合入。
 
-- 保护 `main` 分支。
-- 分支使用 `<类型>-<简短目标>` 格式，例如 `feat-resume-analysis`。
-- 通过经过审查的 Pull Request 合并。
-- 强制执行后端测试和前端构建检查。
+- 分支使用 `<类型>/<简短目标>` 格式，例如 `feat/resume-analysis`。
+- 单人维护时不强制他人批准，但合并前仍需自行检查完整 diff、测试结果和配置影响。
+- 多人协作后至少需要一名未参与实现的维护者批准。
+- 禁止绕过失败的必需检查，也不要直接向 `main` 强制推送。
 
 分支类型与提交类型保持一致，常用类型包括 `feat`、`fix`、`refactor`、`docs`、`test`、`chore`、`build` 和 `ci`。目标部分使用小写英文与连字符，描述该分支最终交付的能力或解决的问题：
 
 ```text
-feat-interview-practice
-fix-chat-stream-reconnect
-refactor-agent-runtime
-docs-development-workflow
+feat/interview-practice
+fix/chat-stream-reconnect
+refactor/agent-runtime
+docs/development-workflow
 ```
 
 一个分支只承载一个明确的交付目标。为完成同一目标，可以同时修改前端、后端、智能体、测试和文档；没有共同交付目标的改动应拆分到不同分支。避免使用 `dev`、`update`、`fix` 或 `feat-many-changes` 等目标不明确的名称。
