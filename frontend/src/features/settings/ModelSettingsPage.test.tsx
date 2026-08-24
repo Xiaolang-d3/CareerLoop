@@ -109,9 +109,9 @@ describe("ModelSettingsPage", () => {
     expect(screen.queryByText("供应商市场")).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
 
-    const page = document.querySelector(".model-settings-page");
-    const top = document.querySelector(".model-settings-top");
-    const monitor = document.querySelector(".model-monitor-card");
+    const page = document.querySelector<HTMLElement>(".model-settings-page");
+    const top = document.querySelector<HTMLElement>(".model-settings-top");
+    const monitor = document.querySelector<HTMLElement>(".model-monitor-card");
     expect(page).toContainElement(top);
     expect(page).toContainElement(monitor);
     expect(top).toContainElement(screen.getByRole("heading", { name: "模型连接" }));

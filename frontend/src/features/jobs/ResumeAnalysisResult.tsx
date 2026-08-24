@@ -21,6 +21,7 @@ const INTENT_LABEL: Record<string, string> = {
 };
 
 export type ResumeRewritePatch = { original: string; suggested: string };
+type ResumeNextAction = NonNullable<NonNullable<QuickMatchResult["analysis"]["resume"]>["next_actions"]>[number];
 
 type Props = {
   result: QuickMatchResult;
@@ -241,7 +242,7 @@ export function ResumeAnalysisResult({
   const proven = resume?.strengths.filter((item) => item.evidence) ?? [];
   const unproven = resume?.strengths.filter((item) => !item.evidence) ?? [];
   const matrix = resume?.evidence_matrix ?? [];
-  const nextActions = resume?.next_actions?.length
+  const nextActions: ResumeNextAction[] = resume?.next_actions?.length
     ? resume.next_actions
     : (resume?.gaps ?? []).slice(0, 3).map((item) => ({ title: item, detail: "", evidence: "" }));
   const visibleActions = nextActions.filter((item) => !skippedTitles.includes(item.title));

@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { InterviewKit, JobProject, QuickMatchResult, ResumeVersion } from "../types";
+import type { AnalysisRunEvent } from "../features/jobs/analysis-run";
 import { AppTopBar } from "./AppTopBar";
 import { WorkbenchView } from "./WorkspaceViews";
 
@@ -344,15 +345,8 @@ describe("WorkbenchView 匹配分析工作台", () => {
       release = resolve;
     });
     const onQuickMatch = vi.fn((
-      _payload: unknown,
-      onEvent?: (event: {
-        type: string;
-        key?: string;
-        title?: string;
-        status?: string;
-        text?: string;
-        source?: string;
-      }) => void
+      _payload: { job_description: string; job_title?: string; company_name?: string },
+      onEvent?: (event: AnalysisRunEvent) => void
     ) => {
       onEvent?.({ type: "step", key: "direction", title: "方向匹配", status: "running", source: "local" });
       onEvent?.({ type: "thought", key: "direction", text: "在简历里找带数字的结果句" });
