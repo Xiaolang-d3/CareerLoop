@@ -26,7 +26,7 @@ from app.profile.candidate_core import (
     verify_candidate_material,
 )
 from app.agent.orchestration import TOOL_POLICIES, route_task
-from app.profile.career_feedback import career_patterns, record_application_stage
+from app.profile.career_feedback import record_interview_debrief
 from app.db import connect, init_db
 from app.tools import (
     PauseProfileInterviewTool,
@@ -237,20 +237,6 @@ class CareerOperatingSystemTest(unittest.TestCase):
         )
         self.assertEqual(strategy["profile_id"], 1)
 
-    def test_patterns_wait_for_five_progressed_jobs(self) -> None:
-        for index in range(5):
-            job = create_job(
-                {"job_title": f"岗位 {index}", "company_name": "示例公司", "description": "这是一个足够长的岗位描述用于测试事件。"},
-                self.db_path,
-            )
-            if index < 4:
-                record_application_stage(job["id"], to_stage="applied", db_path=self.db_path)
-        self.assertFalse(career_patterns(self.db_path)["eligible"])
-        record_application_stage(job["id"], to_stage="applied", db_path=self.db_path)
-        report = career_patterns(self.db_path)
-        self.assertTrue(report["eligible"])
-        self.assertIn("不代表市场因果", report["limitations"][0])
-
     def test_official_source_scan_deduplicates_and_requires_promotion(self) -> None:
         company = create_or_update_company(name="Example", followed=True, db_path=self.db_path)
         with patch("app.opportunities.service.is_public_source_url", return_value=True):
@@ -339,10 +325,6 @@ class CareerOperatingSystemApiTest(unittest.TestCase):
         formal_after = self.client.get("/career-profile/context?scope=resume").json()
         self.assertIn(fact_id, [item["id"] for item in formal_after["confirmed_facts"]])
 
-        strategy = self.client.post(
-            "/career-profile/strategies",
-            json={"name": "后端工程", "target_roles": ["Python 工程师"], "is_active": True},
-        ).json()
         # 正式岗位项目只允许从岗位收件箱提升；为验证后续的结果 API，
         # 在测试夹具中直接创建本地项目。
         job = create_job(
@@ -352,22 +334,13 @@ class CareerOperatingSystemApiTest(unittest.TestCase):
                 "description": "负责 Python FastAPI 服务设计开发和稳定性建设。",
             }
         )
-        outcome = record_application_stage(
+        debrief = record_interview_debrief(
             job["id"],
-            to_stage="applied",
-            note="官网投递",
+            summary="面试讨论了接口性能。",
+            questions=[{"question": "如何优化接口？", "answer": "先定位瓶颈", "competency": "性能优化"}],
+            feedback_verbatim="思路清晰",
         )
-        self.assertEqual(outcome["to_stage"], "applied")
-        debrief = self.client.post(
-            f"/interviews/{job['id']}/debrief",
-            json={
-                "strategy_id": strategy["id"],
-                "source_text": "面试讨论了接口性能。",
-                "questions": [{"question": "如何优化接口？", "answer": "先定位瓶颈", "competency": "性能优化"}],
-                "raw_feedback": "思路清晰",
-            },
-        )
-        self.assertEqual(debrief.status_code, 200)
+        self.assertEqual(debrief["questions"][0]["competency"], "性能优化")
         exported = self.client.get("/career-profile/export?format=bundle")
         self.assertEqual(exported.status_code, 200)
         self.assertEqual(exported.json()["json"]["schema_version"], "careerloop-career-profile-v2")

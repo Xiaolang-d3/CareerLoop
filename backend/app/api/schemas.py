@@ -370,14 +370,6 @@ class ProfileInterviewAnswerIn(BaseModel):
     answer: str = Field(min_length=1, max_length=20_000)
 
 
-class InterviewDebriefIn(BaseModel):
-    interview_round_id: int | None = Field(default=None, ge=1)
-    strategy_id: int | None = Field(default=None, ge=1)
-    questions: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
-    raw_feedback: str = Field(default="", max_length=30_000)
-    source_text: str = Field(default="", max_length=100_000)
-
-
 class CompanyIn(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     website_url: str = Field(default="", max_length=2_000)
