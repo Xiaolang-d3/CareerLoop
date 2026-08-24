@@ -135,4 +135,5 @@ def test_public_brand_assets_are_available_before_login() -> None:
     client = TestClient(app)
 
     assert client.get("/careerloop-mark-v2.png").status_code == 200
-    assert client.get("/careerloop-mark.svg").status_code == 200
+    # careerloop-mark.svg 已随品牌切换移除；白名单不应再放行不存在的文件。
+    assert client.get("/careerloop-mark.svg").status_code == 401
