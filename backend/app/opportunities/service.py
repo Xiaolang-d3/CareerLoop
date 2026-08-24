@@ -315,6 +315,7 @@ async def discover_companies(
         results = await search_client.search(
             f"{query} 公司官网 招聘 careers jobs",
             max(3, min(count, 10)),
+            mode="company",
         )
     except WebResearchError as exc:
         raise OpportunityScanError(str(exc)) from exc

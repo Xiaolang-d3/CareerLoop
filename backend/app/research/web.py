@@ -156,8 +156,14 @@ class AgentSearchClient:
             },
         )
 
-    async def search(self, query: str, count: int) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(self._search_sync, query, count)
+    async def search(
+        self,
+        query: str,
+        count: int,
+        *,
+        mode: str = "general",
+    ) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._search_sync, query, count, mode)
 
     async def enrich_sources(
         self,
@@ -193,10 +199,14 @@ class AgentSearchClient:
             [warning for _, warning in enriched if warning is not None],
         )
 
-    def _search_sync(self, query: str, count: int) -> list[dict[str, Any]]:
+    def _search_sync(self, query: str, count: int, mode: str = "general") -> list[dict[str, Any]]:
         payload = self._request(
             "/search",
-            {"q": query, "count": max(1, min(count, 10)), "mode": "general"},
+            {
+                "q": query,
+                "count": max(1, min(count, 10)),
+                "mode": mode if mode in {"general", "news", "company"} else "general",
+            },
         )
         return self._normalize_search_payload(payload)
 

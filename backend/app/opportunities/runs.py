@@ -404,6 +404,7 @@ async def _execute_funded(run_id: int, config: dict[str, Any], db_path: str | Pa
         results = await client.search(
             f"{query} 融资公告 投资机构 投资方",
             max(3, min(int(config.get("limit") or 12), 30)),
+            mode="news",
         )
         signal_ids: list[int] = []
         companies: list[dict[str, Any]] = []

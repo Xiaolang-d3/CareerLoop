@@ -21,9 +21,11 @@ class FakeSearchClient:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
         self.queries: list[str] = []
+        self.modes: list[str] = []
 
-    async def search(self, query: str, count: int) -> list[dict]:
+    async def search(self, query: str, count: int, *, mode: str = "general") -> list[dict]:
         self.queries.append(query)
+        self.modes.append(mode)
         if self.fail:
             raise WebResearchError("test_unavailable", "测试搜索不可用", retryable=True)
         index = len(self.queries)

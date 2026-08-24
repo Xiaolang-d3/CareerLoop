@@ -11,9 +11,11 @@ from app.research.web import AgentSearchClient, validate_backend_url
 class FakeAgentSearchClient:
     def __init__(self) -> None:
         self.queries: list[str] = []
+        self.modes: list[str] = []
 
-    async def search_extract(self, query: str, count: int):
+    async def search_extract(self, query: str, count: int, *, mode: str = "general"):
         self.queries.append(query)
+        self.modes.append(mode)
         return [
             {
                 "title": f"{query} 的公开资料",
@@ -27,32 +29,34 @@ class FakeAgentSearchClient:
             }
         ]
 
-    async def search(self, query: str, count: int):
-        return await self.search_extract(query, count)
+    async def search(self, query: str, count: int, *, mode: str = "general"):
+        return await self.search_extract(query, count, mode=mode)
 
     async def enrich_sources(self, sources, *, concurrency: int = 1):
         return sources, []
 
 
 class PartiallyFailingAgentSearchClient(FakeAgentSearchClient):
-    async def search(self, query: str, count: int):
+    async def search(self, query: str, count: int, *, mode: str = "general"):
         if "最新消息" in query:
             self.queries.append(query)
             from app.research.web import WebResearchError
 
             raise WebResearchError("agent_search_http_error", "临时失败", retryable=True)
-        return await super().search(query, count)
+        return await super().search(query, count, mode=mode)
 
 
 class EmptyAgentSearchClient(FakeAgentSearchClient):
-    async def search(self, query: str, count: int):
+    async def search(self, query: str, count: int, *, mode: str = "general"):
         self.queries.append(query)
+        self.modes.append(mode)
         return []
 
 
 class CountRespectingAgentSearchClient(FakeAgentSearchClient):
-    async def search(self, query: str, count: int):
+    async def search(self, query: str, count: int, *, mode: str = "general"):
         self.queries.append(query)
+        self.modes.append(mode)
         return [
             {
                 "title": f"{query} 的公开资料 {index}",
@@ -185,8 +189,23 @@ class WebResearchTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.data["source_count"], 1)
         self.assertEqual(result.data["evidence_count"], 1)
-        self.assertIn("最新消息", client.queries[0])
+        self.assertEqual(client.modes[0], "news")
+        self.assertEqual(client.queries[0], "AI Agent 行业最新动态")
         self.assertIn("citation_rule", result.data)
+
+    async def test_generic_web_search_company_category_uses_company_mode(self) -> None:
+        client = FakeAgentSearchClient()
+        result = await SearchPublicWebTool(
+            settings=Settings(web_research_enabled=True),
+            client=client,
+        ).execute(
+            {"query": "示例科技", "category": "company", "count": 5},
+            ToolContext(platform_name="manual"),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(client.modes[0], "company")
+        self.assertEqual(client.queries[0], "示例科技")
 
     async def test_generic_web_search_defaults_to_eight_sources(self) -> None:
         client = CountRespectingAgentSearchClient()
@@ -236,6 +255,8 @@ class WebResearchTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "done")
         self.assertEqual(result.data["search_outcome"]["kind"], "live_search_no_match")
         self.assertIn('"蔻蔻琪" 公司', client.queries)
+        self.assertTrue(client.modes)
+        self.assertTrue(all(mode == "company" for mode in client.modes))
         self.assertNotIn("请补充公司全称", result.message)
 
 
