@@ -126,7 +126,7 @@ _OPEN_AUTH_PATHS = {
 _DOC_PATHS = {"/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"}
 # Docs are protected by token when disabled, so they stay out of the open list.
 _REQUIRE_LOGIN_WHITELIST = _OPEN_AUTH_PATHS | (_DOC_PATHS if _settings.api_docs_enabled else set())
-_PUBLIC_FRONTEND_FILES = {"/favicon.ico", "/vite.svg", "/careerloop-mark-v2.png", "/careerloop-mark.svg"}
+_PUBLIC_FRONTEND_FILES = {"/favicon.ico", "/vite.svg", "/careerloop-mark-v2.png"}
 _STATIC_ASSET_CACHE_CONTROL = "public, max-age=31536000, immutable"
 
 
