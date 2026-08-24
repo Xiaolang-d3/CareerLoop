@@ -90,6 +90,7 @@ from .workflow.engine import refresh_workflow_status
 from .opportunities.runs import interrupt_active_runs
 from .jobs.evaluations import interrupt_active_evaluations
 from .profile.candidate_core import ensure_resume_knowledge_indexed
+from .version import APP_VERSION
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -106,7 +107,7 @@ async def lifespan(_: FastAPI):
 # API docs describe every route, so they stay closed unless explicitly enabled.
 app = FastAPI(
     title="CareerLoop API",
-    version="2.0.0",
+    version=APP_VERSION,
     docs_url="/docs" if _settings.api_docs_enabled else None,
     redoc_url="/redoc" if _settings.api_docs_enabled else None,
     openapi_url="/openapi.json" if _settings.api_docs_enabled else None,

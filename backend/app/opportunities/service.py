@@ -14,6 +14,7 @@ from ..config import Settings, get_settings
 from ..db import connect, json_dump, row_to_dict, rows_to_dicts
 from ..jobs.service import create_job
 from ..research.web import AgentSearchClient, WebResearchError, is_public_source_url
+from ..version import USER_AGENT
 
 
 SUPPORTED_PROVIDERS = {
@@ -353,7 +354,7 @@ def _fetch_json(url: str) -> Any:
         raise OpportunityScanError("职位接口地址不安全")
     request = Request(
         url,
-        headers={"Accept": "application/json", "User-Agent": "CareerLoop/2.0"},
+        headers={"Accept": "application/json", "User-Agent": USER_AGENT},
     )
     with build_opener(ProxyHandler({})).open(request, timeout=20) as response:
         body = response.read(5_000_001)
@@ -367,7 +368,7 @@ def _fetch_html(url: str) -> str:
         raise OpportunityScanError("招聘页面地址不安全")
     request = Request(
         url,
-        headers={"Accept": "text/html", "User-Agent": "CareerLoop/2.0"},
+        headers={"Accept": "text/html", "User-Agent": USER_AGENT},
     )
     with build_opener(ProxyHandler({})).open(request, timeout=20) as response:
         body = response.read(2_000_001)

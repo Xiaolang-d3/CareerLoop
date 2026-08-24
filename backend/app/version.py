@@ -1,0 +1,2 @@
+APP_VERSION = "2.0.0"
+USER_AGENT = f"CareerLoop/{APP_VERSION}"
