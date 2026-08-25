@@ -41,6 +41,7 @@ evals/promptfoo-errors.log
 
 # Local agent / editor tooling — do not commit
 .agents/
+.cursor/
 .hermes/
 .codex/
 .impeccable/
