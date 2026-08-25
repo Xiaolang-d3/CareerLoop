@@ -2470,7 +2470,9 @@ function App({
               apiBase={apiBase}
               accessToken={accessToken}
               projectId={appRoute.projectId}
-              onOpenProject={(projectId) => navigateRoute({ section: "project-lab", projectId })}
+              page={appRoute.page || "overview"}
+              onOpenProject={(projectId, page = "overview") => navigateRoute({ section: "project-lab", projectId, page: projectId ? page : undefined })}
+              onOpenInterview={(projectId) => navigateRoute({ section: "interview-prep", page: "projects", experienceId: projectId })}
               onOpenProfile={() => navigateRoute({ section: "settings", page: "profile" })}
             />
           </Suspense>

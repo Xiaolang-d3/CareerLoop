@@ -5,12 +5,13 @@ type OpportunitiesPage = "index" | "new" | "pipeline" | "sources" | "run" | "job
 export type WorkbenchPage = "index" | "new" | "detail" | "resume" | "interview" | "evaluation" | "evaluation_section" | "comparison";
 export type PreparationPage = "projects" | "knowledge" | "records";
 export type PreparationFocus = "questions" | "knowledge" | "gaps";
+export type ProjectStudioPage = "overview" | "architecture" | "materials" | "interview";
 
 export type AppRoute =
   | { section: "opportunities"; page?: OpportunitiesPage; runId?: number; discoveredJobId?: number }
   | { section: "workbench"; page?: WorkbenchPage; jobId?: number; sectionKey?: "a" | "b" | "c" | "d" | "e" | "f" | "g"; comparisonId?: number }
   | { section: "interview-prep"; page?: PreparationPage; experienceId?: string; focus?: PreparationFocus; nodeId?: string }
-  | { section: "project-lab"; projectId?: string }
+  | { section: "project-lab"; projectId?: string; page?: ProjectStudioPage }
   | { section: "dashboard" }
   | { section: "chat"; conversationId?: number }
   | { section: "settings"; page: SettingsPage; returnTo?: "workbench" };
@@ -68,8 +69,12 @@ export function parseAppHash(hash: string): AppRoute | null {
     return { section: "workbench", page: "detail", jobId: Number(jobDetailMatch[1]) };
   }
   if (path === "project") return { section: "project-lab" };
-  const projectLabMatch = path.match(/^project\/([^/]+)$/);
-  if (projectLabMatch) return { section: "project-lab", projectId: decodeURIComponent(projectLabMatch[1]) };
+  const projectLabMatch = path.match(/^project\/([^/]+)(?:\/(architecture|materials|interview))?$/);
+  if (projectLabMatch) return {
+    section: "project-lab",
+    projectId: decodeURIComponent(projectLabMatch[1]),
+    page: (projectLabMatch[2] as ProjectStudioPage | undefined) || "overview"
+  };
   if (path === "interview-prep" || path === "projects") return { section: "interview-prep", page: "projects" };
   const projectRoute = path.match(/^projects\/([^/]+)(?:\/(questions|knowledge|gaps)(?:\/([^/]+))?)?$/);
   if (projectRoute) return {
@@ -154,7 +159,9 @@ export function appRouteHash(route: AppRoute): string {
     return "#/projects";
   }
   if (route.section === "project-lab") {
-    return route.projectId ? `#/project/${encodeURIComponent(route.projectId)}` : "#/project";
+    if (!route.projectId) return "#/project";
+    const project = encodeURIComponent(route.projectId);
+    return route.page && route.page !== "overview" ? `#/project/${project}/${route.page}` : `#/project/${project}`;
   }
   if (route.section === "dashboard") return "#/home";
   if (route.section === "chat") return route.conversationId ? `#/chat/${route.conversationId}` : "#/chat";

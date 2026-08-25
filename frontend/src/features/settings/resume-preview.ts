@@ -20,9 +20,9 @@ export type ResumePreviewSection = {
 const sectionDefinitions: Array<{ kind: ResumeSourceKind; label: string; pattern: RegExp }> = [
   { kind: "summary", label: "个人概述", pattern: /^(?:个人简介|个人概述|自我评价|个人总结|简介|个人信息|基本信息)$/ },
   { kind: "strengths", label: "个人优势", pattern: /^(?:个人优势|核心优势|个人亮点|能力特长|核心竞争力)$/ },
-  { kind: "experience", label: "工作与实习经历", pattern: /^(?:工作|职业)(?:经历|经验)?$/ },
+  { kind: "experience", label: "工作与实习经历", pattern: /^(?:工作|职业)(?:[与及和](?:实习|校园))?(?:经历|经验)?$/ },
   { kind: "internship", label: "实习经历", pattern: /^实习(?:经历|经验)?$/ },
-  { kind: "combined", label: "工作与项目经历", pattern: /^(?:工作与项目|工作及项目)(?:经历|经验)?$/ },
+  { kind: "combined", label: "工作与项目经历", pattern: /^(?:工作与项目|工作及项目|工作[与及和]项目)(?:经历|经验)?$/ },
   { kind: "projects", label: "项目经历", pattern: /^(?:项目(?:经历|经验|实践)?|实践(?:经历|经验)?|项目[／/]实践经历)$/ },
   { kind: "skills", label: "技能", pattern: /^(?:专业|核心|技术|相关)?技能(?:与工具)?$/ },
   { kind: "education", label: "教育经历", pattern: /^(?:教育)(?:经历|背景)?$/ },
@@ -195,6 +195,7 @@ function shouldJoinExtractedLines(previous: string, current: string) {
   if (!previous || !current) return false;
   if (previous.startsWith("# ") || current.startsWith("# ")) return false;
   if (isHeadingLine(previous) || isHeadingLine(current)) return false;
+  if (isWorkTitle(previous) || PROJECT_URL_SUFFIX.test(previous)) return false;
   if (isTitledCapabilityLine(current)) return false;
   if (isTitledCapabilityLine(previous)) {
     if (isHeadingLine(current) || isContactLine(current) || TARGET_LINE.test(current)) return false;
@@ -232,6 +233,11 @@ function unwrapExtractedLines(lines: string[]) {
     }
   }
   return merged.flatMap((line) => (line ? splitJammedProfileLine(line) : [line]));
+}
+
+function prepareExtractedLines(text: string) {
+  const lines = text.split(/\r?\n/).map((line) => line.trim());
+  return unwrapExtractedLines(lines).map(normalizeLine);
 }
 
 const PROFILE_FIELD_LABELS = "电话|手机|邮箱|邮件|微信|地址|住址|联系方式|GitHub|Github|LinkedIn|求职意向|意向岗位|目标职位|求职目标|英语|日语|普通话|语言";
@@ -291,10 +297,42 @@ function splitEntries(lines: string[]) {
   return entries;
 }
 
+const WORK_DATE_RANGE = /(?:19|20)\d{2}(?:[./年-]\d{1,2}月?)?\s*[至—\-~～]\s*(?:(?:19|20)\d{2}(?:[./年-]\d{1,2}月?)?|至今|现在)/;
+const PROJECT_URL_SUFFIX = /\s+(https?:\/\/\S+)\s*$/i;
+const WORK_ROLE_HINT = /工程师|经理|负责人|实习|开发|测试|运营|设计师|研究员|顾问|架构师/;
+
+function projectTitleCore(line: string) {
+  return line.trim().replace(PROJECT_URL_SUFFIX, "").trim();
+}
+
 function isProjectTitle(line: string) {
-  return line.length <= 80
-    && !/[，、；。：:]/.test(line)
-    && (/[（(][^()（）]+[)）]$/.test(line) || /(项目|平台|系统|工具|助手|应用|引擎|服务|网站|小程序)$/.test(line));
+  const value = projectTitleCore(line);
+  return value.length <= 80
+    && !/[，、；。：:]/.test(value)
+    && !(WORK_DATE_RANGE.test(value) && WORK_ROLE_HINT.test(value))
+    && (/[（(][^()（）]+[)）]$/.test(value) || /(项目|平台|系统|工具|助手|应用|引擎|服务|网站|小程序)$/.test(value));
+}
+
+function isWorkTitle(line: string) {
+  if (!line || /^(?:[-–—*•●▪◦·]\s*)/.test(line)) return false;
+  const match = line.match(WORK_DATE_RANGE);
+  if (!match) return false;
+  const title = line.replace(match[0], "").replace(/[|｜/／\s-]+$/g, "").trim();
+  return Boolean(title) && !isProjectTitle(title);
+}
+
+function splitEmbeddedWorkProject(line: string): string[] {
+  const urlMatch = line.match(PROJECT_URL_SUFFIX);
+  const withoutUrl = urlMatch ? line.slice(0, urlMatch.index).trim() : line.trim();
+  const dateMatch = withoutUrl.match(WORK_DATE_RANGE);
+  if (!dateMatch || dateMatch.index === undefined) return [line];
+
+  const projectStart = dateMatch.index + dateMatch[0].length;
+  const workTitle = withoutUrl.slice(0, projectStart).trim();
+  const projectName = withoutUrl.slice(projectStart).trim();
+  const projectTitle = [projectName, urlMatch?.[1]].filter(Boolean).join(" ");
+  if (!isWorkTitle(workTitle) || !projectName || !isProjectTitle(projectTitle)) return [line];
+  return [workTitle, projectTitle];
 }
 
 function splitProjectEntries(lines: string[]) {
@@ -327,29 +365,42 @@ export function projectOrdinalLabel(index: number) {
 }
 
 function splitCombinedWorkAndProjects(lines: string[]) {
-  const projectStart = lines.findIndex((line, index) => index > 0 && isProjectTitle(line));
-  if (projectStart < 0) return { experience: splitEntries(lines), projects: [] as string[][] };
+  const expanded = lines.flatMap((line) => splitEmbeddedWorkProject(line));
+  if (!expanded.some(isProjectTitle)) return { experience: splitEntries(lines), projects: [] as string[][] };
 
+  const experience: string[][] = [];
   const projects: string[][] = [];
+  let kind: "experience" | "projects" = "experience";
   let current: string[] = [];
-  for (const line of lines.slice(projectStart)) {
+
+  const flush = () => {
+    if (!current.length) return;
+    (kind === "projects" ? projects : experience).push(current);
+    current = [];
+  };
+
+  for (const line of expanded) {
     if (!line) {
-      if (current.length) {
-        projects.push(current);
-        current = [];
-      }
+      flush();
       continue;
     }
-    if (current.length && isProjectTitle(line)) {
-      projects.push(current);
+    if (isWorkTitle(line)) {
+      flush();
+      kind = "experience";
+      current = [line];
+      continue;
+    }
+    if (isProjectTitle(line)) {
+      flush();
+      kind = "projects";
       current = [line];
       continue;
     }
     current.push(line);
   }
-  if (current.length) projects.push(current);
+  flush();
 
-  return { experience: splitEntries(lines.slice(0, projectStart)), projects };
+  return { experience, projects };
 }
 
 const EDUCATION_DATE = /(?:19|20)\d{2}(?:[./年-]\d{1,2})?(?:\s*[至—\-~～]\s*(?:(?:19|20)\d{2}(?:[./年-]\d{1,2})?|至今|现在))?/;
@@ -427,7 +478,7 @@ export function parseResumePreview(text: string): ResumePreviewSection[] {
   const rawSections: Array<{ kind: ResumeSourceKind; label: string; lines: string[] }> = [];
   let current: { kind: ResumeSourceKind; label: string; lines: string[] } | null = null;
 
-  for (const line of unwrapExtractedLines(text.split(/\r?\n/).map(normalizeLine))) {
+  for (const line of prepareExtractedLines(text)) {
     const heading = matchSectionHeading(line);
     if (heading) {
       current = { kind: heading.kind, label: heading.label, lines: [] };
@@ -447,7 +498,7 @@ export function parseResumePreview(text: string): ResumePreviewSection[] {
     if (raw.kind === "combined") {
       const combined = splitCombinedWorkAndProjects(raw.lines);
       if (combined.experience.length) {
-        pushPreviewSection(sections, { kind: "experience", label: "工作与实习经历", entries: combined.experience });
+        pushPreviewSection(sections, { kind: "experience", label: "工作经历", entries: combined.experience });
       }
       if (combined.projects.length) {
         pushPreviewSection(sections, { kind: "projects", label: "项目经历", entries: combined.projects });
@@ -466,6 +517,22 @@ export function parseResumePreview(text: string): ResumePreviewSection[] {
       }
       continue;
     }
+    if (raw.kind === "experience" || raw.kind === "internship") {
+      // 工作段里嵌套的项目名标题拆成独立项目，避免项目内容混进工作条目
+      const combined = splitCombinedWorkAndProjects(raw.lines);
+      const experience: ResumePreviewSection = { kind: raw.kind, label: raw.label, entries: combined.experience };
+      const projects = combined.projects;
+      if (experience.entries.length) {
+        pushPreviewSection(sections, experience);
+      }
+      if (projects.length) {
+        pushPreviewSection(sections, { kind: "projects", label: "项目经历", entries: projects });
+      }
+      if (!experience.entries.length && !projects.length) {
+        pushPreviewSection(sections, { kind: raw.kind, label: raw.label, entries: [] });
+      }
+      continue;
+    }
     const entries = splitSectionEntries(raw.kind, raw.lines);
     if (!entries.length) continue;
     pushPreviewSection(sections, { kind: raw.kind, label: raw.label, entries });
@@ -473,7 +540,7 @@ export function parseResumePreview(text: string): ResumePreviewSection[] {
 
   if (sections.length) return sections;
   return text.trim()
-    ? [{ kind: "other", label: "简历内容", entries: splitEntries(unwrapExtractedLines(text.split(/\r?\n/).map(normalizeLine))) }]
+    ? [{ kind: "other", label: "简历内容", entries: splitEntries(prepareExtractedLines(text)) }]
     : [];
 }
 

@@ -166,6 +166,25 @@ class CareerOperatingSystemTest(unittest.TestCase):
         self.assertIn("- 基于 LangChain 搭建统一网关", profile["resume_text"])
         self.assertNotIn("\uf0b7", profile["resume_text"])
 
+    def test_resume_source_never_stores_phone_or_email(self) -> None:
+        create_candidate_source(
+            source_type="resume",
+            title="原始简历",
+            content=(
+                "求职意向：后端工程师 电话：13812345678\n"
+                "邮箱：candidate@example.com\n"
+                "项目经历\n内部工具\n- 负责接口联调。"
+            ),
+            db_path=self.db_path,
+        )
+
+        profile = get_career_profile(db_path=self.db_path)["profile"]
+        self.assertIn("求职意向：后端工程师", profile["resume_text"])
+        self.assertIn("项目经历", profile["resume_text"])
+        self.assertNotIn("13812345678", profile["resume_text"])
+        self.assertNotIn("candidate@example.com", profile["resume_text"])
+        self.assertNotIn("已隐藏", profile["resume_text"])
+
     def test_fact_gate_blocks_metric_absent_from_the_document(self) -> None:
         fact = propose_fact(
             category="achievement", statement="将转化率提升 30%", db_path=self.db_path
