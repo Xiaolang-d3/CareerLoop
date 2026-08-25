@@ -73,9 +73,13 @@ describe("interview preparation route", () => {
 describe("project studio route", () => {
   it("keeps the project lab independent from interview preparation", () => {
     expect(parseAppHash("#/project")).toEqual({ section: "project-lab" });
-    expect(parseAppHash("#/project/project-1")).toEqual({ section: "project-lab", projectId: "project-1" });
+    expect(parseAppHash("#/project/project-1")).toEqual({ section: "project-lab", projectId: "project-1", page: "overview" });
+    expect(parseAppHash("#/project/project-1/architecture")).toEqual({ section: "project-lab", projectId: "project-1", page: "architecture" });
+    expect(parseAppHash("#/project/project-1/materials")).toEqual({ section: "project-lab", projectId: "project-1", page: "materials" });
+    expect(parseAppHash("#/project/project-1/interview")).toEqual({ section: "project-lab", projectId: "project-1", page: "interview" });
     expect(appRouteHash({ section: "project-lab" })).toBe("#/project");
-    expect(appRouteHash({ section: "project-lab", projectId: "project-1" })).toBe("#/project/project-1");
+    expect(appRouteHash({ section: "project-lab", projectId: "project-1", page: "overview" })).toBe("#/project/project-1");
+    expect(appRouteHash({ section: "project-lab", projectId: "project-1", page: "materials" })).toBe("#/project/project-1/materials");
     expect(routeForSection("project-lab")).toEqual({ section: "project-lab" });
     expect(parseAppHash("#/projects")).toEqual({ section: "interview-prep", page: "projects" });
   });

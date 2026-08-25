@@ -6,7 +6,7 @@ from typing import Any
 _SECTION_DEFS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
     ("summary", "个人概述", re.compile(r"^(?:个人简介|个人概述|自我评价|个人总结|简介|个人信息|基本信息)$")),
     ("strengths", "个人优势", re.compile(r"^(?:个人优势|核心优势|个人亮点|能力特长|核心竞争力)$")),
-    ("experience", "工作与实习经历", re.compile(r"^(?:工作|职业)(?:经历|经验)?$")),
+    ("experience", "工作与实习经历", re.compile(r"^(?:工作|职业)(?:[与及和](?:实习|校园))?(?:经历|经验)?$")),
     ("internship", "实习经历", re.compile(r"^实习(?:经历|经验)?$")),
     ("combined", "工作与项目经历", re.compile(r"^(?:工作与项目|工作及项目)(?:经历|经验)?$")),
     ("projects", "项目经历", re.compile(r"^(?:项目(?:经历|经验|实践)?|实践(?:经历|经验)?|项目[／/]实践经历)$")),
@@ -82,7 +82,14 @@ def split_resume_layout(text: str) -> dict[str, Any]:
         if kind == "combined":
             experience, projects = _split_combined_work_and_projects(raw_lines)
             if experience:
-                sections.append({"kind": "experience", "label": "工作与实习经历", "entries": experience})
+                sections.append({"kind": "experience", "label": "工作经历", "entries": experience})
+            if projects:
+                sections.append({"kind": "projects", "label": "项目经历", "entries": projects})
+            continue
+        if kind in {"experience", "internship"}:
+            experience, projects = _split_combined_work_and_projects(raw_lines)
+            if experience:
+                sections.append({"kind": kind, "label": label, "entries": experience})
             if projects:
                 sections.append({"kind": "projects", "label": "项目经历", "entries": projects})
             continue
@@ -314,12 +321,51 @@ def _is_award_like_line(line: str) -> bool:
     return bool(_AWARD_LIKE.search(line) and not re.search(r"(?:大学|学院|学校|University|College)", line, re.I))
 
 
+_WORK_DATE_RANGE = re.compile(
+    r"(?:19|20)\d{2}(?:[./年-]\d{1,2}月?)?\s*[至—\-~～]\s*"
+    r"(?:(?:19|20)\d{2}(?:[./年-]\d{1,2}月?)?|至今|现在)"
+)
+_PROJECT_URL_SUFFIX = re.compile(r"\s+(https?://\S+)\s*$", re.I)
+_WORK_ROLE_HINT = re.compile(r"工程师|经理|负责人|实习|开发|测试|运营|设计师|研究员|顾问|架构师")
+
+
+def _project_title_core(line: str) -> str:
+    return _PROJECT_URL_SUFFIX.sub("", line.strip()).strip()
+
+
 def _is_project_title(line: str) -> bool:
+    value = _project_title_core(line)
     return (
-        len(line) <= 80
-        and not re.search(r"[，、；。：:]", line)
-        and bool(re.search(r"[（(][^()（）]+[)）]$", line) or re.search(r"(项目|平台|系统|工具|助手|应用|引擎|服务|网站|小程序)$", line))
+        len(value) <= 80
+        and not re.search(r"[，、；。：:]", value)
+        and not (_WORK_DATE_RANGE.search(value) and _WORK_ROLE_HINT.search(value))
+        and bool(re.search(r"[（(][^()（）]+[)）]$", value) or re.search(r"(项目|平台|系统|工具|助手|应用|引擎|服务|网站|小程序)$", value))
     )
+
+
+def _is_work_title(line: str) -> bool:
+    if not line or re.match(r"^(?:[-–—*•●▪◦·]\s*)", line):
+        return False
+    match = _WORK_DATE_RANGE.search(line)
+    if not match:
+        return False
+    title = re.sub(r"[|｜/／\s-]+$", "", line[:match.start()] + line[match.end():]).strip()
+    return bool(title) and not _is_project_title(title)
+
+
+def _split_embedded_work_project(line: str) -> list[str]:
+    url_match = _PROJECT_URL_SUFFIX.search(line)
+    without_url = line[:url_match.start()].strip() if url_match else line.strip()
+    date_match = _WORK_DATE_RANGE.search(without_url)
+    if not date_match:
+        return [line]
+
+    work_title = without_url[:date_match.end()].strip()
+    project_name = without_url[date_match.end():].strip()
+    project_title = " ".join(item for item in (project_name, url_match.group(1) if url_match else "") if item)
+    if not _is_work_title(work_title) or not project_name or not _is_project_title(project_title):
+        return [line]
+    return [work_title, project_title]
 
 
 def _should_join_extracted_lines(previous: str, current: str) -> bool:
@@ -328,6 +374,8 @@ def _should_join_extracted_lines(previous: str, current: str) -> bool:
     if previous.startswith("# ") or current.startswith("# "):
         return False
     if _is_heading_line(previous) or _is_heading_line(current):
+        return False
+    if _is_work_title(previous) or _PROJECT_URL_SUFFIX.search(previous):
         return False
     if _is_titled_capability(current):
         return False
@@ -410,10 +458,39 @@ def _split_project_entries(lines: list[str]) -> list[list[str]]:
 
 
 def _split_combined_work_and_projects(lines: list[str]) -> tuple[list[list[str]], list[list[str]]]:
-    project_start = next((index for index, line in enumerate(lines) if index > 0 and _is_project_title(line)), -1)
-    if project_start < 0:
+    expanded = [part for line in lines for part in _split_embedded_work_project(line)]
+    if not any(_is_project_title(line) for line in expanded):
         return _split_entries(lines), []
-    return _split_entries(lines[:project_start]), _split_project_entries(lines[project_start:])
+
+    experience: list[list[str]] = []
+    projects: list[list[str]] = []
+    kind = "experience"
+    current: list[str] = []
+
+    def flush() -> None:
+        nonlocal current
+        if not current:
+            return
+        (projects if kind == "projects" else experience).append(current)
+        current = []
+
+    for line in expanded:
+        if not line:
+            flush()
+            continue
+        if _is_work_title(line):
+            flush()
+            kind = "experience"
+            current = [line]
+            continue
+        if _is_project_title(line):
+            flush()
+            kind = "projects"
+            current = [line]
+            continue
+        current.append(line)
+    flush()
+    return experience, projects
 
 
 def _split_award_items(text: str) -> list[str]:

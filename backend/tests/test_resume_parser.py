@@ -21,10 +21,30 @@ class ResumeParserTest(unittest.TestCase):
             "fast",
         )
 
-        self.assertEqual(result["suggested_profile"]["name"], "张三")
+        self.assertEqual(result["suggested_profile"]["name"], "")
         self.assertEqual(result["suggested_profile"]["target_roles"], ["后端工程师"])
         self.assertEqual(result["suggested_profile"]["target_cities"], ["上海"])
         self.assertGreaterEqual(set(result["suggested_profile"]["skills"]), {"Python", "Docker"})
+
+    def test_parse_response_drops_contact_details_before_returning_text(self) -> None:
+        result = parse_candidate_resume(
+            "resume.txt",
+            (
+                "李明\n"
+                "求职方向：AI 应用研发 电话：13812345678\n"
+                "邮箱：candidate@example.com\n"
+                "技能：Python\n"
+            ).encode(),
+            "fast",
+        )
+
+        self.assertIn("求职方向：AI 应用研发", result["text"])
+        self.assertIn("技能：Python", result["text"])
+        self.assertNotIn("李明", result["text"])
+        self.assertNotIn("13812345678", result["text"])
+        self.assertNotIn("candidate@example.com", result["text"])
+        self.assertNotIn("已隐藏", result["text"])
+        self.assertEqual(result["redacted_text"], result["text"])
 
     def test_parses_docx_paragraphs_and_tables(self) -> None:
         document = Document()

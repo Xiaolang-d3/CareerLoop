@@ -19,7 +19,7 @@ from .candidate_memory import (
 from ..db import connect, json_dump, row_to_dict, rows_to_dicts
 from ..knowledge import delete_document, index_chunks, index_document
 from ..resume.blocks import parse_resume_blocks
-from ..privacy import scan_and_redact
+from ..privacy import scan_and_redact, strip_resume_personal_info
 from .intelligence import (
     extract_skill_tags,
     extract_skills,
@@ -83,7 +83,7 @@ PROFILE_ID = 1
 
 def _profile_response(document: profile_document.ProfileDocument) -> dict[str, Any]:
     """把文档还原成原先 ``profiles`` 表行的形状。"""
-    resume_text = document.resume_text
+    resume_text = strip_resume_personal_info(document.resume_text)[1]
     return {
         "id": PROFILE_ID,
         "name": document.name,
@@ -120,6 +120,10 @@ def _load_or_migrate_profile(
     """Load the document profile, upgrading a legacy SQLite profile once."""
     document = profile_document.load(db_path)
     if document is not None:
+        safe_resume = strip_resume_personal_info(document.resume_text)[1]
+        if safe_resume != document.resume_text:
+            document = profile_document.save(document.model_copy(update={"resume_text": safe_resume}), db_path)
+            _sync_profile_compat(document, db_path)
         return document
     with connect(db_path) as conn:
         row = conn.execute(
@@ -152,7 +156,7 @@ def _load_or_migrate_profile(
             updated_at=str(legacy.get("updated_at") or ""),
             skills="\n".join(f"- {item}" for item in skills),
             projects="\n".join(f"- {item}" for item in projects),
-            resume_text=str(legacy.get("resume_text") or ""),
+            resume_text=strip_resume_personal_info(str(legacy.get("resume_text") or ""))[1],
         ),
         db_path,
     )
@@ -166,8 +170,30 @@ def _sync_profile_compat(
 ) -> None:
     """Mirror the document profile for legacy tables with profile foreign keys."""
     resume_text = document.resume_text
-    redacted_text = scan_and_redact(resume_text)[1] if resume_text else ""
     with connect(db_path) as conn:
+        existing = conn.execute(
+            """
+            SELECT name, resume_text, resume_redacted_text, privacy_mode,
+                   locale, knowledge_revision
+            FROM profiles WHERE id = ?
+            """,
+            (PROFILE_ID,),
+        ).fetchone()
+        resume_changed = existing is None or str(existing["resume_text"] or "") != resume_text
+        profile_changed = (
+            existing is None
+            or str(existing["name"] or "") != document.name
+            or resume_changed
+            or str(existing["privacy_mode"] or "") != document.privacy_mode
+            or str(existing["locale"] or "") != document.locale
+            or int(existing["knowledge_revision"] or 0) != document.knowledge_revision
+        )
+        if not profile_changed:
+            return
+        if resume_changed:
+            redacted_text = scan_and_redact(resume_text)[1] if resume_text else ""
+        else:
+            redacted_text = str(existing["resume_redacted_text"] or "") if existing is not None else ""
         conn.execute(
             """
             INSERT INTO profiles (
@@ -193,7 +219,8 @@ def _sync_profile_compat(
                 document.knowledge_revision,
             ),
         )
-    _sync_resume_knowledge(redacted_text, db_path)
+    if resume_changed:
+        _sync_resume_knowledge(redacted_text, db_path)
 
 
 def _sync_resume_knowledge(
@@ -354,6 +381,9 @@ def create_candidate_source(
     if not clean_content:
         raise ValueError("资料内容不能为空")
     if source_type == "resume":
+        clean_content = strip_resume_personal_info(clean_content)[1].strip()
+        if not clean_content:
+            raise ValueError("移除联系方式后没有可保存的简历内容")
         document = profile_document.update(db_path, resume_text=clean_content)
         _sync_profile_compat(document, db_path)
     else:

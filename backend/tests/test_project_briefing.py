@@ -105,6 +105,27 @@ def test_studio_lists_resume_projects_and_can_save_a_code_briefing(tmp_path: Pat
     assert reloaded["projects"][0]["briefing"]["code_excerpt"].startswith("frontend/src/audio/capture.ts")
 
 
+def test_studio_reads_do_not_reindex_an_unchanged_resume(tmp_path: Path, monkeypatch) -> None:
+    db_path = _profile(tmp_path)
+    indexed: list[str] = []
+
+    monkeypatch.setattr(
+        "app.profile.candidate_core._sync_resume_knowledge",
+        lambda text, _db_path=None: indexed.append(text),
+    )
+
+    get_project_studio(db_path)
+    get_project_studio(db_path)
+    assert len(indexed) == 1
+
+    profile_document.update(
+        db_path,
+        resume_text="项目经历\n智能会议总结\n- 增加实时转写链路。",
+    )
+    get_project_studio(db_path)
+    assert len(indexed) == 2
+
+
 def test_repo_briefing_uses_real_tree_paths() -> None:
     briefing = build_project_briefing(
         title="实时语音链路",

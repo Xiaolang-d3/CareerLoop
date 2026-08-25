@@ -5,6 +5,8 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from .layout import unwrap_extracted_lines
+
 
 BlockKind = Literal["project", "work", "education", "skill", "other"]
 
@@ -16,6 +18,13 @@ _SECTION_ALIASES: dict[str, BlockKind] = {
     "工作经历": "work",
     "工作经验": "work",
     "实习经历": "work",
+    "实习经验": "work",
+    "工作与实习经历": "work",
+    "工作与实习经验": "work",
+    "工作及实习经历": "work",
+    "工作经历与实习": "work",
+    "工作与项目经历": "work",
+    "工作及项目经历": "work",
     "experience": "work",
     "employment": "work",
     "教育经历": "education",
@@ -36,6 +45,12 @@ _DATE_RE = re.compile(
     r"(?:19|20)\d{2}(?:\s*[\./年\-]\s*(?:0?[1-9]|1[0-2]))?"
     r"(?:\s*[-–—~至到]\s*(?:至今|现在|(?:19|20)\d{2}(?:\s*[\./年\-]\s*(?:0?[1-9]|1[0-2]))?))?"
 )
+_WORK_DATE_RANGE_RE = re.compile(
+    r"(?:19|20)\d{2}(?:[./年-]\d{1,2}月?)?\s*[-–—~至到]\s*"
+    r"(?:(?:19|20)\d{2}(?:[./年-]\d{1,2}月?)?|至今|现在)"
+)
+_PROJECT_URL_SUFFIX_RE = re.compile(r"\s+(https?://\S+)\s*$", re.I)
+_WORK_ROLE_HINT_RE = re.compile(r"工程师|经理|负责人|实习|开发|测试|运营|设计师|研究员|顾问|架构师")
 _BULLET_RE = re.compile(r"^[-–—*•●▪◦·]\s+")
 _BOLD_RE = re.compile(r"\*\*[^*].+?\*\*|__[^_].+?__")
 
@@ -68,7 +83,8 @@ def parse_resume_blocks(text: str) -> list[ResumeBlock]:
     Inspired by OpenResume's heading → subsection scoring, but implemented
     independently for Chinese resumes. Does not copy AGPL code.
     """
-    lines = [_clean_line(line) for line in (text or "").splitlines()]
+    extracted = unwrap_extracted_lines([_clean_line(line) for line in (text or "").splitlines()])
+    lines = [part for line in extracted for part in _split_embedded_work_project(line)]
     section: BlockKind | None = None
     section_title = ""
     current_kind: BlockKind | None = None
@@ -123,8 +139,11 @@ def parse_resume_blocks(text: str) -> list[ResumeBlock]:
                 current_score = 0.0
             continue
         score = title_score(line, section)
-        starts_block = score >= 2.0 and not _BULLET_RE.match(line)
-        if starts_block:
+        # 工作段里嵌套的项目名标题（如「智能会议总结（Summary）」）拆成独立项目块，
+        # 否则项目内容会混进工作块。
+        nested_project = section == "work" and _is_project_like_title(line) and not _BULLET_RE.match(line)
+        starts_block = score >= 2.0 or nested_project
+        if starts_block and not _BULLET_RE.match(line):
             flush()
             current_title = _BULLET_RE.sub("", line)
             current_kind = _line_kind(current_title, section)
@@ -184,7 +203,9 @@ def stable_block_id(kind: str, title: str, start_date: str, evidence: str) -> st
 
 
 def _heading_kind(line: str) -> BlockKind | None:
-    normalized = line.casefold().rstrip(":：")
+    normalized = line.casefold().rstrip(":：").strip()
+    # 去掉「一、」「1.」这类序号前缀再匹配，PDF/DOCX 提取时很常见
+    normalized = re.sub(r"^(?:[一二三四五六七八九十]+|（?\d+）?)[、.．)）]\s*", "", normalized)
     if normalized in _SECTION_ALIASES:
         return _SECTION_ALIASES[normalized]
     for name, kind in _SECTION_ALIASES.items():
@@ -197,7 +218,39 @@ def _is_stop_heading(line: str) -> bool:
     return line.casefold().rstrip(":：") in {item.casefold() for item in _HEADING_STOP}
 
 
+def _is_project_like_title(line: str) -> bool:
+    """项目名标题：短行、无标点，以「（English）」结尾或以常见产品词结尾。"""
+    text = _PROJECT_URL_SUFFIX_RE.sub("", line.strip()).strip()
+    return (
+        bool(text)
+        and len(text) <= 80
+        and not re.search(r"[，、；。：:]", text)
+        and not (_WORK_DATE_RANGE_RE.search(text) and _WORK_ROLE_HINT_RE.search(text))
+        and bool(
+            re.search(r"[（(][^()（）]*[)）]$", text)
+            or re.search(r"(?:项目|平台|系统|工具|助手|应用|引擎|服务|网站|小程序)$", text)
+        )
+    )
+
+
+def _split_embedded_work_project(line: str) -> list[str]:
+    url_match = _PROJECT_URL_SUFFIX_RE.search(line)
+    without_url = line[:url_match.start()].strip() if url_match else line.strip()
+    date_match = _WORK_DATE_RANGE_RE.search(without_url)
+    if not date_match:
+        return [line]
+
+    work_title = without_url[:date_match.end()].strip()
+    project_name = without_url[date_match.end():].strip()
+    project_title = " ".join(item for item in (project_name, url_match.group(1) if url_match else "") if item)
+    if not project_name or not _WORK_ROLE_HINT_RE.search(work_title) or not _is_project_like_title(project_title):
+        return [line]
+    return [work_title, project_title]
+
+
 def _line_kind(title: str, section: BlockKind | None) -> BlockKind:
+    if _is_project_like_title(title) and section in {None, "work", "project"}:
+        return "project"
     if any(token in title for token in ("项目", "系统", "平台", "助手")) and (
         section in {None, "work", "project"}
     ):

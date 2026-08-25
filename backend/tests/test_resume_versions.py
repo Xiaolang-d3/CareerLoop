@@ -89,7 +89,8 @@ class ResumeVersionTest(unittest.TestCase):
         )
         with connect(self.db_path) as conn:
             profile = conn.execute("SELECT resume_text FROM profiles").fetchone()
-        self.assertIn("13800138000", profile["resume_text"])
+        self.assertNotIn("13800138000", profile["resume_text"])
+        self.assertIn("5年产品经验", profile["resume_text"])
 
     def test_change_decisions_and_user_edits_rebuild_preview(self) -> None:
         version = create_resume_version(self.job["id"], self.db_path)
@@ -507,6 +508,30 @@ class ResumeVersionTest(unittest.TestCase):
         )
         self.assertEqual(body.count("小程"), 0)
         self.assertIn("由3天缩短至4h", body.replace(" ", ""))
+
+    def test_layout_splits_jammed_work_projects_and_later_job(self) -> None:
+        layout = split_resume_layout(
+            "工作与项目经历\n"
+            "星河科技（北京星河科技有限公司）-AI 应用开发工程师 2025.07 - 2026.04 "
+            "智能会议总结（Summary） https://example.com/apps/summary\n"
+            "- 负责统一 LLM 接入与调用编排层设计。\n"
+            "智能内容分析平台(True or False) "
+            "https://example.com/apps/analysis\n"
+            "- 构建文本、图片、音频多模态统一分析链路。\n"
+            "云端科技-测试开发工程师 2025.03 - 2025.05\n"
+            "- 负责鸿蒙应用兼容性比对测试。\n"
+        )
+        experience = next(section for section in layout["sections"] if section["kind"] == "experience")
+        projects = next(section for section in layout["sections"] if section["kind"] == "projects")
+
+        self.assertEqual([entry[0] for entry in experience["entries"]], [
+            "星河科技（北京星河科技有限公司）-AI 应用开发工程师 2025.07 - 2026.04",
+            "云端科技-测试开发工程师 2025.03 - 2025.05",
+        ])
+        self.assertEqual([entry[0] for entry in projects["entries"]], [
+            "智能会议总结（Summary） https://example.com/apps/summary",
+            "智能内容分析平台(True or False) https://example.com/apps/analysis",
+        ])
 
     def test_entry_heading_and_document_name_split_like_open_resume(self) -> None:
         self.assertEqual(

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..privacy import scan_and_redact
+from ..privacy import scan_and_redact, strip_resume_personal_info
 from .intelligence import extract_skill_tags, suggest_profile_fields
 from ..resume.parser import parse_resume_result
 
@@ -25,18 +25,18 @@ def parse_candidate_resume(
         text = parsed.text
         parser = parsed.parser
         warnings = parsed.warnings
-    findings, redacted_text = scan_and_redact(text)
+    findings, safe_text = strip_resume_personal_info(text)
     return {
         "filename": filename[:255],
-        "text": text,
-        "redacted_text": redacted_text,
+        "text": safe_text,
+        "redacted_text": safe_text,
         "privacy_findings": findings,
-        "suggested_skills": extract_skill_tags(text),
-        "suggested_profile": suggest_profile_fields(text),
-        "character_count": len(text),
+        "suggested_skills": extract_skill_tags(safe_text),
+        "suggested_profile": suggest_profile_fields(safe_text),
+        "character_count": len(safe_text),
         "parser": parser,
         "warnings": warnings,
-        "notice": "仅完成本地文本提取；确认保存前不会写入人物画像。",
+        "notice": "仅完成本地文本提取；姓名、联系方式和证件信息已移除，确认保存前不会写入人物画像。",
     }
 
 
