@@ -1,21 +1,21 @@
 import {
   ChevronsLeft,
   ChevronsRight,
-  FileSearch,
+  FileText,
   Home,
-  Layers3,
   MessageCircle,
-  Settings,
+  NotebookPen
 } from "lucide-react";
 import { type ReactNode } from "react";
 import { sidebarHighlightForView } from "../constants";
 import type { ViewKey } from "../types";
-import type { SettingsPage } from "../routing";
+import type { SettingsPage, WorkbenchPage } from "../routing";
 
-type PrefetchPage = "chat" | "workbench" | "project-lab" | "settings" | "account" | "dashboard";
+export type ProductNavKey = "dashboard" | "evidence" | "resume" | "chat";
+type PrefetchPage = "chat" | "workbench" | "profile" | "dashboard";
 
 type SidebarItem = {
-  key: string;
+  key: ProductNavKey;
   label: string;
   icon: ReactNode;
   active: boolean;
@@ -30,7 +30,8 @@ type AppSidebarProps = {
   onGoHome: () => void;
   onPrefetchPage: (page: PrefetchPage) => void;
   settingsPage?: SettingsPage;
-  onSelectView: (view: ViewKey) => void;
+  workbenchPage?: WorkbenchPage;
+  onSelectNav: (key: ProductNavKey) => void;
   identity?: ReactNode;
 };
 
@@ -41,16 +42,16 @@ export function AppSidebar({
   onGoHome,
   onPrefetchPage,
   settingsPage,
-  onSelectView,
+  workbenchPage,
+  onSelectNav,
   identity
 }: AppSidebarProps) {
-  const highlighted = sidebarHighlightForView(activeView);
+  const highlighted = sidebarHighlightForView(activeView, { settingsPage, workbenchPage });
   const navItems: SidebarItem[] = [
-    { key: "dashboard", label: "首页", icon: <Home size={18} />, active: highlighted === "dashboard", prefetch: "dashboard", onClick: () => onSelectView("dashboard") },
-    { key: "workbench", label: "分析", icon: <FileSearch size={18} />, active: highlighted === "workbench", prefetch: "workbench", onClick: () => onSelectView("workbench") },
-    { key: "project-lab", label: "项目", icon: <Layers3 size={18} />, active: highlighted === "project-lab", prefetch: "project-lab", onClick: () => onSelectView("project-lab") },
-    { key: "chat", label: "对话", icon: <MessageCircle size={18} />, active: highlighted === "chat", prefetch: "chat", onClick: () => onSelectView("chat") },
-    { key: "settings", label: "设置", icon: <Settings size={18} />, active: highlighted === "settings" && settingsPage !== "profile" && settingsPage !== "account", prefetch: "settings", onClick: () => onSelectView("settings") }
+    { key: "dashboard", label: "首页", icon: <Home size={18} />, active: highlighted === "dashboard", prefetch: "dashboard", onClick: () => onSelectNav("dashboard") },
+    { key: "evidence", label: "证据", icon: <NotebookPen size={18} />, active: highlighted === "evidence", prefetch: "profile", onClick: () => onSelectNav("evidence") },
+    { key: "resume", label: "简历", icon: <FileText size={18} />, active: highlighted === "resume", prefetch: "workbench", onClick: () => onSelectNav("resume") },
+    { key: "chat", label: "对话", icon: <MessageCircle size={18} />, active: highlighted === "chat", prefetch: "chat", onClick: () => onSelectNav("chat") }
   ];
 
   function renderItem(item: SidebarItem, extraClass = "") {

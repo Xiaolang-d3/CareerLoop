@@ -316,7 +316,7 @@ export function homeActionQueue(input: {
       id: "save-resume",
       kind: "profile",
       label: "先保存简历",
-      detail: "分析、定制和面试问答都需要一份已保存的简历。"
+      detail: "证据账本和投递简历都需要一份已保存的原文。"
     });
   } else if (input.completeness != null && input.completeness < 80) {
     push({
@@ -333,7 +333,16 @@ export function homeActionQueue(input: {
       id: "review-facts",
       kind: "review",
       label: pendingFactCount === 1 ? "确认 1 条待审知识" : `确认 ${pendingFactCount} 条待审知识`,
-      detail: "待确认知识不会参与岗位评分，先核对再继续分析。"
+      detail: "待确认知识不会写入账本，先核对今天的证据。"
+    });
+  }
+
+  if (input.hasResume && pendingFactCount === 0 && !items.some((item) => item.kind === "profile")) {
+    push({
+      id: "view-evidence",
+      kind: "profile",
+      label: "查看证据",
+      detail: "今天先核对应确认的经历，再用证据出材料。"
     });
   }
 
@@ -352,7 +361,7 @@ export function homeActionQueue(input: {
       id: "analyze-resume",
       kind: "analysis",
       label: "去分析简历",
-      detail: "先看这份简历给人的印象、证据和下一步。"
+      detail: "需要时再对照岗位看匹配。"
     });
   } else if (jobsReady && input.hasResume && input.lastAnalysis) {
     push({
@@ -384,8 +393,8 @@ export function homeActionQueue(input: {
     push({
       id: "interview",
       kind: "interview",
-      label: "去面试问答",
-      detail: "围绕真实项目练习问答和知识点。"
+      label: "去面试准备",
+      detail: "围绕已确认项目证据练习表达。"
     });
   }
 
