@@ -320,9 +320,12 @@ function App({
       window.history.replaceState(null, "", canonicalHash);
     }
     function syncRoute() {
-      const next = parseAppHash(window.location.hash);
-      if (next) setAppRoute(next);
-      else navigateRoute({ section: "dashboard" }, true);
+      const next = parseAppHash(window.location.hash) ?? { section: "dashboard" as const };
+      const canonicalHash = appRouteHash(next);
+      if (window.location.hash !== canonicalHash) {
+        window.history.replaceState(null, "", canonicalHash);
+      }
+      setAppRoute(next);
     }
     window.addEventListener("hashchange", syncRoute);
     return () => window.removeEventListener("hashchange", syncRoute);
