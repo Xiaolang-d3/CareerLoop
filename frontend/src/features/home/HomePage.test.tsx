@@ -153,13 +153,13 @@ describe("home-metrics", () => {
       hasResume: true,
       completeness: 100,
       lastAnalysis: null
-    }).label).toBe("去分析简历");
+    }).label).toBe("查看证据");
     expect(homeNextStep({
       profileLoaded: true,
       hasResume: true,
       completeness: 100,
       lastAnalysis: "2026-08-12T12:00:00Z"
-    }).label).toBe("继续分析");
+    }).label).toBe("查看证据");
   });
 
   it("orders the home queue by resume, review, then an unevaluated job", () => {
@@ -236,17 +236,17 @@ describe("HomePage", () => {
 
     expect(screen.getByRole("heading", { name: "你好，张三" })).toBeInTheDocument();
     expect(screen.getByText("目标方向：后端工程师 · 上海")).toBeInTheDocument();
-    expect(screen.getByText("先看这份简历给人的印象、证据和下一步。")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "去分析简历" })).toBeInTheDocument();
+    expect(screen.getByText("今天先核对应确认的经历，再用证据出材料。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "查看证据" })).toBeInTheDocument();
     expect(screen.getByText("简历")).toBeInTheDocument();
     expect(screen.getByText("已保存")).toBeInTheDocument();
     expect(screen.getByText("cv.pdf")).toBeInTheDocument();
-    expect(screen.getByText("岗位推进")).toBeInTheDocument();
-    expect(screen.getByText("0")).toBeInTheDocument();
-    expect(screen.getByText("还没有岗位")).toBeInTheDocument();
+    expect(screen.getByText("证据")).toBeInTheDocument();
+    expect(screen.getByText("已核对")).toBeInTheDocument();
+    expect(screen.queryByText("岗位推进")).not.toBeInTheDocument();
     expect(screen.getByLabelText("接下来还可以")).toBeInTheDocument();
-    expect(screen.getByLabelText("接下来还可以")).not.toHaveTextContent("去分析简历");
-    expect(screen.getAllByRole("button", { name: "去分析简历" })).toHaveLength(1);
+    expect(screen.getByLabelText("接下来还可以")).not.toHaveTextContent("查看证据");
+    expect(screen.getAllByRole("button", { name: "查看证据" })).toHaveLength(1);
     expect(screen.getByText("最近分析")).toBeInTheDocument();
     expect(screen.getByText("暂无")).toBeInTheDocument();
     expect(screen.queryByText("资料完整度")).not.toBeInTheDocument();
@@ -255,7 +255,7 @@ describe("HomePage", () => {
     expect(screen.queryByText("求职流程阶段")).not.toBeInTheDocument();
     expect(screen.queryByText("最近任务")).not.toBeInTheDocument();
     expect(screen.getByLabelText("技能标签")).toBeInTheDocument();
-    expect(screen.queryByLabelText("项目全链路")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("项目证据")).not.toBeInTheDocument();
   });
 
   it("shows extracted skill chips instead of resume sentences", () => {
@@ -288,8 +288,7 @@ describe("HomePage", () => {
     expect(screen.getByRole("heading", { name: "你好，小林" })).toBeInTheDocument();
     expect(screen.getByText("完善求职资料后，这里会显示你的求职方向。")).toBeInTheDocument();
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(3);
-    expect(screen.getByText("资料尚未读取")).toBeInTheDocument();
-    expect(screen.getByText("计数稍后更新")).toBeInTheDocument();
+    expect(screen.getAllByText("资料尚未读取").length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText("资料读取后会显示完整度。")).not.toBeInTheDocument();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(screen.queryByText("正在加载")).not.toBeInTheDocument();
@@ -340,30 +339,30 @@ describe("HomePage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /继续分析/ }));
     fireEvent.click(screen.getByRole("button", { name: /去定制简历/ }));
-    fireEvent.click(screen.getByRole("button", { name: /去面试问答/ }));
+    fireEvent.click(screen.getByRole("button", { name: /去面试准备/ }));
 
     expect(screen.queryByRole("button", { name: /机会中心/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /项目解析/ })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("项目全链路")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /岗位推进/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("项目证据")).not.toBeInTheDocument();
 
     expect(props.onOpenAnalysis).toHaveBeenCalledOnce();
     expect(props.onOpenResume).toHaveBeenCalledOnce();
     expect(props.onOpenInterview).toHaveBeenCalledOnce();
-    expect(screen.getByText("1/1")).toBeInTheDocument();
-    expect(screen.getByText("1 个已分析 · 1 个高优先级")).toBeInTheDocument();
   });
 
-  it("sends the job-progress snapshot to opportunities and the resume snapshot to the studio", () => {
+  it("sends the evidence snapshot to the ledger and the resume snapshot to the studio", () => {
     const props = renderHome({ jobs: [sampleJob()] });
     const snapshot = screen.getByLabelText("资料快照");
 
-    fireEvent.click(within(snapshot).getByRole("button", { name: /岗位推进/ }));
+    fireEvent.click(within(snapshot).getByRole("button", { name: /证据/ }));
     fireEvent.click(within(snapshot).getByRole("button", { name: /简历/ }));
     fireEvent.click(within(snapshot).getByRole("button", { name: /最近分析/ }));
 
-    expect(props.onOpenOpportunities).toHaveBeenCalledOnce();
+    expect(props.onOpenProfile).toHaveBeenCalledOnce();
     expect(props.onOpenResume).toHaveBeenCalledOnce();
     expect(props.onOpenAnalysis).toHaveBeenCalledOnce();
+    expect(props.onOpenOpportunities).not.toHaveBeenCalled();
   });
 
   it("surfaces unfinished work and lets the user confirm pending knowledge", () => {
@@ -455,7 +454,7 @@ describe("HomePage", () => {
       onOpenProject: vi.fn()
     });
 
-    const map = screen.getByLabelText("项目全链路");
+    const map = screen.getByLabelText("项目证据");
     expect(map).toHaveTextContent("讲述链路 · 智能会议总结");
     expect(map).toHaveTextContent("职责");
     expect(map).toHaveTextContent("负责统一 LLM 接入网关");
@@ -495,7 +494,7 @@ describe("HomePage", () => {
       onOpenProject: vi.fn()
     });
 
-    const map = await screen.findByLabelText("项目全链路");
+    const map = await screen.findByLabelText("项目证据");
     expect(map).toHaveTextContent("实时语音链路");
     expect(map).toHaveTextContent("音频采集与分片上行");
     expect(map).toHaveTextContent("Ogg/Opus 编码与流控重连");

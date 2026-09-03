@@ -108,7 +108,7 @@ describe("OpportunityDiscoveryPage", () => {
     expect(value.onOpenPreparedJob).toHaveBeenCalledTimes(2);
   });
 
-  it("lets a saved job return to the opportunity hub when this session has no prepared id", async () => {
+  it("lets a saved job return home when this session has no prepared id", async () => {
     const saved = { ...job, lifecycle_status: "saved" };
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -124,7 +124,7 @@ describe("OpportunityDiscoveryPage", () => {
     const value = props("job");
     render(<OpportunityDiscoveryPage {...value} />);
     expect(await screen.findByText("已保存到分析")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "回机会中心" }));
+    fireEvent.click(screen.getByRole("button", { name: "返回首页" }));
     expect(value.onNavigateHome).toHaveBeenCalledOnce();
     expect(value.onOpenPreparedJob).not.toHaveBeenCalled();
   });

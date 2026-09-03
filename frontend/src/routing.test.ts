@@ -18,9 +18,9 @@ describe("workbench route hierarchy", () => {
     expect(parseAppHash("#/workbench")).toEqual({ section: "workbench", page: "index" });
     expect(parseAppHash("#/workbench/new")).toEqual({ section: "workbench", page: "index" });
     expect(parseAppHash("#/workbench/resume")).toEqual({ section: "workbench", page: "resume" });
-    expect(parseAppHash("#/workbench/interview")).toEqual({ section: "workbench", page: "interview" });
+    expect(parseAppHash("#/workbench/interview")).toEqual({ section: "project-lab" });
     expect(parseAppHash("#/workbench/jobs/42/resume")).toEqual({ section: "workbench", page: "resume", jobId: 42 });
-    expect(parseAppHash("#/workbench/jobs/42/interview")).toEqual({ section: "workbench", page: "interview", jobId: 42 });
+    expect(parseAppHash("#/workbench/jobs/42/interview")).toEqual({ section: "project-lab" });
     expect(appRouteHash({ section: "workbench", page: "resume", jobId: 42 })).toBe("#/workbench/jobs/42/resume");
     expect(appRouteHash({ section: "workbench", page: "interview", jobId: 42 })).toBe("#/workbench/jobs/42/interview");
     expect(appRouteHash({ section: "workbench", page: "interview" })).toBe("#/workbench/interview");
@@ -39,8 +39,8 @@ describe("workbench route hierarchy", () => {
 
 describe("opportunity discovery route hierarchy", () => {
   it("separates the home, task creation, queue, run, and job detail pages", () => {
-    expect(parseAppHash("#/opportunities")).toEqual({ section: "opportunities", page: "index" });
-    expect(parseAppHash("#/opportunities/new")).toEqual({ section: "opportunities", page: "index" });
+    expect(parseAppHash("#/opportunities")).toEqual({ section: "dashboard" });
+    expect(parseAppHash("#/opportunities/new")).toEqual({ section: "dashboard" });
     expect(parseAppHash("#/opportunities/pipeline")).toEqual({ section: "opportunities", page: "pipeline" });
     expect(parseAppHash("#/opportunities/runs/7")).toEqual({ section: "opportunities", page: "run", runId: 7 });
     expect(parseAppHash("#/opportunities/jobs/9")).toEqual({ section: "opportunities", page: "job", discoveredJobId: 9 });
@@ -50,7 +50,7 @@ describe("opportunity discovery route hierarchy", () => {
 
 describe("interview preparation route", () => {
   it("keeps personal preparation independent of a specific job and separates its three areas", () => {
-    expect(parseAppHash("#/interview-prep")).toEqual({ section: "interview-prep", page: "projects" });
+    expect(parseAppHash("#/interview-prep")).toEqual({ section: "project-lab" });
     expect(parseAppHash("#/knowledge")).toEqual({ section: "interview-prep", page: "knowledge" });
     expect(parseAppHash("#/interview-records")).toEqual({ section: "interview-prep", page: "records" });
     expect(appRouteHash({ section: "interview-prep", page: "projects" })).toBe("#/projects");
@@ -81,7 +81,7 @@ describe("project studio route", () => {
     expect(appRouteHash({ section: "project-lab", projectId: "project-1", page: "overview" })).toBe("#/project/project-1");
     expect(appRouteHash({ section: "project-lab", projectId: "project-1", page: "materials" })).toBe("#/project/project-1/materials");
     expect(routeForSection("project-lab")).toEqual({ section: "project-lab" });
-    expect(parseAppHash("#/projects")).toEqual({ section: "interview-prep", page: "projects" });
+    expect(parseAppHash("#/projects")).toEqual({ section: "project-lab" });
   });
 });
 
@@ -97,6 +97,8 @@ describe("account settings route", () => {
     expect(parseAppHash("#/settings/account")).toEqual({ section: "settings", page: "account" });
     expect(appRouteHash({ section: "settings", page: "account" })).toBe("#/settings/account");
     expect(parseAppHash("#/settings/profile")).toEqual({ section: "settings", page: "profile" });
+    expect(parseAppHash("#/evidence")).toEqual({ section: "settings", page: "profile" });
+    expect(appRouteHash({ section: "settings", page: "profile" })).toBe("#/settings/profile");
   });
 });
 

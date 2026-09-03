@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("opportunity hub keeps queue and job detail, without discovery run modes", async ({ page }) => {
+test("legacy opportunity hashes keep queue and job detail, without a core hub", async ({ page }) => {
   const jobs = [{
     id: 9, source_id: null, canonical_url: "https://example.com/job/9",
     company_name: "示例科技", job_title: "AI 产品经理", location: "上海",
@@ -35,13 +35,11 @@ test("opportunity hub keeps queue and job detail, without discovery run modes", 
   });
 
   await page.goto("/#/opportunities");
-  await expect(page.getByRole("heading", { name: "值得优先查看" })).toBeVisible();
-  await expect(page.getByText("完整岗位说明只在下一级详情页面展示。")).not.toBeVisible();
-  await expect(page.getByRole("button", { name: /新建发现任务/ })).toHaveCount(0);
-  await expect(page.getByText("近期融资公司")).toHaveCount(0);
-  await expect(page.getByText("识别公司 ATS")).toHaveCount(0);
+  await expect(page).toHaveURL(/#\/home$/);
+  await expect(page.getByRole("heading", { name: "值得优先查看" })).toHaveCount(0);
 
   await page.goto("/#/opportunities/new");
+  await expect(page).toHaveURL(/#\/home$/);
   await expect(page.getByRole("heading", { name: "选择发现方式" })).toHaveCount(0);
 
   await page.goto("/#/opportunities/pipeline");
