@@ -40,8 +40,7 @@ export function parseAppHash(hash: string): AppRoute | null {
   const value = hash.replace(/^#/, "");
   const [rawPath, rawQuery = ""] = value.split("?", 2);
   const path = rawPath.replace(/^\//, "").replace(/\/$/, "");
-  if (path === "opportunities") return { section: "opportunities", page: "index" };
-  if (path === "opportunities/new") return { section: "opportunities", page: "index" };
+  if (path === "opportunities" || path === "opportunities/new") return { section: "dashboard" };
   if (path === "opportunities/pipeline") return { section: "opportunities", page: "pipeline" };
   if (path === "opportunities/sources") return { section: "opportunities", page: "sources" };
   const opportunityRunMatch = path.match(/^opportunities\/runs\/(\d+)$/);
@@ -51,11 +50,11 @@ export function parseAppHash(hash: string): AppRoute | null {
   if (path === "workbench") return { section: "workbench", page: "index" };
   if (path === "workbench/new") return { section: "workbench", page: "index" };
   if (path === "workbench/resume") return { section: "workbench", page: "resume" };
-  if (path === "workbench/interview") return { section: "workbench", page: "interview" };
+  if (path === "workbench/interview") return { section: "project-lab" };
   const jobResumeMatch = path.match(/^workbench\/jobs\/(\d+)\/resume$/);
   if (jobResumeMatch) return { section: "workbench", page: "resume", jobId: Number(jobResumeMatch[1]) };
   const jobInterviewMatch = path.match(/^workbench\/jobs\/(\d+)\/interview$/);
-  if (jobInterviewMatch) return { section: "workbench", page: "interview", jobId: Number(jobInterviewMatch[1]) };
+  if (jobInterviewMatch) return { section: "project-lab" };
   const evaluationSectionMatch = path.match(/^workbench\/jobs\/(\d+)\/evaluation\/([a-g])$/);
   if (evaluationSectionMatch) return { section: "workbench", page: "evaluation_section", jobId: Number(evaluationSectionMatch[1]), sectionKey: evaluationSectionMatch[2] as "a" | "b" | "c" | "d" | "e" | "f" | "g" };
   const evaluationDeepMatch = path.match(/^workbench\/jobs\/(\d+)\/evaluation\/deep$/);
@@ -75,7 +74,7 @@ export function parseAppHash(hash: string): AppRoute | null {
     projectId: decodeURIComponent(projectLabMatch[1]),
     page: (projectLabMatch[2] as ProjectStudioPage | undefined) || "overview"
   };
-  if (path === "interview-prep" || path === "projects") return { section: "interview-prep", page: "projects" };
+  if (path === "interview-prep" || path === "projects") return { section: "project-lab" };
   const projectRoute = path.match(/^projects\/([^/]+)(?:\/(questions|knowledge|gaps)(?:\/([^/]+))?)?$/);
   if (projectRoute) return {
     section: "interview-prep",
@@ -103,7 +102,7 @@ export function parseAppHash(hash: string): AppRoute | null {
   if (path === "settings/model" || path === "settings/models") return { section: "settings", page: "model" };
   if (path === "settings/agent") return { section: "settings", page: "agent" };
   if (path === "settings/account") return { section: "settings", page: "account" };
-  if (path === "settings/profile") {
+  if (path === "settings/profile" || path === "evidence") {
     const query = new URLSearchParams(rawQuery);
     return {
       section: "settings",

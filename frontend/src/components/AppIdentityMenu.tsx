@@ -3,7 +3,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { ViewKey } from "../types";
 import type { SettingsPage } from "../routing";
 
-type PrefetchPage = "profile" | "account";
+type PrefetchPage = "profile" | "account" | "settings";
 
 export type AppIdentityMenuProps = {
   userEmail?: string;
@@ -13,6 +13,7 @@ export type AppIdentityMenuProps = {
   settingsPage?: SettingsPage;
   onOpenProfile: () => void;
   onOpenAccount?: () => void;
+  onOpenSettings?: () => void;
   onLogout: () => void;
   onPrefetchPage?: (page: PrefetchPage) => void;
 };
@@ -29,6 +30,7 @@ export function AppIdentityMenu({
   settingsPage,
   onOpenProfile,
   onOpenAccount,
+  onOpenSettings,
   onLogout,
   onPrefetchPage
 }: AppIdentityMenuProps) {
@@ -115,6 +117,19 @@ export function AppIdentityMenu({
             >
               <Settings size={15} />
               账号与安全
+            </button>
+          ) : null}
+          {onOpenSettings ? (
+            <button
+              type="button"
+              role="menuitem"
+              aria-current={activeView === "settings" && settingsPage === "overview" ? "page" : undefined}
+              onClick={() => closeAnd(onOpenSettings)}
+              onMouseEnter={() => onPrefetchPage?.("settings")}
+              onFocus={() => onPrefetchPage?.("settings")}
+            >
+              <Settings size={15} />
+              设置
             </button>
           ) : null}
           <button

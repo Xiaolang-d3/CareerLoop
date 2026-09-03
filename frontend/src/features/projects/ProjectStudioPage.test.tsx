@@ -67,7 +67,7 @@ describe("ProjectStudioPage", () => {
     const onOpenProject = vi.fn();
     render(<ProjectStudioPage apiBase="http://localhost:8000" accessToken="token" onOpenProject={onOpenProject} onOpenProfile={vi.fn()} />);
 
-    expect(await screen.findByRole("heading", { name: "选择一个项目开始梳理" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "从已确认项目继续梳理" })).toBeInTheDocument();
     expect(screen.queryByText("https://play.example.com/voice")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /实时语音链路/ }));
     expect(onOpenProject).toHaveBeenCalledWith("project-1", "overview");

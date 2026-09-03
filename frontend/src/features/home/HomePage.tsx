@@ -9,6 +9,7 @@ import {
   Layers3,
   ListOrdered,
   MessageCircle,
+  NotebookPen,
   Tags,
   UserRound
 } from "lucide-react";
@@ -20,7 +21,6 @@ import {
   homeActionQueue,
   homeContinueItems,
   homeInboxItems,
-  homeJobProgress,
   homeProjectReviews,
   homeSkillTags,
   latestJobAnalysisAt,
@@ -109,7 +109,6 @@ export function HomePage({
   onOpenProfile,
   onOpenJob,
   onOpenChat,
-  onOpenOpportunities,
   onFactsChanged
 }: HomePageProps) {
   const greetingName = profileName?.trim() || displayName?.trim() || email?.split("@")[0] || "";
@@ -186,7 +185,6 @@ export function HomePage({
     ? profileCompleteness({ name: profileName, targetRole, targetCity, skills, resumeText })
     : null;
   const lastAnalysis = jobsLoaded ? latestJobAnalysisAt(jobs) : null;
-  const jobProgress = homeJobProgress(jobs);
   const reviewableInbox = homeInboxItems(inboxFacts, { resumeText, knownSkills: skillTags });
   const visibleInbox = inboxExpanded ? reviewableInbox : reviewableInbox.slice(0, HOME_INBOX_LIMIT);
   const hiddenInboxCount = Math.max(0, reviewableInbox.length - visibleInbox.length);
@@ -245,11 +243,11 @@ export function HomePage({
   }
 
   function openProject(experienceId?: string) {
-    if (onOpenProject) {
-      onOpenProject(experienceId || "");
+    if (experienceId && onOpenProject) {
+      onOpenProject(experienceId);
       return;
     }
-    onOpenInterview();
+    onOpenProfile();
   }
 
   function openContinueItem(item: HomeContinueItem) {
@@ -281,17 +279,22 @@ export function HomePage({
     }
   }
 
-  const jobNote = !jobsLoaded
-    ? "计数稍后更新"
-    : !jobProgress.total
-      ? "还没有岗位"
-      : [
-          jobProgress.analyzed ? `${jobProgress.analyzed} 个已分析` : null,
-          jobProgress.unevaluated ? `${jobProgress.unevaluated} 个待评估` : null,
-          jobProgress.highPriority ? `${jobProgress.highPriority} 个高优先级` : null
-        ].filter(Boolean).join(" · ") || "还没有岗位";
-
-  const statusCards = [
+  const evidenceNote = !profileLoaded
+    ? "资料尚未读取"
+    : reviewableInbox.length
+      ? `${reviewableInbox.length} 条待确认`
+      : hasResume
+        ? "已确认账本可用来出材料"
+        : "还没有证据";
+  const statusCards: Array<{
+    key: string;
+    label: string;
+    value: string;
+    note: string;
+    icon: React.ReactNode;
+    onClick: () => void;
+    meter?: number;
+  }> = [
     {
       key: "resume",
       label: "简历",
@@ -301,13 +304,12 @@ export function HomePage({
       onClick: onOpenResume
     },
     {
-      key: "jobs",
-      label: "岗位推进",
-      value: metricValue(jobsLoaded, jobProgress.total ? `${jobProgress.analyzed}/${jobProgress.total}` : "0"),
-      note: jobNote,
-      icon: <Building2 size={13} />,
-      onClick: onOpenOpportunities ?? onOpenAnalysis,
-      meter: jobProgress.total ? Math.round((jobProgress.analyzed / jobProgress.total) * 100) : null
+      key: "evidence",
+      label: "证据",
+      value: metricValue(profileLoaded, reviewableInbox.length ? `${reviewableInbox.length}` : hasResume ? "已核对" : "未建立"),
+      note: evidenceNote,
+      icon: <NotebookPen size={13} />,
+      onClick: onOpenProfile
     },
     {
       key: "analysis",
@@ -491,10 +493,10 @@ function HomeProjectMap({
   const filled = selected ? selected.lanes.filter((lane) => !lane.empty).length : 0;
 
   return (
-    <section className="home-project-map" aria-label="项目全链路">
+    <section className="home-project-map" aria-label="项目证据">
       <div className="home-section-heading">
         <span aria-hidden="true"><Layers3 size={15} /></span>
-        <h3>项目全链路</h3>
+        <h3>项目证据</h3>
         <small>{reviews.length ? `${reviews.length} 个项目` : "待拆分"}</small>
       </div>
       {reviews.length ? (
@@ -540,8 +542,8 @@ function HomeProjectMap({
         </>
       ) : (
         <div className="home-project-empty">
-          <p>简历已保存，但还没有拆出可讲的项目链路。</p>
-          <button type="button" className="is-quiet" onClick={() => onOpen()}>去拆项目</button>
+          <p>简历已保存，但还没有拆出可讲的项目证据。</p>
+          <button type="button" className="is-quiet" onClick={() => onOpen()}>去完善证据</button>
         </div>
       )}
     </section>

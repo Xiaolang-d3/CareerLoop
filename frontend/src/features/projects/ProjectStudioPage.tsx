@@ -212,9 +212,9 @@ function ProjectIndex({ projects, onOpenProject }: { projects: ProjectStudioItem
   return (
     <section className="project-studio project-studio-index">
       <header className="project-studio-intro">
-        <p>项目</p>
-        <h2>选择一个项目开始梳理</h2>
-        <span>每个项目按总览、架构、材料和面试四个阶段独立推进。</span>
+        <p>项目证据</p>
+        <h2>从已确认项目继续梳理</h2>
+        <span>项目属于证据账本；面试准备挂在同一条证据链上。</span>
       </header>
       {projects.length ? (
         <div className="project-studio-project-grid" aria-label="项目列表">

@@ -320,9 +320,12 @@ function App({
       window.history.replaceState(null, "", canonicalHash);
     }
     function syncRoute() {
-      const next = parseAppHash(window.location.hash);
-      if (next) setAppRoute(next);
-      else navigateRoute({ section: "dashboard" }, true);
+      const next = parseAppHash(window.location.hash) ?? { section: "dashboard" as const };
+      const canonicalHash = appRouteHash(next);
+      if (window.location.hash !== canonicalHash) {
+        window.history.replaceState(null, "", canonicalHash);
+      }
+      setAppRoute(next);
     }
     window.addEventListener("hashchange", syncRoute);
     return () => window.removeEventListener("hashchange", syncRoute);
@@ -2136,7 +2139,7 @@ function App({
     ? {
         overview: pageMeta.settings,
         account: { title: "账号与安全", description: "管理跟随登录账号的昵称、头像和密码" },
-        profile: { title: "求职资料", description: "完善经历、简历和求职偏好，让推荐和准备更贴合你" },
+        profile: { title: "证据", description: "维护已确认事实、待确认队列和简历原文" },
         model: { title: "模型设置", description: "配置推理模型、服务地址和 API Key，并检查连接质量" },
         agent: { title: "Agent 执行记录", description: "查看 Agent 已完成的任务、工具使用和异常原因" }
       }[appRoute.page]
@@ -2162,7 +2165,9 @@ function App({
               : appRoute.page === "comparison"
                 ? { title: "选择优先岗位", description: "在同一求职目标下比较岗位匹配与下一步行动" }
         : appRoute.page === "interview"
-          ? { title: "面试问答", description: "根据已保存简历准备预测问题、STAR 讲法和追问；导入岗位后可以再出一版" }
+          ? { title: "面试准备", description: "围绕已确认项目证据练习问答" }
+        : appRoute.page === "resume"
+          ? { title: "简历", description: "用已确认证据生成、编辑和导出投递简历" }
         : appRoute.page === "detail"
           ? { title: "匹配分析", description: "对照这份岗位查看匹配、缺口和证据" }
           : pageMeta.workbench
@@ -2171,7 +2176,7 @@ function App({
           ? { title: "知识点回顾", description: "从真实项目出发，回顾技术概念、实际用法与选型边界" }
           : appRoute.page === "records"
             ? { title: "面试记录", description: "记录真实问题、原回答与复盘，把反馈变成下一次准备" }
-            : { title: "项目解析", description: "把真实项目拆成可讲证据，并通过文字追问反复练习" }
+            : { title: "面试准备", description: "把已确认项目拆成可讲证据，并通过文字追问练习" }
       : pageMeta[appRoute.section];
 
   const documentPageTitle = appRoute.section === "chat"
@@ -2193,6 +2198,7 @@ function App({
       settingsPage={appRoute.section === "settings" ? appRoute.page : undefined}
       onOpenProfile={() => navigateRoute({ section: "settings", page: "profile" })}
       onOpenAccount={() => navigateRoute({ section: "settings", page: "account" })}
+      onOpenSettings={() => navigateRoute({ section: "settings", page: "overview" })}
       onLogout={onLogout}
       onPrefetchPage={(page) => void pagePrefetcher.prefetch(page)}
     />
@@ -2207,7 +2213,13 @@ function App({
         onGoHome={() => navigateRoute({ section: "dashboard" })}
         onPrefetchPage={(page) => void pagePrefetcher.prefetch(page)}
         settingsPage={appRoute.section === "settings" ? appRoute.page : undefined}
-        onSelectView={setActiveView}
+        workbenchPage={appRoute.section === "workbench" ? appRoute.page : undefined}
+        onSelectNav={(key) => {
+          if (key === "dashboard") navigateRoute({ section: "dashboard" });
+          else if (key === "evidence") navigateRoute({ section: "settings", page: "profile" });
+          else if (key === "resume") navigateRoute({ section: "workbench", page: "resume" });
+          else navigateRoute({ section: "chat", conversationId: currentConversationId ?? undefined });
+        }}
         identity={identityMenu}
       />
 
@@ -2256,18 +2268,12 @@ function App({
               pendingFacts={pendingCareerFacts}
               onOpenAnalysis={() => navigateRoute({ section: "workbench", page: "index" })}
               onOpenResume={() => navigateRoute({ section: "workbench", page: "resume" })}
-              onOpenInterview={() => {
-                const resumePrepJob = jobs.find((item) => item.job_title === "按简历准备");
-                navigateRoute(
-                  resumePrepJob
-                    ? { section: "workbench", page: "interview", jobId: resumePrepJob.id }
-                    : { section: "workbench", page: "interview" }
-                );
-              }}
-              onOpenProject={(experienceId) => navigateRoute({
-                section: "project-lab",
-                projectId: experienceId || undefined
-              })}
+              onOpenInterview={() => navigateRoute({ section: "project-lab" })}
+              onOpenProject={(experienceId) => navigateRoute(
+                experienceId
+                  ? { section: "project-lab", projectId: experienceId, page: "interview" }
+                  : { section: "settings", page: "profile" }
+              )}
               onOpenProfile={() => navigateRoute({ section: "settings", page: "profile" })}
               onOpenJob={(jobId) => {
                 const job = jobs.find((item) => item.id === jobId);
@@ -2281,7 +2287,7 @@ function App({
                 if (conversationId) setCurrentConversationId(conversationId);
                 navigateRoute({ section: "chat", conversationId });
               }}
-              onOpenOpportunities={() => navigateRoute({ section: "opportunities", page: "index" })}
+              onOpenOpportunities={() => navigateRoute({ section: "dashboard" })}
               onFactsChanged={() => void refreshCandidateProfile()}
             />
           </Suspense>
@@ -2355,7 +2361,7 @@ function App({
               page={appRoute.section === "opportunities" ? appRoute.page || "index" : "index"}
               runId={appRoute.section === "opportunities" ? appRoute.runId : undefined}
               discoveredJobId={appRoute.section === "opportunities" ? appRoute.discoveredJobId : undefined}
-              onNavigateHome={() => navigateRoute({ section: "opportunities", page: "index" })}
+              onNavigateHome={() => navigateRoute({ section: "dashboard" })}
               onNavigatePipeline={() => navigateRoute({ section: "opportunities", page: "pipeline" })}
               onNavigateSources={() => navigateRoute({ section: "opportunities", page: "sources" })}
               onNavigateRun={(runId) => navigateRoute({ section: "opportunities", page: "run", runId })}
@@ -2387,7 +2393,7 @@ function App({
                 onBack={() => navigateRoute({ section: "workbench", page: "index" })}
                 onOpenOverview={() => appRoute.jobId && navigateRoute({ section: "workbench", page: "evaluation", jobId: appRoute.jobId })}
                 onOpenResume={() => appRoute.jobId && navigateRoute({ section: "workbench", page: "resume", jobId: appRoute.jobId })}
-                onOpenInterview={() => appRoute.jobId && navigateRoute({ section: "workbench", page: "interview", jobId: appRoute.jobId })}
+                onOpenInterview={() => navigateRoute({ section: "project-lab" })}
                 onOpenSection={(sectionKey) => appRoute.jobId && navigateRoute({ section: "workbench", page: "evaluation_section", jobId: appRoute.jobId, sectionKey })}
                 interviewKit={interviewKit}
                 interviewBusy={interviewBusy}
@@ -2428,11 +2434,7 @@ function App({
                   ? { section: "workbench", page: "resume", jobId }
                   : { section: "workbench", page: "resume" }
               )}
-              onNavigateInterview={(jobId) => navigateRoute(
-                jobId
-                  ? { section: "workbench", page: "interview", jobId }
-                  : { section: "workbench", page: "interview" }
-              )}
+              onNavigateInterview={() => navigateRoute({ section: "project-lab" })}
               onNavigateEvaluation={(jobId) => navigateRoute({ section: "workbench", page: "evaluation", jobId })}
               onCreateComparison={createJobComparison}
               onQuickMatch={runQuickMatch}
