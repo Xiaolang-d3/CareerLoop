@@ -286,7 +286,15 @@ export function HomePage({
       : hasResume
         ? "已确认账本可用来出材料"
         : "还没有证据";
-  const statusCards = [
+  const statusCards: Array<{
+    key: string;
+    label: string;
+    value: string;
+    note: string;
+    icon: React.ReactNode;
+    onClick: () => void;
+    meter?: number;
+  }> = [
     {
       key: "resume",
       label: "简历",
