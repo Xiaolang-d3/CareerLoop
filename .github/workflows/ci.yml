@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -34,10 +36,17 @@ jobs:
         working-directory: backend
         env:
           EMBEDDING_BACKEND: hash
-        run: python -m pytest tests -q
+        run: python -m pytest tests -q --junitxml=pytest-report.xml
+      - name: Upload backend test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-pytest-report
+          path: backend/pytest-report.xml
+          if-no-files-found: ignore
 
-  frontend-checks:
-    name: frontend-checks
+  frontend-unit:
+    name: frontend-unit
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -50,12 +59,67 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
-      - name: Run frontend tests
+      - name: Run frontend unit tests
         working-directory: frontend
         run: npm run test
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+      - name: Upload frontend dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
+  frontend-e2e:
+    name: frontend-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: frontend-unit
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Restore frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+      - name: Install Playwright Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
       - name: Run frontend end-to-end tests
         working-directory: frontend
+        env:
+          CI: true
         run: npm run test:e2e
+      - name: Upload Playwright traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: |
+            frontend/test-results
+            frontend/playwright-report
+          if-no-files-found: ignore
+
+  ci-gate:
+    name: ci-gate
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - backend-tests
+      - frontend-unit
+      - frontend-e2e
+    steps:
+      - name: Require all CI jobs
+        run: |
+          test "${{ needs.backend-tests.result }}" = success
+          test "${{ needs.frontend-unit.result }}" = success
+          test "${{ needs.frontend-e2e.result }}" = success
