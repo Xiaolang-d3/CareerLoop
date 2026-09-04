@@ -10,13 +10,13 @@ export default defineConfig({
   timeout: 30_000,
   use: {
     baseURL: "http://127.0.0.1:4173",
-    channel: "chrome",
+    ...(process.env.CI ? {} : { channel: "chrome" }),
     trace: "retain-on-failure"
   },
   webServer: process.env.PLAYWRIGHT_EXTERNAL_SERVER ? undefined : {
     command: "npm run preview -- --host 127.0.0.1 --port 4173",
     url: "http://127.0.0.1:4173",
-    reuseExistingServer: true,
+    reuseExistingServer: !process.env.CI,
     timeout: 30_000
   }
 });

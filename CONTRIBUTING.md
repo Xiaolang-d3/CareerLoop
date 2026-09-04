@@ -83,7 +83,7 @@ fix bug
 
 ## 分支策略
 
-`main` 是受保护分支。所有合入内容必须通过 GitHub Actions 的 `backend-tests` 与 `frontend-checks`；功能、修复和高风险维护通过 Pull Request 合入。
+`main` 是受保护分支。所有合入内容必须通过 GitHub Actions 的汇总检查 `ci-gate`（覆盖 `backend-tests`、`frontend-unit`、`frontend-e2e`，以及 PR 上的 `docs-sync`）；功能、修复和高风险维护通过 Pull Request 合入。
 
 - 分支使用 `<类型>/<简短目标>` 格式，例如 `feat/resume-analysis`。
 - 单人维护时不强制他人批准，但合并前仍需自行检查完整 diff、测试结果和配置影响。

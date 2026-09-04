@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### 工程
+
+- CI 拆成后端测试、前端单测/构建与 E2E 三个作业，并用 `ci-gate` 汇总结果；E2E 失败会上传 Playwright 轨迹。
+- 推送 `v*` 标签时运行 Release workflow：先复用 CI，再打包前端 `dist` 并创建 GitHub Release。本地优先应用不做远程部署。
+- PR 若改动 `backend/app/agent` 或 `backend/app/tools`，CI 要求同一变更包含 `docs/agent.md`。分支保护应把 required check 设为 `ci-gate`。
+
 ### 变更
 
 - 产品导航收成「首页 / 证据 / 简历 / 对话」。证据进入原职业画像页（`#/settings/profile`，并增加 `#/evidence` 别名），简历进入定制简历（`#/workbench/resume`）；账号、模型与设置仍从身份菜单进入。
