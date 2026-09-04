@@ -30,6 +30,7 @@ from ..tools import (
     ToolRegistry,
 )
 from .runtime import AgentRuntime
+from .run_store import AgentRunStore
 from ..workspace import current_user_id
 
 
@@ -99,6 +100,7 @@ def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
         tool_timeout_seconds=settings.tool_execution_timeout_seconds,
         max_model_retries=settings.model_retry_attempts,
         max_tool_retries=settings.tool_retry_attempts,
+        run_store=AgentRunStore(),
     )
     capabilities = {
         "active_model_provider": model.name,

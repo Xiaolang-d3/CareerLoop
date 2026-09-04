@@ -505,6 +505,69 @@ class ChatStreamingApiTest(unittest.TestCase):
             "waiting_user",
         )
 
+    def test_repeated_ag_ui_run_id_replays_bound_messages_without_duplicate_execution(self) -> None:
+        conversation = self.client.post(
+            "/conversations", json={"title": "幂等运行"}
+        ).json()
+
+        class CountingRuntime:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def run_stream(self, *args, **kwargs):
+                self.calls += 1
+                yield AgentStreamEvent(type="text_delta", delta="只执行一次")
+                yield AgentStreamEvent(
+                    type="completed",
+                    result=AgentRunResult(
+                        content="只执行一次",
+                        provider="test",
+                        platform="manual",
+                        rounds=1,
+                        status="done",
+                    ),
+                )
+
+        runtime = CountingRuntime()
+        original_get_agent_runtime = main_module.get_agent_runtime
+        main_module.get_agent_runtime = lambda: runtime
+        try:
+            first = self.run_ag_ui(conversation["id"], "执行任务", "stable-run-id")
+            second = self.run_ag_ui(conversation["id"], "执行任务", "stable-run-id")
+        finally:
+            main_module.get_agent_runtime = original_get_agent_runtime
+
+        self.assertEqual(runtime.calls, 1)
+        with db.connect() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) AS count FROM chat_messages WHERE conversation_id = ?",
+                (conversation["id"],),
+            ).fetchone()["count"]
+        self.assertEqual(count, 2)
+        durable = self.client.get(
+            "/agent/runs/current",
+            params={"conversation_id": conversation["id"]},
+        )
+        self.assertEqual(durable.status_code, 200)
+        durable_run = durable.json()["run"]
+        terminal_snapshot = next(
+            event["snapshot"] for event in first if event["type"] == "STATE_SNAPSHOT"
+        )
+        self.assertEqual(durable_run["run_id"], "stable-run-id")
+        self.assertEqual(durable_run["status"], "completed")
+        self.assertEqual(
+            durable_run["user_message_id"],
+            terminal_snapshot["careerLoop"]["userMessage"]["id"],
+        )
+        self.assertNotIn("checkpoint", durable_run)
+        for events in (first, second):
+            content = "".join(
+                event["delta"]
+                for event in events
+                if event["type"] == "TEXT_MESSAGE_CONTENT"
+            )
+            self.assertEqual(content, "只执行一次")
+
     def _seed_waiting_company_snapshot(self, conversation_id: int) -> None:
         save_run_snapshot(
             conversation_id,

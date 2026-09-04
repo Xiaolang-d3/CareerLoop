@@ -12,7 +12,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT_DIR / "data"
 DB_PATH = DATA_DIR / "careerloop.db"
 LEGACY_DB_PATH = DATA_DIR / "bosscopilot.db"
-DB_SCHEMA_VERSION = 20
+DB_SCHEMA_VERSION = 21
 
 
 def adopt_legacy_database() -> None:
@@ -461,6 +461,7 @@ DROP TABLE IF EXISTS candidate_fact_evidence;
 DROP TABLE IF EXISTS candidate_facts;
 """),
         (20, "model_protocol_metadata", _migrate_model_protocol_metadata),
+        (21, "agent_execution_runs", _AGENT_EXECUTION_RUN_SCHEMA),
     ]
     applied = {
         int(row["version"])
@@ -581,6 +582,92 @@ CREATE TABLE IF NOT EXISTS agent_run_snapshots (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 );
+"""
+
+
+_AGENT_EXECUTION_RUN_SCHEMA = """
+CREATE TABLE IF NOT EXISTS agent_execution_runs (
+    run_id TEXT PRIMARY KEY,
+    conversation_id INTEGER,
+    task_id INTEGER,
+    user_message_id INTEGER,
+    assistant_message_id INTEGER,
+    parent_run_id TEXT,
+    resumed_by_run_id TEXT,
+    user_content TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'queued',
+    route_kind TEXT NOT NULL DEFAULT '',
+    round_number INTEGER NOT NULL DEFAULT 0,
+    checkpoint_json TEXT NOT NULL DEFAULT '',
+    result_json TEXT NOT NULL DEFAULT '',
+    stop_reason TEXT NOT NULL DEFAULT '',
+    cancel_requested INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    started_at TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+    FOREIGN KEY (task_id) REFERENCES conversation_tasks(id) ON DELETE SET NULL,
+    FOREIGN KEY (user_message_id) REFERENCES chat_messages(id) ON DELETE SET NULL,
+    FOREIGN KEY (assistant_message_id) REFERENCES chat_messages(id) ON DELETE SET NULL,
+    FOREIGN KEY (parent_run_id) REFERENCES agent_execution_runs(run_id) ON DELETE SET NULL,
+    FOREIGN KEY (resumed_by_run_id) REFERENCES agent_execution_runs(run_id) ON DELETE SET NULL,
+    CHECK (status IN (
+        'queued', 'running', 'waiting_user', 'completed',
+        'failed', 'cancelled', 'interrupted'
+    ))
+);
+
+CREATE TABLE IF NOT EXISTS agent_tool_executions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    tool_call_id TEXT NOT NULL,
+    tool_name TEXT NOT NULL,
+    arguments_json TEXT NOT NULL DEFAULT '{}',
+    risk TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    result_json TEXT NOT NULL DEFAULT '',
+    attempt_count INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT,
+    FOREIGN KEY (run_id) REFERENCES agent_execution_runs(run_id) ON DELETE CASCADE,
+    UNIQUE(run_id, fingerprint),
+    CHECK (status IN (
+        'running', 'done', 'failed', 'waiting_approval', 'blocked', 'interrupted'
+    ))
+);
+
+CREATE TABLE IF NOT EXISTS agent_run_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    step_id TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    title TEXT NOT NULL,
+    tool_name TEXT NOT NULL,
+    risk TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    started_at TEXT,
+    completed_at TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (run_id) REFERENCES agent_execution_runs(run_id) ON DELETE CASCADE,
+    UNIQUE(run_id, step_id),
+    CHECK (status IN ('pending', 'running', 'done', 'failed', 'blocked'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_execution_runs_conversation
+ON agent_execution_runs(conversation_id, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_agent_execution_runs_status
+ON agent_execution_runs(status, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_agent_tool_executions_run
+ON agent_tool_executions(run_id, status, id);
+
+CREATE INDEX IF NOT EXISTS idx_agent_run_steps_run
+ON agent_run_steps(run_id, position, id);
 """
 
 

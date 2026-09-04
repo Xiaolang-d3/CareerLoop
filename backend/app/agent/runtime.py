@@ -4,12 +4,15 @@ import asyncio
 import hashlib
 import json
 import re
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from ..domain import (
     AgentMessage,
     AgentPlan,
+    AgentClarification,
     AgentRunResult,
     AgentRunSnapshot,
     AgentStreamEvent,
@@ -39,6 +42,7 @@ from .orchestration import (
     visible_tools_prompt,
 )
 from .resume_policy import clarification_from_events, resolve_resume_snapshot
+from .run_store import AgentRunStore, REPLAYABLE_RUN_STATUSES
 from .tool_executor import ToolExecutor
 
 
@@ -53,6 +57,10 @@ COMPANY_CONTEXT_PATTERNS = (
     re.compile(rf"“([^”\n]{{2,100}}?{COMPANY_SUFFIX})”"),
     re.compile(rf"\*\*([^*\n]{{2,100}}?{COMPANY_SUFFIX})\*\*"),
 )
+
+
+class _RunCancellationRequested(Exception):
+    pass
 
 
 def _active_profile_interview(conversation_id: int | None) -> dict | None:
@@ -139,6 +147,7 @@ class AgentRuntime:
         tool_timeout_seconds: float = 60,
         max_model_retries: int = 1,
         max_tool_retries: int = 1,
+        run_store: AgentRunStore | None = None,
     ) -> None:
         self._models = models
         self._tools = tools
@@ -147,6 +156,7 @@ class AgentRuntime:
         self._max_tool_rounds = max_tool_rounds
         self._max_model_retries = max(0, max_model_retries)
         self._max_tool_retries = max(0, max_tool_retries)
+        self._run_store = run_store
         self._tool_executor = ToolExecutor(tools, tool_timeout_seconds)
 
     async def run(
@@ -161,14 +171,16 @@ class AgentRuntime:
         routing_content: str | None = None,
         web_search_mode: str = "auto",
         resume: AgentRunSnapshot | None = None,
+        run_id: str | None = None,
     ) -> AgentRunResult:
         provider = self._models.get(self._model_provider)
         selected_platform = platform_name or self._platform_name
-        resume = resolve_resume_snapshot(
-            user_content,
-            resume,
-            routing_text=routing_content or user_content,
-        )
+        if resume is None or resume.resume_mode != "checkpoint":
+            resume = resolve_resume_snapshot(
+                user_content,
+                resume,
+                routing_text=routing_content or user_content,
+            )
         if resume is not None:
             return await self._resume_run(
                 provider=provider,
@@ -179,6 +191,7 @@ class AgentRuntime:
                 event_callback=event_callback,
                 image_urls=image_urls,
                 web_search_mode=web_search_mode,
+                run_id=run_id,
                 resume=resume,
             )
         interview_session = _active_profile_interview(conversation_id)
@@ -401,6 +414,7 @@ class AgentRuntime:
             completed_tools=completed_tools,
             completed_tool_calls=completed_tool_calls,
             repeated_tool_calls=repeated_tool_calls,
+            run_id=run_id,
         )
 
     async def _resume_run(
@@ -414,6 +428,7 @@ class AgentRuntime:
         event_callback: StreamCallback | None,
         image_urls: list[str] | None,
         web_search_mode: str,
+        run_id: str | None,
         resume: AgentRunSnapshot,
     ) -> AgentRunResult:
         route = TaskRoute(
@@ -429,7 +444,11 @@ class AgentRuntime:
                 tool_call_id="agent-thinking",
                 tool_name="agent_thinking",
                 status="done",
-                message="继续上次暂停的任务，不重新规划",
+                message=(
+                    "从持久化检查点恢复任务，不重新规划"
+                    if resume.resume_mode == "checkpoint"
+                    else "继续上次暂停的任务，不重新规划"
+                ),
                 data={
                     "route": route.kind,
                     "allowed_tools": list(route.allowed_tools),
@@ -442,19 +461,30 @@ class AgentRuntime:
         planned_tools = {step.tool_name for step in plan.steps} if plan is not None else set()
         interrupt_tools = INTERRUPT_TOOLS & set(self._tools.names())
         executable_tools = (planned_tools or set(route.allowed_tools)) | interrupt_tools
-        messages.append(
-            AgentMessage(
-                role="user",
-                content=user_content,
-                payload={"image_urls": image_urls or []} if image_urls else {},
+        if resume.resume_mode == "waiting_user":
+            messages.append(
+                AgentMessage(
+                    role="user",
+                    content=user_content,
+                    payload={"image_urls": image_urls or []} if image_urls else {},
+                )
             )
-        )
-        messages.append(
-            AgentMessage(
-                role="system",
-                content="用户已回复暂停时的确认，继续原计划，不要换车道。",
+            messages.append(
+                AgentMessage(
+                    role="system",
+                    content="用户已回复暂停时的确认，继续原计划，不要换车道。",
+                )
             )
-        )
+        else:
+            messages.append(
+                AgentMessage(
+                    role="system",
+                    content=(
+                        "上次执行因进程中断而停止。请从已有工具结果继续；"
+                        "不要重复已完成步骤，也不要假设状态不明的写操作已经失败。"
+                    ),
+                )
+            )
         tool_definitions = [
             definition
             for definition in self._tools.definitions()
@@ -482,6 +512,7 @@ class AgentRuntime:
             completed_tools=set(resume.completed_tools),
             completed_tool_calls=set(resume.completed_tool_calls),
             repeated_tool_calls=dict(resume.repeated_tool_calls),
+            run_id=run_id,
         )
 
     def _waiting_result(
@@ -501,6 +532,19 @@ class AgentRuntime:
         completed_tool_calls: set[str],
         repeated_tool_calls: dict[str, int],
     ) -> AgentRunResult:
+        snapshot = self._build_snapshot(
+            route=route,
+            plan=plan,
+            messages=messages,
+            replan_used=replan_used,
+            citation_retry_used=citation_retry_used,
+            rounds_used=round_number,
+            completed_tools=completed_tools,
+            completed_tool_calls=completed_tool_calls,
+            repeated_tool_calls=repeated_tool_calls,
+            resume_mode="waiting_user",
+            clarification=clarification_from_events(events),
+        )
         return AgentRunResult(
             content=content,
             provider=self._model_provider,
@@ -510,19 +554,68 @@ class AgentRuntime:
             error=error,
             events=events,
             plan=plan,
-            snapshot=AgentRunSnapshot(
-                route_kind=route.kind,
-                needs_plan=route.needs_plan,
-                allowed_tools=list(route.allowed_tools),
-                required_tools=list(route.required_tools),
+            snapshot=snapshot,
+        )
+
+    @staticmethod
+    def _build_snapshot(
+        *,
+        route: TaskRoute,
+        plan: AgentPlan | None,
+        messages: list[AgentMessage],
+        replan_used: bool,
+        citation_retry_used: bool,
+        rounds_used: int,
+        completed_tools: set[str],
+        completed_tool_calls: set[str],
+        repeated_tool_calls: dict[str, int],
+        resume_mode: Literal["waiting_user", "checkpoint"] = "checkpoint",
+        clarification: AgentClarification | None = None,
+    ) -> AgentRunSnapshot:
+        return AgentRunSnapshot(
+            resume_mode=resume_mode,
+            route_kind=route.kind,
+            needs_plan=route.needs_plan,
+            allowed_tools=list(route.allowed_tools),
+            required_tools=list(route.required_tools),
+            plan=plan,
+            messages=messages,
+            replan_used=replan_used,
+            citation_retry_used=citation_retry_used,
+            rounds_used=rounds_used,
+            clarification=clarification,
+            completed_tools=sorted(completed_tools),
+            completed_tool_calls=sorted(completed_tool_calls),
+            repeated_tool_calls=repeated_tool_calls,
+        )
+
+    def _checkpoint_run(
+        self,
+        run_id: str | None,
+        *,
+        route: TaskRoute,
+        plan: AgentPlan | None,
+        messages: list[AgentMessage],
+        replan_used: bool,
+        citation_retry_used: bool,
+        rounds_used: int,
+        completed_tools: set[str],
+        completed_tool_calls: set[str],
+        repeated_tool_calls: dict[str, int],
+    ) -> None:
+        if self._run_store is None or run_id is None:
+            return
+        self._run_store.checkpoint(
+            run_id,
+            self._build_snapshot(
+                route=route,
                 plan=plan,
                 messages=messages,
                 replan_used=replan_used,
                 citation_retry_used=citation_retry_used,
-                rounds_used=round_number,
-                clarification=clarification_from_events(events),
-                completed_tools=sorted(completed_tools),
-                completed_tool_calls=sorted(completed_tool_calls),
+                rounds_used=rounds_used,
+                completed_tools=completed_tools,
+                completed_tool_calls=completed_tool_calls,
                 repeated_tool_calls=repeated_tool_calls,
             ),
         )
@@ -565,11 +658,28 @@ class AgentRuntime:
         completed_tools: set[str],
         completed_tool_calls: set[str],
         repeated_tool_calls: dict[str, int],
+        run_id: str | None,
     ) -> AgentRunResult:
         """Execute the bounded model/tool loop for a fresh or resumed run."""
         unresolved_error: ToolError | None = None
         rejected_completions: set[tuple[str, ...]] = set()
+        self._checkpoint_run(
+            run_id,
+            route=route,
+            plan=plan,
+            messages=messages,
+            replan_used=replan_used,
+            citation_retry_used=citation_retry_used,
+            rounds_used=max(0, start_round - 1),
+            completed_tools=completed_tools,
+            completed_tool_calls=completed_tool_calls,
+            repeated_tool_calls=repeated_tool_calls,
+        )
         for round_number in range(start_round, self._max_tool_rounds + 1):
+            if self._cancel_requested(run_id):
+                return self._cancelled_run_result(
+                    selected_platform, round_number - 1, events, plan
+                )
             await self._publish(event_callback, AgentStreamEvent(type="text_reset"))
             try:
                 completion = validate_completion(route, events, plan, completed_tools)
@@ -583,6 +693,11 @@ class AgentRuntime:
                     event_callback,
                     events=events,
                     round_number=round_number,
+                    run_id=run_id,
+                )
+            except _RunCancellationRequested:
+                return self._cancelled_run_result(
+                    selected_platform, round_number, events, plan
                 )
             except ModelProviderError as exc:
                 event = ToolEvent(
@@ -669,6 +784,18 @@ class AgentRuntime:
                     messages.append(
                         AgentMessage(role="system", content=completion.repair_prompt())
                     )
+                    self._checkpoint_run(
+                        run_id,
+                        route=route,
+                        plan=plan,
+                        messages=messages,
+                        replan_used=replan_used,
+                        citation_retry_used=citation_retry_used,
+                        rounds_used=round_number,
+                        completed_tools=completed_tools,
+                        completed_tool_calls=completed_tool_calls,
+                        repeated_tool_calls=repeated_tool_calls,
+                    )
                     continue
 
             if response.content and not response.tool_calls:
@@ -706,6 +833,18 @@ class AgentRuntime:
                             )
                         )
                         tool_definitions = []
+                        self._checkpoint_run(
+                            run_id,
+                            route=route,
+                            plan=plan,
+                            messages=messages,
+                            replan_used=replan_used,
+                            citation_retry_used=citation_retry_used,
+                            rounds_used=round_number,
+                            completed_tools=completed_tools,
+                            completed_tool_calls=completed_tool_calls,
+                            repeated_tool_calls=repeated_tool_calls,
+                        )
                         continue
                     if not citations_valid:
                         return AgentRunResult(
@@ -773,6 +912,10 @@ class AgentRuntime:
             )
             round_error: ToolError | None = None
             for tool_call in response.tool_calls:
+                if self._cancel_requested(run_id):
+                    return self._cancelled_run_result(
+                        selected_platform, round_number, events, plan
+                    )
                 if tool_call.name not in executable_tools:
                     message = f"风险门已阻止计划外工具：{tool_call.name}"
                     event = ToolEvent(
@@ -833,20 +976,28 @@ class AgentRuntime:
                         ),
                     ),
                 )
-                result = await self._execute_tool_with_retry(
-                    tool_call,
-                    ToolContext(
-                        platform_name=selected_platform,
+                try:
+                    result = await self._execute_tool_with_retry(
+                        tool_call,
+                        ToolContext(
+                            platform_name=selected_platform,
+                            agent_run_id=run_id,
+                            conversation_id=conversation_id,
+                            task_id=task_id,
+                            user_content=user_content,
+                            web_search_mode=web_search_mode,
+                        ),
+                        round_number=round_number,
                         conversation_id=conversation_id,
-                        task_id=task_id,
-                        user_content=user_content,
-                        web_search_mode=web_search_mode,
-                    ),
-                    round_number=round_number,
-                    conversation_id=conversation_id,
-                    event_callback=event_callback,
-                    events=events,
-                )
+                        event_callback=event_callback,
+                        events=events,
+                        run_id=run_id,
+                        fingerprint=fingerprint,
+                    )
+                except _RunCancellationRequested:
+                    return self._cancelled_run_result(
+                        selected_platform, round_number, events, plan
+                    )
                 event = ToolEvent(
                     round=round_number,
                     tool_call_id=tool_call.id,
@@ -944,6 +1095,18 @@ class AgentRuntime:
                         repeated_tool_calls=repeated_tool_calls,
                     )
             unresolved_error = round_error
+            self._checkpoint_run(
+                run_id,
+                route=route,
+                plan=plan,
+                messages=messages,
+                replan_used=replan_used,
+                citation_retry_used=citation_retry_used,
+                rounds_used=round_number,
+                completed_tools=completed_tools,
+                completed_tool_calls=completed_tool_calls,
+                repeated_tool_calls=repeated_tool_calls,
+            )
         return AgentRunResult(
             content=f"Agent 已达到最大工具调用轮数（{self._max_tool_rounds}），本次执行已终止，请缩小任务范围后重新提问。",
             provider=self._model_provider,
@@ -951,6 +1114,58 @@ class AgentRuntime:
             rounds=self._max_tool_rounds,
             status="failed",
             error=ToolError(code="round_limit_reached", message="Agent 已达到最大工具调用轮数"),
+            events=events,
+            plan=plan,
+        )
+
+    def _cancel_requested(self, run_id: str | None) -> bool:
+        return bool(
+            self._run_store is not None
+            and run_id is not None
+            and self._run_store.is_cancel_requested(run_id)
+        )
+
+    async def _await_with_cancellation(self, operation, run_id: str | None):
+        if self._run_store is None or run_id is None:
+            return await operation
+        task = asyncio.create_task(operation)
+        try:
+            while True:
+                done, _ = await asyncio.wait({task}, timeout=0.25)
+                if done:
+                    return await task
+                if self._cancel_requested(run_id):
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                    raise _RunCancellationRequested()
+        except BaseException:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            raise
+
+    def _cancelled_run_result(
+        self,
+        selected_platform: str,
+        round_number: int,
+        events: list[ToolEvent],
+        plan: AgentPlan | None,
+    ) -> AgentRunResult:
+        event = ToolEvent(
+            round=round_number,
+            tool_call_id=f"durable-cancel-{round_number}",
+            tool_name="agent_run_state",
+            status="cancelled",
+            message="检测到持久化取消请求，任务已停止",
+        )
+        events.append(event)
+        return AgentRunResult(
+            content="已停止生成。",
+            provider=self._model_provider,
+            platform=selected_platform,
+            rounds=round_number,
+            status="cancelled",
+            error=ToolError(code="user_cancelled", message="用户已停止生成"),
             events=events,
             plan=plan,
         )
@@ -964,17 +1179,35 @@ class AgentRuntime:
         conversation_id: int | None,
         event_callback: StreamCallback | None,
         events: list[ToolEvent],
+        run_id: str | None = None,
+        fingerprint: str | None = None,
     ) -> ToolResult:
         """Retry only side-effect-free tools when their error is explicitly retryable."""
         safe_risks = {"read_only", "derived_analysis", "external_read"}
         spec = self._tools.spec(tool_call.name)
-        for retry_number in range(self._max_tool_retries + 1):
-            result = await self._tool_executor.execute(
+        if self._run_store is not None and run_id is not None and fingerprint is not None:
+            decision = self._run_store.prepare_tool_call(
+                run_id,
+                fingerprint,
                 tool_call,
-                context,
-                round_number=round_number,
-                conversation_id=conversation_id,
+                spec,
             )
+            if decision.action != "execute":
+                if decision.result is None:
+                    raise RuntimeError("持久化工具决策缺少结果")
+                return decision.result
+        for retry_number in range(self._max_tool_retries + 1):
+            result = await self._await_with_cancellation(
+                self._tool_executor.execute(
+                    tool_call,
+                    context,
+                    round_number=round_number,
+                    conversation_id=conversation_id,
+                ),
+                run_id,
+            )
+            if self._run_store is not None and run_id is not None and fingerprint is not None:
+                self._run_store.record_tool_result(run_id, fingerprint, result)
             retryable = (
                 result.status == "failed"
                 and result.error is not None
@@ -984,6 +1217,17 @@ class AgentRuntime:
             )
             if not retryable:
                 return result
+            if self._run_store is not None and run_id is not None and fingerprint is not None:
+                decision = self._run_store.prepare_tool_call(
+                    run_id,
+                    fingerprint,
+                    tool_call,
+                    spec,
+                )
+                if decision.action != "execute":
+                    if decision.result is None:
+                        raise RuntimeError("持久化工具重试决策缺少结果")
+                    return decision.result
             event = ToolEvent(
                 round=round_number,
                 tool_call_id=tool_call.id,
@@ -1169,7 +1413,36 @@ class AgentRuntime:
         routing_content: str | None = None,
         web_search_mode: str = "auto",
         resume: AgentRunSnapshot | None = None,
+        run_id: str | None = None,
     ) -> AsyncIterator[AgentStreamEvent]:
+        execution_id = run_id or f"agent-{uuid.uuid4().hex}"
+        effective_content = user_content
+        effective_resume = resume
+        cached_result: AgentRunResult | None = None
+        if self._run_store is not None:
+            existing = self._run_store.get_run(execution_id)
+            if (
+                existing is not None
+                and existing["status"] in REPLAYABLE_RUN_STATUSES
+                and existing.get("result") is not None
+            ):
+                cached_result = existing["result"]
+            else:
+                if (
+                    existing is not None
+                    and existing["status"] == "interrupted"
+                    and existing.get("checkpoint") is not None
+                ):
+                    effective_content = str(existing.get("user_content") or user_content)
+                    effective_resume = existing["checkpoint"].model_copy(
+                        update={"resume_mode": "checkpoint"}
+                    )
+                self._run_store.start_run(
+                    execution_id,
+                    conversation_id=conversation_id,
+                    task_id=task_id,
+                    user_content=effective_content,
+                )
         queue: asyncio.Queue[AgentStreamEvent | None] = asyncio.Queue()
 
         async def publish(event: AgentStreamEvent) -> None:
@@ -1178,35 +1451,58 @@ class AgentRuntime:
         async def execute() -> None:
             try:
                 await queue.put(AgentStreamEvent(type="run_started"))
-                result = await self.run(
-                    user_content,
-                    platform_name=platform_name,
-                    history=history,
-                    conversation_id=conversation_id,
-                    task_id=task_id,
-                    event_callback=publish,
-                    image_urls=image_urls,
-                    routing_content=routing_content,
-                    web_search_mode=web_search_mode,
-                    resume=resume,
-                )
+                if cached_result is not None:
+                    result = cached_result
+                    if result.content:
+                        await queue.put(
+                            AgentStreamEvent(type="text_delta", delta=result.content)
+                        )
+                else:
+                    result = await self.run(
+                        effective_content,
+                        platform_name=platform_name,
+                        history=history,
+                        conversation_id=conversation_id,
+                        task_id=task_id,
+                        event_callback=publish,
+                        image_urls=image_urls,
+                        routing_content=routing_content,
+                        web_search_mode=web_search_mode,
+                        resume=effective_resume,
+                        run_id=execution_id,
+                    )
+                    if self._run_store is not None:
+                        self._run_store.finish(execution_id, result)
                 if result.status == "waiting_user":
                     await queue.put(AgentStreamEvent(type="waiting_user", result=result))
                 await queue.put(AgentStreamEvent(type="completed", result=result))
             except asyncio.CancelledError:
-                await queue.put(AgentStreamEvent(type="cancelled"))
+                cancelled = AgentRunResult(
+                    content="已停止生成。",
+                    provider=self._model_provider,
+                    platform=platform_name or self._platform_name,
+                    rounds=0,
+                    status="cancelled",
+                    error=ToolError(code="user_cancelled", message="用户已停止生成"),
+                )
+                if self._run_store is not None:
+                    self._run_store.finish(execution_id, cancelled)
+                await queue.put(AgentStreamEvent(type="cancelled", result=cancelled))
             except Exception as exc:
+                failed = AgentRunResult(
+                    content="Agent 流式执行发生未知异常。",
+                    provider=self._model_provider,
+                    platform=platform_name or self._platform_name,
+                    rounds=0,
+                    status="failed",
+                    error=ToolError(code="stream_failed", message=str(exc)),
+                )
+                if self._run_store is not None:
+                    self._run_store.finish(execution_id, failed)
                 await queue.put(
                     AgentStreamEvent(
                         type="error",
-                        result=AgentRunResult(
-                            content="Agent 流式执行发生未知异常。",
-                            provider=self._model_provider,
-                            platform=platform_name or self._platform_name,
-                            rounds=0,
-                            status="failed",
-                            error=ToolError(code="stream_failed", message=str(exc)),
-                        ),
+                        result=failed,
                     )
                 )
             finally:
@@ -1265,11 +1561,15 @@ class AgentRuntime:
         *,
         events: list[ToolEvent],
         round_number: int,
+        run_id: str | None = None,
     ) -> ModelResponse:
         """Retry transient model failures inside the current bounded round."""
         for retry_number in range(self._max_model_retries + 1):
             try:
-                response = await self._generate_response(provider, request, event_callback)
+                response = await self._await_with_cancellation(
+                    self._generate_response(provider, request, event_callback),
+                    run_id,
+                )
                 if retry_number:
                     event = ToolEvent(
                         round=round_number,

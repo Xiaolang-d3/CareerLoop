@@ -75,7 +75,13 @@ export type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   created_at: string;
-  payload?: { workflow?: unknown; agent?: AgentRunResult; attachments?: ChatAttachment[] };
+  payload?: {
+    workflow?: unknown;
+    agent?: AgentRunResult;
+    attachments?: ChatAttachment[];
+    web_search?: boolean;
+    web_search_mode?: WebSearchMode;
+  };
 };
 
 export type ChatAttachment = {
@@ -109,6 +115,8 @@ export type ChatRetryDraft = {
   visionAttachmentIds: string[];
   webSearch: boolean;
   webSearchMode: WebSearchMode;
+  runId?: string;
+  reason?: "send_failed" | "interrupted";
 };
 
 export type WebSearchMode = "auto" | "technical" | "general";
@@ -200,6 +208,7 @@ type ChatWorkspaceProps = {
   onSuggestedAction: () => void;
   onCancelTask: () => void;
   onSend: (content: string, attachmentIds?: string[], visionAttachmentIds?: string[], webSearch?: boolean, webSearchMode?: WebSearchMode) => Promise<void>;
+  onRetry?: (draft: ChatRetryDraft) => Promise<void>;
   onStop: () => Promise<void>;
   onEdit: (userMessageId: number, content: string) => Promise<void>;
   onRegenerate: (userMessageId: number) => Promise<void>;
@@ -556,7 +565,8 @@ const SYSTEM_THINKING_TOOLS = new Set([
   "model_provider",
   "completion_validator",
   "citation_validator",
-  "agent_loop_guard"
+  "agent_loop_guard",
+  "agent_run_state"
 ]);
 const TOOL_ACTIVITY_LABELS: Record<string, string> = {
   search_public_web: "正在检索公开资料",
@@ -584,6 +594,7 @@ const TOOL_ACTIVITY_LABELS: Record<string, string> = {
   completion_validator: "正在补齐必要步骤",
   citation_validator: "正在核对引用",
   agent_loop_guard: "正在纠正重复步骤",
+  agent_run_state: "正在同步任务状态",
   ask_user: "需要你确认",
   agent_tool: "正在执行任务"
 };
@@ -1472,12 +1483,21 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
           ) : null}
 
           {props.retryDraft && !props.chatBusy ? (
-            <section className="chat-retry-prompt" aria-label="消息发送失败">
-              <TriangleAlert size={14} /><span>上一条消息未发送成功</span>
+            <section
+              className="chat-retry-prompt"
+              aria-label={props.retryDraft.reason === "interrupted" ? "任务恢复提示" : "消息发送失败"}
+            >
+              <TriangleAlert size={14} />
+              <span>{props.retryDraft.reason === "interrupted" ? "上次任务意外中断，可从最近检查点继续" : "上一条消息未发送成功"}</span>
               <button onClick={() => {
                 const draft = props.retryDraft;
-                if (draft) void props.onSend(draft.content, draft.attachmentIds, draft.visionAttachmentIds, draft.webSearch, draft.webSearchMode);
-              }}><RefreshCw size={12} />重试</button>
+                if (!draft) return;
+                if (props.onRetry) {
+                  void props.onRetry(draft);
+                  return;
+                }
+                void props.onSend(draft.content, draft.attachmentIds, draft.visionAttachmentIds, draft.webSearch, draft.webSearchMode);
+              }}><RefreshCw size={12} />{props.retryDraft.reason === "interrupted" ? "继续执行" : "重试"}</button>
             </section>
           ) : null}
 

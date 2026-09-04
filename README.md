@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Xiaolang-d3/CareerLoop/actions/workflows/ci.yml/badge.svg)](https://github.com/Xiaolang-d3/CareerLoop/actions/workflows/ci.yml)
 
-本地优先、由个人资料驱动的 AI 协作工作台。CareerLoop 把长期资料沉淀为可复用上下文，通过对话完成搜索、分析和内容生成，并将结果保留在工作台。求职是当前最成熟的专业场景，但不是产品边界。
+本地优先、由个人资料驱动的 AI 协作工作台：沉淀可复用上下文，通过可恢复 Agent 完成搜索、分析与内容生成。结果可追踪、可恢复，并持续保留在工作台；求职是当前最成熟的专业场景，但不是产品边界。
 
 当前版本为 **2.0.0 开发预览版**，尚未发布稳定的 GitHub Release。
 

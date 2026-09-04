@@ -1,7 +1,7 @@
 import { createRef } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ChatWorkspace, interviewHintParts, interviewQuestionParts, type AgentRunResult, type ChatMessage } from "./ChatWorkspace";
+import { ChatWorkspace, interviewHintParts, interviewQuestionParts, type AgentRunResult, type ChatMessage, type ChatRetryDraft } from "./ChatWorkspace";
 
 const mermaidMocks = vi.hoisted(() => ({
   initialize: vi.fn(),
@@ -54,7 +54,12 @@ function fencedMermaid(source: string): string {
   return ["```mermaid", source, "```"].join("\n");
 }
 
-function renderChat(messages: ChatMessage[] = [message], extras: { chatBusy?: boolean; latestAgent?: AgentRunResult; webSearchAvailable?: boolean } = {}) {
+function renderChat(messages: ChatMessage[] = [message], extras: {
+  chatBusy?: boolean;
+  latestAgent?: AgentRunResult;
+  webSearchAvailable?: boolean;
+  retryDraft?: ChatRetryDraft | null;
+} = {}) {
   const props = {
     conversationTitle: conversation.title,
     messages,
@@ -66,7 +71,7 @@ function renderChat(messages: ChatMessage[] = [message], extras: { chatBusy?: bo
     waitingForUser: false,
     latestAgent: extras.latestAgent,
     taskCancelBusy: false,
-    retryDraft: null,
+    retryDraft: extras.retryDraft ?? null,
     chatEndRef: createRef<HTMLDivElement>(),
     chatInputRef: createRef<HTMLTextAreaElement>(),
     onLoadMore: vi.fn(),
@@ -84,6 +89,7 @@ function renderChat(messages: ChatMessage[] = [message], extras: { chatBusy?: bo
     onSuggestedAction: vi.fn(),
     onCancelTask: vi.fn(),
     onSend: vi.fn(),
+    onRetry: vi.fn(),
     onStop: vi.fn(),
     onEdit: vi.fn(),
     onRegenerate: vi.fn(),
@@ -113,6 +119,25 @@ describe("ChatWorkspace", () => {
     expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();
     expect(screen.queryByText("准备中")).not.toBeInTheDocument();
     expect(screen.queryByText("CareerLoop · 面试准备")).not.toBeInTheDocument();
+  });
+
+  it("continues an interrupted durable run through the retry callback", () => {
+    const retryDraft: ChatRetryDraft = {
+      content: "继续分析这份材料",
+      attachmentIds: ["attachment-1"],
+      visionAttachmentIds: [],
+      webSearch: true,
+      webSearchMode: "technical",
+      runId: "run-recover-1",
+      reason: "interrupted"
+    };
+    const props = renderChat([message], { retryDraft });
+
+    expect(screen.getByLabelText("任务恢复提示")).toHaveTextContent("可从最近检查点继续");
+    fireEvent.click(screen.getByRole("button", { name: "继续执行" }));
+
+    expect(props.onRetry).toHaveBeenCalledWith(retryDraft);
+    expect(props.onSend).not.toHaveBeenCalled();
   });
 
   it("keeps session title and tools in the conversation rail instead of a second page heading", () => {

@@ -75,6 +75,7 @@ from .database_lifecycle import (
 from .domain import AgentRunResult, ToolError, ToolEvent
 from .agent.resume_policy import should_abandon_snapshot
 from .agent.snapshots import clear_run_snapshot, load_run_snapshot
+from .agent.run_store import AgentRunStore
 from .chat.service import (
     agent_history as _agent_history,
     attachment_context as _attachment_context,
@@ -262,6 +263,7 @@ def _chat_run_key(conversation_id: int) -> tuple[int, int]:
 
 def _startup_workspace(user_id: int, root: Path) -> None:
     with use_workspace(user_id, root):
+        AgentRunStore().interrupt_active_runs()
         interrupt_active_runs()
         interrupt_active_evaluations()
         try:
@@ -276,6 +278,7 @@ def startup() -> None:
         return
     user_ids = list_user_ids()
     if not user_ids:
+        AgentRunStore().interrupt_active_runs()
         interrupt_active_runs()
         interrupt_active_evaluations()
         return
@@ -366,6 +369,8 @@ async def cancel_current_agent_task(conversation_id: int | None = None) -> dict[
     resolved_id = conversation_id or _default_conversation_id()
     require_conversation(resolved_id)
     cancelled = False
+    if AgentRunStore().request_cancel_for_conversation(resolved_id):
+        cancelled = True
     active_task = _active_chat_runs.get(_chat_run_key(resolved_id))
     if active_task is not None and not active_task.done():
         active_task.cancel()
@@ -402,6 +407,68 @@ async def cancel_current_agent_task(conversation_id: int | None = None) -> dict[
     end_active_task(resolved_id)
     clear_run_snapshot(resolved_id)
     return {"cancelled": cancelled, "workflow": refresh_workflow_status(resolved_id)}
+
+
+def _durable_run_payload(run: dict[str, Any]) -> dict[str, Any]:
+    run_id = str(run["run_id"])
+    tool_executions = [
+        {
+            "tool_call_id": item.get("tool_call_id"),
+            "tool_name": item.get("tool_name"),
+            "risk": item.get("risk"),
+            "status": item.get("status"),
+            "attempt_count": item.get("attempt_count"),
+            "created_at": item.get("created_at"),
+            "updated_at": item.get("updated_at"),
+            "completed_at": item.get("completed_at"),
+        }
+        for item in AgentRunStore().list_tool_executions(run_id)
+    ]
+    return {
+        "run_id": run_id,
+        "conversation_id": run.get("conversation_id"),
+        "task_id": run.get("task_id"),
+        "user_message_id": run.get("user_message_id"),
+        "status": run.get("status"),
+        "route_kind": run.get("route_kind"),
+        "round_number": run.get("round_number"),
+        "stop_reason": run.get("stop_reason"),
+        "cancel_requested": bool(run.get("cancel_requested")),
+        "can_resume": bool(
+            run.get("status") == "interrupted" and run.get("checkpoint") is not None
+        ),
+        "parent_run_id": run.get("parent_run_id"),
+        "resumed_by_run_id": run.get("resumed_by_run_id"),
+        "steps": AgentRunStore().list_steps(run_id),
+        "tool_executions": tool_executions,
+        "created_at": run.get("created_at"),
+        "updated_at": run.get("updated_at"),
+        "completed_at": run.get("completed_at"),
+    }
+
+
+@app.get("/agent/runs/current")
+def current_durable_agent_run(conversation_id: int | None = None) -> dict[str, Any]:
+    resolved_id = conversation_id or _default_conversation_id()
+    require_conversation(resolved_id)
+    run = AgentRunStore().latest_for_conversation(resolved_id)
+    return {"run": _durable_run_payload(run) if run is not None else None}
+
+
+@app.post("/agent/runs/{run_id}/cancel")
+def cancel_durable_agent_run(run_id: str) -> dict[str, Any]:
+    store = AgentRunStore()
+    run = store.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Agent run 不存在")
+    if run.get("conversation_id") is not None:
+        require_conversation(int(run["conversation_id"]))
+    cancelled = store.request_cancel(run_id)
+    refreshed = store.get_run(run_id)
+    return {
+        "cancelled": cancelled,
+        "run": _durable_run_payload(refreshed),
+    }
 
 
 def _ag_ui_message_content(payload: RunAgentInput) -> str:
@@ -462,25 +529,106 @@ async def _stream_chat_message_response(
     if active is not None and not active.done():
         raise HTTPException(status_code=409, detail="当前对话已有正在执行的任务")
 
-    task_id = ensure_active_task(conversation_id)
-    attachment_context, attachment_summaries, image_urls = _attachment_context(
-        conversation_id, payload.attachment_ids, payload.vision_attachment_ids
-    )
-    user_payload: dict[str, Any] = {}
-    if attachment_summaries:
-        user_payload["attachments"] = attachment_summaries
-    if payload.web_search:
-        user_payload["web_search"] = True
-        user_payload["web_search_mode"] = payload.web_search_mode
-    user_message = _save_chat_message(
-        "user",
-        payload.content,
-        user_payload or None,
-        conversation_id,
-        task_id,
-    )
-    maybe_title_from_first_message(conversation_id, payload.content)
-    history = _agent_history(conversation_id, user_message["id"])
+    run_store = AgentRunStore()
+    persisted_run = run_store.get_run(ag_ui_input.run_id)
+    if (
+        persisted_run is not None
+        and persisted_run.get("conversation_id") is not None
+        and int(persisted_run["conversation_id"]) != conversation_id
+    ):
+        raise HTTPException(status_code=409, detail="runId 已属于其他对话")
+    if persisted_run is not None and persisted_run.get("status") == "running":
+        raise HTTPException(status_code=409, detail="该 Agent run 仍在其他执行器中运行")
+    cached_execution: dict[str, Any] | None = None
+    if (
+        persisted_run is not None
+        and persisted_run.get("result") is not None
+        and persisted_run.get("user_message_id")
+        and persisted_run.get("assistant_message_id")
+    ):
+        with connect() as conn:
+            cached_user = conn.execute(
+                "SELECT * FROM chat_messages WHERE id = ? AND conversation_id = ?",
+                (persisted_run["user_message_id"], conversation_id),
+            ).fetchone()
+            cached_assistant = conn.execute(
+                "SELECT * FROM chat_messages WHERE id = ? AND conversation_id = ?",
+                (persisted_run["assistant_message_id"], conversation_id),
+            ).fetchone()
+        if cached_user is not None and cached_assistant is not None:
+            cached_execution = {
+                "result": persisted_run["result"],
+                "user_message": row_to_dict(cached_user),
+                "assistant_message": row_to_dict(cached_assistant),
+            }
+
+    recovered_user_message: dict[str, Any] | None = None
+    if (
+        cached_execution is None
+        and persisted_run is not None
+        and persisted_run.get("user_message_id")
+        and (
+            persisted_run.get("result") is not None
+            or persisted_run.get("status") == "interrupted"
+        )
+    ):
+        with connect() as conn:
+            bound_user = conn.execute(
+                "SELECT * FROM chat_messages WHERE id = ? AND conversation_id = ?",
+                (persisted_run["user_message_id"], conversation_id),
+            ).fetchone()
+        if bound_user is not None:
+            recovered_user_message = row_to_dict(bound_user)
+
+    if cached_execution is not None or recovered_user_message is not None:
+        task_id = int(persisted_run.get("task_id") or 0) or None
+        attachment_context, attachment_summaries, image_urls = "", [], []
+        user_message = (
+            cached_execution["user_message"]
+            if cached_execution is not None
+            else recovered_user_message
+        )
+        history = []
+        agent_input = str(persisted_run.get("user_content") or payload.content)
+    else:
+        task_id = ensure_active_task(conversation_id)
+        attachment_context, attachment_summaries, image_urls = _attachment_context(
+            conversation_id, payload.attachment_ids, payload.vision_attachment_ids
+        )
+        user_payload: dict[str, Any] = {}
+        if attachment_summaries:
+            user_payload["attachments"] = attachment_summaries
+        if payload.web_search:
+            user_payload["web_search"] = True
+            user_payload["web_search_mode"] = payload.web_search_mode
+        agent_input = payload.content
+        if attachment_context:
+            agent_input += (
+                "\n\n以下为用户主动上传附件的本地解析文本，请基于此内容回答：\n"
+                f"{attachment_context}"
+            )
+        try:
+            run_store.start_run(
+                ag_ui_input.run_id,
+                conversation_id=conversation_id,
+                task_id=task_id,
+                user_content=agent_input,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        user_message = _save_chat_message(
+            "user",
+            payload.content,
+            user_payload or None,
+            conversation_id,
+            task_id,
+        )
+        run_store.bind_messages(
+            ag_ui_input.run_id,
+            user_message_id=int(user_message["id"]),
+        )
+        maybe_title_from_first_message(conversation_id, payload.content)
+        history = _agent_history(conversation_id, user_message["id"])
     queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue()
 
     async def execute() -> None:
@@ -489,9 +637,22 @@ async def _stream_chat_message_response(
         current_task = asyncio.current_task()
         try:
             await queue.put(("run_started", {"user_message": user_message}))
-            agent_input = payload.content
-            if attachment_context:
-                agent_input += f"\n\n以下为用户主动上传附件的本地解析文本，请基于此内容回答：\n{attachment_context}"
+            if cached_execution is not None:
+                result = cached_execution["result"]
+                await queue.put(("text_reset", {}))
+                if result.content:
+                    await queue.put(("text_delta", {"delta": result.content}))
+                await queue.put(
+                    (
+                        "completed",
+                        {
+                            "user_message": cached_execution["user_message"],
+                            "assistant_message": cached_execution["assistant_message"],
+                            "workflow": refresh_workflow_status(conversation_id),
+                        },
+                    )
+                )
+                return
             # Profile interview intent is no longer keyword-matched here: the
             # interview is exposed as tools (start/record/pause) and the model
             # decides, with an active session admitted via stored state.
@@ -526,6 +687,11 @@ async def _stream_chat_message_response(
                 ):
                     clear_run_snapshot(conversation_id)
                     resume_snapshot = None
+                if resume_snapshot is not None:
+                    run_store.link_waiting_resume(
+                        conversation_id,
+                        ag_ui_input.run_id,
+                    )
                 async for stream_event in get_agent_runtime().run_stream(
                     agent_input,
                     history=history,
@@ -535,6 +701,7 @@ async def _stream_chat_message_response(
                     routing_content=trusted_routing_content,
                     web_search_mode=payload.web_search_mode,
                     resume=resume_snapshot,
+                    run_id=ag_ui_input.run_id,
                 ):
                     if stream_event.type == "text_delta":
                         partial_content += stream_event.delta
@@ -552,7 +719,12 @@ async def _stream_chat_message_response(
                 if result is None:
                     raise RuntimeError("Agent 流已结束，但没有返回结果")
 
+            run_store.finish(ag_ui_input.run_id, result)
             completed = _save_stream_result(conversation_id, task_id, user_message, result)
+            run_store.bind_messages(
+                ag_ui_input.run_id,
+                assistant_message_id=int(completed["assistant_message"]["id"]),
+            )
             await queue.put(("completed", completed))
         except asyncio.CancelledError:
             cancel_event = ToolEvent(
@@ -572,8 +744,13 @@ async def _stream_chat_message_response(
                 error=ToolError(code="user_cancelled", message="用户已停止生成"),
                 events=list(streamed_events.values()),
             )
+            run_store.finish(ag_ui_input.run_id, cancelled_result)
             completed = _save_stream_result(
                 conversation_id, task_id, user_message, cancelled_result
+            )
+            run_store.bind_messages(
+                ag_ui_input.run_id,
+                assistant_message_id=int(completed["assistant_message"]["id"]),
             )
             await queue.put(("cancelled", completed))
         except Exception as exc:
@@ -586,7 +763,12 @@ async def _stream_chat_message_response(
                 error=ToolError(code="stream_failed", message=str(exc), retryable=True),
                 events=list(streamed_events.values()),
             )
+            run_store.finish(ag_ui_input.run_id, failed_result)
             completed = _save_stream_result(conversation_id, task_id, user_message, failed_result)
+            run_store.bind_messages(
+                ag_ui_input.run_id,
+                assistant_message_id=int(completed["assistant_message"]["id"]),
+            )
             await queue.put(("error", {**completed, "message": str(exc)}))
         finally:
             if _active_chat_runs.get(_chat_run_key(conversation_id)) is current_task:

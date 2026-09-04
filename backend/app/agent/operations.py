@@ -18,6 +18,7 @@ SYSTEM_EVENT_TOOLS = {
     "completion_validator",
     "citation_validator",
     "agent_loop_guard",
+    "agent_run_state",
 }
 TOOL_LABELS = {
     "analyze_resume_against_jd": "简历与 JD 分析",

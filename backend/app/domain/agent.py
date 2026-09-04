@@ -108,6 +108,7 @@ class AgentClarification(BaseModel):
 
 
 class AgentRunSnapshot(BaseModel):
+    resume_mode: Literal["waiting_user", "checkpoint"] = "waiting_user"
     route_kind: str
     needs_plan: bool
     allowed_tools: list[str] = Field(default_factory=list)

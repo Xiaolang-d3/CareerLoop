@@ -9,6 +9,7 @@ import { AppSidebar } from "./components/AppSidebar";
 import { AppIdentityMenu } from "./components/AppIdentityMenu";
 import { AppTopBar } from "./components/AppTopBar";
 import { createClientId } from "./api/clientId";
+import { interruptedRunRetryDraft, type DurableAgentRunSummary } from "./durable-agent-run";
 import { ConversationDialog, type ConversationDialogState } from "./components/ConversationDialog";
 import type { AgentRunResult, AttachmentConfig, ChatAttachment, ChatMessage, ChatRetryDraft, WebSearchMode } from "./components/ChatWorkspace";
 import {
@@ -465,7 +466,18 @@ function App({
 
   async function refreshChat(conversationId = currentConversationId) {
     if (!conversationId) return;
-    setChatMessages(await fetchJson<ChatMessage[]>(`/chat/messages?conversation_id=${conversationId}`));
+    const [messages, durableRunResponse] = await Promise.all([
+      fetchJson<ChatMessage[]>(`/chat/messages?conversation_id=${conversationId}`),
+      fetchJson<{ run: DurableAgentRunSummary | null }>(`/agent/runs/current?conversation_id=${conversationId}`)
+    ]);
+    setChatMessages(messages);
+    const interruptedDraft = interruptedRunRetryDraft(durableRunResponse.run, messages);
+    if (interruptedDraft) {
+      setRetryChatDraft(interruptedDraft);
+    } else {
+      setRetryChatDraft((current) => current?.reason === "interrupted" ? null : current);
+    }
+    return messages;
   }
 
   async function refreshConversations() {
@@ -1636,12 +1648,14 @@ function App({
     webSearch = false,
     webSearchMode: WebSearchMode = "auto",
     conversationIdOverride?: number,
+    runIdOverride?: string,
   ) {
     const content = contentOverride.trim();
     const targetConversationId = conversationIdOverride ?? currentConversationId;
     if (!content || chatBusy || !targetConversationId) return;
     const { HttpAgent } = await import("@ag-ui/client");
     const conversationId = targetConversationId;
+    const executionRunId = runIdOverride ?? createClientId();
     chatAgentRef.current?.abortRun();
     const optimisticId = -Date.now();
     const optimisticAssistantId = optimisticId - 1;
@@ -1843,7 +1857,7 @@ function App({
     try {
       await agent.runAgent(
         {
-          runId: createClientId(),
+          runId: executionRunId,
           tools: [],
           context: [],
           forwardedProps: { conversationId, client: "careerloop-web", attachmentIds, visionAttachmentIds, webSearch, webSearchMode }
@@ -1861,7 +1875,15 @@ function App({
       }
       if (error instanceof DOMException && error.name === "AbortError") return;
       setErrorMessage(error instanceof Error ? error.message : "消息发送失败");
-      setRetryChatDraft({ content, attachmentIds, visionAttachmentIds, webSearch, webSearchMode });
+      setRetryChatDraft({
+        content,
+        attachmentIds,
+        visionAttachmentIds,
+        webSearch,
+        webSearchMode,
+        runId: executionRunId,
+        reason: "send_failed"
+      });
     } finally {
       if (chatAgentRef.current === agent) {
         chatAgentRef.current = null;
@@ -2347,6 +2369,15 @@ function App({
               onSuggestedAction={handleSuggestedAction}
               onCancelTask={() => void cancelCurrentTask()}
               onSend={sendChatMessage}
+              onRetry={(draft) => sendChatMessage(
+                draft.content,
+                draft.attachmentIds,
+                draft.visionAttachmentIds,
+                draft.webSearch,
+                draft.webSearchMode,
+                undefined,
+                draft.runId
+              )}
               onStop={stopChatGeneration}
               onEdit={editChatMessage}
               onRegenerate={regenerateChatMessage}

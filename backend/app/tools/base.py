@@ -11,6 +11,7 @@ from ..tooling import TOOL_SPECS, ToolSpec
 
 class ToolContext(BaseModel):
     platform_name: str
+    agent_run_id: str | None = None
     conversation_id: int | None = None
     task_id: int | None = None
     user_content: str = ""
