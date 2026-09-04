@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
-from time import perf_counter
 from urllib.parse import urlsplit, urlunsplit
 
 from ..domain import (
@@ -19,8 +18,8 @@ from ..domain import (
 )
 from ..profile.candidate_core import get_profile_interview_session
 from ..models import ModelProviderError, ModelProviderRegistry
-from ..observability.tool_call_audit import record_tool_call_event
 from ..tools import ToolContext, ToolRegistry
+from .completion import validate_completion
 from .orchestration import (
     INTERRUPT_TOOLS,
     TaskRoute,
@@ -36,6 +35,7 @@ from .orchestration import (
     visible_tools_prompt,
 )
 from .resume_policy import clarification_from_events, resolve_resume_snapshot
+from .tool_executor import ToolExecutor
 
 
 StreamCallback = Callable[[AgentStreamEvent], Awaitable[None]]
@@ -127,7 +127,7 @@ class AgentRuntime:
         self._model_provider = model_provider
         self._platform_name = platform_name
         self._max_tool_rounds = max_tool_rounds
-        self._tool_timeout_seconds = tool_timeout_seconds
+        self._tool_executor = ToolExecutor(tools, tool_timeout_seconds)
 
     async def run(
         self,
@@ -163,10 +163,12 @@ class AgentRuntime:
         interview_session = _active_profile_interview(conversation_id)
         routing_text = routing_content or user_content
         available_tools = set(self._tools.names())
+        tool_specs = {spec.name: spec for spec in self._tools.specs()}
         route = route_task(
             routing_text,
             available_tools,
             profile_interview_active=interview_session is not None,
+            tool_specs=tool_specs,
         )
         if should_classify_kind(route, routing_text):
             try:
@@ -181,6 +183,7 @@ class AgentRuntime:
                     available_tools,
                     classified,
                     profile_interview_active=interview_session is not None,
+                    tool_specs=tool_specs,
                 )
             except Exception:
                 pass
@@ -202,10 +205,15 @@ class AgentRuntime:
             try:
                 planning_response = await provider.generate(
                     ModelRequest(
-                        messages=[AgentMessage(role="user", content=planner_prompt(user_content, route))]
+                        messages=[
+                            AgentMessage(
+                                role="user",
+                                content=planner_prompt(user_content, route, tool_specs),
+                            )
+                        ]
                     )
                 )
-                plan = parse_plan(planning_response, user_content, route)
+                plan = parse_plan(planning_response, user_content, route, tool_specs)
             except ModelProviderError as exc:
                 event = ToolEvent(
                         round=0,
@@ -347,13 +355,19 @@ class AgentRuntime:
         self._append_visible_tools(messages, executable_tools)
         citation_retry_used = False
         replan_used = False
+        rejected_completions: set[tuple[str, ...]] = set()
 
         for round_number in range(1, self._max_tool_rounds + 1):
             await self._publish(event_callback, AgentStreamEvent(type="text_reset"))
             try:
+                completion = validate_completion(route, events, plan)
                 response = await self._generate_response(
                     provider,
-                    ModelRequest(messages=messages, tools=tool_definitions),
+                    ModelRequest(
+                        messages=messages,
+                        tools=tool_definitions,
+                        tool_choice=completion.tool_choice,
+                    ),
                     event_callback,
                 )
             except ModelProviderError as exc:
@@ -401,6 +415,51 @@ class AgentRuntime:
                     events=events,
                     plan=plan,
                 )
+            if not response.tool_calls:
+                completion = validate_completion(route, events, plan)
+                if not completion.complete:
+                    signature = completion.missing_tools
+                    repeated = signature in rejected_completions
+                    event = ToolEvent(
+                        round=round_number,
+                        tool_call_id=f"completion-validation-{round_number}",
+                        tool_name="completion_validator",
+                        status="failed" if repeated else "running",
+                        message=(
+                            "模型重复跳过必要工具，任务已终止"
+                            if repeated
+                            else "必要步骤尚未完成，正在继续执行"
+                        ),
+                        data={"missing_tools": list(signature)},
+                    )
+                    events.append(event)
+                    await self._publish(
+                        event_callback,
+                        AgentStreamEvent(type="agent_event", event=event),
+                    )
+                    if repeated:
+                        return AgentRunResult(
+                            content="模型未执行完成任务所需的必要步骤。本次执行已终止，请重试。",
+                            provider=self._model_provider,
+                            platform=selected_platform,
+                            rounds=round_number,
+                            status="failed",
+                            error=ToolError(
+                                code="completion_obligations_unmet",
+                                message="模型重复跳过必要工具",
+                                retryable=True,
+                            ),
+                            events=events,
+                            plan=plan,
+                        )
+                    rejected_completions.add(signature)
+                    if response.content:
+                        messages.append(AgentMessage(role="assistant", content=response.content))
+                    messages.append(
+                        AgentMessage(role="system", content=completion.repair_prompt())
+                    )
+                    continue
+
             if response.content and not response.tool_calls:
                 allowed_source_urls = _web_source_urls(messages)
                 if allowed_source_urls:
@@ -548,92 +607,17 @@ class AgentRuntime:
                         ),
                     ),
                 )
-                started_at = perf_counter()
-                try:
-                    handler = self._tools.get(tool_call.name)
-                    result = await asyncio.wait_for(
-                        handler.execute(
-                            tool_call.arguments,
-                            ToolContext(
-                                platform_name=selected_platform,
-                                conversation_id=conversation_id,
-                                task_id=task_id,
-                                user_content=user_content,
-                                web_search_mode=web_search_mode,
-                            ),
-                        ),
-                        timeout=self._tool_timeout_seconds,
-                    )
-                except asyncio.TimeoutError:
-                    self._record_tool_call(
-                        conversation_id, round_number, tool_call.id, tool_call.name,
-                        "failed", started_at, error_code="tool_timeout",
-                    )
-                    message = f"工具 {tool_call.name} 执行超时"
-                    round_error = ToolError(
-                        code="tool_timeout",
-                        message=message,
-                        retryable=True,
-                    )
-                    event = ToolEvent(
-                            round=round_number,
-                            tool_call_id=tool_call.id,
-                            tool_name=tool_call.name,
-                            status="failed",
-                            message=message,
-                            data={"status": "failed", "error": "timeout"},
-                        )
-                    events.append(event)
-                    await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
-                    if plan_step is not None:
-                        plan_step.status = "failed"
-                    return AgentRunResult(
-                        content=f"{message}。本次执行已终止，请处理后重新提问。",
-                        provider=self._model_provider,
-                        platform=selected_platform,
-                        rounds=round_number,
-                        status="failed",
-                        error=round_error,
-                        events=events,
-                        plan=plan,
-                    )
-                except Exception as exc:
-                    self._record_tool_call(
-                        conversation_id, round_number, tool_call.id, tool_call.name,
-                        "failed", started_at, error_code="tool_execution_failed",
-                    )
-                    result_data = {"status": "failed", "error": str(exc)}
-                    round_error = ToolError(
-                        code="tool_execution_failed",
-                        message=f"工具执行失败：{exc}",
-                    )
-                    event = ToolEvent(
-                            round=round_number,
-                            tool_call_id=tool_call.id,
-                            tool_name=tool_call.name,
-                            status="failed",
-                            message=f"工具执行失败：{exc}",
-                            data=result_data,
-                        )
-                    events.append(event)
-                    await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
-                    if plan_step is not None:
-                        plan_step.status = "failed"
-                    return AgentRunResult(
-                        content=f"工具执行失败：{exc}。本次执行已终止，请处理后重新提问。",
-                        provider=self._model_provider,
-                        platform=selected_platform,
-                        rounds=round_number,
-                        status="failed",
-                        error=round_error,
-                        events=events,
-                        plan=plan,
-                    )
-
-                self._record_tool_call(
-                    conversation_id, round_number, tool_call.id, tool_call.name,
-                    result.status, started_at,
-                    error_code=result.error.code if result.error else "",
+                result = await self._tool_executor.execute(
+                    tool_call,
+                    ToolContext(
+                        platform_name=selected_platform,
+                        conversation_id=conversation_id,
+                        task_id=task_id,
+                        user_content=user_content,
+                        web_search_mode=web_search_mode,
+                    ),
+                    round_number=round_number,
+                    conversation_id=conversation_id,
                 )
                 event = ToolEvent(
                         round=round_number,
@@ -670,6 +654,10 @@ class AgentRuntime:
                     )
                     if (
                         result.status == "failed"
+                        and (
+                            result.error is None
+                            or result.error.code not in {"tool_timeout", "tool_execution_failed"}
+                        )
                         and not replan_used
                         and plan is not None
                         and route.needs_plan
@@ -753,6 +741,7 @@ class AgentRuntime:
             kind=resume.route_kind,
             needs_plan=resume.needs_plan,
             allowed_tools=tuple(resume.allowed_tools),
+            required_tools=tuple(resume.required_tools),
         )
         plan = resume.plan
         events: list[ToolEvent] = [
@@ -839,6 +828,7 @@ class AgentRuntime:
                 route_kind=route.kind,
                 needs_plan=route.needs_plan,
                 allowed_tools=list(route.allowed_tools),
+                required_tools=list(route.required_tools),
                 plan=plan,
                 messages=messages,
                 replan_used=replan_used,
@@ -848,11 +838,20 @@ class AgentRuntime:
             ),
         )
 
-    @staticmethod
-    def _append_visible_tools(messages: list[AgentMessage], executable_tools: set[str]) -> None:
+    def _append_visible_tools(
+        self,
+        messages: list[AgentMessage],
+        executable_tools: set[str],
+    ) -> None:
         rest = sorted(name for name in executable_tools if name not in INTERRUPT_TOOLS)
         interrupt = [name for name in INTERRUPT_TOOLS if name in executable_tools]
-        messages.append(AgentMessage(role="system", content=visible_tools_prompt(rest + interrupt)))
+        specs = {spec.name: spec for spec in self._tools.specs()}
+        messages.append(
+            AgentMessage(
+                role="system",
+                content=visible_tools_prompt(rest + interrupt, specs),
+            )
+        )
 
     async def _run_tool_loop(self, **kwargs):
         """Resume path only: reuse the same loop body via a nested run-like call.
@@ -882,12 +881,18 @@ class AgentRuntime:
         start_round: int,
     ) -> AgentRunResult:
         unresolved_error: ToolError | None = None
+        rejected_completions: set[tuple[str, ...]] = set()
         for round_number in range(start_round, self._max_tool_rounds + 1):
             await self._publish(event_callback, AgentStreamEvent(type="text_reset"))
             try:
+                completion = validate_completion(route, events, plan)
                 response = await self._generate_response(
                     provider,
-                    ModelRequest(messages=messages, tools=tool_definitions),
+                    ModelRequest(
+                        messages=messages,
+                        tools=tool_definitions,
+                        tool_choice=completion.tool_choice,
+                    ),
                     event_callback,
                 )
             except ModelProviderError as exc:
@@ -932,6 +937,51 @@ class AgentRuntime:
                     events=events,
                     plan=plan,
                 )
+            if not response.tool_calls:
+                completion = validate_completion(route, events, plan)
+                if not completion.complete:
+                    signature = completion.missing_tools
+                    repeated = signature in rejected_completions
+                    event = ToolEvent(
+                        round=round_number,
+                        tool_call_id=f"completion-validation-{round_number}",
+                        tool_name="completion_validator",
+                        status="failed" if repeated else "running",
+                        message=(
+                            "模型重复跳过必要工具，任务已终止"
+                            if repeated
+                            else "必要步骤尚未完成，正在继续执行"
+                        ),
+                        data={"missing_tools": list(signature)},
+                    )
+                    events.append(event)
+                    await self._publish(
+                        event_callback,
+                        AgentStreamEvent(type="agent_event", event=event),
+                    )
+                    if repeated:
+                        return AgentRunResult(
+                            content="模型未执行完成任务所需的必要步骤。本次执行已终止，请重试。",
+                            provider=self._model_provider,
+                            platform=selected_platform,
+                            rounds=round_number,
+                            status="failed",
+                            error=ToolError(
+                                code="completion_obligations_unmet",
+                                message="模型重复跳过必要工具",
+                                retryable=True,
+                            ),
+                            events=events,
+                            plan=plan,
+                        )
+                    rejected_completions.add(signature)
+                    if response.content:
+                        messages.append(AgentMessage(role="assistant", content=response.content))
+                    messages.append(
+                        AgentMessage(role="system", content=completion.repair_prompt())
+                    )
+                    continue
+
             if response.content and not response.tool_calls:
                 allowed_source_urls = _web_source_urls(messages)
                 if allowed_source_urls:
@@ -1066,80 +1116,16 @@ class AgentRuntime:
                         ),
                     ),
                 )
-                started_at = perf_counter()
-                try:
-                    handler = self._tools.get(tool_call.name)
-                    result = await asyncio.wait_for(
-                        handler.execute(
-                            tool_call.arguments,
-                            ToolContext(
-                                platform_name=selected_platform,
-                                conversation_id=conversation_id,
-                                task_id=task_id,
-                                user_content=user_content,
-                            ),
-                        ),
-                        timeout=self._tool_timeout_seconds,
-                    )
-                except asyncio.TimeoutError:
-                    self._record_tool_call(
-                        conversation_id, round_number, tool_call.id, tool_call.name,
-                        "failed", started_at, error_code="tool_timeout",
-                    )
-                    message = f"工具 {tool_call.name} 执行超时"
-                    event = ToolEvent(
-                        round=round_number,
-                        tool_call_id=tool_call.id,
-                        tool_name=tool_call.name,
-                        status="failed",
-                        message=message,
-                        data={"status": "failed", "error": "timeout"},
-                    )
-                    events.append(event)
-                    await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
-                    if plan_step is not None:
-                        plan_step.status = "failed"
-                    return AgentRunResult(
-                        content=f"{message}。本次执行已终止，请处理后重新提问。",
-                        provider=self._model_provider,
-                        platform=selected_platform,
-                        rounds=round_number,
-                        status="failed",
-                        error=ToolError(code="tool_timeout", message=message, retryable=True),
-                        events=events,
-                        plan=plan,
-                    )
-                except Exception as exc:
-                    self._record_tool_call(
-                        conversation_id, round_number, tool_call.id, tool_call.name,
-                        "failed", started_at, error_code="tool_execution_failed",
-                    )
-                    event = ToolEvent(
-                        round=round_number,
-                        tool_call_id=tool_call.id,
-                        tool_name=tool_call.name,
-                        status="failed",
-                        message=f"工具执行失败：{exc}",
-                        data={"status": "failed", "error": str(exc)},
-                    )
-                    events.append(event)
-                    await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
-                    if plan_step is not None:
-                        plan_step.status = "failed"
-                    return AgentRunResult(
-                        content=f"工具执行失败：{exc}。本次执行已终止，请处理后重新提问。",
-                        provider=self._model_provider,
-                        platform=selected_platform,
-                        rounds=round_number,
-                        status="failed",
-                        error=ToolError(code="tool_execution_failed", message=f"工具执行失败：{exc}"),
-                        events=events,
-                        plan=plan,
-                    )
-                self._record_tool_call(
-                    conversation_id, round_number, tool_call.id, tool_call.name,
-                    result.status, started_at,
-                    error_code=result.error.code if result.error else "",
+                result = await self._tool_executor.execute(
+                    tool_call,
+                    ToolContext(
+                        platform_name=selected_platform,
+                        conversation_id=conversation_id,
+                        task_id=task_id,
+                        user_content=user_content,
+                    ),
+                    round_number=round_number,
+                    conversation_id=conversation_id,
                 )
                 event = ToolEvent(
                     round=round_number,
@@ -1176,6 +1162,10 @@ class AgentRuntime:
                     )
                     if (
                         result.status == "failed"
+                        and (
+                            result.error is None
+                            or result.error.code not in {"tool_timeout", "tool_execution_failed"}
+                        )
                         and not replan_used
                         and plan is not None
                         and route.needs_plan
@@ -1263,17 +1253,24 @@ class AgentRuntime:
         events.append(event)
         await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
         try:
+            tool_specs = {spec.name: spec for spec in self._tools.specs()}
             response = await provider.generate(
                 ModelRequest(
                     messages=[
                         AgentMessage(
                             role="user",
-                            content=replan_prompt(user_content, route, failed_tool, error_message),
+                            content=replan_prompt(
+                                user_content,
+                                route,
+                                failed_tool,
+                                error_message,
+                                tool_specs,
+                            ),
                         )
                     ]
                 )
             )
-            plan = parse_plan(response, user_content, route)
+            plan = parse_plan(response, user_content, route, tool_specs)
         except Exception:
             failed = ToolEvent(
                 round=round_number,
@@ -1414,28 +1411,3 @@ class AgentRuntime:
     ) -> None:
         if callback is not None:
             await callback(event)
-
-    @staticmethod
-    def _record_tool_call(
-        conversation_id: int | None,
-        round_number: int,
-        tool_call_id: str,
-        tool_name: str,
-        status: str,
-        started_at: float,
-        *,
-        error_code: str = "",
-    ) -> None:
-        try:
-            record_tool_call_event(
-                conversation_id=conversation_id,
-                round_number=round_number,
-                tool_call_id=tool_call_id,
-                tool_name=tool_name,
-                status=status,
-                latency_ms=round((perf_counter() - started_at) * 1000),
-                error_code=error_code,
-            )
-        except Exception:
-            # Auditing is best-effort and must never break a successful tool call.
-            pass

@@ -11,6 +11,7 @@ from app.agent.orchestration import (
     build_task_route,
     classifier_prompt,
     detect_kind,
+    parse_plan,
     parse_classified_kind,
     refine_route_from_classifier,
     route_task,
@@ -19,6 +20,7 @@ from app.agent.orchestration import (
     tools_for_kind,
 )
 from app.domain import ModelResponse, ToolCall
+from app.tooling import ToolSpec
 
 
 AVAILABLE = set(TOOL_POLICIES)
@@ -38,6 +40,32 @@ class RouteCompilerTest(unittest.TestCase):
             {"research_company", "analyze_resume_against_jd", "search_resume_evidence"},
         )
         self.assertEqual(tools, ("research_company",))
+
+    def test_capability_metadata_can_supply_a_new_tool_without_route_name_changes(self) -> None:
+        replacement = ToolSpec(
+            name="generic_entity_research",
+            title="通用实体研究",
+            risk="external_read",
+            capabilities=frozenset({"company.research"}),
+            priority=5,
+        )
+
+        route = build_task_route(
+            "company_research",
+            "调查这家公司",
+            {replacement.name},
+            tool_specs={replacement.name: replacement},
+        )
+
+        self.assertEqual(route.allowed_tools, ("generic_entity_research",))
+        self.assertEqual(route.required_tools, ("generic_entity_research",))
+        plan = parse_plan(
+            ModelResponse(content="not-json"),
+            "调查这家公司",
+            route,
+            {replacement.name: replacement},
+        )
+        self.assertEqual([step.tool_name for step in plan.steps], [replacement.name])
 
     def test_screenshot_marker_is_stripped_then_hard_gated(self) -> None:
         raw = f"帮我看看\n{JOB_SCREENSHOT_MARKER}"

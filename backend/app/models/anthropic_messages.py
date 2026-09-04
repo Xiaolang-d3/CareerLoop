@@ -245,13 +245,25 @@ class AnthropicMessagesProvider:
 
     def _request_body(self, request: ModelRequest) -> dict[str, Any]:
         settings = get_agent_settings()
+        extra_instructions = "\n".join(
+            message.content
+            for message in request.messages
+            if message.role == "system" and message.content
+        )
+        system = SYSTEM_PROMPT + persona_prompt(settings)
+        if extra_instructions:
+            system = f"{system}\n{extra_instructions}"
         body: dict[str, Any] = {
             "model": self._model,
             "max_tokens": 4096,
-            "system": SYSTEM_PROMPT + persona_prompt(settings),
-            "messages": [self._convert_message(message) for message in request.messages],
+            "system": system,
+            "messages": [
+                self._convert_message(message)
+                for message in request.messages
+                if message.role != "system"
+            ],
         }
-        if request.tools:
+        if request.tools and request.tool_choice != "none":
             body["tools"] = [
                 {
                     "name": tool.name,
@@ -260,7 +272,9 @@ class AnthropicMessagesProvider:
                 }
                 for tool in request.tools
             ]
-            body["tool_choice"] = {"type": "auto"}
+            body["tool_choice"] = {
+                "type": "any" if request.tool_choice == "required" else "auto"
+            }
         return body
 
     @staticmethod

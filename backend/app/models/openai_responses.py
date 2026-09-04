@@ -163,7 +163,7 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
                 }
                 for tool in request.tools
             ]
-            arguments["tool_choice"] = "auto"
+            arguments["tool_choice"] = request.tool_choice
         return arguments
 
     @staticmethod

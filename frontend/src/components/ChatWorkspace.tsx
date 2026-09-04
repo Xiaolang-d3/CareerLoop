@@ -549,7 +549,13 @@ function EditMessageComposer() {
 const STREAMING_THINKING_TITLE = "正在整理要点";
 const GENERIC_TASK_MESSAGE = /^(?:正在执行(?:\s+\S+)?|running|in progress)$/i;
 const ROUTE_SUMMARY_MESSAGE = /^已识别为/;
-const SYSTEM_THINKING_TOOLS = new Set(["agent_thinking", "agent_planner", "model_provider", "citation_validator"]);
+const SYSTEM_THINKING_TOOLS = new Set([
+  "agent_thinking",
+  "agent_planner",
+  "model_provider",
+  "completion_validator",
+  "citation_validator"
+]);
 const TOOL_ACTIVITY_LABELS: Record<string, string> = {
   search_public_web: "正在检索公开资料",
   research_company: "正在检索公司资料",
@@ -573,6 +579,7 @@ const TOOL_ACTIVITY_LABELS: Record<string, string> = {
   agent_thinking: STREAMING_THINKING_TITLE,
   agent_planner: "正在规划步骤",
   model_provider: "正在生成回答",
+  completion_validator: "正在补齐必要步骤",
   citation_validator: "正在核对引用",
   ask_user: "需要你确认",
   agent_tool: "正在执行任务"

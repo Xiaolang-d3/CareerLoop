@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from app.agent.orchestration import (
-    REQUIRED_BY_ROUTE,
+    REQUIRED_CAPABILITIES_BY_ROUTE,
     TOOL_POLICIES,
     build_task_route,
     parse_plan,
@@ -30,16 +30,19 @@ LANE_PROBES = {
 class RequiredToolsTest(unittest.TestCase):
     def test_required_aliases_intersect_allowed_tools(self) -> None:
         available = set(TOOL_POLICIES)
-        self.assertEqual(set(LANE_PROBES), set(REQUIRED_BY_ROUTE))
-        for kind, alias_groups in REQUIRED_BY_ROUTE.items():
+        self.assertEqual(set(LANE_PROBES), set(REQUIRED_CAPABILITIES_BY_ROUTE))
+        for kind, capabilities in REQUIRED_CAPABILITIES_BY_ROUTE.items():
             route = build_task_route(kind, LANE_PROBES[kind], available)
             self.assertTrue(route.needs_plan, kind)
             required = required_tools_for_route(route)
             self.assertTrue(required, kind)
-            for aliases in alias_groups:
+            for capability in capabilities:
                 self.assertTrue(
-                    set(aliases) & set(route.allowed_tools),
-                    (kind, aliases, route.allowed_tools),
+                    any(
+                        capability in TOOL_POLICIES[name].capabilities
+                        for name in required
+                    ),
+                    (kind, capability, route.allowed_tools),
                 )
 
     def test_parse_plan_injects_preferred_resume_tool(self) -> None:

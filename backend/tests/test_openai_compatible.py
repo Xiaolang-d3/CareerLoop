@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 
-from app.domain import AgentMessage, ModelRequest
+from app.domain import AgentMessage, ModelRequest, ToolDefinition
 from app.models.base import ModelProviderError
 from app.models.openai_compatible import SYSTEM_PROMPT, OpenAICompatibleProvider
 
@@ -48,6 +48,29 @@ class OpenAICompatibleProviderTest(unittest.TestCase):
         ):
             self.assertNotIn(name, SYSTEM_PROMPT)
         self.assertNotIn("waiting_approval", SYSTEM_PROMPT)
+
+    def test_required_tool_choice_is_forwarded_to_chat_completions(self) -> None:
+        provider = OpenAICompatibleProvider(
+            api_key="test-key",
+            model="test-model",
+            base_url="https://gateway.example.test",
+        )
+
+        arguments = provider._request_arguments(
+            ModelRequest(
+                messages=[AgentMessage(role="user", content="查询")],
+                tools=[
+                    ToolDefinition(
+                        name="lookup",
+                        description="查询",
+                        input_schema={"type": "object"},
+                    )
+                ],
+                tool_choice="required",
+            )
+        )
+
+        self.assertEqual(arguments["tool_choice"], "required")
 
     def test_user_message_with_image_urls_uses_multimodal_content_blocks(self) -> None:
         converted = OpenAICompatibleProvider._convert_message(

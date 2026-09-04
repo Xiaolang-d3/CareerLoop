@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from ..tooling import TOOL_SPECS
+
 
 # 有序阶段：(stage_id, 展示标题, 未完成时的提示语)
 STAGE_DEFS: tuple[tuple[str, str, str], ...] = (
@@ -50,35 +52,10 @@ ROUTE_STAGES: dict[str, str | None] = {
 
 # 工具名 -> stage_id。键集合必须与 orchestration.TOOL_POLICIES 一致。
 # 只收录真实工具；runtime 发出的合成事件名（agent_thinking / agent_planner /
-# model_provider / citation_validator）不在此处，因而会被自动忽略。
+# model_provider / completion_validator / citation_validator）不在此处，因而会被自动忽略。
 # None 表示该工具不推进任何阶段（例如向用户确认）。
 TOOL_STAGES: dict[str, str | None] = {
-    # 候选人画像与知识
-    "search_resume_evidence": "candidate_knowledge",
-    "get_candidate_context": "candidate_knowledge",
-    "search_candidate_evidence": "candidate_knowledge",
-    "propose_candidate_knowledge": "candidate_knowledge",
-    "start_profile_interview": "candidate_knowledge",
-    "record_profile_interview_answer": "candidate_knowledge",
-    "pause_profile_interview": "candidate_knowledge",
-    # 岗位评估与决策
-    "analyze_resume_against_jd": "job_evaluation",
-    "analyze_job_against_strategy": "job_evaluation",
-    "research_company": "job_evaluation",
-    "search_public_web": "job_evaluation",
-    "create_job_evaluation": "job_evaluation",
-    "get_job_evaluation": "job_evaluation",
-    "review_job_evaluation": "job_evaluation",
-    "compare_job_evaluations": "job_evaluation",
-    # 求职材料准备
-    "generate_tailored_resume_content": "material_preparation",
-    "generate_candidate_material": "material_preparation",
-    # 面试准备
-    "generate_interview_advice": "interview_preparation",
-    # 结果与复盘
-    "record_interview_debrief": "outcome_tracking",
-    # 不推进阶段
-    "ask_user": None,
+    name: spec.stage_id for name, spec in TOOL_SPECS.items()
 }
 
 

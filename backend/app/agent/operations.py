@@ -11,7 +11,13 @@ from ..db import connect
 
 WINDOW_OPTIONS = {7, 30, 90}
 TERMINAL_TOOL_STATUSES = {"done", "failed", "blocked", "waiting_approval", "cancelled"}
-SYSTEM_EVENT_TOOLS = {"agent_thinking", "agent_planner", "model_provider"}
+SYSTEM_EVENT_TOOLS = {
+    "agent_thinking",
+    "agent_planner",
+    "model_provider",
+    "completion_validator",
+    "citation_validator",
+}
 TOOL_LABELS = {
     "analyze_resume_against_jd": "简历与 JD 分析",
     "search_resume_evidence": "简历证据检索",
@@ -19,7 +25,6 @@ TOOL_LABELS = {
     "generate_interview_advice": "面试建议",
     "research_company": "公司研究",
     "search_public_web": "公开网络搜索",
-    "citation_validator": "引用校验",
 }
 
 

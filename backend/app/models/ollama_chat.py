@@ -172,7 +172,7 @@ class OllamaChatProvider:
         messages = [{"role": "system", "content": SYSTEM_PROMPT + persona_prompt(settings)}]
         messages.extend(self._convert_message(message) for message in request.messages)
         body: dict[str, Any] = {"model": self._model, "messages": messages}
-        if request.tools:
+        if request.tools and request.tool_choice != "none":
             body["tools"] = [
                 {
                     "type": "function",
@@ -184,6 +184,13 @@ class OllamaChatProvider:
                 }
                 for tool in request.tools
             ]
+            if request.tool_choice == "required":
+                body["messages"].append(
+                    {
+                        "role": "system",
+                        "content": "本轮必须调用一个已提供的工具，不要直接返回最终回答。",
+                    }
+                )
         return body
 
     @staticmethod

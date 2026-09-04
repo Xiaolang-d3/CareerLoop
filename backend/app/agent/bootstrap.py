@@ -105,6 +105,7 @@ def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
         "model_providers": models.names(),
         "platforms": ["manual"],
         "tools": tools.names(),
+        "tool_specs": [spec.model_dump(mode="json") for spec in tools.specs()],
         "web_research": {
             "enabled": settings.web_research_enabled,
             "provider": "agent_search" if settings.web_research_enabled else "disabled",

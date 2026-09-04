@@ -3,47 +3,15 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Literal
 
 from pydantic import ValidationError
 
 from ..domain import AgentPlan, AgentPlanStep, ModelResponse
+from ..tooling import TOOL_SPECS, ToolSpec
 
 
-ToolRisk = Literal[
-    "read_only", "derived_analysis", "local_pending_write",
-    "confirmed_local_write", "external_read",
-]
-
-
-@dataclass(frozen=True)
-class ToolPolicy:
-    risk: ToolRisk
-    title: str
-
-
-TOOL_POLICIES: dict[str, ToolPolicy] = {
-    "analyze_resume_against_jd": ToolPolicy("derived_analysis", "对比 JD 与当前简历"),
-    "search_resume_evidence": ToolPolicy("read_only", "检索简历真实证据"),
-    "generate_tailored_resume_content": ToolPolicy("derived_analysis", "生成高匹配简历内容"),
-    "generate_interview_advice": ToolPolicy("derived_analysis", "生成个人化面试建议"),
-    "research_company": ToolPolicy("external_read", "搜索并核验公开公司资料"),
-    "search_public_web": ToolPolicy("external_read", "搜索公开互联网资料"),
-    "get_candidate_context": ToolPolicy("read_only", "装配最小候选人上下文"),
-    "search_candidate_evidence": ToolPolicy("read_only", "检索已确认候选人证据"),
-    "propose_candidate_knowledge": ToolPolicy("local_pending_write", "创建待确认候选人知识"),
-    "start_profile_interview": ToolPolicy("local_pending_write", "开始或恢复对话式画像访谈"),
-    "record_profile_interview_answer": ToolPolicy("local_pending_write", "记录画像访谈回答"),
-    "pause_profile_interview": ToolPolicy("local_pending_write", "暂停对话式画像访谈"),
-    "analyze_job_against_strategy": ToolPolicy("derived_analysis", "按职业策略分析岗位"),
-    "generate_candidate_material": ToolPolicy("derived_analysis", "生成可信候选人材料"),
-    "record_interview_debrief": ToolPolicy("local_pending_write", "记录面试复盘"),
-    "create_job_evaluation": ToolPolicy("external_read", "生成完整岗位决策报告"),
-    "get_job_evaluation": ToolPolicy("read_only", "读取岗位决策报告"),
-    "review_job_evaluation": ToolPolicy("confirmed_local_write", "审核岗位决策报告"),
-    "compare_job_evaluations": ToolPolicy("derived_analysis", "比较完整岗位评估"),
-    "ask_user": ToolPolicy("read_only", "向用户确认不明确的信息"),
-}
+# Compatibility name for callers while route policy migrates to capabilities.
+TOOL_POLICIES: dict[str, ToolSpec] = TOOL_SPECS
 
 
 # Always visible to the model, never part of a lane plan, and never blocked as
@@ -56,6 +24,7 @@ class TaskRoute:
     kind: str
     needs_plan: bool
     allowed_tools: tuple[str, ...]
+    required_tools: tuple[str, ...] = ()
 
 
 ROUTE_LABELS = {
@@ -82,11 +51,6 @@ ROUTE_LABELS = {
 WEB_SEARCH_MARKER = "[系统可信开关：本轮允许联网搜索]"
 JOB_SCREENSHOT_MARKER = "[系统确认：本轮请求分析岗位截图]"
 ROUTING_MARKERS = (WEB_SEARCH_MARKER, JOB_SCREENSHOT_MARKER)
-INTERVIEW_TOOLS = (
-    "record_profile_interview_answer",
-    "pause_profile_interview",
-    "start_profile_interview",
-)
 SIMPLE_CONVERSATION_MESSAGES = frozenset(
     {
         "hi",
@@ -292,80 +256,89 @@ def tools_for_kind(
     kind: str,
     content: str,
     available_tools: set[str],
+    tool_specs: dict[str, ToolSpec] | None = None,
 ) -> tuple[str, ...]:
-    """Expand a lane into the smallest registered tool surface. Never invents tools."""
+    """Compose the smallest registered tool surface from capability metadata."""
     flags = _intent_flags(strip_routing_markers(content))
     text = flags.text
     tools: list[str] = []
+    specs = tool_specs or TOOL_SPECS
 
-    def add(*names: str) -> None:
-        for name in names:
-            if name in available_tools and name not in tools:
-                tools.append(name)
-
-    def add_preferred(preferred: str, fallback: str) -> None:
-        add(preferred if preferred in available_tools else fallback)
+    def add_capability(capability: str, *, all_matches: bool = False) -> None:
+        matches = sorted(
+            (
+                spec
+                for name, spec in specs.items()
+                if name in available_tools and capability in spec.capabilities
+            ),
+            key=lambda spec: (spec.priority, spec.name),
+        )
+        for spec in matches if all_matches else matches[:1]:
+            if spec.name not in tools:
+                tools.append(spec.name)
 
     if kind == "job_evaluation":
         if any(phrase in text for phrase in ("比较岗位", "岗位比较")):
-            add("compare_job_evaluations", "get_job_evaluation")
+            add_capability("report.compare")
+            add_capability("report.read")
         elif any(phrase in text for phrase in ("审核评估", "确认风险", "驳回风险")):
-            add("review_job_evaluation", "get_job_evaluation")
+            add_capability("report.review")
+            add_capability("report.read")
         else:
-            add("create_job_evaluation", "get_job_evaluation")
+            add_capability("report.generate")
+            add_capability("report.read")
     elif kind == "interview_debrief":
-        add("record_interview_debrief", "get_candidate_context")
+        add_capability("candidate.debrief")
+        add_capability("candidate.context")
     elif kind == "profile_onboarding":
-        add(
-            "start_profile_interview",
-            "record_profile_interview_answer",
-            "pause_profile_interview",
-            "get_candidate_context",
-            "propose_candidate_knowledge",
-        )
+        add_capability("dialog.start")
+        add_capability("dialog.record")
+        add_capability("dialog.pause")
+        add_capability("candidate.context")
+        add_capability("candidate.memory")
     elif kind == "profile_enrichment":
-        add(
-            "record_profile_interview_answer",
-            "start_profile_interview",
-            "pause_profile_interview",
-            "get_candidate_context",
-            "propose_candidate_knowledge",
-        )
+        add_capability("dialog.record")
+        add_capability("dialog.start")
+        add_capability("dialog.pause")
+        add_capability("candidate.context")
+        add_capability("candidate.memory")
     elif kind == "career_strategy":
-        add("get_candidate_context", "propose_candidate_knowledge")
+        add_capability("candidate.context")
+        add_capability("candidate.memory")
     elif kind == "skill_growth":
-        add("get_candidate_context", "search_candidate_evidence")
+        add_capability("candidate.context")
+        add_capability("memory.search")
     elif kind == "company_research":
-        add("research_company")
+        add_capability("company.research")
     elif kind == "web_search":
-        add("search_public_web")
+        add_capability("web.search.generic")
     elif kind == "job_due_diligence":
-        add_preferred("analyze_resume_against_jd", "analyze_job_against_strategy")
-        add_preferred("search_resume_evidence", "search_candidate_evidence")
-        add("research_company")
+        add_capability("candidate.match")
+        add_capability("candidate.evidence")
+        add_capability("company.research")
     elif kind == "career_package":
-        add_preferred("analyze_resume_against_jd", "analyze_job_against_strategy")
-        add_preferred("search_resume_evidence", "search_candidate_evidence")
-        add_preferred("generate_tailored_resume_content", "generate_candidate_material")
-        add("generate_interview_advice")
+        add_capability("candidate.match")
+        add_capability("candidate.evidence")
+        add_capability("candidate.material")
+        add_capability("candidate.advice")
     elif kind == "tailored_resume":
-        add_preferred("analyze_resume_against_jd", "analyze_job_against_strategy")
-        add_preferred("search_resume_evidence", "search_candidate_evidence")
-        add_preferred("generate_tailored_resume_content", "generate_candidate_material")
+        add_capability("candidate.match")
+        add_capability("candidate.evidence")
+        add_capability("candidate.material")
     elif kind == "interview_preparation":
-        add_preferred("analyze_resume_against_jd", "analyze_job_against_strategy")
-        add_preferred("search_resume_evidence", "search_candidate_evidence")
-        add_preferred("generate_interview_advice", "generate_candidate_material")
+        add_capability("candidate.match")
+        add_capability("candidate.evidence")
+        add_capability("candidate.advice")
     elif kind == "project_story":
-        add("get_candidate_context")
-        add_preferred("search_resume_evidence", "search_candidate_evidence")
+        add_capability("candidate.context")
+        add_capability("candidate.evidence")
     elif kind == "jd_analysis":
-        add_preferred("analyze_resume_against_jd", "analyze_job_against_strategy")
-        add_preferred("search_resume_evidence", "search_candidate_evidence")
+        add_capability("candidate.match")
+        add_capability("candidate.evidence")
     elif kind == "resume_evidence":
-        add_preferred("search_resume_evidence", "search_candidate_evidence")
+        add_capability("candidate.evidence")
     elif kind == "profile_analysis":
-        add_preferred("search_resume_evidence", "search_candidate_evidence")
+        add_capability("candidate.evidence")
     return tuple(tools)
 
 
@@ -375,20 +348,38 @@ def build_task_route(
     available_tools: set[str],
     *,
     profile_interview_active: bool = False,
+    tool_specs: dict[str, ToolSpec] | None = None,
 ) -> TaskRoute:
     """Assemble a route from a lane name. Interview session is a hard rule, not a classifier input."""
     resolved = kind if kind in ROUTE_LABELS else "conversation"
-    tools = list(tools_for_kind(resolved, content, available_tools))
+    specs = tool_specs or TOOL_SPECS
+    tools = list(tools_for_kind(resolved, content, available_tools, specs))
     if profile_interview_active:
         # A running interview makes every reply a possible answer. Keep the
         # current lane unless this turn was open conversation, and only admit
         # the interview tools — do not expand the full enrichment surface.
         if resolved == "conversation":
             resolved = "profile_enrichment"
-        for name in INTERVIEW_TOOLS:
-            if name in available_tools and name not in tools:
-                tools.append(name)
-    return TaskRoute(kind=resolved, needs_plan=bool(tools), allowed_tools=tuple(tools))
+        interview_capabilities = ("dialog.record", "dialog.pause", "dialog.start")
+        for capability in interview_capabilities:
+            match = min(
+                (
+                    spec
+                    for name, spec in specs.items()
+                    if name in available_tools and capability in spec.capabilities
+                ),
+                key=lambda spec: (spec.priority, spec.name),
+                default=None,
+            )
+            if match is not None and match.name not in tools:
+                tools.append(match.name)
+    route = TaskRoute(kind=resolved, needs_plan=bool(tools), allowed_tools=tuple(tools))
+    return TaskRoute(
+        kind=route.kind,
+        needs_plan=route.needs_plan,
+        allowed_tools=route.allowed_tools,
+        required_tools=tuple(required_tools_for_route(route, specs)),
+    )
 
 
 def route_task(
@@ -396,6 +387,7 @@ def route_task(
     available_tools: set[str],
     *,
     profile_interview_active: bool = False,
+    tool_specs: dict[str, ToolSpec] | None = None,
 ) -> TaskRoute:
     """Keyword fast path plus hard gates. Does not call the model."""
     kind = apply_hard_gates(content, detect_kind(content))
@@ -404,6 +396,7 @@ def route_task(
         content,
         available_tools,
         profile_interview_active=profile_interview_active,
+        tool_specs=tool_specs,
     )
 
 
@@ -456,6 +449,7 @@ def refine_route_from_classifier(
     response: ModelResponse,
     *,
     profile_interview_active: bool = False,
+    tool_specs: dict[str, ToolSpec] | None = None,
 ) -> TaskRoute:
     """Apply a kind-only classifier result. Invalid output leaves the keyword route."""
     if not should_classify_kind(route, content):
@@ -468,6 +462,7 @@ def refine_route_from_classifier(
         content,
         available_tools,
         profile_interview_active=profile_interview_active,
+        tool_specs=tool_specs,
     )
 
 
@@ -502,13 +497,17 @@ def tool_progress_message(tool_name: str, arguments: dict | None = None) -> str:
     return "正在执行"
 
 
-def visible_tools_prompt(tool_names: list[str]) -> str:
+def visible_tools_prompt(
+    tool_names: list[str],
+    tool_specs: dict[str, ToolSpec] | None = None,
+) -> str:
     """Tell the model the exact tool surface for this turn. Names only come from the runtime."""
     if not tool_names:
         return "本轮没有可调用的工具。直接说明当前能力缺失，不要点名或调用未提供的工具。"
+    specs = tool_specs or TOOL_SPECS
     lines = []
     for name in tool_names:
-        policy = TOOL_POLICIES.get(name)
+        policy = specs.get(name)
         title = policy.title if policy else name
         lines.append(f"- {name}: {title}")
     return (
@@ -518,44 +517,57 @@ def visible_tools_prompt(tool_names: list[str]) -> str:
     )
 
 
-# Each lane lists required skills as alias groups. parse_plan injects the first
-# name that is actually in allowed_tools, matching tools_for_kind / add_preferred.
-REQUIRED_BY_ROUTE: dict[str, tuple[tuple[str, ...], ...]] = {
-    "company_research": (("research_company",),),
-    "web_search": (("search_public_web",),),
-    "job_due_diligence": (
-        ("analyze_resume_against_jd", "analyze_job_against_strategy"),
-        ("research_company",),
-    ),
-    "profile_analysis": (("search_resume_evidence", "search_candidate_evidence"),),
-    "project_story": (
-        ("get_candidate_context",),
-        ("search_resume_evidence", "search_candidate_evidence"),
-    ),
-    "tailored_resume": (("generate_tailored_resume_content", "generate_candidate_material"),),
-    "interview_preparation": (("generate_interview_advice", "generate_candidate_material"),),
-    "career_package": (("generate_tailored_resume_content", "generate_candidate_material"),),
-    "interview_debrief": (("record_interview_debrief",),),
-    "profile_onboarding": (("start_profile_interview",),),
-    "profile_enrichment": (("record_profile_interview_answer",),),
+# Each lane lists the capabilities that must produce a successful event before
+# the run can finish. The concrete tool is resolved from the current tool surface.
+REQUIRED_CAPABILITIES_BY_ROUTE: dict[str, tuple[str, ...]] = {
+    "company_research": ("company.research",),
+    "web_search": ("web.search.generic",),
+    "job_due_diligence": ("candidate.match", "company.research"),
+    "profile_analysis": ("candidate.evidence",),
+    "project_story": ("candidate.context", "candidate.evidence"),
+    "tailored_resume": ("candidate.material",),
+    "interview_preparation": ("candidate.advice",),
+    "career_package": ("candidate.material",),
+    "interview_debrief": ("candidate.debrief",),
+    "profile_onboarding": ("dialog.start",),
+    "profile_enrichment": ("dialog.record",),
 }
 
 
-def required_tools_for_route(route: TaskRoute) -> list[str]:
-    """Resolve required tools against the current allowed surface."""
+def required_tools_for_route(
+    route: TaskRoute,
+    tool_specs: dict[str, ToolSpec] | None = None,
+) -> list[str]:
+    """Resolve completion obligations to concrete tools on this route."""
+    if route.required_tools:
+        return list(route.required_tools)
+    specs = tool_specs or TOOL_SPECS
     allowed = set(route.allowed_tools)
     chosen: list[str] = []
-    for aliases in REQUIRED_BY_ROUTE.get(route.kind, ()):
-        match = next((name for name in aliases if name in allowed), None)
-        if match and match not in chosen:
-            chosen.append(match)
+    for capability in REQUIRED_CAPABILITIES_BY_ROUTE.get(route.kind, ()):
+        match = min(
+            (
+                spec
+                for name, spec in specs.items()
+                if name in allowed and capability in spec.capabilities
+            ),
+            key=lambda spec: (spec.priority, spec.name),
+            default=None,
+        )
+        if match is not None and match.name not in chosen:
+            chosen.append(match.name)
     return chosen
 
 
-def fallback_plan(goal: str, route: TaskRoute) -> AgentPlan:
+def fallback_plan(
+    goal: str,
+    route: TaskRoute,
+    tool_specs: dict[str, ToolSpec] | None = None,
+) -> AgentPlan:
+    specs = tool_specs or TOOL_SPECS
     steps = []
     for index, tool_name in enumerate(route.allowed_tools, start=1):
-        policy = TOOL_POLICIES[tool_name]
+        policy = specs[tool_name]
         steps.append(
             AgentPlanStep(
                 id=f"step-{index}",
@@ -572,10 +584,17 @@ def fallback_plan(goal: str, route: TaskRoute) -> AgentPlan:
     )
 
 
-def replan_prompt(goal: str, route: TaskRoute, failed_tool: str, error_message: str) -> str:
+def replan_prompt(
+    goal: str,
+    route: TaskRoute,
+    failed_tool: str,
+    error_message: str,
+    tool_specs: dict[str, ToolSpec] | None = None,
+) -> str:
     """Ask for one same-lane replacement plan after a tool failure."""
+    specs = tool_specs or TOOL_SPECS
     tool_lines = "\n".join(
-        f"- {name}: {TOOL_POLICIES[name].title}，风险={TOOL_POLICIES[name].risk}"
+        f"- {name}: {specs[name].title}，风险={specs[name].risk}"
         for name in route.allowed_tools
     )
     return f"""当前求职任务的一个工具失败了，请在同一车道重新生成 JSON 计划。
@@ -592,9 +611,14 @@ def replan_prompt(goal: str, route: TaskRoute, failed_tool: str, error_message: 
 优先选择尚未失败的工具；只有没有替代工具时才重试失败工具；不要输出思维过程。"""
 
 
-def planner_prompt(goal: str, route: TaskRoute) -> str:
+def planner_prompt(
+    goal: str,
+    route: TaskRoute,
+    tool_specs: dict[str, ToolSpec] | None = None,
+) -> str:
+    specs = tool_specs or TOOL_SPECS
     tool_lines = "\n".join(
-        f"- {name}: {TOOL_POLICIES[name].title}，风险={TOOL_POLICIES[name].risk}"
+        f"- {name}: {specs[name].title}，风险={specs[name].risk}"
         for name in route.allowed_tools
     )
     return f"""为下面的求职任务生成简短、可执行、可审计的 JSON 计划。
@@ -608,9 +632,15 @@ def planner_prompt(goal: str, route: TaskRoute) -> str:
 规则：按依赖顺序排列；不必使用所有工具；不得添加未列出的工具；不要输出思维过程。"""
 
 
-def parse_plan(response: ModelResponse, goal: str, route: TaskRoute) -> AgentPlan:
+def parse_plan(
+    response: ModelResponse,
+    goal: str,
+    route: TaskRoute,
+    tool_specs: dict[str, ToolSpec] | None = None,
+) -> AgentPlan:
+    specs = tool_specs or TOOL_SPECS
     if response.tool_calls or not response.content.strip():
-        return fallback_plan(goal, route)
+        return fallback_plan(goal, route, specs)
     raw = response.content.strip()
     fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", raw, re.DOTALL)
     if fenced:
@@ -618,7 +648,7 @@ def parse_plan(response: ModelResponse, goal: str, route: TaskRoute) -> AgentPla
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
-        return fallback_plan(goal, route)
+        return fallback_plan(goal, route, specs)
 
     allowed = set(route.allowed_tools)
     steps: list[AgentPlanStep] = []
@@ -626,7 +656,7 @@ def parse_plan(response: ModelResponse, goal: str, route: TaskRoute) -> AgentPla
         tool_name = str(item.get("tool_name", ""))
         if tool_name not in allowed or tool_name in {step.tool_name for step in steps}:
             continue
-        policy = TOOL_POLICIES[tool_name]
+        policy = specs[tool_name]
         try:
             step = AgentPlanStep(
                 id=f"step-{len(steps) + 1}",
@@ -640,7 +670,7 @@ def parse_plan(response: ModelResponse, goal: str, route: TaskRoute) -> AgentPla
     for tool_name in required_tools_for_route(route):
         if tool_name not in allowed or tool_name in {step.tool_name for step in steps}:
             continue
-        policy = TOOL_POLICIES[tool_name]
+        policy = specs[tool_name]
         steps.append(
             AgentPlanStep(
                 id=f"step-{len(steps) + 1}",
@@ -650,7 +680,7 @@ def parse_plan(response: ModelResponse, goal: str, route: TaskRoute) -> AgentPla
             )
         )
     if not steps:
-        return fallback_plan(goal, route)
+        return fallback_plan(goal, route, specs)
     return AgentPlan(
         goal=str(payload.get("goal") or goal).strip()[:300],
         route=route.kind,

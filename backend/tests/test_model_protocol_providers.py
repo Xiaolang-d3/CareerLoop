@@ -213,6 +213,7 @@ class OpenAIResponsesProviderTest(unittest.TestCase):
                                 input_schema={"type": "object", "properties": {"q": {"type": "string"}}},
                             )
                         ],
+                        tool_choice="required",
                     )
                 )
             )
@@ -221,6 +222,7 @@ class OpenAIResponsesProviderTest(unittest.TestCase):
         self.assertFalse(arguments["store"])
         self.assertEqual(arguments["input"][0], {"role": "user", "content": "查询"})
         self.assertEqual(arguments["tools"][0]["name"], "lookup")
+        self.assertEqual(arguments["tool_choice"], "required")
         self.assertEqual(response.content, "我来查询。")
         self.assertEqual(response.tool_calls[0].arguments, {"q": "x"})
         self.assertEqual(response.usage.total_tokens, 14)
@@ -321,6 +323,7 @@ class GeminiGenerateContentProviderTest(unittest.TestCase):
                 ModelRequest(
                     messages=[AgentMessage(role="user", content="查询")],
                     tools=[ToolDefinition(name="lookup", description="查询", input_schema={"type": "object"})],
+                    tool_choice="required",
                 )
             )
         )
@@ -331,6 +334,10 @@ class GeminiGenerateContentProviderTest(unittest.TestCase):
         )
         self.assertEqual(requested[0][2], "gemini-key")
         self.assertEqual(requested[0][1]["tools"][0]["functionDeclarations"][0]["name"], "lookup")
+        self.assertEqual(
+            requested[0][1]["toolConfig"],
+            {"functionCallingConfig": {"mode": "ANY"}},
+        )
         self.assertEqual(result.tool_calls[0].arguments, {"q": "x"})
         self.assertEqual(result.usage.total_tokens, 7)
 
@@ -392,6 +399,7 @@ class OllamaChatProviderTest(unittest.TestCase):
                 ModelRequest(
                     messages=[AgentMessage(role="user", content="查询")],
                     tools=[ToolDefinition(name="lookup", description="查询", input_schema={"type": "object"})],
+                    tool_choice="required",
                 )
             )
         )
@@ -399,6 +407,13 @@ class OllamaChatProviderTest(unittest.TestCase):
         self.assertEqual(requested[0][0], "http://localhost:11434/api/chat")
         self.assertIsNone(requested[0][2])
         self.assertFalse(requested[0][1]["stream"])
+        self.assertEqual(
+            requested[0][1]["messages"][-1],
+            {
+                "role": "system",
+                "content": "本轮必须调用一个已提供的工具，不要直接返回最终回答。",
+            },
+        )
         self.assertEqual(result.tool_calls[0].name, "lookup")
         self.assertEqual(result.usage.total_tokens, 6)
 

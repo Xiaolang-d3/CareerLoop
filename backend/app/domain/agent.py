@@ -9,6 +9,9 @@ class ToolDefinition(BaseModel):
     name: str = Field(min_length=1)
     description: str = Field(min_length=1)
     input_schema: dict[str, Any]
+    output_schema: dict[str, Any] = Field(
+        default_factory=lambda: {"type": "object", "additionalProperties": True}
+    )
 
 
 class ToolCall(BaseModel):
@@ -47,6 +50,7 @@ class ModelUsage(BaseModel):
 class ModelRequest(BaseModel):
     messages: list[AgentMessage]
     tools: list[ToolDefinition] = Field(default_factory=list)
+    tool_choice: Literal["auto", "required", "none"] = "auto"
 
 
 class ModelResponse(BaseModel):
@@ -107,6 +111,7 @@ class AgentRunSnapshot(BaseModel):
     route_kind: str
     needs_plan: bool
     allowed_tools: list[str] = Field(default_factory=list)
+    required_tools: list[str] = Field(default_factory=list)
     plan: AgentPlan | None = None
     messages: list[AgentMessage] = Field(default_factory=list)
     replan_used: bool = False

@@ -231,7 +231,12 @@ class GeminiGenerateContentProvider:
                     ]
                 }
             ]
-            body["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
+            mode = {
+                "auto": "AUTO",
+                "required": "ANY",
+                "none": "NONE",
+            }[request.tool_choice]
+            body["toolConfig"] = {"functionCallingConfig": {"mode": mode}}
         return body
 
     @staticmethod

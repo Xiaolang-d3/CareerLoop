@@ -15,6 +15,7 @@ from app.domain import (
     ToolResult,
 )
 from app.models import ModelProviderRegistry
+from app.tooling import ToolSpec
 from app.tools import AskUserTool, ToolContext, ToolRegistry
 
 
@@ -313,6 +314,117 @@ class AgentRuntimeStatusTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(running.message, "正在检索：腾讯科技")
         self.assertEqual(running.data["arguments"]["company_name"], "腾讯科技")
+
+    async def test_required_tool_cannot_be_skipped_by_a_text_only_answer(self) -> None:
+        class PrematureModel:
+            name = "premature"
+
+            def __init__(self) -> None:
+                self.requests = []
+
+            async def generate(self, request):
+                self.requests.append(request)
+                if len(self.requests) == 1:
+                    return ModelResponse(
+                        content='{"goal":"研究公司","steps":[{"tool_name":"research_company","title":"检索公开资料"}]}'
+                    )
+                if len(self.requests) == 2:
+                    return ModelResponse(
+                        content="我只能使用 research_company，是否需要帮助？"
+                    )
+                if len(self.requests) == 3:
+                    return ModelResponse(
+                        tool_calls=[
+                            ToolCall(
+                                id="research-1",
+                                name="research_company",
+                                arguments={"company_name": "示例科技"},
+                            )
+                        ]
+                    )
+                return ModelResponse(content="已基于公开资料完成研究。")
+
+        class ResearchTool:
+            definition = ToolDefinition(
+                name="research_company",
+                description="搜索公司",
+                input_schema={"type": "object", "properties": {}},
+            )
+
+            async def execute(self, arguments, context):
+                return ToolResult(ok=True, status="done", message="已找到公开资料")
+
+        model = PrematureModel()
+        models = ModelProviderRegistry()
+        models.register("premature", model)
+        tools = ToolRegistry()
+        tools.register_handler(ResearchTool())
+        runtime = AgentRuntime(
+            models=models,
+            tools=tools,
+            model_provider="premature",
+            platform_name="manual",
+            max_tool_rounds=4,
+        )
+
+        result = await runtime.run("帮我调查一下示例科技这家公司怎么样")
+
+        self.assertEqual(result.status, "done")
+        self.assertEqual(model.requests[1].tool_choice, "required")
+        self.assertEqual(model.requests[2].tool_choice, "required")
+        self.assertEqual(model.requests[3].tool_choice, "auto")
+        validation = [
+            event for event in result.events if event.tool_name == "completion_validator"
+        ]
+        self.assertEqual(len(validation), 1)
+        self.assertEqual(validation[0].status, "running")
+        self.assertEqual(validation[0].data["missing_tools"], ["research_company"])
+        self.assertEqual(result.plan.steps[0].status, "done")
+
+    async def test_repeated_premature_completion_fails_instead_of_claiming_success(self) -> None:
+        class RefusingModel:
+            name = "refusing"
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def generate(self, request):
+                self.calls += 1
+                if self.calls == 1:
+                    return ModelResponse(
+                        content='{"goal":"研究公司","steps":[{"tool_name":"research_company","title":"检索公开资料"}]}'
+                    )
+                return ModelResponse(content="需要什么帮助？")
+
+        class ResearchTool:
+            definition = ToolDefinition(
+                name="research_company",
+                description="搜索公司",
+                input_schema={"type": "object", "properties": {}},
+            )
+
+            async def execute(self, arguments, context):
+                raise AssertionError("模型没有调用工具")
+
+        model = RefusingModel()
+        models = ModelProviderRegistry()
+        models.register("refusing", model)
+        tools = ToolRegistry()
+        tools.register_handler(ResearchTool())
+        runtime = AgentRuntime(
+            models=models,
+            tools=tools,
+            model_provider="refusing",
+            platform_name="manual",
+            max_tool_rounds=4,
+        )
+
+        result = await runtime.run("帮我调查一下示例科技这家公司怎么样")
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.error.code, "completion_obligations_unmet")
+        self.assertEqual(result.rounds, 2)
+        self.assertNotIn("需要什么帮助", result.content)
 
     async def test_explained_platform_block_remains_failed(self) -> None:
         models = ModelProviderRegistry()
@@ -622,6 +734,12 @@ class AgentRuntimeStatusTest(unittest.IsolatedAsyncioTestCase):
                 name="queue_application",
                 description="加入待投递队列",
                 input_schema={"type": "object", "properties": {}},
+            )
+            spec = ToolSpec(
+                name="queue_application",
+                title="加入待投递队列",
+                risk="local_pending_write",
+                capabilities=frozenset({"queue.write"}),
             )
 
             async def execute(self, arguments, context):
@@ -1004,6 +1122,16 @@ class AgentRuntimeStatusTest(unittest.IsolatedAsyncioTestCase):
                 if len(self.requests) == 1:
                     return ModelResponse(
                         content='{"goal":"核验公司","steps":[{"tool_name":"research_company","title":"搜索公司资料"}]}'
+                    )
+                if len(self.requests) == 2:
+                    return ModelResponse(
+                        tool_calls=[
+                            ToolCall(
+                                id="research-visible-1",
+                                name="research_company",
+                                arguments={"company_name": "示例科技"},
+                            )
+                        ]
                     )
                 return ModelResponse(content="已完成公司核验。")
 

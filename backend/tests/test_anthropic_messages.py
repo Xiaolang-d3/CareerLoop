@@ -132,6 +132,49 @@ class AnthropicMessagesProviderTest(unittest.TestCase):
         self.assertEqual(response.tool_calls[0].arguments, {"q": "x"})
         self.assertEqual(response.usage.total_tokens, 17)
 
+    def test_system_messages_stay_in_system_and_required_tools_use_any(self) -> None:
+        requested: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requested.append(json.loads(request.content))
+            return httpx.Response(
+                200,
+                json={
+                    "id": "msg_456",
+                    "model": "claude-sonnet-5-thinking",
+                    "stop_reason": "tool_use",
+                    "usage": {"input_tokens": 4, "output_tokens": 2},
+                    "content": [
+                        {"type": "tool_use", "id": "tool_2", "name": "lookup", "input": {}},
+                    ],
+                },
+            )
+
+        provider = provider_with_handler(handler)
+        asyncio.run(
+            provider.generate(
+                ModelRequest(
+                    messages=[
+                        AgentMessage(role="system", content="必须先核验来源"),
+                        AgentMessage(role="user", content="查询"),
+                    ],
+                    tools=[
+                        ToolDefinition(
+                            name="lookup",
+                            description="查询",
+                            input_schema={"type": "object"},
+                        )
+                    ],
+                    tool_choice="required",
+                )
+            )
+        )
+
+        body = requested[0]
+        self.assertIn("必须先核验来源", body["system"])
+        self.assertEqual(body["messages"], [{"role": "user", "content": "查询"}])
+        self.assertEqual(body["tool_choice"], {"type": "any"})
+
     def test_explicit_v1_base_url_is_not_duplicated(self) -> None:
         requested: list[str] = []
 

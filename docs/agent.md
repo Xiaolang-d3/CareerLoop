@@ -2,7 +2,7 @@
 
 本文是 CareerLoop **智能体层的维护文档**。代码是行为的事实来源；本文记录意图、边界和同步点。改智能体行为时必须在同一变更中更新本文。
 
-最近校准：2026-09-03（产品入口收敛为对话、首页、资料库和工作台；无显式路由时默认进入对话，首页只负责继续工作，事实人审归入资料库，通用工作台默认不展示求职专属页签）。
+最近校准：2026-09-04（任务完成不再只看模型是否返回正文；必需工具必须有成功事件，支持的模型协议会在义务未完成时强制工具调用）。
 
 ## 定位
 
@@ -50,6 +50,7 @@ CareerLoop 是个人资料驱动的受控协作运行时，不是通用 Agent OS
         ├─ classify kind（仅 conversation）  JSON {"kind":...}；失败则保持 conversation
         ├─ tools_for_kind()       按车道从 TOOL_POLICIES 展开 allowed_tools
         ├─ planner（可选）         生成 JSON 计划；失败则整轮终止
+        ├─ CompletionValidator     必需工具成功事件 / tool_choice
         ├─ 模型多轮 tool calls     只允许计划内工具
         ├─ ToolRegistry.execute   超时、审计、waiting_approval
         └─ 引用校验（若本轮用过联网工具）
@@ -65,6 +66,8 @@ backend/app/
 ├── domain/agent.py          协议：消息、工具、计划、流式事件
 ├── agent/
 │   ├── runtime.py           对话循环
+│   ├── completion.py        完成义务与强制工具选择
+│   ├── tool_executor.py     工具超时、结果归一化与审计边界
 │   ├── orchestration.py     路由、风险、规划
 │   ├── bootstrap.py         组装模型 + 工具
 │   ├── settings.py          人设、记忆开关、模型连接
@@ -73,6 +76,7 @@ backend/app/
 │   ├── resume_policy.py     等待确认后恢复或放弃快照
 │   └── model_capabilities.py
 ├── models/                  模型协议、OpenAI 兼容与 Anthropic Messages 实现
+├── tooling/specs.py         工具风险、能力标签、阶段与超时元数据
 ├── tools/                   对话工具
 ├── chat/                    历史、摘要、落库
 ├── workflow/                阶段记账（不调度）
@@ -99,15 +103,17 @@ backend/app/
 1. `route_task()`：关键词 `detect_kind` + 硬开关，得到 `kind`。关键词未命中且仍为 `conversation` 时，额外一次模型调用只分类 `kind`（`ROUTE_LABELS` 之一）；`hello`、`你好`、`test` 等确定性的简单问候/连通性测试直接走对话，不花一次分类调用。解析失败或输出工具名则保持 `conversation`。`allowed_tools` 始终由 `tools_for_kind` / `TOOL_POLICIES` 计算，分类器不能点名工具。
 2. 需要计划时，另一次模型调用生成 JSON；解析失败则用路由允许工具做兜底计划；规划调用本身失败则整轮 `failed`。
 3. 把计划写入 system 消息，并把模型可见的 tool definitions 裁成计划内工具。另注入一条「本轮实际可用工具」清单（`visible_tools_prompt`），只列出 `executable_tools`。全局 `SYSTEM_PROMPT` 不点名具体工具。
-4. 循环：模型生成 → 若有 tool_calls 则逐个执行 → 结果以 `role=tool` 回写。
-5. 工具 `failed`：同一轮只允许一次同车道重规划（`replan_prompt` + `parse_plan`），新计划仍受当前 `allowed_tools` 约束，不能换车道或补联网工具。重规划成功后清空本轮错误，最终正文标 `done`。第二次失败、`blocked`、超时或规划调用失败则整轮终止。
-6. 无 tool_calls 且有正文：若本轮用过联网工具，则校验 Markdown 链接必须来自本轮工具返回的 URL；失败会自动重写一次，再失败则标记 `citation_validation_failed`。
-7. 达到轮数上限 → `round_limit_reached`。
-8. `waiting_user` 会把 `route` / `plan` / 完整 `messages` / `clarification` 写入 `agent_run_snapshots`。下一轮若有快照，先判定是否仍在回答暂停时的问题：命中选项原文，或手输未改口，则 `resume` 同一条 run（跳过分类与规划，不换车道）。手输明显改口（改口词，或 `detect_kind` 落到另一条非 `conversation` 车道）则清快照并重新路由。取消、回退、重置上下文或非 `local_router` 的终态会清快照。等待中问「进度」走本地摘要，不清快照。
+4. 每次模型生成前，`CompletionValidator` 用成功的工具事件核对 `REQUIRED_CAPABILITIES_BY_ROUTE` 编译出的 `route.required_tools`。仍有义务时，OpenAI Chat / Responses 使用 `tool_choice=required`，Anthropic 使用 `any`，Gemini 使用 `ANY`；Ollama 以 system 约束补足原生协议缺少 `tool_choice` 的差异。
+5. 循环：模型生成 → 若有 tool_calls 则逐个执行 → 结果以 `role=tool` 回写。模型在义务未完成时只返回正文或空响应，runtime 会丢弃该终态并追加一次纠正提示；同一未完成集合再次出现则 `completion_obligations_unmet`，不能保存为成功回答。义务集合因工具成功而缩小时，可以继续下一步。
+6. 工具 `failed`：同一轮只允许一次同车道重规划（`replan_prompt` + `parse_plan`），新计划仍受当前 `allowed_tools` 约束，不能换车道或补联网工具。重规划成功后清空本轮错误，最终正文标 `done`。第二次失败、`blocked`、超时或规划调用失败则整轮终止。
+7. 完成义务满足且无 tool_calls、有正文：若本轮用过联网工具，则校验 Markdown 链接必须来自本轮工具返回的 URL；失败会自动重写一次，再失败则标记 `citation_validation_failed`。
+8. 达到轮数上限 → `round_limit_reached`。
+9. `waiting_user` 会把 `route` / `plan` / 完整 `messages` / `clarification` 写入 `agent_run_snapshots`。下一轮若有快照，先判定是否仍在回答暂停时的问题：命中选项原文，或手输未改口，则 `resume` 同一条 run（跳过分类与规划，不换车道）。手输明显改口（改口词，或 `detect_kind` 落到另一条非 `conversation` 车道）则清快照并重新路由。取消、回退、重置上下文或非 `local_router` 的终态会清快照。等待中问「进度」走本地摘要，不清快照。
 
 硬约束（不要在改 runtime 时悄悄放宽，除非同步改本文和测试）：
 
 - 计划外工具立即 `blocked` / `tool_not_planned`。`ask_user` 是例外：它不进车道计划，但始终对模型可见，调用后以 `waiting_user` 交回界面。
+- `REQUIRED_CAPABILITIES_BY_ROUTE` 不只是规划提示，也是完成契约；路由会把 capability 解析成当前工具面的 `required_tools`，没有对应工具的 `done` 事件时，模型正文不能结束任务。
 - 工具 `failed`：先同车道重规划一次；`blocked` / 超时仍立即终止。
 - `waiting_approval`：状态 `waiting_user`，把确认权交回界面。若 `data.clarification` 带有 `question` / `options`，输入框上方渲染选项。点选选项，或手输仍是在回答（选项原文、补充指代），则恢复原计划。手输明显换题则清快照并重新路由。
 - 联网回答必须引用本轮来源；不得把未检索到的经历写成事实。
@@ -151,7 +157,7 @@ backend/app/
 | `skill_growth` | 能力成长分析 | 上下文 + 证据 |
 | `job_evaluation` | 岗位决策与评估 | `create/get/review/compare_job_evaluation` |
 
-规划器只允许从当前车道的 `allowed_tools` 里选步骤，按依赖排序，不必用完全部工具。部分车道会把关键工具补进计划（`REQUIRED_BY_ROUTE` 别名组，注入 `allowed_tools` 里的第一个，与 `add_preferred` 对齐）。含 `confirmed_local_write` 的计划会标 `requires_confirmation`。
+规划器只允许从当前车道的 `allowed_tools` 里选步骤，按依赖排序，不必用完全部工具。`tools_for_kind` 按 ToolSpec capability + priority 组合工具面；部分车道再由 `REQUIRED_CAPABILITIES_BY_ROUTE` 把关键能力解析为具体 `required_tools` 并补进计划，因此同能力的新工具可以替换旧工具而无需修改车道分支。含 `confirmed_local_write` 的计划会标 `requires_confirmation`。
 
 工具风险（`ToolPolicy.risk`）：
 
@@ -167,7 +173,7 @@ backend/app/
 
 ## 工具目录
 
-对话工具必须同时满足：实现类、`bootstrap.py` 注册、`TOOL_POLICIES`、`TOOL_STAGES`。缺一不可。
+对话工具必须同时满足：实现类、`bootstrap.py` 注册和 `tooling/specs.py` 的 `ToolSpec`。`TOOL_POLICIES` 与 `TOOL_STAGES` 现在都从 `TOOL_SPECS` 派生，不再维护三份风险/标题/阶段映射。插件式或测试工具也可以在 handler 上直接提供同名 `spec`，但没有 ToolSpec 的工具不能注册。
 
 | 工具 | 风险 | 作用 |
 | --- | --- | --- |
@@ -194,9 +200,11 @@ backend/app/
 
 许多工具是整段技能，不是原子动作。智能体当前是在选技能，而不是组合底层步骤。新增工具时先问：它是可复用原语，还是应留在领域服务里被现有工具调用。
 
-协议：`ToolHandler.definition` + `async execute(arguments, ToolContext) -> ToolResult`。`ToolResult.status` 为 `done` / `failed` / `waiting_approval` / `blocked`。参数用 Pydantic 校验；统一错误边界见 `tools/local_data.py`。
+协议分两层：`ToolHandler.definition` 是模型可见契约，包含 `name`、说明、输入 JSON Schema 和输出 JSON Schema；`ToolSpec` 是 runtime 契约，包含用户标题、风险、可检索 capability tags、工作流阶段、可选单工具超时与是否需要确认。`async execute(arguments, ToolContext) -> ToolResult` 是执行入口，`ToolResult.status` 为 `done` / `failed` / `waiting_approval` / `blocked`。`ToolExecutor` 统一应用单工具/全局超时、异常归一化和审计；runtime 不再分别维护 fresh/resume 的执行异常边界。参数用 Pydantic 校验；领域参数错误边界见 `tools/local_data.py`。
 
-合成事件名（`agent_thinking`、`agent_planner`、`model_provider`、`citation_validator`）不是工具，不要写入 `TOOL_POLICIES`。
+`ToolRegistry.names_for_capabilities()` 已支持按能力发现工具；当前车道仍按名称选择工具，下一阶段会把 `tools_for_kind` 迁移成 capability composition。`/agent/capabilities` 同时返回 `tools` 和 `tool_specs`，便于运营与后续动态工具面检查。
+
+合成事件名（`agent_thinking`、`agent_planner`、`model_provider`、`completion_validator`、`citation_validator`）不是工具，不要写入 `TOOL_POLICIES`。
 
 ## 记忆与人审
 
@@ -248,7 +256,7 @@ backend/app/
 
 模型连接支持 OpenAI 兼容 Chat Completions、OpenAI Responses、Anthropic Messages、Google Gemini `generateContent` 与 Ollama Chat。显式 `model_protocol` 永远优先；`auto` 会先识别官方域名和 Ollama 地址，再按模型家族选择协议（`claude-*` → Anthropic、`gemini-*` → Gemini，其他 → OpenAI 兼容）。自定义多协议网关上的 Claude/Gemini 会先调用原生协议；只有 404/405 路由不存在、HTTP 200 却无法解析为该协议等可证明的协议不匹配，才回退到 OpenAI 兼容，并按网关 + 模型 + 密钥指纹缓存成功协议。认证失败、限流、模型不可用、上游账户池耗尽和其他 5xx 都不得换协议重试；流式响应一旦输出任何事件也不得回退，以免重复正文。根地址回退到 OpenAI 兼容时会尝试标准 `/v1`，已带路径的自定义 API 根地址不改写。Responses 与非标准包装仍可在设置页显式选择。
 
-Base URL 视为对应协议的 API 根地址：显式 OpenAI 兼容客户端不自动追加 `/v1`，Responses 请求 `/responses`，Anthropic 请求 `/v1/messages`，Gemini 请求 `/models/{model}:generateContent`，Ollama 请求 `/api/chat`。OpenAI 兼容调用还会验证响应中存在 `choices`，流式调用至少返回响应 ID、用量、结束原因、正文或工具调用之一；网页回退或空响应即使 HTTP 状态为 200 也会记为 `invalid_provider_response`，不得标记为健康。模型目录只证明名称可见，不证明当前账户可实际调用；设置页将目录项标记为“仅目录可见”，默认模型只有在调用监控健康时才显示“已验证”。本地 Ollama 可不配置 API Key；其他协议要求密钥。runtime、模型发现、能力检测与健康监控使用同一协议解析结果。系统提示在 `backend/app/models/openai_compatible.py`：中文、不编造经历与来源、只使用本轮实际提供的工具、不点名具体工具名、过程叙述交给界面。本轮工具清单由 runtime 注入。缺少关键信息或指代有歧义时必须调用 `ask_user`，不要猜测，也不要只在正文里提问。用户明确要求思维导图时可输出 Mermaid `mindmap` 代码块，界面渲染为可展开、缩放的交互导图；普通回答不主动生成图。
+Base URL 视为对应协议的 API 根地址：显式 OpenAI 兼容客户端不自动追加 `/v1`，Responses 请求 `/responses`，Anthropic 请求 `/v1/messages`，Gemini 请求 `/models/{model}:generateContent`，Ollama 请求 `/api/chat`。OpenAI 兼容调用还会验证响应中存在 `choices`，流式调用至少返回响应 ID、用量、结束原因、正文或工具调用之一；网页回退或空响应即使 HTTP 状态为 200 也会记为 `invalid_provider_response`，不得标记为健康。模型目录只证明名称可见，不证明当前账户可实际调用；设置页将目录项标记为“仅目录可见”，默认模型只有在调用监控健康时才显示“已验证”。本地 Ollama 可不配置 API Key；其他协议要求密钥。runtime、模型发现、能力检测与健康监控使用同一协议解析结果。runtime 的 system 消息必须保持协议级 system 语义：Anthropic 合并到顶层 `system`，不能降级成 `user` 消息。系统提示在 `backend/app/models/openai_compatible.py`：中文、不编造经历与来源、只使用本轮实际提供的工具、不点名具体工具名、过程叙述交给界面。本轮工具清单由 runtime 注入。缺少关键信息或指代有歧义时必须调用 `ask_user`，不要猜测，也不要只在正文里提问。用户明确要求思维导图时可输出 Mermaid `mindmap` 代码块，界面渲染为可展开、缩放的交互导图；普通回答不主动生成图。
 
 用户可配置人设（名称、角色、详略、补充指令）不能覆盖事实要求、工具权限和人工确认规则。模型名、Base URL、API Key 存在 `agent_settings`，缺省回落到环境变量。
 

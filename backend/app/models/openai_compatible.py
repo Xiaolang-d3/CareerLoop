@@ -467,7 +467,7 @@ class OpenAICompatibleProvider:
         }
         if tools:
             arguments["tools"] = tools
-            arguments["tool_choice"] = "auto"
+            arguments["tool_choice"] = request.tool_choice
         return arguments
 
     def _response_from_completion(self, response: Any) -> ModelResponse:

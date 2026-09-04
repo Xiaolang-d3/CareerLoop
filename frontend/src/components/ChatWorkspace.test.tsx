@@ -607,6 +607,40 @@ describe("ChatWorkspace", () => {
     expect(document.querySelector(".thinking-process-scroll")).not.toBeInTheDocument();
   });
 
+  it("shows completion repair as a friendly system activity", () => {
+    renderChat([
+      message,
+      {
+        id: -1,
+        role: "assistant",
+        content: "",
+        created_at: "2026-08-11T00:01:00Z",
+        payload: {
+          agent: {
+            provider: "test",
+            platform: "local",
+            rounds: 1,
+            status: "done",
+            events: [{
+              round: 1,
+              tool_call_id: "completion-validation-1",
+              tool_name: "completion_validator",
+              status: "running",
+              message: "必要步骤尚未完成，正在继续执行",
+              data: { missing_tools: ["research_company"] }
+            }]
+          }
+        }
+      }
+    ], { chatBusy: true });
+
+    const toggle = screen.getByRole("button", { name: /正在补齐必要步骤/ });
+    expect(toggle).not.toHaveTextContent("research_company");
+    fireEvent.click(toggle);
+    expect(screen.getByRole("complementary", { name: "研究详情" }))
+      .toHaveTextContent("必要步骤尚未完成，正在继续执行");
+  });
+
   it("appends fetched source hosts after a research tool finishes", () => {
     renderChat([{
       id: 12,
