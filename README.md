@@ -133,6 +133,11 @@ cd frontend
 npm run test:e2e
 ```
 
+## 持续集成与发布
+
+- 推送 `main` 或打开 PR 时运行 [CI](.github/workflows/ci.yml)：`backend-tests`、`frontend-unit`、`frontend-e2e`，由 `ci-gate` 汇总。
+- 本地优先架构没有远程部署目标。推送 `v*` 标签时运行 [Release](.github/workflows/release.yml)：复用 CI，打包前端 `dist`，并创建 GitHub Release。
+
 ## 协作与变更记录
 
 - 贡献、分支、提交与验证规则：[`CONTRIBUTING.md`](CONTRIBUTING.md)
