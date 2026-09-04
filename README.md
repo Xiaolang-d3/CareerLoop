@@ -135,7 +135,7 @@ npm run test:e2e
 
 ## 持续集成与发布
 
-- 推送 `main` 或打开 PR 时运行 [CI](.github/workflows/ci.yml)：`backend-tests`、`frontend-unit`、`frontend-e2e`，由 `ci-gate` 汇总。
+- 推送 `main` 或打开 PR 时运行 [CI](.github/workflows/ci.yml)：`backend-tests`、`frontend-unit`、`frontend-e2e`，由 `ci-gate` 汇总。PR 改动智能体代码时额外检查 `docs/agent.md`。
 - 本地优先架构没有远程部署目标。推送 `v*` 标签时运行 [Release](.github/workflows/release.yml)：复用 CI，打包前端 `dist`，并创建 GitHub Release。
 
 ## 协作与变更记录
