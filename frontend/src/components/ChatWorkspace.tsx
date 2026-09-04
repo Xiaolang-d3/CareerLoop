@@ -30,6 +30,7 @@ import {
   History,
   ImagePlus,
   LoaderCircle,
+  PanelRight,
   Pencil,
   Plus,
   RefreshCw,
@@ -106,7 +107,10 @@ export type ChatRetryDraft = {
   attachmentIds: string[];
   visionAttachmentIds: string[];
   webSearch: boolean;
+  webSearchMode: WebSearchMode;
 };
+
+export type WebSearchMode = "auto" | "technical" | "general";
 
 export type ChatClarificationOption = {
   id: string;
@@ -158,10 +162,12 @@ const STARTER_PROMPTS: Array<{
   draft: string;
   title: string;
   needsResume?: boolean;
+  enableWebSearch?: boolean;
 }> = [
-  { draft: "帮我看看这份已保存的简历，先说方向和缺口。", title: "看这份简历", needsResume: true },
-  { draft: "对照这个岗位看我适不适合。岗位是：", title: "对照一个岗位" },
-  { draft: "帮我复盘刚结束的这场面试。岗位和主要问题是：", title: "复盘一场面试" }
+  { draft: "帮我梳理已保存的资料，先总结重点，再指出还缺什么。", title: "梳理已保存资料", needsResume: true },
+  { draft: "帮我分析这份材料，先总结重点，再指出值得继续追问的地方。", title: "分析一份材料" },
+  { draft: "帮我查找并核对这个主题的公开信息：", title: "查找公开信息", enableWebSearch: true },
+  { draft: "根据我的要求起草一份内容。用途、读者和要点是：", title: "起草一份内容" }
 ];
 
 type ChatWorkspaceProps = {
@@ -192,7 +198,7 @@ type ChatWorkspaceProps = {
   onAttachmentInvalid: (message: string) => void;
   onSuggestedAction: () => void;
   onCancelTask: () => void;
-  onSend: (content: string, attachmentIds?: string[], visionAttachmentIds?: string[], webSearch?: boolean) => Promise<void>;
+  onSend: (content: string, attachmentIds?: string[], visionAttachmentIds?: string[], webSearch?: boolean, webSearchMode?: WebSearchMode) => Promise<void>;
   onStop: () => Promise<void>;
   onEdit: (userMessageId: number, content: string) => Promise<void>;
   onRegenerate: (userMessageId: number) => Promise<void>;
@@ -248,7 +254,30 @@ type WebSource = {
   title: string;
   url: string;
   domain?: string;
+  snippet?: string;
+  content?: string;
+  published_at?: string;
 };
+
+function webSourcesFromAgent(agent?: AgentRunResult): WebSource[] {
+  return (agent?.events
+    .filter((event) => ["search_public_web", "research_company"].includes(event.tool_name))
+    .flatMap((event) => Array.isArray(event.data?.sources) ? event.data.sources : [])
+    .filter((item): item is WebSource => {
+      if (!item || typeof item !== "object") return false;
+      const candidate = item as Partial<WebSource>;
+      return typeof candidate.title === "string"
+        && typeof candidate.url === "string"
+        && /^https?:\/\//.test(candidate.url);
+    }) ?? [])
+    .filter((item, index, all) => all.findIndex((candidate) => candidate.url === item.url) === index);
+}
+
+type ResearchPanelActions = {
+  openDetails: (agent: AgentRunResult | undefined, sources: WebSource[], selectedSource?: number) => void;
+};
+
+const ResearchPanelActionsContext = createContext<ResearchPanelActions | null>(null);
 
 function childrenToText(children: ReactNode): string {
   if (typeof children === "string" || typeof children === "number") return String(children);
@@ -302,7 +331,17 @@ function canonicalCitationUrl(value: string): string {
   }
 }
 
-function CitationLink({ href, sources, children }: { href?: string; sources: WebSource[]; children?: ReactNode }) {
+function CitationLink({
+  href,
+  sources,
+  children,
+  onOpenSource
+}: {
+  href?: string;
+  sources: WebSource[];
+  children?: ReactNode;
+  onOpenSource?: (index: number) => void;
+}) {
   const label = childrenToText(children);
   if (!href || !/^https?:\/\//i.test(href)) {
     return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
@@ -320,6 +359,10 @@ function CitationLink({ href, sources, children }: { href?: string; sources: Web
       target="_blank"
       rel="noreferrer"
       aria-label={citationNo ? `来源 ${citationNo}：${title}` : `来源：${title}`}
+      onClick={citationNo && onOpenSource ? (event) => {
+        event.preventDefault();
+        onOpenSource(index);
+      } : undefined}
     >
       <span className="md-citation-badge">{citationNo ?? letter}</span>
       <span className="md-citation-card" aria-hidden="true">
@@ -333,14 +376,14 @@ function CitationLink({ href, sources, children }: { href?: string; sources: Web
   );
 }
 
-const MarkdownRenderContext = createContext<{ sources: WebSource[]; streaming: boolean }>({
+const MarkdownRenderContext = createContext<{ sources: WebSource[]; streaming: boolean; onOpenSource?: (index: number) => void }>({
   sources: [],
   streaming: false
 });
 
 function MarkdownLinkRenderer({ children, href }: { children?: ReactNode; href?: string }) {
-  const { sources } = useContext(MarkdownRenderContext);
-  return <CitationLink href={href} sources={sources}>{children}</CitationLink>;
+  const { sources, onOpenSource } = useContext(MarkdownRenderContext);
+  return <CitationLink href={href} sources={sources} onOpenSource={onOpenSource}>{children}</CitationLink>;
 }
 
 function MarkdownCodeRenderer({
@@ -461,17 +504,19 @@ const MARKDOWN_COMPONENTS: Components = {
 function MarkdownContent({
   children,
   sources = [],
-  streaming = false
+  streaming = false,
+  onOpenSource
 }: {
   children: string;
   sources?: WebSource[];
   streaming?: boolean;
+  onOpenSource?: (index: number) => void;
 }) {
   const projectAnalysisAnswer = /(项目(?:经历|经验|解析|背景|亮点)|技术深度|证据完整度|简历版|面试版)/.test(children);
   const interviewDrill = INTERVIEW_DRILL_RE.test(children);
   return (
     <div className={`message-markdown${projectAnalysisAnswer ? " project-analysis-answer" : ""}${interviewDrill ? " interview-drill" : ""}`}>
-      <MarkdownRenderContext.Provider value={{ sources, streaming }}>
+      <MarkdownRenderContext.Provider value={{ sources, streaming, onOpenSource }}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           skipHtml
@@ -736,12 +781,13 @@ function ThinkingSourceChip({ host, url, title }: { host: string; url?: string; 
 
 function ThoughtProcess({
   streaming,
-  agent
+  agent,
+  onOpen
 }: {
   streaming: boolean;
   agent?: AgentRunResult;
+  onOpen?: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const { title, currentTask } = thinkingHeaderCopy(agent, streaming);
   const { thoughts, steps, sources } = thoughtProcessContent(agent);
   const hasBody = thoughts.length + steps.length + sources.length > 0;
@@ -756,55 +802,22 @@ function ThoughtProcess({
     </>
   );
   return (
-    <section className={`thinking-process ${expanded ? "expanded" : ""} ${streaming ? "streaming" : "complete"} ${hasBody ? "has-body" : "is-status"}`} aria-label="思考过程">
-      {hasBody ? (
+    <section className={`thinking-process ${streaming ? "streaming" : "complete"} ${hasBody ? "has-body" : "is-status"}`} aria-label="研究过程">
+      {hasBody && onOpen ? (
         <button
           type="button"
           className="thinking-process-header"
-          aria-expanded={expanded}
-          onClick={() => setExpanded((value) => !value)}
+          onClick={onOpen}
+          aria-label={`${title}，打开研究详情`}
         >
           {headerCopy}
-          <ChevronDown className="thinking-process-chevron" size={14} />
+          <PanelRight className="thinking-process-chevron" size={14} />
         </button>
       ) : (
         <div className="thinking-process-header is-static">
           {headerCopy}
         </div>
       )}
-      {hasBody ? (
-        <div className="thinking-process-collapse">
-          <div className="thinking-process-scroll">
-            {thoughts.length ? (
-              <div className="thinking-thoughts">
-                {thoughts.map((thought) => <p key={thought}>{thought}</p>)}
-              </div>
-            ) : null}
-            {steps.length ? (
-              <ol className="thinking-steps">
-                {steps.map((step) => (
-                  <li key={step.text} className={`thinking-step is-${step.status}`}>
-                    <span className="thinking-step-marker" aria-hidden="true" />
-                    <p>{step.text}</p>
-                  </li>
-                ))}
-              </ol>
-            ) : null}
-            {sources.length ? (
-              <div className="thinking-sources">
-                <p className="thinking-sources-label">已阅读 {sources.length} 个站点</p>
-                <ul className="thinking-source-chips">
-                  {sources.map((source) => (
-                    <li key={source.host}>
-                      <ThinkingSourceChip host={source.host} url={source.url} title={source.title} />
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
     </section>
   );
 }
@@ -857,15 +870,15 @@ function StarterPromptList({
   onFill,
   hasResume
 }: {
-  onFill: (draft: string) => void;
+  onFill: (draft: string, enableWebSearch?: boolean) => void;
   hasResume: boolean;
 }) {
   const prompts = STARTER_PROMPTS.filter((item) => !item.needsResume || hasResume);
   if (!prompts.length) return null;
   return (
     <div className="composer-drafts" aria-label="可选草稿">
-      {prompts.map(({ draft, title }) => (
-        <button key={title} type="button" onClick={() => onFill(draft)}>
+      {prompts.map(({ draft, enableWebSearch, title }) => (
+        <button key={title} type="button" onClick={() => onFill(draft, enableWebSearch)}>
           {title}
         </button>
       ))}
@@ -890,11 +903,11 @@ function ChatContextChips({
           type="button"
           className="composer-context-status is-resume"
           onClick={onOpenResume}
-          title="查看已保存简历，提问时会自动参考"
-          aria-label="查看已保存简历"
+          title="查看已保存资料，提问时会自动参考"
+          aria-label="查看已保存资料"
         >
           <FileText size={15} aria-hidden="true" />
-          <span>已保存简历</span>
+          <span>已保存资料</span>
         </button>
       ) : null}
       {analysisLabel ? (
@@ -910,42 +923,186 @@ function ChatContextChips({
   );
 }
 
-function WebSourcesPanel({ sources }: { sources: WebSource[] }) {
-  const [expanded, setExpanded] = useState(false);
+function WebSourcesPanel({ sources, onOpen }: { sources: WebSource[]; onOpen?: () => void }) {
   if (!sources.length) return null;
   return (
-    <section className={`web-sources-panel ${expanded ? "expanded" : ""}`} aria-label="联网搜索来源">
+    <section className="web-sources-panel" aria-label="联网搜索来源">
       <button
         type="button"
         className="web-sources-heading"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((value) => !value)}
+        onClick={onOpen}
       >
-        <ChevronDown size={15} />
         <Search size={16} />
-        <strong>已搜索 {sources.length} 个网站</strong>
+        <strong>查看全部 {sources.length} 个来源</strong>
+        <PanelRight size={14} />
       </button>
-      {expanded ? (
-        <div className="web-source-grid">
-          {sources.map((source, index) => (
-            <a
-              key={`${source.url}-${index}`}
-              href={source.url}
-              target="_blank"
-              rel="noreferrer"
-              title={source.title}
-            >
-              <span className="web-source-index">{index + 1}</span>
-              <SourceFavicon domain={sourceDomain(source)} title={source.title} />
-              <span className="web-source-meta">
-                <strong>{source.title}</strong>
-                <small>{sourceDomain(source)}</small>
-              </span>
-            </a>
-          ))}
-        </div>
-      ) : null}
     </section>
+  );
+}
+
+function researchStepTitle(text: string): string {
+  return text.replace(/^(?:正在进行|已完成|失败|正在检索)[:：]\s*/, "").trim() || "处理信息";
+}
+
+function sourceConfidence(source: WebSource): "high" | "review" {
+  const host = sourceDomain(source).toLowerCase();
+  return /\.(?:gov|edu)(?:\.[a-z]{2})?$/.test(host) || /(?:^|\.)docs\./.test(host) ? "high" : "review";
+}
+
+function sourceDisplaySummary(source: WebSource): string {
+  const summary = source.content?.trim() || source.snippet?.trim() || "";
+  const compactness = summary.length ? summary.replace(/\s/g, "").length / summary.length : 0;
+  if (!summary) return "暂无摘要，可打开原网页核对完整内容。";
+  if (summary.length > 1200 && compactness > .92) return "页面返回的摘要不可读，请打开原网页核对完整内容。";
+  return `${summary.slice(0, 520)}${summary.length > 520 ? "…" : ""}`;
+}
+
+function ResearchPanel({
+  open,
+  agent,
+  sources,
+  selectedSource,
+  streaming,
+  onSelectSource,
+  onClose
+}: {
+  open: boolean;
+  agent?: AgentRunResult;
+  sources: WebSource[];
+  selectedSource: number;
+  streaming: boolean;
+  onSelectSource: (index: number) => void;
+  onClose: () => void;
+}) {
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const [expandedStep, setExpandedStep] = useState<number | null>(null);
+  const process = thoughtProcessContent(agent);
+  const planSteps = planStepsFromAgent(agent);
+  const steps = process.steps.length
+    ? process.steps
+    : planSteps.map((step) => ({ text: step.title, status: step.status }));
+  const totalSteps = Math.max(steps.length, sources.length ? 4 : 1);
+  const completedSteps = agent?.status === "done"
+    ? totalSteps
+    : Math.min(totalSteps, steps.filter((step) => step.status === "done").length);
+  const progress = Math.max(streaming ? 8 : 0, Math.round((completedSteps / totalSteps) * 100));
+  const current = thinkingHeaderCopy(agent, streaming);
+  const activeSource = sources[Math.min(selectedSource, Math.max(0, sources.length - 1))];
+
+  useEffect(() => {
+    if (!open || typeof window === "undefined" || window.innerWidth > 820) return;
+    closeButtonRef.current?.focus();
+  }, [open]);
+
+  useEffect(() => {
+    setExpandedStep(null);
+  }, [agent]);
+
+  if (!open) return null;
+  return (
+    <aside id="chat-research-panel" className="research-panel" aria-label="研究详情">
+      <header className="research-panel-header">
+        <div>
+          <span className={`research-live-dot${streaming ? " is-live" : ""}`} aria-hidden="true" />
+          <strong>{streaming ? current.title : agent?.status === "failed" ? "研究未完成" : "研究详情"}</strong>
+          <small>{completedSteps}/{totalSteps}</small>
+        </div>
+        <button ref={closeButtonRef} type="button" onClick={onClose} aria-label="关闭研究详情" title="关闭研究详情">
+          <X size={17} />
+        </button>
+        <div className="research-progress" aria-label={`研究进度 ${progress}%`}>
+          <span style={{ width: `${progress}%` }} />
+        </div>
+      </header>
+
+      <div className="research-panel-scroll">
+        <section className="research-section" aria-labelledby="research-process-title">
+          <div className="research-section-heading">
+            <span>过程</span>
+            <small>{streaming ? "实时更新" : "已完成"}</small>
+          </div>
+          <h2 id="research-process-title">这次回答是怎样形成的</h2>
+          {steps.length ? (
+            <ol className="research-process-list">
+              {steps.map((step, index) => {
+                const expanded = expandedStep === index;
+                const status = step.status === "failed" ? "failed" : step.status === "running" ? "running" : "done";
+                return (
+                  <li key={`${step.text}-${index}`} className={`is-${status}`}>
+                    <button type="button" aria-expanded={expanded} onClick={() => setExpandedStep(expanded ? null : index)}>
+                      <span className="research-step-state" aria-hidden="true">
+                        {status === "done" ? <Check size={12} /> : status === "failed" ? <TriangleAlert size={12} /> : <LoaderCircle size={12} />}
+                      </span>
+                      <span className="research-step-copy">
+                        <strong>{researchStepTitle(step.text)}</strong>
+                        <small>{status === "running" ? "进行中" : status === "failed" ? "需要检查" : "已完成"}</small>
+                      </span>
+                      <ChevronDown size={14} />
+                    </button>
+                    {expanded ? <p>{step.text}</p> : null}
+                  </li>
+                );
+              })}
+            </ol>
+          ) : (
+            <div className="research-empty-state">
+              <ThinkingMark size={16} />
+              <p>{streaming ? "正在拆解问题并准备下一步。" : "这条回答没有调用外部研究工具。"}</p>
+            </div>
+          )}
+        </section>
+
+        <section className="research-section research-sources" aria-labelledby="research-sources-title">
+          <div className="research-section-heading">
+            <span>引用</span>
+            <small>{sources.length ? `${sources.length} 个来源` : "暂无来源"}</small>
+          </div>
+          <h2 id="research-sources-title">用于回答的公开资料</h2>
+          {sources.length ? (
+            <>
+              <div className="research-source-list" aria-label="来源列表">
+                {sources.map((source, index) => {
+                  const confidence = sourceConfidence(source);
+                  return (
+                    <button
+                      type="button"
+                      className={activeSource?.url === source.url ? "is-active" : ""}
+                      key={`${source.url}-${index}`}
+                      onClick={() => onSelectSource(index)}
+                      aria-label={`来源 ${index + 1}：${source.title}`}
+                    >
+                      <span className="research-source-number">{index + 1}</span>
+                      <SourceFavicon domain={sourceDomain(source)} title={source.title} />
+                      <span className="research-source-copy">
+                        <strong>{source.title}</strong>
+                        <small>{sourceDomain(source)}</small>
+                      </span>
+                      <em className={`is-${confidence}`}>{confidence === "high" ? "高可信" : "待核验"}</em>
+                    </button>
+                  );
+                })}
+              </div>
+              {activeSource ? (
+                <article className="research-source-detail" aria-label={`来源详情：${activeSource.title}`}>
+                  <div>
+                    <span>来源 {Math.min(selectedSource, sources.length - 1) + 1}</span>
+                    <a href={activeSource.url} target="_blank" rel="noreferrer">打开原网页<ArrowUpRight size={13} /></a>
+                  </div>
+                  <strong>{activeSource.title}</strong>
+                  {activeSource.published_at ? <small>{activeSource.published_at}</small> : null}
+                  <p>{sourceDisplaySummary(activeSource)}</p>
+                </article>
+              ) : null}
+            </>
+          ) : (
+            <div className="research-empty-state">
+              <Search size={16} />
+              <p>开启“联网”后，搜索节点与引用会集中显示在这里。</p>
+            </div>
+          )}
+        </section>
+      </div>
+    </aside>
   );
 }
 
@@ -970,6 +1127,7 @@ function UserMessageContent({ content }: { content: string }) {
 }
 
 function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: boolean }) {
+  const researchPanel = useContext(ResearchPanelActionsContext);
   const source = state.metadata.custom.source as ChatMessage | undefined;
   if (!source) return null;
   const isCopied = "isCopied" in state && Boolean(state.isCopied);
@@ -979,26 +1137,19 @@ function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: boolean 
   const isActiveAssistant = chatBusy && source.id < 0;
   const resultContent = resultOnlyContent(source.content, Boolean(thoughtEvent?.message));
   const failed = source.payload?.agent?.status === "failed";
-  const webSources = (source.payload?.agent?.events
-    .filter((event) => ["search_public_web", "research_company"].includes(event.tool_name))
-    .flatMap((event) => Array.isArray(event.data?.sources) ? event.data.sources : [])
-    .filter((item): item is WebSource => {
-      if (!item || typeof item !== "object") return false;
-      const candidate = item as Partial<WebSource>;
-      return typeof candidate.title === "string"
-        && typeof candidate.url === "string"
-        && /^https?:\/\//.test(candidate.url);
-    }) ?? [])
-    .filter((item, index, all) => all.findIndex((candidate) => candidate.url === item.url) === index);
+  const webSources = webSourcesFromAgent(source.payload?.agent);
+  const openResearch = (selectedSource?: number) => {
+    researchPanel?.openDetails(source.payload?.agent, webSources, selectedSource);
+  };
 
   return (
     <MessagePrimitive.Root className={`message ${source.role}`}>
       <div className="message-content">
         {source.role === "assistant" ? (
           <>
-            <ThoughtProcess streaming={isActiveAssistant} agent={source.payload?.agent} />
+            <ThoughtProcess streaming={isActiveAssistant} agent={source.payload?.agent} onOpen={() => openResearch()} />
             <section className="message-result message-dialog" aria-label="输出结果">
-              <MarkdownContent sources={webSources} streaming={isActiveAssistant}>{resultContent}</MarkdownContent>
+              <MarkdownContent sources={webSources} streaming={isActiveAssistant} onOpenSource={openResearch}>{resultContent}</MarkdownContent>
               <AgentResultNote run={source.payload?.agent} />
             </section>
             <ActionBarPrimitive.Root className="message-actions" hideWhenRunning>
@@ -1010,7 +1161,7 @@ function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: boolean 
                 <RefreshCw size={12} />{failed ? "重试" : "重新生成"}
               </ActionBarPrimitive.Reload>
             </ActionBarPrimitive.Root>
-            <WebSourcesPanel sources={webSources} />
+            <WebSourcesPanel sources={webSources} onOpen={() => openResearch()} />
           </>
         ) : (
           <>
@@ -1047,23 +1198,54 @@ type ChatWorkspaceContentProps = ChatWorkspaceProps & {
   onUpload: (file?: File) => Promise<void>;
   onRemovePendingAttachment: (attachmentId: string) => Promise<void>;
   webSearchSelected: boolean;
+  webSearchMode: WebSearchMode;
   onToggleWebSearch: () => void;
+  onWebSearchModeChange: (mode: WebSearchMode) => void;
 };
 
 function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const researchToggleRef = useRef<HTMLButtonElement>(null);
   const aui = useAui();
   const placeholderThinking = thinkingHeaderCopy(props.latestAgent, true);
   const clarification = clarificationFromAgent(props.latestAgent);
   const [isDraggingAttachment, setIsDraggingAttachment] = useState(false);
   const [expandedPreview, setExpandedPreview] = useState<{ filename: string; url: string } | null>(null);
   const [conversationListOpen, setConversationListOpen] = useState(false);
+  const [researchPanelOpen, setResearchPanelOpen] = useState(false);
+  const [researchSelection, setResearchSelection] = useState<{
+    agent?: AgentRunResult;
+    sources: WebSource[];
+    selectedSource: number;
+  } | null>(null);
   const currentConversation = props.conversations.find((item) => item.id === props.currentConversationId);
   const sessionTitle = props.conversationTitle?.trim() || currentConversation?.title || "新对话";
   const showStarters = props.messages.length === 0 && !props.chatBusy && !clarification;
   const isFreshUntitled = props.messages.length === 0 && (!currentConversation || sessionTitle === "新对话");
+  const latestAssistant = [...props.messages].reverse().find((message) => message.role === "assistant");
+  const defaultResearchAgent = props.latestAgent ?? latestAssistant?.payload?.agent;
+  const defaultResearchSources = webSourcesFromAgent(defaultResearchAgent);
+  const activeResearch = researchSelection ?? {
+    agent: defaultResearchAgent,
+    sources: defaultResearchSources,
+    selectedSource: 0
+  };
 
-  function fillComposer(draft: string) {
+  function openResearchDetails(agent = defaultResearchAgent, sources = defaultResearchSources, selectedSource = 0) {
+    setConversationListOpen(false);
+    setResearchSelection({ agent, sources, selectedSource });
+    setResearchPanelOpen(true);
+  }
+
+  function closeResearchDetails(restoreFocus = true) {
+    setResearchPanelOpen(false);
+    if (restoreFocus) window.requestAnimationFrame(() => researchToggleRef.current?.focus());
+  }
+
+  function fillComposer(draft: string, enableWebSearch = false) {
+    if (enableWebSearch && props.webSearchAvailable && !props.webSearchSelected) {
+      props.onToggleWebSearch();
+    }
     aui.composer().setText(draft);
     window.requestAnimationFrame(() => {
       const input = props.chatInputRef.current;
@@ -1076,6 +1258,8 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   useEffect(() => {
     setExpandedPreview(null);
     setConversationListOpen(false);
+    setResearchPanelOpen(false);
+    setResearchSelection(null);
   }, [props.currentConversationId]);
 
   useEffect(() => {
@@ -1085,13 +1269,15 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   }, [props.chatBusy, props.chatInputRef, props.currentConversationId, props.messages.length]);
 
   useEffect(() => {
-    if (!conversationListOpen) return;
+    if (!conversationListOpen && !researchPanelOpen) return;
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setConversationListOpen(false);
+      if (event.key !== "Escape") return;
+      if (conversationListOpen) setConversationListOpen(false);
+      if (researchPanelOpen) closeResearchDetails();
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [conversationListOpen]);
+  }, [conversationListOpen, researchPanelOpen]);
 
   async function selectAttachment(file?: File) {
     if (!file || props.attachmentBusy) return;
@@ -1141,7 +1327,8 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   }
 
   return (
-    <section className={`chat-workspace ${props.messages.length ? "has-history" : "is-empty"} ${props.chatBusy ? "is-running" : ""}`}>
+    <section className={`chat-workspace ${props.messages.length ? "has-history" : "is-empty"} ${props.chatBusy ? "is-running" : ""} ${researchPanelOpen ? "has-research-panel" : ""}`}>
+      <ResearchPanelActionsContext.Provider value={{ openDetails: openResearchDetails }}>
       <ThreadPrimitive.Root className="chat-main">
         <header
           className={`chat-session-header${isFreshUntitled ? " is-untitled" : " has-session"}`}
@@ -1168,6 +1355,22 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             )}
           </div>
           <div className="chat-session-tools" role="toolbar" aria-label="对话操作">
+            {props.messages.length || props.chatBusy ? (
+              <button
+                ref={researchToggleRef}
+                className={`chat-session-tool chat-research-toggle${researchPanelOpen ? " is-open" : ""}`}
+                type="button"
+                onClick={() => researchPanelOpen ? closeResearchDetails(false) : openResearchDetails()}
+                aria-label="研究详情"
+                aria-expanded={researchPanelOpen}
+                aria-controls="chat-research-panel"
+                title="查看搜索过程与引用来源"
+              >
+                <PanelRight size={15} />
+                <span>研究详情</span>
+                {defaultResearchSources.length ? <em>{defaultResearchSources.length}</em> : null}
+              </button>
+            ) : null}
             <button
               className="chat-session-tool"
               type="button"
@@ -1228,7 +1431,8 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
         <div className="chat-composer">
           {props.messages.length === 0 ? (
             <div className="chat-welcome">
-              <h2>说说你现在卡在哪。</h2>
+              <h2>你想完成什么？</h2>
+              <p>在这里搜索公开信息、核对来源、分析资料并生成内容，不用在多个工具之间来回切换。</p>
             </div>
           ) : null}
           {clarification && !props.chatBusy ? (
@@ -1262,7 +1466,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
               <TriangleAlert size={14} /><span>上一条消息未发送成功</span>
               <button onClick={() => {
                 const draft = props.retryDraft;
-                if (draft) void props.onSend(draft.content, draft.attachmentIds, draft.visionAttachmentIds, draft.webSearch);
+                if (draft) void props.onSend(draft.content, draft.attachmentIds, draft.visionAttachmentIds, draft.webSearch, draft.webSearchMode);
               }}><RefreshCw size={12} />重试</button>
             </section>
           ) : null}
@@ -1287,7 +1491,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                 rows={1}
                 maxLength={1000}
                 aria-label="输入消息"
-                placeholder={clarification ? "回答上面的问题，或直接说下一件…" : "说说目标、卡点，或一段经历…"}
+                placeholder={clarification ? "回答上面的问题，或直接说下一件…" : "描述任务，或添加一份资料…"}
                 submitMode="enter"
                 onPaste={handleComposerPaste}
               />
@@ -1309,6 +1513,19 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                     <Search size={15} />
                     <span>联网</span>
                   </button>
+                  {props.webSearchSelected ? (
+                    <select
+                      className="web-search-mode"
+                      aria-label="联网搜索模式"
+                      value={props.webSearchMode}
+                      disabled={props.chatBusy}
+                      onChange={(event) => props.onWebSearchModeChange(event.target.value as WebSearchMode)}
+                    >
+                      <option value="auto">自动来源</option>
+                      <option value="technical">技术来源</option>
+                      <option value="general">通用来源</option>
+                    </select>
+                  ) : null}
                   <ChatContextChips context={props.sessionContext} onOpenResume={props.onOpenResume} />
                 </div>
                 {props.chatBusy ? (
@@ -1370,6 +1587,20 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
           ) : null}
         </div>
       </ThreadPrimitive.Root>
+      <ResearchPanel
+        open={researchPanelOpen}
+        agent={activeResearch.agent}
+        sources={activeResearch.sources}
+        selectedSource={activeResearch.selectedSource}
+        streaming={props.chatBusy && activeResearch.agent === props.latestAgent}
+        onSelectSource={(selectedSource) => setResearchSelection({
+          agent: activeResearch.agent,
+          sources: activeResearch.sources,
+          selectedSource
+        })}
+        onClose={() => closeResearchDetails()}
+      />
+      </ResearchPanelActionsContext.Provider>
       <ConversationHistoryPanel
         conversations={props.conversations}
         currentConversationId={props.currentConversationId}
@@ -1383,6 +1614,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
         onRemove={props.onRemoveConversation}
       />
       {conversationListOpen ? <button className="conversation-history-backdrop" type="button" aria-label="关闭对话记录" onClick={() => setConversationListOpen(false)} /> : null}
+      {researchPanelOpen ? <button className="research-panel-backdrop" type="button" aria-label="关闭研究详情" onClick={() => closeResearchDetails()} /> : null}
     </section>
   );
 }
@@ -1394,6 +1626,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
   const previewUrlsRef = useRef<Record<string, string>>({});
   const [visionAttachmentIds, setVisionAttachmentIds] = useState<string[]>([]);
   const [webSearchSelected, setWebSearchSelected] = useState(false);
+  const [webSearchMode, setWebSearchMode] = useState<WebSearchMode>("auto");
 
   useEffect(() => {
     Object.values(previewUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
@@ -1403,6 +1636,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     setUploadingPreview(null);
     setVisionAttachmentIds([]);
     setWebSearchSelected(false);
+    setWebSearchMode("auto");
   }, [props.currentConversationId]);
 
   useEffect(() => () => {
@@ -1464,10 +1698,12 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
           pendingAttachments.map((attachment) => attachment.id),
           visionAttachmentIds,
           webSearchSelected,
+          webSearchMode,
         );
         setPendingAttachments([]);
         setVisionAttachmentIds([]);
         setWebSearchSelected(false);
+        setWebSearchMode("auto");
       }
     },
     onEdit: async (message) => {
@@ -1492,7 +1728,9 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
         onUpload={uploadAttachment}
         onRemovePendingAttachment={removePendingAttachment}
         webSearchSelected={webSearchSelected}
+        webSearchMode={webSearchMode}
         onToggleWebSearch={() => setWebSearchSelected((selected) => !selected)}
+        onWebSearchModeChange={setWebSearchMode}
       />
     </AssistantRuntimeProvider>
   );

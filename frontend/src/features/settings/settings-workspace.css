@@ -137,6 +137,36 @@
 
 /* Profile is organized as one linear canvas: identity first, then the resume workspace. */
 .profile-linear-layout { display: grid; gap: 14px; }
+.profile-library-index {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.profile-library-index button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 13px 14px;
+  border: 1px solid var(--color-border, #e4e2ef);
+  border-radius: 12px;
+  color: var(--color-brand, #6557dc);
+  background: rgba(255,255,255,.78);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .16s ease, background .16s ease, transform .16s ease;
+}
+.profile-library-index button:hover,
+.profile-library-index button:focus-visible {
+  border-color: #bbb4e6;
+  background: #f8f7ff;
+  transform: translateY(-1px);
+}
+.profile-library-index button > span { display: grid; min-width: 0; gap: 3px; }
+.profile-library-index strong { color: var(--color-text, #20213a); font-size: 13px; }
+.profile-library-index small { overflow: hidden; color: var(--color-text-muted, #84859a); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .profile-linear-layout .profile-foundation-card { padding: 20px; }
 .profile-linear-layout .profile-foundation-form { grid-template-columns: minmax(150px, .72fr) minmax(220px, 1.2fr) minmax(160px, .8fr); }
 .profile-linear-layout .profile-foundation-form label.wide-field { grid-column: auto; }
@@ -205,9 +235,54 @@
 .profile-resume-empty .profile-paste-details { padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 .profile-resume-workspace-footer { display: grid; gap: 10px; padding-top: 13px; border-top: 1px solid var(--color-border, #e4e2ef); }
 .profile-resume-workspace-footer .profile-data-note { margin: 0; }
+.profile-organized-card {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--color-border, #e4e2ef);
+  border-radius: 14px;
+  background: rgba(255,255,255,.84);
+  box-shadow: var(--shadow-sm);
+}
+.profile-organized-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(140px, 180px)) minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+.profile-organized-summary > div:not(.profile-organized-tags) {
+  display: grid;
+  gap: 3px;
+  padding: 13px;
+  border-radius: 10px;
+  background: var(--color-surface-subtle, #f0eff8);
+}
+.profile-organized-summary strong { color: var(--color-text, #20213a); font-size: 18px; }
+.profile-organized-summary span { color: var(--color-text-muted, #84859a); font-size: 11px; }
+.profile-organized-tags { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.profile-organized-tags span { padding: 5px 8px; border-radius: 999px; color: var(--color-brand-strong, #4e42ba); background: var(--color-brand-soft, #eeecff); font-size: 11px; }
+.profile-organized-empty { margin: 0; color: var(--color-text-muted, #84859a); font-size: 13px; }
+.profile-review-queue { display: grid; gap: 10px; padding: 14px; border: 1px solid #dedaf7; border-radius: 12px; background: #faf9ff; }
+.profile-review-queue > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.profile-review-queue > header > div { display: flex; align-items: center; gap: 7px; }
+.profile-review-queue > header strong { color: var(--color-text, #20213a); font-size: 13px; }
+.profile-review-queue > header span { color: var(--color-brand-strong, #4e42ba); font-size: 11px; font-weight: 720; }
+.profile-review-queue > header p { margin: 0; color: var(--color-text-muted, #84859a); font-size: 11px; }
+.profile-review-queue ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.profile-review-queue li { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 12px; border: 1px solid var(--color-border, #e4e2ef); border-radius: 10px; background: #fff; }
+.profile-review-queue li > div:first-child { min-width: 0; }
+.profile-review-queue li strong { color: var(--color-text, #20213a); font-size: 12px; }
+.profile-review-queue li p { margin: 4px 0 0; color: var(--color-text-secondary, #50516a); font-size: 11px; line-height: 1.5; }
+.profile-review-queue blockquote { margin: 8px 0 0; padding-left: 9px; border-left: 2px solid #d8d3f5; color: var(--color-text-muted, #84859a); font-size: 11px; line-height: 1.5; }
+.profile-review-queue cite { display: block; margin-bottom: 2px; color: var(--color-brand-strong, #4e42ba); font-style: normal; font-weight: 700; }
+.profile-review-actions { display: inline-flex; flex: 0 0 auto; gap: 6px; }
+.profile-review-actions button { min-height: 30px; padding: 0 10px; border: 1px solid var(--color-brand, #6557dc); border-radius: 8px; color: #fff; background: var(--color-brand, #6557dc); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+.profile-review-actions button.is-quiet { border-color: var(--color-border, #e4e2ef); color: var(--color-text-secondary, #50516a); background: #fff; }
+.profile-review-actions button:disabled { cursor: wait; opacity: .55; }
+.profile-review-more { justify-self: start; padding: 0; border: 0; color: var(--color-brand-strong, #4e42ba); background: transparent; font: inherit; font-size: 11px; font-weight: 720; cursor: pointer; }
 
 @media (max-width: 880px) { .profile-editing-grid { grid-template-columns: 1fr; }.profile-editing-grid .profile-resume-editor > textarea { min-height: 300px; } }
-@media (max-width: 760px) { .profile-page-heading { display: grid; }.profile-heading-actions { padding-top: 0; }.profile-foundation-grid { grid-template-columns: 1fr; }.profile-linear-layout .profile-foundation-form { grid-template-columns: 1fr; }.profile-linear-layout .profile-foundation-form label.wide-field { grid-column: auto; }.profile-resume-workspace-heading, .profile-resume-import, .profile-resume-editor > header { align-items: flex-start; flex-direction: column; }.profile-resume-heading-actions { padding-top: 0; }.profile-resume-import { gap: 10px; }.profile-resume-import .profile-resume-action, .profile-resume-view-switch { width: 100%; box-sizing: border-box; }.profile-resume-editor > header { gap: 10px; }.profile-resume-editor > footer { align-items: flex-start; flex-direction: column; }.profile-resume-workspace .profile-resume-editor > textarea { min-height: 280px; }.profile-save-bar.profile-simplified-save { display: grid; gap: 10px; padding: 12px; }.profile-save-bar.profile-simplified-save .primary-button { width: 100%; justify-content: center; } }
+@media (max-width: 760px) { .profile-page-heading { display: grid; }.profile-heading-actions { padding-top: 0; }.profile-library-index { grid-template-columns: 1fr; }.profile-organized-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }.profile-organized-tags { grid-column: 1 / -1; justify-content: flex-start; }.profile-review-queue > header, .profile-review-queue li { flex-direction: column; }.profile-review-actions { width: 100%; }.profile-review-actions button { flex: 1; }.profile-foundation-grid { grid-template-columns: 1fr; }.profile-linear-layout .profile-foundation-form { grid-template-columns: 1fr; }.profile-linear-layout .profile-foundation-form label.wide-field { grid-column: auto; }.profile-resume-workspace-heading, .profile-resume-import, .profile-resume-editor > header { align-items: flex-start; flex-direction: column; }.profile-resume-heading-actions { padding-top: 0; }.profile-resume-import { gap: 10px; }.profile-resume-import .profile-resume-action, .profile-resume-view-switch { width: 100%; box-sizing: border-box; }.profile-resume-editor > header { gap: 10px; }.profile-resume-editor > footer { align-items: flex-start; flex-direction: column; }.profile-resume-workspace .profile-resume-editor > textarea { min-height: 280px; }.profile-save-bar.profile-simplified-save { display: grid; gap: 10px; padding: 12px; }.profile-save-bar.profile-simplified-save .primary-button { width: 100%; justify-content: center; } }
 
 /* Responsive profile workspace: desktop, tablet, and narrow mobile. */
 @media (max-width: 1024px) {

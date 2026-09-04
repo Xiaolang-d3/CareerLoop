@@ -737,6 +737,9 @@ export type OpportunitySource = {
   last_scanned_at: string | null;
 };
 
+export type ModelProtocol = "auto" | "openai" | "responses" | "anthropic" | "gemini" | "ollama";
+export type ResolvedModelProtocol = Exclude<ModelProtocol, "auto">;
+
 export type AgentSettings = {
   display_name: string;
   persona_role: string;
@@ -749,6 +752,8 @@ export type AgentSettings = {
   context_message_limit: number;
   model_name: string;
   model_base_url: string;
+  model_protocol: ModelProtocol;
+  resolved_model_protocol?: ResolvedModelProtocol;
   api_key: string;
   api_key_configured: boolean;
 };
@@ -763,6 +768,7 @@ type ModelServiceEvent = {
   total_tokens: number;
   model_name: string;
   base_url: string;
+  protocol: ResolvedModelProtocol;
   created_at: string;
 };
 
@@ -778,6 +784,8 @@ export type ModelCapabilityReport = {
   model_name: string;
   provider: string;
   provider_label: string;
+  protocol: ResolvedModelProtocol;
+  protocol_label: string;
   vision: ModelCapabilityFlag;
   streaming: ModelCapabilityFlag;
   tools: ModelCapabilityFlag;
@@ -791,6 +799,7 @@ export type ModelServiceMonitor = {
   status_message: string;
   model_name: string;
   base_url: string;
+  protocol: ResolvedModelProtocol;
   api_key_configured: boolean;
   window_hours: number;
   summary: {
@@ -887,4 +896,3 @@ export type AgentOperationsSnapshot = {
     tokens_attributed_to_run: boolean;
   };
 };
-

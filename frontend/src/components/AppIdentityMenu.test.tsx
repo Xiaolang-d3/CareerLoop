@@ -47,7 +47,7 @@ describe("AppIdentityMenu", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "账号菜单" }));
 
-    expect(screen.getByRole("menuitem", { name: "求职资料" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "资料库" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "账号与安全" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "退出登录" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "对话" })).not.toBeInTheDocument();
@@ -72,7 +72,7 @@ describe("AppIdentityMenu", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "账号菜单" }));
-    const profile = screen.getByRole("menuitem", { name: "求职资料" });
+    const profile = screen.getByRole("menuitem", { name: "资料库" });
     expect(profile).toHaveAttribute("aria-current", "page");
     fireEvent.focus(profile);
     fireEvent.click(profile);

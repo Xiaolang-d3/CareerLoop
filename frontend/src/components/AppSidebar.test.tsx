@@ -93,14 +93,21 @@ describe("AppSidebar", () => {
     expect(screen.queryByRole("button", { name: "退出登录" })).not.toBeInTheDocument();
   });
 
-  it("keeps only home, evidence, resume, and chat in product navigation", () => {
+  it("keeps only home, library, workspace, and chat in product navigation", () => {
     renderSidebar();
 
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
-    expect(within(screen.getByRole("navigation", { name: "主导航" })).getByText("工作台")).toHaveClass("nav-label");
+    const desktopNav = screen.getByRole("navigation", { name: "主导航" });
+    expect(within(desktopNav).getByText("从对话开始")).toHaveClass("nav-label");
+    expect(within(desktopNav).getAllByRole("button").map((item) => item.getAttribute("aria-label"))).toEqual([
+      "对话",
+      "首页",
+      "资料库",
+      "工作台"
+    ]);
     expect(screen.getAllByRole("button", { name: "首页" })).not.toHaveLength(0);
-    expect(screen.getAllByRole("button", { name: "证据" })).toHaveLength(2);
-    expect(screen.getAllByRole("button", { name: "简历" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "资料库" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "工作台" })).toHaveLength(2);
     expect(screen.getAllByRole("button", { name: "对话" })).not.toHaveLength(0);
     expect(screen.queryByRole("button", { name: "分析" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "项目" })).not.toBeInTheDocument();
@@ -113,24 +120,24 @@ describe("AppSidebar", () => {
     expect(screen.queryByRole("button", { name: "新建对话" })).not.toBeInTheDocument();
   });
 
-  it("opens home, evidence, and resume from the sidebar", () => {
+  it("opens home, library, and workspace from the sidebar", () => {
     const props = renderSidebar();
 
     fireEvent.click(screen.getAllByRole("button", { name: "首页" })[0]);
-    fireEvent.click(screen.getAllByRole("button", { name: "证据" })[0]);
-    fireEvent.click(screen.getAllByRole("button", { name: "简历" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "资料库" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "工作台" })[0]);
 
     expect(props.onSelectNav).toHaveBeenCalledWith("dashboard");
-    expect(props.onSelectNav).toHaveBeenCalledWith("evidence");
-    expect(props.onSelectNav).toHaveBeenCalledWith("resume");
+    expect(props.onSelectNav).toHaveBeenCalledWith("library");
+    expect(props.onSelectNav).toHaveBeenCalledWith("workspace");
   });
 
   it("prefetches a module when its navigation item is hovered", () => {
     const props = renderSidebar();
 
     fireEvent.mouseEnter(screen.getAllByRole("button", { name: "首页" })[0]);
-    fireEvent.mouseEnter(screen.getAllByRole("button", { name: "证据" })[0]);
-    fireEvent.mouseEnter(screen.getAllByRole("button", { name: "简历" })[0]);
+    fireEvent.mouseEnter(screen.getAllByRole("button", { name: "资料库" })[0]);
+    fireEvent.mouseEnter(screen.getAllByRole("button", { name: "工作台" })[0]);
 
     expect(props.onPrefetchPage).toHaveBeenCalledWith("dashboard");
     expect(props.onPrefetchPage).toHaveBeenCalledWith("profile");
@@ -142,52 +149,52 @@ describe("AppSidebar", () => {
     const mobile = screen.getByRole("navigation", { name: "移动端主导航" });
 
     expect(within(mobile).getByRole("button", { name: "首页" })).toBeInTheDocument();
-    expect(within(mobile).getByRole("button", { name: "证据" })).toBeInTheDocument();
-    expect(within(mobile).getByRole("button", { name: "简历" })).toBeInTheDocument();
+    expect(within(mobile).getByRole("button", { name: "资料库" })).toBeInTheDocument();
+    expect(within(mobile).getByRole("button", { name: "工作台" })).toBeInTheDocument();
     expect(within(mobile).getByRole("button", { name: "对话" })).toHaveAttribute("aria-current", "page");
     expect(screen.queryByRole("button", { name: "更多导航" })).not.toBeInTheDocument();
 
-    fireEvent.focus(within(mobile).getByRole("button", { name: "证据" }));
-    fireEvent.click(within(mobile).getByRole("button", { name: "证据" }));
+    fireEvent.focus(within(mobile).getByRole("button", { name: "资料库" }));
+    fireEvent.click(within(mobile).getByRole("button", { name: "资料库" }));
 
     expect(props.onPrefetchPage).toHaveBeenCalledWith("profile");
-    expect(props.onSelectNav).toHaveBeenCalledWith("evidence");
+    expect(props.onSelectNav).toHaveBeenCalledWith("library");
   });
 
-  it("highlights evidence and resume only on those pages", () => {
+  it("highlights library and workspace only on those pages", () => {
     renderSidebar(undefined, false, "settings", { settingsPage: "profile" });
     const evidenceNav = screen.getByRole("navigation", { name: "主导航" });
-    expect(within(evidenceNav).getByRole("button", { name: "证据" })).toHaveAttribute("aria-current", "page");
-    expect(within(evidenceNav).getByRole("button", { name: "简历" })).not.toHaveAttribute("aria-current");
+    expect(within(evidenceNav).getByRole("button", { name: "资料库" })).toHaveAttribute("aria-current", "page");
+    expect(within(evidenceNav).getByRole("button", { name: "工作台" })).not.toHaveAttribute("aria-current");
     expect(within(evidenceNav).getByRole("button", { name: "首页" })).not.toHaveAttribute("aria-current");
     cleanup();
 
     renderSidebar(undefined, false, "workbench", { workbenchPage: "resume" });
     const resumeNav = screen.getByRole("navigation", { name: "主导航" });
-    expect(within(resumeNav).getByRole("button", { name: "简历" })).toHaveAttribute("aria-current", "page");
-    expect(within(resumeNav).getByRole("button", { name: "证据" })).not.toHaveAttribute("aria-current");
+    expect(within(resumeNav).getByRole("button", { name: "工作台" })).toHaveAttribute("aria-current", "page");
+    expect(within(resumeNav).getByRole("button", { name: "资料库" })).not.toHaveAttribute("aria-current");
     cleanup();
 
     renderSidebar(undefined, false, "workbench", { workbenchPage: "index" });
     const analysisNav = screen.getByRole("navigation", { name: "主导航" });
-    expect(within(analysisNav).getByRole("button", { name: "简历" })).not.toHaveAttribute("aria-current");
-    expect(within(analysisNav).getByRole("button", { name: "证据" })).not.toHaveAttribute("aria-current");
+    expect(within(analysisNav).getByRole("button", { name: "工作台" })).not.toHaveAttribute("aria-current");
+    expect(within(analysisNav).getByRole("button", { name: "资料库" })).not.toHaveAttribute("aria-current");
   });
 
   it("does not steal evidence or resume highlight on opportunity, interview, or project deep links", () => {
     renderSidebar(undefined, false, "opportunities");
     const homeNav = screen.getByRole("navigation", { name: "主导航" });
     expect(within(homeNav).getByRole("button", { name: "首页" })).not.toHaveAttribute("aria-current");
-    expect(within(homeNav).getByRole("button", { name: "证据" })).not.toHaveAttribute("aria-current");
-    expect(within(homeNav).getByRole("button", { name: "简历" })).not.toHaveAttribute("aria-current");
+    expect(within(homeNav).getByRole("button", { name: "资料库" })).not.toHaveAttribute("aria-current");
+    expect(within(homeNav).getByRole("button", { name: "工作台" })).not.toHaveAttribute("aria-current");
     expect(within(homeNav).getByRole("button", { name: "对话" })).not.toHaveAttribute("aria-current");
     expect(screen.queryByRole("button", { name: "机会中心" })).not.toBeInTheDocument();
     cleanup();
 
     renderSidebar(undefined, false, "interview-prep");
     const prepNav = screen.getByRole("navigation", { name: "主导航" });
-    expect(within(prepNav).getByRole("button", { name: "证据" })).not.toHaveAttribute("aria-current");
-    expect(within(prepNav).getByRole("button", { name: "简历" })).not.toHaveAttribute("aria-current");
+    expect(within(prepNav).getByRole("button", { name: "资料库" })).not.toHaveAttribute("aria-current");
+    expect(within(prepNav).getByRole("button", { name: "工作台" })).not.toHaveAttribute("aria-current");
     expect(within(prepNav).getByRole("button", { name: "首页" })).not.toHaveAttribute("aria-current");
     expect(within(prepNav).getByRole("button", { name: "对话" })).not.toHaveAttribute("aria-current");
     expect(screen.queryByRole("button", { name: "项目解析" })).not.toBeInTheDocument();
@@ -195,8 +202,8 @@ describe("AppSidebar", () => {
 
     renderSidebar(undefined, false, "project-lab");
     const labNav = screen.getByRole("navigation", { name: "主导航" });
-    expect(within(labNav).getByRole("button", { name: "证据" })).not.toHaveAttribute("aria-current");
-    expect(within(labNav).getByRole("button", { name: "简历" })).not.toHaveAttribute("aria-current");
+    expect(within(labNav).getByRole("button", { name: "资料库" })).not.toHaveAttribute("aria-current");
+    expect(within(labNav).getByRole("button", { name: "工作台" })).not.toHaveAttribute("aria-current");
     expect(screen.queryByRole("button", { name: "项目" })).not.toBeInTheDocument();
   });
 });

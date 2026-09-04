@@ -5,12 +5,13 @@ from typing import Any
 
 from ..config import get_settings
 from ..db import connect, row_to_dict
+from ..model_protocol import normalize_model_protocol, resolve_model_protocol
 
 
 DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
     "id": 1,
     "display_name": "CareerLoop",
-    "persona_role": "理性、坦诚、尊重用户决定的本地求职顾问",
+    "persona_role": "理性、坦诚、尊重用户决定，并基于用户资料协助分析与创作的本地 AI 伙伴",
     "response_style": "concise",
     "custom_instructions": "",
     "profile_memory_enabled": True,
@@ -20,6 +21,7 @@ DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
     "context_message_limit": 12,
     "model_name": "",
     "model_base_url": "",
+    "model_protocol": "auto",
     "model_api_key": "",
 }
 
@@ -34,6 +36,10 @@ def get_agent_settings(db_path: str | Path | None = None) -> dict[str, Any]:
         fallback.pop("model_api_key", None)
         fallback["model_name"] = config.model_name
         fallback["model_base_url"] = config.model_base_url or ""
+        fallback["model_protocol"] = config.model_protocol
+        fallback["resolved_model_protocol"] = resolve_model_protocol(
+            config.model_name, config.model_protocol, config.model_base_url or ""
+        )
         fallback["api_key_configured"] = bool(config.openai_api_key)
         return fallback
     if row is None:
@@ -41,6 +47,10 @@ def get_agent_settings(db_path: str | Path | None = None) -> dict[str, Any]:
         fallback.pop("model_api_key", None)
         fallback["model_name"] = config.model_name
         fallback["model_base_url"] = config.model_base_url or ""
+        fallback["model_protocol"] = config.model_protocol
+        fallback["resolved_model_protocol"] = resolve_model_protocol(
+            config.model_name, config.model_protocol, config.model_base_url or ""
+        )
         fallback["api_key_configured"] = bool(config.openai_api_key)
         return fallback
     result = row_to_dict(row)
@@ -51,6 +61,12 @@ def get_agent_settings(db_path: str | Path | None = None) -> dict[str, Any]:
         result[key] = bool(result[key])
     result["model_name"] = result.get("model_name") or config.model_name
     result["model_base_url"] = result.get("model_base_url") or config.model_base_url or ""
+    result["model_protocol"] = normalize_model_protocol(
+        result.get("model_protocol") or config.model_protocol
+    )
+    result["resolved_model_protocol"] = resolve_model_protocol(
+        result["model_name"], result["model_protocol"], result["model_base_url"]
+    )
     result["api_key_configured"] = bool(result.pop("model_api_key", "") or config.openai_api_key)
     return result
 
@@ -63,8 +79,8 @@ def save_agent_settings(values: dict[str, Any], db_path: str | Path | None = Non
                 id, display_name, persona_role, response_style, custom_instructions,
                 profile_memory_enabled, conversation_memory_enabled,
                 knowledge_memory_enabled, summary_enabled, context_message_limit,
-                model_name, model_base_url, model_api_key
-            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                model_name, model_base_url, model_protocol, model_api_key
+            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 display_name = excluded.display_name,
                 persona_role = excluded.persona_role,
@@ -77,6 +93,7 @@ def save_agent_settings(values: dict[str, Any], db_path: str | Path | None = Non
                 context_message_limit = excluded.context_message_limit,
                 model_name = excluded.model_name,
                 model_base_url = excluded.model_base_url,
+                model_protocol = excluded.model_protocol,
                 model_api_key = excluded.model_api_key,
                 updated_at = CURRENT_TIMESTAMP
             """,
@@ -86,6 +103,7 @@ def save_agent_settings(values: dict[str, Any], db_path: str | Path | None = Non
                 int(values["conversation_memory_enabled"]), int(values["knowledge_memory_enabled"]),
                 int(values["summary_enabled"]), values["context_message_limit"],
                 values["model_name"], values["model_base_url"],
+                normalize_model_protocol(values.get("model_protocol")),
                 values.get("api_key") or _current_model_api_key(conn),
             ),
         )
@@ -101,11 +119,20 @@ def get_model_connection(db_path: str | Path | None = None) -> dict[str, str]:
     config = get_settings()
     with connect(db_path) as conn:
         row = conn.execute(
-            "SELECT model_name, model_base_url, model_api_key FROM agent_settings WHERE id = 1"
+            "SELECT model_name, model_base_url, model_protocol, model_api_key FROM agent_settings WHERE id = 1"
         ).fetchone()
+    model_name = str(row["model_name"] or config.model_name) if row else config.model_name
+    model_base_url = str(row["model_base_url"] or config.model_base_url or "") if row else config.model_base_url or ""
+    model_protocol = normalize_model_protocol(
+        str(row["model_protocol"] or config.model_protocol) if row else config.model_protocol
+    )
     return {
-        "model_name": str(row["model_name"] or config.model_name) if row else config.model_name,
-        "model_base_url": str(row["model_base_url"] or config.model_base_url or "") if row else config.model_base_url or "",
+        "model_name": model_name,
+        "model_base_url": model_base_url,
+        "model_protocol": model_protocol,
+        "resolved_model_protocol": resolve_model_protocol(
+            model_name, model_protocol, model_base_url
+        ),
         "api_key": str(row["model_api_key"] or config.openai_api_key or "") if row else config.openai_api_key or "",
     }
 

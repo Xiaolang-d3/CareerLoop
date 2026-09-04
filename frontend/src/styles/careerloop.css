@@ -414,12 +414,20 @@ body {
 .ui-section-copy h1, .ui-section-copy h2, .ui-section-copy h3 { color: #2a2b46; font-family: var(--font-display); font-weight: 400; }
 .workbench-hero p, .dashboard-hero p, .ui-section-copy p { color: #77778d; }
 .home-page { gap: 16px; }
+.home-hero-kicker {
+  display: inline-block;
+  margin-bottom: 7px;
+  color: var(--color-brand-strong);
+  font-size: 11px;
+  font-weight: 760;
+  letter-spacing: .08em;
+}
 .home-hero-hint { max-width: 36em; }
 
 .home-hero-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .home-status-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   overflow: hidden;
   border: 1px solid var(--color-border);
   border-radius: 14px;
@@ -582,7 +590,7 @@ body {
 .home-next-actions .workbench-task-card p { margin: 4px 0 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
 .home-followup {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
 }
 .home-continue,
@@ -594,6 +602,32 @@ body {
   border-radius: 14px;
   background: var(--color-surface);
   box-shadow: var(--shadow-sm);
+}
+.home-recent-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 4px 8px;
+}
+.home-recent-empty p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+.home-recent-empty button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  color: var(--color-brand-strong);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 720;
+  cursor: pointer;
 }
 .home-project-tabs {
   display: flex;
@@ -2260,6 +2294,15 @@ body {
   border-radius: 12px;
   background: #f4f2ff;
 }
+.workspace-document-context {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--color-brand, #6557dc);
+}
+.workspace-document-context > span { display: grid; gap: 2px; text-align: left; }
+.workspace-document-context strong { color: var(--color-text, #20213a); font-size: 13px; }
+.workspace-document-context small { color: var(--color-text-muted, #84859a); font-size: 10px; font-weight: 500; }
 .workbench-module-nav button {
   min-height: 32px;
   padding: 0 12px;
@@ -4148,4 +4191,3 @@ button.composer-context-status {
 .comparison-table > article {
   color: var(--color-text-secondary);
 }
-

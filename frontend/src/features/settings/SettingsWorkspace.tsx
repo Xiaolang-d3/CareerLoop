@@ -22,7 +22,7 @@ type WorkspaceProps = {
 
 const pageLabels: Record<Exclude<SettingsPage, "overview">, string> = {
   account: "账号与安全",
-  profile: "求职资料",
+  profile: "资料库",
   model: "模型设置",
   agent: "Agent 执行记录"
 };
@@ -30,7 +30,7 @@ const pageLabels: Record<Exclude<SettingsPage, "overview">, string> = {
 export function SettingsWorkspace({ page, children, onBack }: WorkspaceProps) {
   return (
     <section className={`settings-workspace settings-${page}`}>
-      {page !== "overview" ? (
+      {page !== "overview" && page !== "profile" ? (
         <nav className="settings-breadcrumb" aria-label="设置路径">
           <button type="button" onClick={onBack}><ArrowLeft size={14} />设置</button>
           <ChevronRight size={13} aria-hidden="true" />
@@ -91,7 +91,7 @@ export function SettingsOverview({
         <button className="settings-entry-card profile" type="button" onClick={() => onOpen("profile")}>
           <span className="settings-entry-icon"><UserRound size={21} /></span>
           <span className="settings-entry-copy">
-            <span className="settings-entry-title"><strong>求职资料</strong>{profileReadyBadge(profileReady)}</span>
+            <span className="settings-entry-title"><strong>资料库</strong>{profileReadyBadge(profileReady)}</span>
             <span className="settings-entry-primary">{profile.name || "尚未填写称呼"}</span>
             <span className="settings-entry-meta"><FileText size={13} />{profile.resumeFilename || (profile.resumeText ? "已粘贴简历文本" : "尚未保存简历")}</span>
             <span className="settings-entry-meta"><ShieldCheck size={13} />{profile.privacyMode === "original" ? "允许使用原文" : "脱敏模式"}</span>

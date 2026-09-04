@@ -46,7 +46,7 @@ class ModelMonitorTest(unittest.TestCase):
             latency_ms=latency_ms,
             total_tokens=total_tokens,
             model_name="monitor-test-model",
-            base_url="https://models.example.test/v1",
+            base_url="https://models.example.test",
             response_id=response_id,
             db_path=self.db_path,
         )
@@ -101,6 +101,59 @@ class ModelMonitorTest(unittest.TestCase):
         self.assertEqual(snapshot["status"], "unavailable")
         self.assertEqual(snapshot["summary"]["consecutive_failures"], 2)
         self.assertIn("连续 2 次", snapshot["status_message"])
+
+    def test_snapshot_keeps_protocol_histories_separate(self) -> None:
+        self.record("success")
+        record_model_service_event(
+            request_kind="stream",
+            status="error",
+            latency_ms=100,
+            model_name="monitor-test-model",
+            base_url="https://models.example.test",
+            protocol="anthropic",
+            db_path=self.db_path,
+        )
+
+        snapshot = get_model_monitor_snapshot(db_path=self.db_path)
+
+        self.assertEqual(snapshot["protocol"], "openai")
+        self.assertEqual(snapshot["summary"]["total_requests"], 1)
+
+    def test_auto_mode_includes_native_and_successful_fallback_attempts(self) -> None:
+        settings = get_agent_settings(self.db_path)
+        settings.update(
+            {
+                "model_name": "claude-sonnet-5",
+                "model_base_url": "https://gateway.example.test",
+                "model_protocol": "auto",
+            }
+        )
+        save_agent_settings(settings, self.db_path)
+        record_model_service_event(
+            request_kind="stream",
+            status="error",
+            error_code="route_not_found",
+            latency_ms=30,
+            model_name="claude-sonnet-5",
+            base_url="https://gateway.example.test",
+            protocol="anthropic",
+            db_path=self.db_path,
+        )
+        record_model_service_event(
+            request_kind="stream",
+            status="success",
+            latency_ms=90,
+            model_name="claude-sonnet-5",
+            base_url="https://gateway.example.test/v1",
+            protocol="openai",
+            db_path=self.db_path,
+        )
+
+        snapshot = get_model_monitor_snapshot(db_path=self.db_path)
+
+        self.assertEqual(snapshot["summary"]["total_requests"], 2)
+        self.assertEqual(snapshot["protocol"], "openai")
+        self.assertEqual(snapshot["base_url"], "https://gateway.example.test/v1")
 
 
 if __name__ == "__main__":

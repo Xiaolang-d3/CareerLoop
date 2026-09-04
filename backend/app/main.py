@@ -442,6 +442,14 @@ def _ag_ui_web_search(payload: RunAgentInput) -> bool:
     return value
 
 
+def _ag_ui_web_search_mode(payload: RunAgentInput) -> str:
+    forwarded = payload.forwarded_props or {}
+    value = forwarded.get("webSearchMode", "auto") if isinstance(forwarded, dict) else "auto"
+    if value not in {"auto", "technical", "general"}:
+        raise HTTPException(status_code=422, detail="webSearchMode 必须是 auto、technical 或 general")
+    return value
+
+
 async def _stream_chat_message_response(
     payload: ChatMessageIn,
     *,
@@ -463,6 +471,7 @@ async def _stream_chat_message_response(
         user_payload["attachments"] = attachment_summaries
     if payload.web_search:
         user_payload["web_search"] = True
+        user_payload["web_search_mode"] = payload.web_search_mode
     user_message = _save_chat_message(
         "user",
         payload.content,
@@ -524,6 +533,7 @@ async def _stream_chat_message_response(
                     task_id=task_id,
                     image_urls=image_urls,
                     routing_content=trusted_routing_content,
+                    web_search_mode=payload.web_search_mode,
                     resume=resume_snapshot,
                 ):
                     if stream_event.type == "text_delta":
@@ -746,6 +756,7 @@ async def run_ag_ui(payload: dict[str, Any], request: Request) -> StreamingRespo
             attachment_ids=_ag_ui_attachment_ids(ag_ui_input),
             vision_attachment_ids=_ag_ui_vision_attachment_ids(ag_ui_input),
             web_search=_ag_ui_web_search(ag_ui_input),
+            web_search_mode=_ag_ui_web_search_mode(ag_ui_input),
         ),
         ag_ui_input=ag_ui_input,
         accept=request.headers.get("accept"),

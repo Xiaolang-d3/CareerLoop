@@ -10,7 +10,8 @@ from typing import Any
 from ..agent.settings import get_model_connection
 from ..config import get_settings
 from ..domain import AgentMessage, ModelRequest
-from ..models import ModelProviderError, OpenAICompatibleProvider
+from ..models import ModelProviderError, build_model_provider
+from ..model_protocol import protocol_requires_api_key
 from .intelligence import SKILL_ALIASES, _contains, extract_skill_tags, normalize_skill_tag
 
 _MAX_TAGS = 16
@@ -31,7 +32,7 @@ async def resolve_home_skill_tags(
     if not source:
         return {"skills": [], "source": "local"}
     connection = get_model_connection(db_path)
-    if not connection.get("api_key"):
+    if protocol_requires_api_key(connection.get("resolved_model_protocol", "openai")) and not connection.get("api_key"):
         return {"skills": local, "source": "local"}
     cache_key = _cache_key(source, connection.get("model_name") or "")
     cached = _CACHE.get(cache_key)
@@ -55,11 +56,12 @@ def _cache_key(text: str, model_name: str) -> str:
 
 
 async def _refine_skill_tags(text: str, connection: dict[str, str]) -> list[str]:
-    provider = OpenAICompatibleProvider(
+    provider = build_model_provider(
         api_key=connection["api_key"],
         model=connection["model_name"],
         base_url=connection["model_base_url"] or None,
         timeout_seconds=min(get_settings().model_timeout_seconds, 20),
+        protocol=connection.get("model_protocol", "auto"),
     )
     response = await provider.generate(ModelRequest(messages=[
         AgentMessage(role="system", content=(

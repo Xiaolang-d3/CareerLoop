@@ -216,7 +216,7 @@ export function AccountSettingsPage({
     <section className="account-settings-page">
       <header className="profile-page-heading">
         <div>
-          <p>这些信息跟随登录账号，和求职画像分开。换设备登录后仍然有效。</p>
+          <p>这些信息跟随登录账号，和资料库内容分开。换设备登录后仍然有效。</p>
         </div>
       </header>
 

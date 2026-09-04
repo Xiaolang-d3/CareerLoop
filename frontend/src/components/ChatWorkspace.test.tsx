@@ -54,7 +54,7 @@ function fencedMermaid(source: string): string {
   return ["```mermaid", source, "```"].join("\n");
 }
 
-function renderChat(messages: ChatMessage[] = [message], extras: { chatBusy?: boolean; latestAgent?: AgentRunResult } = {}) {
+function renderChat(messages: ChatMessage[] = [message], extras: { chatBusy?: boolean; latestAgent?: AgentRunResult; webSearchAvailable?: boolean } = {}) {
   const props = {
     conversationTitle: conversation.title,
     messages,
@@ -77,7 +77,7 @@ function renderChat(messages: ChatMessage[] = [message], extras: { chatBusy?: bo
     onRemoveConversation: vi.fn(),
     attachmentBusy: false,
     attachmentConfig: null,
-    webSearchAvailable: false,
+    webSearchAvailable: extras.webSearchAvailable ?? false,
     onUploadAttachment: vi.fn(),
     onRemoveAttachment: vi.fn(),
     onAttachmentInvalid: vi.fn(),
@@ -171,7 +171,7 @@ describe("ChatWorkspace", () => {
     expect(header).toHaveClass("is-untitled");
     expect(header.querySelector(".chat-session-title")).toHaveClass("is-static");
     expect(screen.getByRole("toolbar", { name: "对话操作" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "说说你现在卡在哪。" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "你想完成什么？" })).toBeInTheDocument();
   });
 
   it("recedes a default-titled empty session so the opening line owns the canvas", () => {
@@ -213,7 +213,7 @@ describe("ChatWorkspace", () => {
     const header = screen.getByLabelText("新对话 · 对话操作");
     expect(header).toHaveClass("is-untitled");
     expect(header.querySelector(".chat-session-title")).toHaveTextContent("新对话");
-    expect(screen.getByRole("heading", { level: 2, name: "说说你现在卡在哪。" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "你想完成什么？" })).toBeInTheDocument();
   });
 
   it("renames the current conversation from the session title", () => {
@@ -269,37 +269,63 @@ describe("ChatWorkspace", () => {
     renderChat([]);
 
     expect(screen.queryByText("准备与复盘")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "说说你现在卡在哪。" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "你想完成什么？" })).toBeInTheDocument();
     expect(screen.queryByText("没有固定题目。想出题去面试问答，想拆项目去项目解析。")).not.toBeInTheDocument();
     expect(screen.queryByText("面试问答")).not.toBeInTheDocument();
     expect(screen.queryByText("项目解析")).not.toBeInTheDocument();
+    expect(screen.getByText("在这里搜索公开信息、核对来源、分析资料并生成内容，不用在多个工具之间来回切换。")).toBeInTheDocument();
     const drafts = screen.getByLabelText("可选草稿");
     const welcome = document.querySelector(".chat-welcome");
     const composer = document.querySelector(".chat-composer");
     expect(composer?.contains(welcome as Node)).toBe(true);
     expect(composer?.contains(drafts)).toBe(true);
-    expect(screen.queryByRole("button", { name: "看这份简历" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "对照一个岗位" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "复盘一场面试" })).toBeInTheDocument();
-    expect(screen.getByLabelText("输入消息")).toHaveAttribute("placeholder", "说说目标、卡点，或一段经历…");
+    expect(screen.queryByRole("button", { name: "梳理已保存资料" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "分析一份材料" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "查找公开信息" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "起草一份内容" })).toBeInTheDocument();
+    expect(screen.getByLabelText("输入消息")).toHaveAttribute("placeholder", "描述任务，或添加一份资料…");
   });
 
   it("hides starter prompts once the conversation has messages", () => {
     renderChat();
 
     expect(screen.queryByLabelText("可选草稿")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "对照一个岗位" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "分析一份材料" })).not.toBeInTheDocument();
   });
 
   it("fills the composer from a draft instead of sending", async () => {
     const props = renderChat([]);
 
-    fireEvent.click(screen.getByRole("button", { name: "对照一个岗位" }));
+    fireEvent.click(screen.getByRole("button", { name: "分析一份材料" }));
 
     expect(props.onSend).not.toHaveBeenCalled();
     await waitFor(() => {
-      expect(screen.getByLabelText("输入消息")).toHaveValue("对照这个岗位看我适不适合。岗位是：");
+      expect(screen.getByLabelText("输入消息")).toHaveValue("帮我分析这份材料，先总结重点，再指出值得继续追问的地方。");
     });
+  });
+
+  it("enables web search when the public information starter is selected", async () => {
+    renderChat([], { webSearchAvailable: true });
+
+    expect(screen.getByRole("button", { name: "联网搜索" })).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(screen.getByRole("button", { name: "查找公开信息" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "联网搜索" })).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByLabelText("输入消息")).toHaveValue("帮我查找并核对这个主题的公开信息：");
+    });
+  });
+
+  it("keeps source selection inside the existing conversation composer", () => {
+    renderChat([], { webSearchAvailable: true });
+
+    expect(screen.queryByLabelText("联网搜索模式")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "联网搜索" }));
+
+    const mode = screen.getByLabelText("联网搜索模式");
+    expect(mode).toHaveValue("auto");
+    fireEvent.change(mode, { target: { value: "technical" } });
+    expect(mode).toHaveValue("technical");
   });
 
   it("shows saved resume and analysis as attached composer context", () => {
@@ -344,14 +370,14 @@ describe("ChatWorkspace", () => {
       />
     );
 
-    const resume = screen.getByRole("button", { name: "查看已保存简历" });
-    expect(resume).toHaveTextContent("已保存简历");
-    expect(resume).toHaveAttribute("title", "查看已保存简历，提问时会自动参考");
+    const resume = screen.getByRole("button", { name: "查看已保存资料" });
+    expect(resume).toHaveTextContent("已保存资料");
+    expect(resume).toHaveAttribute("title", "查看已保存资料，提问时会自动参考");
     expect(screen.getByText("示例公司 · 后端")).toBeInTheDocument();
     expect(screen.queryByText("分析")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /分析/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "分析" })).not.toBeInTheDocument();
     expect(screen.queryByText("参考简历原文")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "看这份简历" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "梳理已保存资料" })).toBeInTheDocument();
 
     fireEvent.click(resume);
     expect(onOpenResume).toHaveBeenCalledOnce();
@@ -466,7 +492,7 @@ describe("ChatWorkspace", () => {
     expect(onSuggestedAction).not.toHaveBeenCalled();
   });
 
-  it("collapses the thinking process until expanded", () => {
+  it("opens research details from the compact process summary without exposing raw thoughts", () => {
     renderChat([{
       id: 12,
       role: "assistant",
@@ -489,12 +515,13 @@ describe("ChatWorkspace", () => {
       }
     }]);
 
-    const toggle = screen.getByRole("button", { name: "思考过程" });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(toggle.closest(".thinking-process")).not.toHaveClass("expanded");
+    const toggle = screen.getByRole("button", { name: "思考过程，打开研究详情" });
+    expect(screen.queryByRole("complementary", { name: "研究详情" })).not.toBeInTheDocument();
+    expect(screen.queryByText("先确认项目范围，再追问取舍。")).not.toBeInTheDocument();
     fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText("先确认项目范围，再追问取舍。")).toBeVisible();
+    expect(screen.getByRole("complementary", { name: "研究详情" })).toBeInTheDocument();
+    expect(screen.getByText("这条回答没有调用外部研究工具。")).toBeVisible();
+    expect(screen.queryByText("先确认项目范围，再追问取舍。")).not.toBeInTheDocument();
   });
 
   it("expands thinking with live tool work and hides the local route summary", () => {
@@ -542,10 +569,10 @@ describe("ChatWorkspace", () => {
 
     const toggle = screen.getByRole("button", { name: /正在检索公司资料/ });
     fireEvent.click(toggle);
-    const body = document.querySelector(".thinking-process-scroll");
+    const body = screen.getByRole("complementary", { name: "研究详情" });
     expect(body).not.toHaveTextContent("已识别为公司公开信息研究，需要先规划并限制可用工具");
     expect(body).toHaveTextContent("已规划 1 个步骤：核验腾讯科技公开信息");
-    expect(body).toHaveTextContent("正在检索：腾讯科技");
+    expect(body).toHaveTextContent("腾讯科技");
   });
 
   it("does not show the local route summary while waiting for the first real step", () => {
@@ -618,12 +645,13 @@ describe("ChatWorkspace", () => {
       }
     }]);
 
-    fireEvent.click(screen.getByRole("button", { name: "思考过程" }));
+    fireEvent.click(screen.getByRole("button", { name: "思考过程，打开研究详情" }));
     expect(screen.queryByText(/已识别为/)).not.toBeInTheDocument();
     expect(screen.getByText("已找到并读取 2 条公开公司资料，可生成带来源的公司研究报告")).toBeVisible();
-    expect(screen.getByText("已阅读 2 个站点")).toBeVisible();
-    expect(screen.getByRole("link", { name: "tianyancha.com" })).toHaveAttribute("href", "https://www.tianyancha.com/company/1");
-    expect(screen.getByRole("link", { name: "tencent.com" })).toHaveAttribute("href", "https://www.tencent.com/");
+    expect(screen.getByText("2 个来源")).toBeVisible();
+    expect(screen.getByRole("button", { name: "来源 1：天眼查" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "来源 2：官网" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /打开原网页/ })).toHaveAttribute("href", "https://www.tianyancha.com/company/1");
   });
 
   it("shows a specific thinking placeholder while waiting for the first assistant token", () => {
@@ -683,7 +711,6 @@ describe("ChatWorkspace", () => {
     ], { chatBusy: true });
 
     const toggle = screen.getByRole("button", { name: /正在检索公司资料/ });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(toggle).toHaveTextContent("搜索公司资料");
     expect(toggle).not.toHaveTextContent(thoughtBody);
     expect(screen.queryByText("思考过程")).not.toBeInTheDocument();
@@ -716,11 +743,10 @@ describe("ChatWorkspace", () => {
     ], { chatBusy: true });
 
     const toggle = screen.getByRole("button", { name: /正在读取简历/ });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(toggle).toHaveTextContent("正在从简历中定位项目证据");
   });
 
-  it("keeps the thought body out of the streaming header until expanded", () => {
+  it("keeps the thought body private while allowing the research panel to open", () => {
     const thoughtBody = "我先读取简历，再对比岗位要求，然后整理成面试可讲的要点。";
     renderChat([
       message,
@@ -747,12 +773,11 @@ describe("ChatWorkspace", () => {
       }
     ], { chatBusy: true });
 
-    const toggle = screen.getByRole("button", { name: "正在整理要点" });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    const toggle = screen.getByRole("button", { name: "正在整理要点，打开研究详情" });
     expect(toggle).not.toHaveTextContent(thoughtBody);
     fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText(thoughtBody)).toBeVisible();
+    expect(screen.getByRole("complementary", { name: "研究详情" })).toBeInTheDocument();
+    expect(screen.queryByText(thoughtBody)).not.toBeInTheDocument();
   });
 
   it("renders in-text source links as numbered citation previews", () => {
@@ -796,6 +821,51 @@ describe("ChatWorkspace", () => {
     expect(screen.queryByRole("link", { name: "天眼查" })).not.toBeInTheDocument();
     expect(citation).toHaveTextContent("腾讯科技（深圳）有限公司");
     expect(citation).toHaveTextContent("www.tianyancha.com");
+
+    fireEvent.click(citation);
+    expect(screen.getByRole("complementary", { name: "研究详情" })).toHaveTextContent("腾讯科技（深圳）有限公司");
+  });
+
+  it("opens source evidence details inside a researched answer", () => {
+    renderChat([{
+      id: 12,
+      role: "assistant",
+      content: "已完成联网核验。",
+      created_at: "2026-08-11T00:01:00Z",
+      payload: {
+        agent: {
+          provider: "test",
+          platform: "local",
+          rounds: 1,
+          status: "done",
+          events: [{
+            round: 1,
+            tool_call_id: "web-detail",
+            tool_name: "search_public_web",
+            status: "done",
+            message: "ok",
+            data: {
+              sources: [{
+                title: "Python 官方文档",
+                url: "https://docs.python.org/3/library/asyncio.html",
+                domain: "docs.python.org",
+                snippet: "asyncio 用于编写并发代码。",
+                published_at: "2026-08-01"
+              }]
+            }
+          }]
+        }
+      }
+    }]);
+
+    fireEvent.click(screen.getByRole("button", { name: "查看全部 1 个来源" }));
+    const panel = screen.getByRole("complementary", { name: "研究详情" });
+    expect(panel).toHaveTextContent("asyncio 用于编写并发代码");
+    expect(screen.getByRole("link", { name: /打开原网页/ })).toHaveAttribute("href", "https://docs.python.org/3/library/asyncio.html");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("complementary", { name: "研究详情" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "研究详情" })).toHaveAttribute("aria-expanded", "false");
   });
 
   it("renders each Mermaid block in its own stable container", async () => {

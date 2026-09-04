@@ -31,6 +31,7 @@ class ChatMessageIn(BaseModel):
     attachment_ids: list[str] = Field(default_factory=list, max_length=8)
     vision_attachment_ids: list[str] = Field(default_factory=list, max_length=4)
     web_search: bool = False
+    web_search_mode: Literal["auto", "technical", "general"] = "auto"
 
 
 class ConversationIn(BaseModel):
@@ -205,17 +206,21 @@ class AgentSettingsIn(BaseModel):
     context_message_limit: int = Field(default=12, ge=4, le=30)
     model_name: str = Field(default="gpt-5.5", min_length=1, max_length=120)
     model_base_url: str = Field(default="", max_length=500)
+    model_protocol: Literal["auto", "openai", "responses", "anthropic", "gemini", "ollama"] = "auto"
     api_key: str = Field(default="", max_length=500)
 
 
 class ModelDiscoveryIn(BaseModel):
     model_base_url: str = Field(default="", max_length=500)
+    model_name: str = Field(default="", max_length=120)
+    model_protocol: Literal["auto", "openai", "responses", "anthropic", "gemini", "ollama"] = "auto"
     api_key: str = Field(default="", max_length=500)
 
 
 class ModelCapabilitiesIn(BaseModel):
     model_name: str = Field(default="", max_length=120)
     model_base_url: str = Field(default="", max_length=500)
+    model_protocol: Literal["auto", "openai", "responses", "anthropic", "gemini", "ollama"] = "auto"
     api_key: str = Field(default="", max_length=500)
     probe: bool = False
 

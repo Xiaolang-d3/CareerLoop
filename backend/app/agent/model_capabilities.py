@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from ..config import get_settings
+from ..model_protocol import model_protocol_label, resolve_model_protocol
 
 CapabilityStatus = Literal["supported", "unsupported", "unknown"]
 CapabilitySource = Literal["model_id", "probe", "client"]
@@ -61,6 +62,14 @@ _NON_CHAT = (
 
 
 def provider_label(provider: str, base_url: str = "") -> str:
+    native_labels = {
+        "anthropic": "Anthropic",
+        "gemini": "Google Gemini",
+        "ollama": "Ollama",
+        "responses": "OpenAI Responses",
+    }
+    if provider in native_labels:
+        return native_labels[provider]
     if provider != "openai":
         return provider
     normalized = (base_url or "").lower()
@@ -88,11 +97,17 @@ def infer_vision(model_name: str) -> dict[str, str]:
     return _flag("unknown", "model_id", "无法从模型 ID 判断是否支持多模态，可点击检测")
 
 
-def infer_streaming(model_name: str) -> dict[str, str]:
+def infer_streaming(model_name: str, protocol: str = "openai") -> dict[str, str]:
     if _contains(model_name, _NON_CHAT):
         return _flag("unsupported", "model_id", "该模型 ID 不是对话模型，客户端不会对其发起流式请求")
     if model_name.strip():
-        return _flag("supported", "client", "当前 OpenAI 兼容客户端会对该对话模型发起流式请求")
+        label = {
+            "anthropic": "Anthropic Messages",
+            "gemini": "Gemini generateContent",
+            "ollama": "Ollama Chat",
+            "responses": "OpenAI Responses",
+        }.get(protocol, "OpenAI 兼容 Chat Completions")
+        return _flag("supported", "client", f"当前 {label} 客户端会对该对话模型发起流式请求")
     return _flag("unknown", "client", "尚未填写模型名称")
 
 
@@ -109,14 +124,18 @@ def infer_model_capabilities(
     *,
     provider: str = "openai",
     base_url: str = "",
+    protocol: str = "auto",
 ) -> dict[str, Any]:
     name = model_name.strip()
+    resolved_protocol = resolve_model_protocol(name, protocol, base_url)
     return {
         "model_name": name,
         "provider": provider,
         "provider_label": provider_label(provider, base_url),
+        "protocol": resolved_protocol,
+        "protocol_label": model_protocol_label(name, protocol, base_url),
         "vision": infer_vision(name),
-        "streaming": infer_streaming(name),
+        "streaming": infer_streaming(name, resolved_protocol),
         "tools": infer_tools(name),
         "probed": False,
         "probe_error": None,
@@ -143,6 +162,8 @@ def build_model_list(
             "provider": provider,
             "provider_label": label,
             "is_default": name == default_name.strip(),
+            "availability": "unverified",
+            "availability_label": "未验证" if name == default_name.strip() else "仅目录可见",
         }
         for name in names
     ]

@@ -295,12 +295,14 @@ function resumeSourceIdentity(text?: string, profileName?: string): string {
 
 function ResumeModuleShell({
   active,
+  generic = false,
   onSelectAnalysis,
   onSelectResume,
   onSelectInterview,
   children
 }: {
   active: WorkbenchModule;
+  generic?: boolean;
   onSelectAnalysis: () => void;
   onSelectResume: () => void;
   onSelectInterview: () => void;
@@ -315,7 +317,12 @@ function ResumeModuleShell({
     <section className={`resume-module-shell ${shellClass}`}>
       <SectionHeader
         className="topbar"
-        meta={(
+        meta={generic ? (
+          <div className="workspace-document-context">
+            <FileText size={16} aria-hidden="true" />
+            <span><strong>简历</strong><small>编辑、预览并导出当前文档</small></span>
+          </div>
+        ) : (
           <WorkbenchModuleNav
             active={active}
             onSelectAnalysis={onSelectAnalysis}
@@ -1134,6 +1141,7 @@ export function WorkbenchView({
     return (
       <ResumeModuleShell
         active="resume"
+        generic={!resumeJob}
         onSelectAnalysis={onNavigateIndex}
         onSelectResume={() => openResumeStudio(resumeJob?.id)}
         onSelectInterview={() => openInterviewQa(resumeJob?.id)}
@@ -1143,7 +1151,7 @@ export function WorkbenchView({
             <span><LoaderCircle className="spinning" size={24} /></span>
             <div>
               <h2>正在读取已保存的简历</h2>
-              <p>读取完成后可以选择类型、模板、编辑内容并导出。</p>
+              <p>读取完成后可以编辑内容、调整样式并导出。</p>
             </div>
           </section>
         ) : hasResumeContent ? (
@@ -1163,12 +1171,12 @@ export function WorkbenchView({
           <section className="job-stage-empty">
             <span><FileUp size={24} /></span>
             <div>
-              <h2>还没有保存简历</h2>
-              <p>先在求职资料里上传并保存简历，再选择类型和模板编辑和导出。</p>
+              <h2>工作台还没有文档</h2>
+              <p>先在资料库中导入一份来源材料，再到这里编辑和导出。</p>
             </div>
             {onOpenProfile ? (
               <button type="button" onClick={onOpenProfile}>
-                去求职资料<ArrowRight size={14} />
+                去资料库<ArrowRight size={14} />
               </button>
             ) : (
               <button type="button" onClick={onNavigateIndex}>
@@ -2215,7 +2223,7 @@ function ResumeVersionPanel({
   return (
     <section className="resume-version-panel resume-studio-board">
       <div className="resume-studio-designer">
-        <aside className="resume-studio-sidebar" aria-label="定制简历">
+        <aside className="resume-studio-sidebar" aria-label={job ? "定制简历" : "简历编辑器"}>
           <header>
             <div>
               <p>{studioPane === "modules" ? "左侧改内容，右侧马上更新。" : studioPane === "templates" ? "点选风格，右侧马上换一套。" : "先定栏数和疏密，右侧跟着变。"}</p>
@@ -2265,7 +2273,7 @@ function ResumeVersionPanel({
               </div>
             </div>
           </header>
-          <div className="resume-studio-tabs" role="tablist" aria-label="定制简历面板">
+          <div className="resume-studio-tabs" role="tablist" aria-label={job ? "定制简历面板" : "简历编辑面板"}>
             {([
               ["modules", "内容"],
               ["templates", "模板"],

@@ -221,6 +221,21 @@ class WebResearchTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.data["source_count"], 8)
         self.assertEqual(result.data["evidence_count"], 8)
 
+    async def test_generic_web_search_can_prioritize_technical_sources(self) -> None:
+        client = FakeAgentSearchClient()
+        result = await SearchPublicWebTool(
+            settings=Settings(web_research_enabled=True),
+            client=client,
+        ).execute(
+            {"query": "Python 异步任务如何排查", "category": "general"},
+            ToolContext(platform_name="manual", web_search_mode="technical"),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.data["search_mode"], "technical")
+        self.assertIn("site:stackoverflow.com", client.queries[0])
+        self.assertIn("site:docs.python.org", client.queries[0])
+
     async def test_boss_job_search_zero_results_is_inconclusive_not_failed(self) -> None:
         client = EmptyAgentSearchClient()
         result = await ResearchCompanyTool(

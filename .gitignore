@@ -15,12 +15,18 @@ dist/
 # Local runtime data
 backend/data/
 logs/
+tmp/
 *.log
 frontend/test-results/
 frontend/playwright-report/
 *.db
 *.sqlite
 *.sqlite3
+
+# Local design QA evidence
+design-qa.md
+source-loop-comparison.png
+source-loop-implementation.png
 
 # Environment / secrets
 .env

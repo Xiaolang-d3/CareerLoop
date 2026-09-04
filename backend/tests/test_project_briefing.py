@@ -209,7 +209,7 @@ def test_repo_model_drops_invented_paths(tmp_path: Path, monkeypatch) -> None:
                 return type("R", (), {"content": '{"situation":"麦克风 PCM 采集后做 Opus 编码","core":"采集","stack":["Opus","Kafka"]}'})()
             return type("R", (), {"content": '{"layers":[{"name":"客户端","steps":[{"title":"采集","path":"frontend/src/audio/capture.ts"},{"title":"虚构","path":"secret/vault.py"}]}]}'})()
 
-    monkeypatch.setattr("app.projects.briefing.OpenAICompatibleProvider", FakeProvider)
+    monkeypatch.setattr("app.projects.briefing.build_model_provider", FakeProvider)
 
     studio = get_project_studio(db_path)
     project_id = studio["projects"][0]["id"]

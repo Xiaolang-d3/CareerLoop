@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic import BaseModel
 
@@ -13,6 +13,7 @@ class ToolContext(BaseModel):
     conversation_id: int | None = None
     task_id: int | None = None
     user_content: str = ""
+    web_search_mode: Literal["auto", "technical", "general"] = "auto"
 
 
 class ToolHandler(Protocol):

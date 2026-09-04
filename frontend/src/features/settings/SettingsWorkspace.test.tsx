@@ -30,7 +30,7 @@ describe("SettingsOverview", () => {
     expect(screen.getByText("账号与安全")).toBeInTheDocument();
     expect(screen.getByText("小林")).toBeInTheDocument();
     expect(screen.getByText("owner@example.com")).toBeInTheDocument();
-    expect(screen.getByText("求职资料")).toBeInTheDocument();
+    expect(screen.getByText("资料库")).toBeInTheDocument();
     expect(screen.getByText("求职画像里的名字")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /账号与安全/ }));
@@ -116,7 +116,7 @@ describe("SettingsWorkspace", () => {
     }
   });
 
-  it("shows a settings breadcrumb on the career profile page", () => {
+  it("keeps the library as a first-class page instead of nesting it under settings", () => {
     const onBack = vi.fn();
     render(
       <SettingsWorkspace page="profile" onBack={onBack}>
@@ -124,11 +124,8 @@ describe("SettingsWorkspace", () => {
       </SettingsWorkspace>
     );
 
-    const crumb = screen.getByRole("navigation", { name: "设置路径" });
-    expect(crumb).toHaveTextContent("设置");
-    expect(crumb).toHaveTextContent("求职资料");
-    fireEvent.click(screen.getByRole("button", { name: "设置" }));
-    expect(onBack).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("navigation", { name: "设置路径" })).not.toBeInTheDocument();
+    expect(onBack).not.toHaveBeenCalled();
   });
 });
 

@@ -57,7 +57,7 @@ class HomeSkillTagsTest(unittest.TestCase):
             patch.object(skill_tags_module, "get_model_connection", return_value={
                 "api_key": "test", "model_name": "test", "model_base_url": "",
             }),
-            patch.object(skill_tags_module, "OpenAICompatibleProvider", provider),
+            patch.object(skill_tags_module, "build_model_provider", provider),
         ):
             result = asyncio.run(resolve_home_skill_tags(STIFF_SKILLS))
 
@@ -73,7 +73,7 @@ class HomeSkillTagsTest(unittest.TestCase):
             patch.object(skill_tags_module, "get_model_connection", return_value={
                 "api_key": "test", "model_name": "test", "model_base_url": "",
             }),
-            patch.object(skill_tags_module, "OpenAICompatibleProvider", provider),
+            patch.object(skill_tags_module, "build_model_provider", provider),
         ):
             result = asyncio.run(resolve_home_skill_tags(STIFF_SKILLS))
 

@@ -104,7 +104,7 @@ export function AppIdentityMenu({
             onFocus={() => onPrefetchPage?.("profile")}
           >
             <UserRound size={15} />
-            求职资料
+            资料库
           </button>
           {onOpenAccount ? (
             <button

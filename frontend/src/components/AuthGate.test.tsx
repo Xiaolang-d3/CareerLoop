@@ -151,11 +151,11 @@ describe("AuthGate", () => {
     expect(screen.queryByText("登录状态只保存在当前标签页，关闭后需要重新登录。")).not.toBeInTheDocument();
     expect(screen.queryByText("使用账户进入你的职业成长工作台。")).not.toBeInTheDocument();
     expect(screen.queryByText("验证身份 → 进入求职系统，登录只在当前标签页。")).not.toBeInTheDocument();
-    expect(screen.getByRole("complementary", { name: "CareerLoop 如何帮助求职" })).toBeInTheDocument();
-    expect(screen.getByText("把求职变成可持续推进的过程")).toBeInTheDocument();
-    expect(screen.getByText("保存简历")).toBeInTheDocument();
-    expect(screen.getByText("分析岗位")).toBeInTheDocument();
-    expect(screen.getByText("准备面试")).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "CareerLoop 如何与你协作" })).toBeInTheDocument();
+    expect(screen.getByText("让资料在每次对话中持续发挥作用")).toBeInTheDocument();
+    expect(screen.getByText("整理资料")).toBeInTheDocument();
+    expect(screen.getByText("开始对话")).toBeInTheDocument();
+    expect(screen.getByText("沉淀成果")).toBeInTheDocument();
     expect(screen.getByText("有据可循")).toBeInTheDocument();
     expect(screen.getByLabelText("邮箱")).toHaveAttribute("autocomplete", "username");
     expect(screen.getByLabelText("密码")).toHaveAttribute("autocomplete", "current-password");

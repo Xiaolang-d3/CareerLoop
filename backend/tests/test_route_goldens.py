@@ -79,6 +79,12 @@ class RouteCompilerTest(unittest.TestCase):
         self.assertFalse(should_classify_kind(hit, "分析这个岗位是否适合我"))
         self.assertFalse(should_classify_kind(miss, f"\n{WEB_SEARCH_MARKER}"))
 
+    def test_simple_greetings_do_not_spend_an_extra_classifier_call(self) -> None:
+        for content in ("hello", "Hello!", "你好", "你好。", "test"):
+            route = route_task(content, AVAILABLE)
+            self.assertEqual(route.kind, "conversation")
+            self.assertFalse(should_classify_kind(route, content))
+
     def test_classifier_prompt_lists_kinds_not_tools(self) -> None:
         prompt = classifier_prompt("这家靠谱吗")
         for kind in ROUTE_LABELS:

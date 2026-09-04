@@ -50,7 +50,9 @@ describe("ProfileSettingsPage 2.0", () => {
 
   it("keeps a single, concise personal-information heading", () => {
     render(<ProfileSettingsPage {...props()} />);
-    expect(screen.getByText("简历已导入")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "资料库" })).toBeInTheDocument();
+    expect(screen.getByText("来源已就绪")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "资料库内容" })).toBeInTheDocument();
     expect(screen.queryByText("JOB SEARCH")).not.toBeInTheDocument();
     expect(screen.queryByText("我的求职资料")).not.toBeInTheDocument();
     expect(screen.queryByText("我的亮点")).not.toBeInTheDocument();
@@ -69,7 +71,7 @@ describe("ProfileSettingsPage 2.0", () => {
   it("keeps personal details, preparation direction, and resume in one compact flow", async () => {
     render(<ProfileSettingsPage {...props()} />);
     expect(screen.getByDisplayValue("AI 产品经理")).toBeInTheDocument();
-    expect(screen.getByText("资料仅用于你的准备内容，不会自行对外发送。")).toBeInTheDocument();
+    expect(screen.getByText("材料只用于你的搜索、分析和内容生成，不会自行对外发送。")).toBeInTheDocument();
     expect(screen.queryByLabelText("核心技能")).not.toBeInTheDocument();
     expect(screen.getByText("意向城市")).toBeInTheDocument();
     expect(screen.queryByText("其他求职方向")).not.toBeInTheDocument();
@@ -78,23 +80,39 @@ describe("ProfileSettingsPage 2.0", () => {
   it("only exposes the upload control when the resume is empty or explicitly being replaced", () => {
     render(<ProfileSettingsPage {...props()} />);
     expect(screen.getByRole("button", { name: "重新导入" })).toBeInTheDocument();
-    expect(screen.queryByText("上传新简历")).not.toBeInTheDocument();
+    expect(screen.queryByText("上传新材料")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "重新导入" }));
-    expect(screen.getByText("上传新简历")).toBeInTheDocument();
+    expect(screen.getByText("上传新材料")).toBeInTheDocument();
 
     cleanup();
     render(<ProfileSettingsPage {...props()} editor={{ ...editor, resumeText: "", resumeFilename: "" }} />);
-    expect(screen.getByText("导入简历")).toBeInTheDocument();
+    expect(screen.getByText("导入材料")).toBeInTheDocument();
   });
 
   it("shows a readable resume preview by default and keeps raw editing available", () => {
     render(<ProfileSettingsPage {...props()} />);
-    expect(screen.getByRole("heading", { name: "简历预览" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "材料预览" })).toBeInTheDocument();
     expect(screen.getByLabelText("简历预览")).toHaveClass("profile-resume-preview");
 
     fireEvent.click(screen.getByRole("tab", { name: "编辑原文" }));
     expect(screen.getByRole("textbox", { name: "简历内容" })).toBeInTheDocument();
+  });
+
+  it("reviews pending facts inside the library instead of on the home page", async () => {
+    const onReviewFact = vi.fn().mockResolvedValue(undefined);
+    render(<ProfileSettingsPage
+      {...props()}
+      pendingFacts={[{ id: 21, statement: "主导过检索评测", category: "project" }]}
+      onReviewFact={onReviewFact}
+    />);
+
+    const queue = screen.getByLabelText("待确认内容");
+    expect(queue).toHaveTextContent("主导过检索评测");
+    fireEvent.click(screen.getByRole("button", { name: "确认" }));
+
+    await waitFor(() => expect(onReviewFact).toHaveBeenCalledWith(21, "confirm"));
+    expect(screen.queryByLabelText("待确认内容")).not.toBeInTheDocument();
   });
 
   it("renders education like other preview sections: full-width card with heading and award lines", () => {
@@ -172,12 +190,12 @@ GitHub：https://github.com/example
       );
     }
     render(<Harness />);
-    expect(screen.getByText("简历已导入")).toBeInTheDocument();
+    expect(screen.getByText("来源已就绪")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "清除" }));
 
-    expect(screen.getByText("导入简历")).toBeInTheDocument();
-    expect(screen.getByText("待导入简历")).toBeInTheDocument();
+    expect(screen.getByText("导入材料")).toBeInTheDocument();
+    expect(screen.getByText("待导入材料")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "清除" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("简历预览")).not.toBeInTheDocument();
     expect(screen.getByDisplayValue("小林")).toBeInTheDocument();

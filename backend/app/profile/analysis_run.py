@@ -12,7 +12,8 @@ from ..agent.settings import get_model_connection
 from ..config import get_settings
 from ..domain import AgentMessage, ModelRequest
 from ..jobs.quick_match import analyze_job_description
-from ..models import ModelProviderError, OpenAICompatibleProvider
+from ..models import ModelProviderError, build_model_provider
+from ..model_protocol import protocol_requires_api_key
 
 
 ANALYSIS_STEPS: tuple[tuple[str, str, str], ...] = (
@@ -226,7 +227,10 @@ async def refine_analysis_with_model(
     db_path: str | Path | None = None,
 ) -> tuple[dict[str, Any], str, list[str]]:
     settings = connection or get_model_connection(db_path)
-    if not str(settings.get("api_key") or "").strip():
+    if (
+        protocol_requires_api_key(settings.get("resolved_model_protocol", "openai"))
+        and not str(settings.get("api_key") or "").strip()
+    ):
         return result, "local", []
 
     resume = _resume(result)
@@ -257,11 +261,12 @@ async def refine_analysis_with_model(
         "scan": resume.get("scan"),
     }
     try:
-        provider = OpenAICompatibleProvider(
+        provider = build_model_provider(
             api_key=settings["api_key"],
             model=settings["model_name"],
             base_url=settings.get("model_base_url") or None,
             timeout_seconds=min(get_settings().model_timeout_seconds, 45),
+            protocol=settings.get("model_protocol", "auto"),
         )
         content = ""
         async for event in provider.stream(

@@ -34,10 +34,18 @@ class ModelCapabilityInferenceTest(unittest.TestCase):
             base_url="https://api.example.test/v1",
         )
         self.assertEqual(
-            [(item["name"], item["is_default"], item["provider_label"]) for item in items],
             [
-                ("gpt-5.5", True, "OpenAI 兼容"),
-                ("gpt-4.1", False, "OpenAI 兼容"),
+                (
+                    item["name"],
+                    item["is_default"],
+                    item["provider_label"],
+                    item["availability_label"],
+                )
+                for item in items
+            ],
+            [
+                ("gpt-5.5", True, "OpenAI 兼容", "未验证"),
+                ("gpt-4.1", False, "OpenAI 兼容", "仅目录可见"),
             ],
         )
 
@@ -48,6 +56,17 @@ class ModelCapabilityInferenceTest(unittest.TestCase):
         self.assertFalse(report["probed"])
         self.assertNotIn("score", report)
         self.assertNotIn("87", str(report))
+
+    def test_report_exposes_the_effective_protocol_for_claude(self) -> None:
+        report = infer_model_capabilities(
+            "claude-sonnet-5-thinking",
+            provider="anthropic",
+            protocol="auto",
+        )
+
+        self.assertEqual(report["protocol"], "anthropic")
+        self.assertEqual(report["protocol_label"], "Anthropic Messages API")
+        self.assertIn("Anthropic Messages", report["streaming"]["detail"])
 
 
 class ModelCapabilitiesApiTest(unittest.TestCase):

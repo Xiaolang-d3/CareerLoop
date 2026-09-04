@@ -87,6 +87,20 @@ INTERVIEW_TOOLS = (
     "pause_profile_interview",
     "start_profile_interview",
 )
+SIMPLE_CONVERSATION_MESSAGES = frozenset(
+    {
+        "hi",
+        "hello",
+        "hey",
+        "你好",
+        "您好",
+        "在吗",
+        "谢谢",
+        "感谢",
+        "测试",
+        "test",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -397,7 +411,10 @@ def should_classify_kind(route: TaskRoute, content: str) -> bool:
     """Only classify when keywords and hard gates left the turn as open conversation."""
     if route.kind != "conversation":
         return False
-    return bool(strip_routing_markers(content))
+    normalized = strip_routing_markers(content).strip().lower().rstrip("!！?？。,. ")
+    if not normalized or normalized in SIMPLE_CONVERSATION_MESSAGES:
+        return False
+    return True
 
 
 def classifier_prompt(content: str) -> str:

@@ -17,7 +17,8 @@ from ..db import connect, json_dump, row_to_dict
 from ..agent.settings import get_model_connection
 from ..config import get_settings
 from ..domain import AgentMessage, ModelRequest
-from ..models import ModelProviderError, OpenAICompatibleProvider
+from ..models import ModelProviderError, build_model_provider
+from ..model_protocol import protocol_requires_api_key
 from ..profile.intelligence import extract_skills
 from ..resume.blocks import parse_resume_blocks
 
@@ -252,7 +253,7 @@ async def analyze_interview_preparation_resume(
         profile.get("resume_redacted_text") or original
     )
     connection = get_model_connection(db_path)
-    if not connection["api_key"]:
+    if protocol_requires_api_key(connection.get("resolved_model_protocol", "openai")) and not connection["api_key"]:
         raise ValueError("请先在 Agent 设置中配置模型，再进行 AI 整理")
 
     node_state[_RESUME_ANALYSIS_STATE_KEY] = {
@@ -262,11 +263,12 @@ async def analyze_interview_preparation_resume(
         "phase": "calling_model",
     }
     _save_state(profile_id, revision, node_state, db_path)
-    provider = OpenAICompatibleProvider(
+    provider = build_model_provider(
         api_key=connection["api_key"],
         model=connection["model_name"],
         base_url=connection["model_base_url"] or None,
         timeout_seconds=min(get_settings().model_timeout_seconds, 30),
+        protocol=connection.get("model_protocol", "auto"),
     )
     response = await provider.generate(ModelRequest(messages=[
         AgentMessage(role="system", content=(
@@ -401,16 +403,17 @@ async def analyze_interview_preparation_jd(
     if cached and cached.get("job_description") == clean_jd:
         return current
     connection = get_model_connection(db_path)
-    if not connection["api_key"]:
+    if protocol_requires_api_key(connection.get("resolved_model_protocol", "openai")) and not connection["api_key"]:
         raise ValueError("请先在 Agent 设置中配置模型，再进行 JD 分析")
     resume_text = str(profile.get("resume_text") or "")
     model_resume = resume_text if profile.get("privacy_mode") == "original" else str(
         profile.get("resume_redacted_text") or resume_text
     )
-    provider = OpenAICompatibleProvider(
+    provider = build_model_provider(
         api_key=connection["api_key"], model=connection["model_name"],
         base_url=connection["model_base_url"] or None,
         timeout_seconds=get_settings().model_timeout_seconds,
+        protocol=connection.get("model_protocol", "auto"),
     )
     projects_for_prompt = [
         {"id": item["id"], "title": item["title"], "evidence": item["evidence"], "fields": item["fields"]}
@@ -460,12 +463,13 @@ async def give_interview_preparation_feedback(
     if profile is None:
         raise ProfileNotInitializedError("请先创建候选人画像")
     connection = get_model_connection(db_path)
-    if not connection["api_key"]:
+    if protocol_requires_api_key(connection.get("resolved_model_protocol", "openai")) and not connection["api_key"]:
         raise ValueError("请先在 Agent 设置中配置模型，再获取回答反馈")
-    provider = OpenAICompatibleProvider(
+    provider = build_model_provider(
         api_key=connection["api_key"], model=connection["model_name"],
         base_url=connection["model_base_url"] or None,
         timeout_seconds=get_settings().model_timeout_seconds,
+        protocol=connection.get("model_protocol", "auto"),
     )
     response = await provider.generate(ModelRequest(messages=[
         AgentMessage(role="system", content="你是严格、简洁的面试教练。只能基于提供的项目证据反馈，不得补写事实。只输出 JSON。"),

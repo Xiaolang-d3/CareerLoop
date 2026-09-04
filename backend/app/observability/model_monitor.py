@@ -8,6 +8,7 @@ from typing import Any
 
 from ..agent.settings import get_model_connection
 from ..db import connect, row_to_dict
+from ..model_protocol import base_url_for_protocol, model_protocol_candidates
 
 
 ERROR_LABELS = {
@@ -16,6 +17,10 @@ ERROR_LABELS = {
     "request_timeout": "响应超时",
     "service_unavailable": "连接失败",
     "provider_error": "服务异常",
+    "invalid_provider_response": "响应格式异常",
+    "route_not_found": "协议路由不存在",
+    "model_unavailable": "模型不可用",
+    "account_pool_exhausted": "上游账户耗尽",
     "not_configured": "未完成配置",
 }
 
@@ -31,6 +36,7 @@ def record_model_service_event(
     error_message: str = "",
     total_tokens: int = 0,
     response_id: str = "",
+    protocol: str = "openai",
     db_path: str | Path | None = None,
 ) -> None:
     """Persist only operational metadata; prompts and responses are never stored."""
@@ -39,8 +45,8 @@ def record_model_service_event(
             """
             INSERT INTO model_service_events (
                 request_kind, status, error_code, error_message, latency_ms,
-                total_tokens, model_name, base_url, response_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                total_tokens, model_name, base_url, response_id, protocol
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 request_kind,
@@ -52,6 +58,7 @@ def record_model_service_event(
                 model_name,
                 base_url or "",
                 response_id,
+                protocol,
             ),
         )
         conn.execute(
@@ -68,21 +75,35 @@ def get_model_monitor_snapshot(
     cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
     cutoff_text = cutoff.strftime("%Y-%m-%d %H:%M:%S")
     model_name = connection["model_name"]
-    base_url = _normalize_base_url(connection["model_base_url"])
+    configured_base_url = connection["model_base_url"]
+    protocol = connection["resolved_model_protocol"]
+    candidate_pairs = _monitor_candidate_pairs(
+        model_name,
+        connection["model_protocol"],
+        configured_base_url,
+    )
+    candidate_clause = " OR ".join("(base_url = ? AND protocol = ?)" for _ in candidate_pairs)
+    candidate_values = [value for pair in candidate_pairs for value in pair]
 
     with connect(db_path) as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT id, request_kind, status, error_code, error_message,
-                   latency_ms, total_tokens, model_name, base_url, created_at
+                   latency_ms, total_tokens, model_name, base_url, protocol, created_at
             FROM model_service_events
-            WHERE created_at >= ? AND model_name = ? AND base_url = ?
+            WHERE created_at >= ? AND model_name = ? AND ({candidate_clause})
             ORDER BY id DESC
             """,
-            (cutoff_text, model_name, base_url),
+            (cutoff_text, model_name, *candidate_values),
         ).fetchall()
 
     events = [row_to_dict(row) for row in rows]
+    active_protocol = str(events[0]["protocol"] or protocol) if events else protocol
+    active_base_url = (
+        str(events[0]["base_url"])
+        if events
+        else _provider_base_url(configured_base_url, active_protocol)
+    )
     total = len(events)
     total_tokens = sum(int(event.get("total_tokens") or 0) for event in events)
     successful = sum(event["status"] == "success" for event in events)
@@ -127,7 +148,8 @@ def get_model_monitor_snapshot(
         "status": status,
         "status_message": status_message,
         "model_name": model_name,
-        "base_url": base_url,
+        "base_url": active_base_url,
+        "protocol": active_protocol,
         "api_key_configured": bool(connection["api_key"]),
         "window_hours": window_hours,
         "summary": {
@@ -165,8 +187,36 @@ def get_model_monitor_snapshot(
 def _normalize_base_url(value: str | None) -> str:
     if not value:
         return ""
-    normalized = value.rstrip("/")
-    return normalized if normalized.endswith("/v1") else f"{normalized}/v1"
+    return value.rstrip("/")
+
+
+def _provider_base_url(value: str | None, protocol: str) -> str:
+    normalized = _normalize_base_url(value)
+    if normalized:
+        return normalized
+    return {
+        "anthropic": "https://api.anthropic.com",
+        "gemini": "https://generativelanguage.googleapis.com/v1beta",
+        "ollama": "http://127.0.0.1:11434",
+    }.get(protocol, "")
+
+
+def _monitor_candidate_pairs(
+    model_name: str,
+    configured_protocol: str,
+    base_url: str | None,
+) -> list[tuple[str, str]]:
+    protocols = model_protocol_candidates(model_name, configured_protocol, base_url or "")
+    return [
+        (
+            _provider_base_url(
+                base_url_for_protocol(base_url, candidate, fallback=index > 0),
+                candidate,
+            ),
+            candidate,
+        )
+        for index, candidate in enumerate(protocols)
+    ]
 
 
 def _service_status(

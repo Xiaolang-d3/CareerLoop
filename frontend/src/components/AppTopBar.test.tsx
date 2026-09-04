@@ -54,13 +54,13 @@ describe("AppTopBar", () => {
     expect(screen.getByRole("heading", { level: 1, name: "新对话" })).toBeInTheDocument();
   });
 
-  it("uses the analysis metadata title on the workbench landing page", () => {
+  it("uses the workspace metadata title on the workbench landing page", () => {
     renderTopBar({
       section: topbarSectionForPage("workbench", pageMeta.workbench.title),
       title: pageMeta.workbench.title
     });
 
-    expect(screen.getByRole("heading", { level: 1, name: "分析" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "工作台" })).toBeInTheDocument();
     expect(document.querySelector(".app-topbar-context > span")).toBeNull();
   });
 
@@ -79,7 +79,7 @@ describe("AppTopBar", () => {
     expect(screen.getByText("小林")).toBeInTheDocument();
     expect(screen.getByText("owner@example.com")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("menuitem", { name: "求职资料" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "资料库" }));
     expect(props.onOpenProfile).toHaveBeenCalledOnce();
 
     fireEvent.click(screen.getByRole("button", { name: "账号菜单" }));

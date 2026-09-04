@@ -178,7 +178,7 @@ def test_model_structure_classifies_resume_without_manual_fragment_triage(tmp_pa
                 ],
             })})()
 
-    monkeypatch.setattr(interview_preparation, "OpenAICompatibleProvider", FakeProvider)
+    monkeypatch.setattr(interview_preparation, "build_model_provider", FakeProvider)
     monkeypatch.setattr(
         interview_preparation,
         "get_model_connection",
@@ -211,7 +211,7 @@ def test_resume_structure_analysis_runs_in_background_and_exposes_its_status(tmp
                 "projects": [{"title": "AI 求职助手项目", "evidence": "AI 求职助手项目\n- 使用 FastAPI、React 和 SQLite 开发求职助手，负责简历解析与岗位评估模块。", "fields": []}],
             })})()
 
-    monkeypatch.setattr(interview_preparation, "OpenAICompatibleProvider", FakeProvider)
+    monkeypatch.setattr(interview_preparation, "build_model_provider", FakeProvider)
     monkeypatch.setattr(interview_preparation, "get_model_connection", lambda _db_path: {"api_key": "test", "model_name": "test", "model_base_url": ""})
 
     async def run() -> None:
@@ -239,7 +239,7 @@ def test_preparation_uses_work_module_as_a_candidate_when_model_returns_no_proje
                 "projects": [],
             })})()
 
-    monkeypatch.setattr(interview_preparation, "OpenAICompatibleProvider", FakeProvider)
+    monkeypatch.setattr(interview_preparation, "build_model_provider", FakeProvider)
     monkeypatch.setattr(interview_preparation, "get_model_connection", lambda _db_path: {"api_key": "test", "model_name": "test", "model_base_url": ""})
 
     prepared = asyncio.run(interview_preparation.analyze_interview_preparation_resume(db_path))
@@ -286,7 +286,7 @@ def test_jd_flow_generates_rewrite_questions_and_answer_feedback(tmp_path: Path,
                 content = {"strengths": ["说明了负责范围"], "gaps": ["补充具体取舍"], "next_attempt": "用项目中的解析流程说明你的决策。"}
             return type("Response", (), {"content": json.dumps(content)})()
 
-    monkeypatch.setattr(interview_preparation, "OpenAICompatibleProvider", FakeProvider)
+    monkeypatch.setattr(interview_preparation, "build_model_provider", FakeProvider)
     monkeypatch.setattr(
         interview_preparation,
         "get_model_connection",

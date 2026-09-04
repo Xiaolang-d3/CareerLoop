@@ -139,6 +139,7 @@ class AgentRuntime:
         event_callback: StreamCallback | None = None,
         image_urls: list[str] | None = None,
         routing_content: str | None = None,
+        web_search_mode: str = "auto",
         resume: AgentRunSnapshot | None = None,
     ) -> AgentRunResult:
         provider = self._models.get(self._model_provider)
@@ -558,6 +559,7 @@ class AgentRuntime:
                                 conversation_id=conversation_id,
                                 task_id=task_id,
                                 user_content=user_content,
+                                web_search_mode=web_search_mode,
                             ),
                         ),
                         timeout=self._tool_timeout_seconds,
@@ -1315,6 +1317,7 @@ class AgentRuntime:
         task_id: int | None = None,
         image_urls: list[str] | None = None,
         routing_content: str | None = None,
+        web_search_mode: str = "auto",
         resume: AgentRunSnapshot | None = None,
     ) -> AsyncIterator[AgentStreamEvent]:
         queue: asyncio.Queue[AgentStreamEvent | None] = asyncio.Queue()
@@ -1334,6 +1337,7 @@ class AgentRuntime:
                     event_callback=publish,
                     image_urls=image_urls,
                     routing_content=routing_content,
+                    web_search_mode=web_search_mode,
                     resume=resume,
                 )
                 if result.status == "waiting_user":

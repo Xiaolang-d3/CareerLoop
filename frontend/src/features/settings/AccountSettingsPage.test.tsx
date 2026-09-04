@@ -31,7 +31,7 @@ describe("AccountSettingsPage", () => {
   it("keeps account identity separate from the career profile", () => {
     render(<AccountSettingsPage {...props()} />);
 
-    expect(screen.getByText("这些信息跟随登录账号，和求职画像分开。换设备登录后仍然有效。")).toBeInTheDocument();
+    expect(screen.getByText("这些信息跟随登录账号，和资料库内容分开。换设备登录后仍然有效。")).toBeInTheDocument();
     expect(document.querySelector(".account-avatar-glyph")).toHaveTextContent("O");
     expect(screen.getByText("登录邮箱")).toBeInTheDocument();
     expect(screen.getByText("owner@example.com")).toBeInTheDocument();

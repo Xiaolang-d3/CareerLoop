@@ -304,19 +304,19 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
   return (
     <AuthGateShell>
       <div className="auth-shell">
-        <aside className="auth-intro" aria-label="CareerLoop 如何帮助求职">
-          <p className="auth-intro-kicker">把求职变成可持续推进的过程</p>
-          <h2>从真实经历出发，准备每一次机会。</h2>
-          <p>CareerLoop 帮你整理职业证据、判断岗位匹配，并把面试复盘沉淀为下一次的准备。</p>
+        <aside className="auth-intro" aria-label="CareerLoop 如何与你协作">
+          <p className="auth-intro-kicker">让资料在每次对话中持续发挥作用</p>
+          <h2>从真实资料出发，完成分析与创作。</h2>
+          <p>CareerLoop 帮你整理长期资料，在对话中完成搜索、分析和内容生成，并把结果沉淀到工作台。</p>
           <ol className="auth-intro-steps">
-            <li>保存简历</li>
-            <li>分析岗位</li>
-            <li>准备面试</li>
+            <li>整理资料</li>
+            <li>开始对话</li>
+            <li>沉淀成果</li>
           </ol>
           <ul>
-            <li><strong>有据可循</strong><span>每份建议回到你的经历与岗位要求。</span></li>
+            <li><strong>有据可循</strong><span>分析和内容都能回到你提供的资料。</span></li>
             <li><strong>始终可控</strong><span>联网研究和资料使用均由你决定。</span></li>
-            <li><strong>注重隐私</strong><span>先处理敏感信息，再用于后续分析。</span></li>
+            <li><strong>持续积累</strong><span>确认过的信息可以在后续任务中复用。</span></li>
           </ul>
         </aside>
 

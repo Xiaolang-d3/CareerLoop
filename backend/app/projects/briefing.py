@@ -10,7 +10,8 @@ from ..agent.settings import get_model_connection
 from ..config import get_settings
 from ..domain import AgentMessage, ModelRequest
 from ..interview.preparation import _get_state, _save_state, get_interview_preparation
-from ..models import ModelProviderError, OpenAICompatibleProvider
+from ..models import ModelProviderError, build_model_provider
+from ..model_protocol import protocol_requires_api_key
 from ..profile.candidate_core import ProfileNotInitializedError
 from ..profile.intelligence import extract_skills
 from .github_repo import (
@@ -469,7 +470,7 @@ async def _model_briefing(
     db_path: str | Path | None,
 ) -> dict[str, Any]:
     connection = get_model_connection(db_path)
-    if not connection["api_key"]:
+    if protocol_requires_api_key(connection.get("resolved_model_protocol", "openai")) and not connection["api_key"]:
         raise ValueError("请先在 Agent 设置中配置模型，再做深度梳理")
     source = "\n".join(part for part in (
         project.get("title") or "",
@@ -478,11 +479,12 @@ async def _model_briefing(
         description,
         code_excerpt,
     ) if part)
-    provider = OpenAICompatibleProvider(
+    provider = build_model_provider(
         api_key=connection["api_key"],
         model=connection["model_name"],
         base_url=connection["model_base_url"] or None,
         timeout_seconds=min(get_settings().model_timeout_seconds, 30),
+        protocol=connection.get("model_protocol", "auto"),
     )
     response = await provider.generate(ModelRequest(messages=[
         AgentMessage(role="system", content=(
@@ -514,7 +516,7 @@ async def _model_repo_briefing(
     db_path: str | Path | None,
 ) -> dict[str, Any]:
     connection = get_model_connection(db_path)
-    if not connection["api_key"]:
+    if protocol_requires_api_key(connection.get("resolved_model_protocol", "openai")) and not connection["api_key"]:
         raise ValueError("请先在 Agent 设置中配置模型，再做深度梳理")
     tree_text = "\n".join(snapshot["paths"][:400])
     materials = "\n".join(part for part in (
@@ -525,11 +527,12 @@ async def _model_repo_briefing(
         f"仓库：{snapshot['owner']}/{snapshot['repo']}",
         f"目录：\n{tree_text}",
     ) if part)
-    provider = OpenAICompatibleProvider(
+    provider = build_model_provider(
         api_key=connection["api_key"],
         model=connection["model_name"],
         base_url=connection["model_base_url"] or None,
         timeout_seconds=min(get_settings().model_timeout_seconds, 30),
+        protocol=connection.get("model_protocol", "auto"),
     )
     try:
         overview = await provider.generate(ModelRequest(messages=[

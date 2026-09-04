@@ -34,7 +34,7 @@ class ModelDiscoveryApiTest(unittest.TestCase):
             json={"model_base_url": base_url, "api_key": api_key},
         )
 
-    def test_discovery_returns_the_normalized_catalog_address(self) -> None:
+    def test_discovery_returns_the_exact_configured_api_root(self) -> None:
         with patch(
             "app.api.resources.OpenAICompatibleProvider.list_models",
             new=AsyncMock(return_value=["gpt-4.1", "gpt-5.5"]),
@@ -44,7 +44,7 @@ class ModelDiscoveryApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["count"], 2)
-        self.assertEqual(payload["base_url"], "https://gateway.example.test/v1")
+        self.assertEqual(payload["base_url"], "https://gateway.example.test")
         self.assertIn("gpt-5.5", payload["models"])
 
     def test_missing_key_asks_for_a_key_instead_of_calling_the_service(self) -> None:
@@ -62,13 +62,32 @@ class ModelDiscoveryApiTest(unittest.TestCase):
         self.assertIn("API Key", response.json()["detail"])
         list_models.assert_not_awaited()
 
+    def test_ollama_discovery_does_not_require_a_key(self) -> None:
+        with patch(
+            "app.models.ollama_chat.OllamaChatProvider.list_models",
+            new=AsyncMock(return_value=["qwen3"]),
+        ):
+            response = self.client.post(
+                "/agent/models/discover",
+                json={
+                    "model_base_url": "http://localhost:11434",
+                    "model_name": "qwen3",
+                    "model_protocol": "ollama",
+                    "api_key": "",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["protocol"], "ollama")
+        self.assertEqual(response.json()["models"], ["qwen3"])
+
     def test_invalid_catalog_returns_the_reason_not_a_server_error(self) -> None:
         with patch(
             "app.api.resources.OpenAICompatibleProvider.list_models",
             new=AsyncMock(
                 side_effect=ModelProviderError(
                     "invalid_model_catalog",
-                    "模型目录 https://gateway.example.test/v1/models 没有返回 OpenAI 兼容的模型列表，"
+                    "模型目录 https://gateway.example.test/models 没有返回 OpenAI 兼容的模型列表，"
                     "请确认 Base URL 填写的是模型服务的 API 网关地址",
                 )
             ),
@@ -102,7 +121,7 @@ class ModelDiscoveryApiTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 502)
         detail = response.json()["detail"]
-        self.assertIn("https://gateway.example.test/v1/models", detail)
+        self.assertIn("https://gateway.example.test/models", detail)
         self.assertNotIn("unexpected parse failure", detail)
 
     def test_empty_catalog_points_at_manual_entry(self) -> None:
@@ -133,12 +152,18 @@ class ModelDiscoveryApiTest(unittest.TestCase):
                     base_url=self._client.base_url,
                 )
 
-        with patch("app.api.resources.OpenAICompatibleProvider", MockedUpstreamProvider):
+        provider = MockedUpstreamProvider(
+            api_key="sk-test",
+            model="test-model",
+            base_url="https://gateway.example.test",
+            timeout_seconds=5,
+        )
+        with patch("app.api.resources.build_model_provider", return_value=provider):
             response = self.discover()
 
         self.assertEqual(response.status_code, 400)
         detail = response.json()["detail"]
-        self.assertIn("https://gateway.example.test/v1/models", detail)
+        self.assertIn("https://gateway.example.test/models", detail)
         self.assertIn("Base URL", detail)
 
 

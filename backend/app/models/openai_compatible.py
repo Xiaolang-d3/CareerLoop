@@ -34,6 +34,17 @@ _VISION_REJECTION_MARKERS = (
     "unsupported",
     "invalid content",
 )
+_ACCOUNT_POOL_MARKERS = (
+    "all available accounts exhausted",
+    "no available accounts",
+)
+_MODEL_UNAVAILABLE_MARKERS = (
+    "model not found",
+    "model is not supported",
+    "not supported by any configured account",
+    "does not exist",
+    "unknown model",
+)
 
 
 def _looks_like_vision_rejection(message: str, status_code: int | None) -> bool:
@@ -102,8 +113,11 @@ class OpenAICompatibleProvider:
     def _normalize_base_url(base_url: str | None) -> str | None:
         if not base_url:
             return None
-        normalized = base_url.rstrip("/")
-        return normalized if normalized.endswith("/v1") else f"{normalized}/v1"
+        # Base URL is the provider's complete API root.  Do not infer an API
+        # version from the model name or silently append /v1: compatible
+        # gateways may expose /chat/completions at the root or under a custom
+        # prefix.  Callers that require /v1 must include it explicitly.
+        return base_url.rstrip("/")
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         arguments = self._request_arguments(request)
@@ -122,7 +136,11 @@ class OpenAICompatibleProvider:
             self._record_event("generate", started_at, error=error)
             raise error from exc
 
-        result = self._response_from_completion(response)
+        try:
+            result = self._response_from_completion(response)
+        except ModelProviderError as error:
+            self._record_event("generate", started_at, error=error)
+            raise
         self._record_event(
             "generate",
             started_at,
@@ -207,6 +225,16 @@ class OpenAICompatibleProvider:
                     arguments=parsed_arguments,
                 )
             )
+        if (
+            not content_parts
+            and not tool_calls
+            and not response_id
+            and usage is None
+            and finish_reason is None
+        ):
+            error = self._empty_response_error()
+            self._record_event("stream", started_at, error=error)
+            raise error
         self._record_event(
             "stream",
             started_at,
@@ -246,9 +274,17 @@ class OpenAICompatibleProvider:
             error = self._provider_error(exc)
             self._record_event("health_check", started_at, error=error)
             raise error from exc
-        usage = getattr(response, "usage", None)
-        total_tokens = usage.total_tokens if usage is not None else 0
-        self._record_event("health_check", started_at, total_tokens=total_tokens)
+        try:
+            result = self._response_from_completion(response)
+        except ModelProviderError as error:
+            self._record_event("health_check", started_at, error=error)
+            raise
+        self._record_event(
+            "health_check",
+            started_at,
+            total_tokens=result.usage.total_tokens if result.usage else 0,
+            response_id=result.provider_metadata.get("response_id", ""),
+        )
 
     async def probe_vision(self) -> dict[str, str]:
         """Send a 1x1 PNG to see whether the current model accepts image input."""
@@ -295,7 +331,7 @@ class OpenAICompatibleProvider:
         }
 
     async def list_models(self) -> list[str]:
-        """Return model IDs exposed by an OpenAI-compatible /v1/models endpoint."""
+        """Return model IDs exposed by the configured API root's /models endpoint."""
         try:
             page = await self._client.models.list()
             items = list(getattr(page, "data", None) or [])
@@ -355,6 +391,25 @@ class OpenAICompatibleProvider:
             )
         if isinstance(exc, APIStatusError):
             detail = _status_error_detail(exc)
+            normalized_detail = detail.lower()
+            if any(marker in normalized_detail for marker in _ACCOUNT_POOL_MARKERS):
+                return ModelProviderError(
+                    "account_pool_exhausted",
+                    "模型网关没有可调度的上游账户，请联系服务商检查账户状态、额度或并发限制",
+                    retryable=True,
+                )
+            if exc.status_code == 404 and any(
+                marker in normalized_detail for marker in _MODEL_UNAVAILABLE_MARKERS
+            ):
+                return ModelProviderError(
+                    "model_unavailable",
+                    f"当前账户组不支持模型 {detail[:160] or '（未知模型）'}",
+                )
+            if exc.status_code in {404, 405}:
+                return ModelProviderError(
+                    "route_not_found",
+                    "当前地址没有提供 Chat Completions 路由，可检查协议或 API 根路径",
+                )
             message = f"模型服务返回异常状态（{exc.status_code}）"
             if detail:
                 message = f"{message}：{detail}"
@@ -385,6 +440,7 @@ class OpenAICompatibleProvider:
                 model_name=self._model,
                 base_url=self._base_url,
                 response_id=response_id,
+                protocol=self.name,
             )
         except Exception:
             # Monitoring is best-effort and must never break a successful model call.
@@ -415,7 +471,10 @@ class OpenAICompatibleProvider:
         return arguments
 
     def _response_from_completion(self, response: Any) -> ModelResponse:
-        choice = response.choices[0]
+        choices = getattr(response, "choices", None) or []
+        if not choices:
+            raise self._empty_response_error()
+        choice = choices[0]
         message = choice.message
         tool_calls = []
         for call in message.tool_calls or []:
@@ -447,6 +506,16 @@ class OpenAICompatibleProvider:
                 "response_id": response.id,
                 "base_url": self._base_url,
             },
+        )
+
+    def _empty_response_error(self) -> ModelProviderError:
+        base_url = self._base_url or "OpenAI 官方 API"
+        return ModelProviderError(
+            "invalid_provider_response",
+            (
+                "模型服务返回 HTTP 200，但没有符合 Chat Completions 协议的响应内容。"
+                f"请确认 Base URL（{base_url}）指向真实 API 根地址，且当前账户支持模型 {self._model}"
+            ),
         )
 
     @staticmethod

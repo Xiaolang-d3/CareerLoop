@@ -2,19 +2,21 @@
 
 本文是 CareerLoop **智能体层的维护文档**。代码是行为的事实来源；本文记录意图、边界和同步点。改智能体行为时必须在同一变更中更新本文。
 
-最近校准：2026-08-24（联网搜索按语言走 general/news/company 策略；工具失败允许一次同车道重规划）。
+最近校准：2026-09-03（产品入口收敛为对话、首页、资料库和工作台；无显式路由时默认进入对话，首页只负责继续工作，事实人审归入资料库，通用工作台默认不展示求职专属页签）。
 
 ## 定位
 
-CareerLoop 是受控的求职领域智能体运行时，不是通用 Agent OS。
+CareerLoop 是个人资料驱动的受控协作运行时，不是通用 Agent OS。求职是当前最成熟的专业场景，但不是产品边界。联网检索是对话中的可选能力，不是独立产品入口；它继续受路由、计划门、工具权限和引用校验约束。
 
 它具备：感知（简历、画像、网页、搜索）、决策（路由 + 计划 + 模型选工具）、行动（注册工具）、约束（风险等级、计划门、引用校验、失败即停）、反馈（流式事件、审计、运营快照）。
 
 它目前没有：子智能体、图编排、跨车道或多次全局重规划、按阶段主动派任务、跨会话情景记忆。工具 `failed` 时只允许一次同车道重规划；关键词未命中时会多一次只输出 `kind` 的分类，不会让模型自选工具面。
 
-产品核心是对话智能体（`AgentRuntime`）：画像、证据、匹配、材料、面试、复盘。岗位是可选上下文，不是先决条件；系统提示也写明对话不要求预先提供 JD。
+产品核心是资料库、工作台和对话智能体（`AgentRuntime`）：资料与已确认事实构成长效上下文，分析和生成通过对话触发，结果进入工作台。岗位、简历和面试是可选的求职场景上下文，不是使用产品的先决条件；系统提示也写明对话不要求预先提供 JD。
 
-岗位可以来自粘贴 JD、聊天截图或机会中心队列。不提供从岗位 URL 抓取页面的导入循环；岗位记录上的 `source_url` 只是可选出处，不会去拉网页。对话不再提供融资公司发现、ATS 识别或独立深度研究工具。
+前端规范入口是 `#/chat`、`#/home`、`#/library` 和 `#/workspace`，其中对话是默认入口和任务中心；资料库提供长效上下文，工作台承接可继续编辑的成果，首页只做概览与继续工作。对话里的“查找公开信息”起始操作会在服务可用时自动打开本轮联网开关。历史的机会发现与面试入口统一跳转到对话；项目与知识入口统一跳转到资料库。后端能力和历史数据暂时保留，避免在信息架构调整时同时进行破坏性迁移。
+
+岗位上下文可以来自粘贴 JD 或聊天截图；历史机会队列数据只保留兼容，不再形成独立产品入口。不提供从岗位 URL 抓取页面的导入循环；岗位记录上的 `source_url` 只是可选出处，不会去拉网页。对话不再提供融资公司发现、ATS 识别或独立深度研究工具。
 
 ## 维护约定
 
@@ -70,7 +72,7 @@ backend/app/
 │   ├── snapshots.py         waiting_user 恢复快照
 │   ├── resume_policy.py     等待确认后恢复或放弃快照
 │   └── model_capabilities.py
-├── models/                  模型协议与 OpenAI 兼容实现
+├── models/                  模型协议、OpenAI 兼容与 Anthropic Messages 实现
 ├── tools/                   对话工具
 ├── chat/                    历史、摘要、落库
 ├── workflow/                阶段记账（不调度）
@@ -80,9 +82,9 @@ backend/app/
 └── observability/           工具审计、模型监控
 ```
 
-前端：`frontend/src/components/ChatWorkspace.tsx` 消费流式事件；`frontend/src/features/settings/AgentOperationsDashboard.tsx` 展示运营快照。
+前端：`frontend/src/components/ChatWorkspace.tsx` 消费流式事件，并在同一个对话输入框提供联网开关、来源模式和回答内来源详情；`frontend/src/features/settings/AgentOperationsDashboard.tsx` 展示运营快照。
 
-外部感知：`agent-search/` 是独立仓库，对话里的 `research_company` / `search_public_web` 会调用它。它不是 CareerLoop runtime 的一部分，`scripts/dev.sh` 不负责启动它。`search_public_web` 按 `category` 走 `general` / `news` / `company` 策略；`research_company` 与岗位评估走 `company` 策略，因此配套 AgentSearch 必须支持 `/search?...&mode=company`。AgentSearch 可配置 Brave / 博查作为主检索，未配置时仍走 SearXNG；中文查询会再融合国内搜索源。部署、环境变量和健康检查步骤见根目录 `README.md`。
+外部感知：`agent-search/` 是独立仓库，对话里的 `research_company` / `search_public_web` 会调用它。它不是 CareerLoop runtime 的一部分，`scripts/dev.sh` 不负责启动它。`search_public_web` 按 `category` 走 `general` / `news` / `company` 策略；用户选择“技术来源”时，工具会在 `general` 查询中优先加入官方文档、GitHub 与 Stack Overflow；“自动来源”只在识别到技术关键词时采用该策略。`research_company` 与岗位评估走 `company` 策略，因此配套 AgentSearch 必须支持 `/search?...&mode=company`。AgentSearch 可配置 Brave / 博查作为主检索，未配置时仍走 SearXNG；中文查询会再融合国内搜索源。部署、环境变量和健康检查步骤见根目录 `README.md`。
 
 运行边界：AgentSearch 默认地址是 `http://127.0.0.1:3939`，由 `WEB_RESEARCH_ENABLED`、`AGENT_SEARCH_BASE_URL` 和可选的 `AGENT_SEARCH_TOKEN` 控制。单个上游引擎失败可以让 `/health` 显示 `degraded`，不能仅据此判定全部搜索不可用，应以实际 `/search` 结果为准。连接失败、超时或所有查询均失败时，工具必须返回“联网服务暂不可用”的可重试结论，不能把它解释为公司名称不完整、公司不存在或招聘平台没有岗位。
 
@@ -94,7 +96,7 @@ backend/app/
 
 每轮顺序：
 
-1. `route_task()`：关键词 `detect_kind` + 硬开关，得到 `kind`。关键词未命中且仍为 `conversation` 时，额外一次模型调用只分类 `kind`（`ROUTE_LABELS` 之一）；解析失败或输出工具名则保持 `conversation`。`allowed_tools` 始终由 `tools_for_kind` / `TOOL_POLICIES` 计算，分类器不能点名工具。
+1. `route_task()`：关键词 `detect_kind` + 硬开关，得到 `kind`。关键词未命中且仍为 `conversation` 时，额外一次模型调用只分类 `kind`（`ROUTE_LABELS` 之一）；`hello`、`你好`、`test` 等确定性的简单问候/连通性测试直接走对话，不花一次分类调用。解析失败或输出工具名则保持 `conversation`。`allowed_tools` 始终由 `tools_for_kind` / `TOOL_POLICIES` 计算，分类器不能点名工具。
 2. 需要计划时，另一次模型调用生成 JSON；解析失败则用路由允许工具做兜底计划；规划调用本身失败则整轮 `failed`。
 3. 把计划写入 system 消息，并把模型可见的 tool definitions 裁成计划内工具。另注入一条「本轮实际可用工具」清单（`visible_tools_prompt`），只列出 `executable_tools`。全局 `SYSTEM_PROMPT` 不点名具体工具。
 4. 循环：模型生成 → 若有 tool_calls 则逐个执行 → 结果以 `role=tool` 回写。
@@ -123,7 +125,7 @@ backend/app/
 1. **识别意图**：`detect_kind(content)` 只用关键词，只输出已有 `ROUTE_LABELS` 的 `kind`。系统标记会先被剥掉，避免把可信开关读成用户原文。
 2. **硬开关**：`apply_hard_gates` 处理联网开关与岗位截图确认。进行中的画像访谈由 `build_task_route(..., profile_interview_active=True)` 处理。这些规则不交给分类器。
 3. **按 kind 展开工具**：`tools_for_kind` 按车道从已注册工具里取出最小集合；车道内细分（比较岗位 / 审核评估等）仍看原文，但不改 `kind`。
-4. **关键词未命中**：runtime 在发布 `agent_thinking` 之前可调用一次分类器。提示词只列出车道名；`parse_classified_kind` 拒绝未知值和工具名。分类成功后仍走 `tools_for_kind`，不能扩大工具面。
+4. **关键词未命中**：runtime 在发布 `agent_thinking` 之前可调用一次分类器。提示词只列出车道名；`parse_classified_kind` 拒绝未知值和工具名。分类成功后仍走 `tools_for_kind`，不能扩大工具面。确定性的简单问候与测试文本由 `should_classify_kind` 快速放行，不调用分类模型。
 
 `route_task()` 是关键词 + 硬开关的同步快路径，不调用模型。未命中则为 `conversation`，不调用工具，直到分类器（若启用）给出另一条车道。进行中的画像访谈会把访谈工具留在桌面上，由模型判断本轮是不是在答题。
 
@@ -212,16 +214,16 @@ backend/app/
 
 候选人知识账本（`profile/candidate_memory.py`）把 Agent 推导出的内容与用户可读的画像文档分开。文档正文是已确认画像；记忆是待审账本和屏蔽名单。新知识默认 `proposed`，确认后才能进入正式材料。状态：`proposed` / `confirmed` / `rejected` / `retracted` / `superseded`。
 
-首页「待确认」是人审闸门，只处理会改变下游的断言：
+资料库「已整理内容 → 待确认」是人审闸门，只处理会改变下游的断言；首页仅展示待确认数量并引导进入资料库：
 
-- **确认**：技能以短标签写入 `career-profile.md` 的 `## 技能`，成果写入 `## 成果`；记忆标为 `confirmed`。之后首页技能、`analyze_resume` / `/quick-match`、`get_candidate_context("match")` 都能读到，即使简历原文没有这句。
-- **不是**：记忆标为 `rejected`（撤回为 `retracted`）。`blocked_claims` 同时收录这两类，按规范名（`skill:{name}` / 同一句成果）阻止下次 ingest 再提议。被屏蔽的技能会从首页 chips、`/career-profile/skill-tags`、`extract_skills` / `extract_skill_tags` 的分析与机会技能列表、以及 `confirmed_facts` 匹配中去掉；简历里仍写着 Redis，点「不是」后首页也不再把它当技能。
+- **确认**：技能以短标签写入 `career-profile.md` 的 `## 技能`，成果写入 `## 成果`；记忆标为 `confirmed`。之后资料库、`analyze_resume` / `/quick-match`、`get_candidate_context("match")` 都能读到，即使简历原文没有这句。
+- **不是**：记忆标为 `rejected`（撤回为 `retracted`）。`blocked_claims` 同时收录这两类，按规范名（`skill:{name}` / 同一句成果）阻止下次 ingest 再提议。被屏蔽的技能会从资料库整理结果、`/career-profile/skill-tags`、`extract_skills` / `extract_skill_tags` 的分析与机会技能列表、以及 `confirmed_facts` 匹配中去掉；来源材料里仍写着 Redis，点「不是」后也不再把它当技能。
 - **收件箱**：不把简历里已有的词典技能（Python / Redis 这类）当成待办——它们已经在 chips 里。只提示文档小节里还没有的新标签和成果。展示短标签、确认后的写入位置，以及简历原句或提议出处；句子和「具备 … 相关经验」套话不进收件箱。主 CTA 用真实剩余条数；列表先显示 3 条，其余可展开。空则整块隐藏。无法解析成短标签的技能提议也不进收件箱。
 - **评估**：`## 技能` 里已有标签时，即使记忆账本是空的，A–G / 机会分流也不再因「没有已确认事实」硬失败。
 
 原则：工具可以提议，不能把未确认内容写成「你具备某项能力」。生成材料只使用已确认事实；`verify_candidate_material` 会拦截 `blocked_claims` 里的撤回/否决声明。
 
-人审入口：首页待确认；工具返回 `waiting_approval`；`confirmed_local_write` 必须来自用户明确指令；画像访谈一次一问。
+人审入口：资料库待确认；工具返回 `waiting_approval`；`confirmed_local_write` 必须来自用户明确指令；画像访谈一次一问。
 
 附件：简历用脱敏文本；岗位截图默认不抽文本，需用户勾选「模型看图」。隐私模式默认 `redacted`。
 
@@ -244,7 +246,9 @@ backend/app/
 
 ## 模型与配置
 
-当前只支持 OpenAI 兼容 Chat Completions（`MODEL_PROVIDER=openai`）。系统提示在 `backend/app/models/openai_compatible.py`：中文、不编造经历与来源、只使用本轮实际提供的工具、不点名具体工具名、过程叙述交给界面。本轮工具清单由 runtime 注入。缺少关键信息或指代有歧义时必须调用 `ask_user`，不要猜测，也不要只在正文里提问。用户明确要求思维导图时可输出 Mermaid `mindmap` 代码块，界面渲染为可展开、缩放的交互导图；普通回答不主动生成图。
+模型连接支持 OpenAI 兼容 Chat Completions、OpenAI Responses、Anthropic Messages、Google Gemini `generateContent` 与 Ollama Chat。显式 `model_protocol` 永远优先；`auto` 会先识别官方域名和 Ollama 地址，再按模型家族选择协议（`claude-*` → Anthropic、`gemini-*` → Gemini，其他 → OpenAI 兼容）。自定义多协议网关上的 Claude/Gemini 会先调用原生协议；只有 404/405 路由不存在、HTTP 200 却无法解析为该协议等可证明的协议不匹配，才回退到 OpenAI 兼容，并按网关 + 模型 + 密钥指纹缓存成功协议。认证失败、限流、模型不可用、上游账户池耗尽和其他 5xx 都不得换协议重试；流式响应一旦输出任何事件也不得回退，以免重复正文。根地址回退到 OpenAI 兼容时会尝试标准 `/v1`，已带路径的自定义 API 根地址不改写。Responses 与非标准包装仍可在设置页显式选择。
+
+Base URL 视为对应协议的 API 根地址：显式 OpenAI 兼容客户端不自动追加 `/v1`，Responses 请求 `/responses`，Anthropic 请求 `/v1/messages`，Gemini 请求 `/models/{model}:generateContent`，Ollama 请求 `/api/chat`。OpenAI 兼容调用还会验证响应中存在 `choices`，流式调用至少返回响应 ID、用量、结束原因、正文或工具调用之一；网页回退或空响应即使 HTTP 状态为 200 也会记为 `invalid_provider_response`，不得标记为健康。模型目录只证明名称可见，不证明当前账户可实际调用；设置页将目录项标记为“仅目录可见”，默认模型只有在调用监控健康时才显示“已验证”。本地 Ollama 可不配置 API Key；其他协议要求密钥。runtime、模型发现、能力检测与健康监控使用同一协议解析结果。系统提示在 `backend/app/models/openai_compatible.py`：中文、不编造经历与来源、只使用本轮实际提供的工具、不点名具体工具名、过程叙述交给界面。本轮工具清单由 runtime 注入。缺少关键信息或指代有歧义时必须调用 `ask_user`，不要猜测，也不要只在正文里提问。用户明确要求思维导图时可输出 Mermaid `mindmap` 代码块，界面渲染为可展开、缩放的交互导图；普通回答不主动生成图。
 
 用户可配置人设（名称、角色、详略、补充指令）不能覆盖事实要求、工具权限和人工确认规则。模型名、Base URL、API Key 存在 `agent_settings`，缺省回落到环境变量。
 

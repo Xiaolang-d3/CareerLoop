@@ -10,7 +10,7 @@ import { AppIdentityMenu } from "./components/AppIdentityMenu";
 import { AppTopBar } from "./components/AppTopBar";
 import { createClientId } from "./api/clientId";
 import { ConversationDialog, type ConversationDialogState } from "./components/ConversationDialog";
-import type { AgentRunResult, AttachmentConfig, ChatAttachment, ChatMessage, ChatRetryDraft } from "./components/ChatWorkspace";
+import type { AgentRunResult, AttachmentConfig, ChatAttachment, ChatMessage, ChatRetryDraft, WebSearchMode } from "./components/ChatWorkspace";
 import {
   bossHomeUrl,
   defaultAgentSettings,
@@ -295,11 +295,12 @@ function App({
   const currentConversation = conversations.find((item) => item.id === currentConversationId) ?? null;
 
   function navigateRoute(route: AppRoute, replace = false) {
-    if (route.section === "workbench" && route.page === "interview") {
+    const nextHash = appRouteHash(route);
+    const nextRoute = parseAppHash(nextHash) ?? route;
+    if (nextRoute.section === "workbench" && nextRoute.page === "interview") {
       setInterviewBusy(true);
     }
-    const nextHash = appRouteHash(route);
-    setAppRoute(route);
+    setAppRoute(nextRoute);
     if (replace) {
       window.history.replaceState(null, "", nextHash);
     } else if (window.location.hash !== nextHash) {
@@ -320,7 +321,7 @@ function App({
       window.history.replaceState(null, "", canonicalHash);
     }
     function syncRoute() {
-      const next = parseAppHash(window.location.hash) ?? { section: "dashboard" as const };
+      const next = parseAppHash(window.location.hash) ?? { section: "chat" as const };
       const canonicalHash = appRouteHash(next);
       if (window.location.hash !== canonicalHash) {
         window.history.replaceState(null, "", canonicalHash);
@@ -447,7 +448,7 @@ function App({
     .find((message) => message.role === "assistant" && message.payload?.agent)?.payload?.agent;
   const waitingForUser = latestAgent?.status === "waiting_user";
   const nextStep = !hasProfile
-    ? { title: "先建立职业画像", detail: "导入简历或填写关键经历，让岗位判断和面试准备真正贴合你。", action: "创建求职资料", kind: "settings" as const }
+    ? { title: "先建立资料库", detail: "导入现有材料或填写关键经历，让后续分析和创作真正贴合你。", action: "创建资料库", kind: "settings" as const }
     : !workbenchProfileReady
       ? { title: "确认候选人事实", detail: "待确认知识不会参与岗位评分；请先在画像中心核对证据。", action: "审核画像", kind: "settings" as const }
       : { title: "分析这份简历", detail: "先看已保存简历的方向与缺口；需要时再对照岗位。", action: "开始分析", kind: "workbench" as const };
@@ -1155,8 +1156,9 @@ function App({
       return;
     }
     setAgentSettings(clean);
-    updateModelSettingsEditing(!next.api_key_configured);
-    if (next.api_key_configured) {
+    const keyOptional = next.resolved_model_protocol === "ollama";
+    updateModelSettingsEditing(!next.api_key_configured && !keyOptional);
+    if (next.api_key_configured || keyOptional) {
       void discoverModels(clean, { silent: true });
     }
   }
@@ -1177,6 +1179,7 @@ function App({
             body: JSON.stringify({
               model_name: agentSettings.model_name,
               model_base_url: agentSettings.model_base_url,
+              model_protocol: agentSettings.model_protocol,
               api_key: agentSettings.api_key,
               probe: true
             })
@@ -1238,7 +1241,7 @@ function App({
     settings: AgentSettings,
     options: { silent?: boolean; force?: boolean } = {}
   ) {
-    const discoveryKey = `${settings.model_base_url.trim()}|${settings.api_key ? "draft" : "saved"}`;
+    const discoveryKey = `${settings.model_base_url.trim()}|${settings.model_protocol}|${settings.model_name.trim()}|${settings.api_key ? "draft" : "saved"}`;
     if (!options.force && modelDiscoveryKeyRef.current === discoveryKey) return;
     modelDiscoveryKeyRef.current = discoveryKey;
     setModelDiscoveryBusy(true);
@@ -1252,6 +1255,8 @@ function App({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             model_base_url: settings.model_base_url,
+            model_name: settings.model_name,
+            model_protocol: settings.model_protocol,
             api_key: settings.api_key
           })
         }
@@ -1285,7 +1290,15 @@ function App({
   }
 
   async function saveAgentPreferences() {
-    if (!window.confirm(`确认应用模型连接吗？\n\n模型：${agentSettings.model_name}\n服务：${agentSettings.model_base_url || "OpenAI 默认地址"}\n\n新的连接将从下一次模型调用开始生效。`)) return;
+    const protocolName = {
+      auto: "自动匹配",
+      openai: "OpenAI 兼容 Chat Completions",
+      responses: "OpenAI Responses API",
+      anthropic: "Anthropic Messages API",
+      gemini: "Google Gemini generateContent",
+      ollama: "Ollama Chat API"
+    }[agentSettings.model_protocol];
+    if (!window.confirm(`确认应用模型连接吗？\n\n模型：${agentSettings.model_name}\n协议：${protocolName}\n服务：${agentSettings.model_base_url || "官方默认地址"}\n\n新的连接将从下一次模型调用开始生效。`)) return;
     setAgentSettingsBusy(true);
     setErrorMessage("");
     try {
@@ -1493,7 +1506,7 @@ function App({
       setNoticeMessage("保存成功");
       return true;
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "保存求职资料失败");
+      setErrorMessage(error instanceof Error ? error.message : "保存资料库失败");
       return false;
     } finally {
       setCandidateProfileBusy(false);
@@ -1621,6 +1634,7 @@ function App({
     attachmentIds: string[] = [],
     visionAttachmentIds: string[] = [],
     webSearch = false,
+    webSearchMode: WebSearchMode = "auto",
     conversationIdOverride?: number,
   ) {
     const content = contentOverride.trim();
@@ -1832,7 +1846,7 @@ function App({
           runId: createClientId(),
           tools: [],
           context: [],
-          forwardedProps: { conversationId, client: "careerloop-web", attachmentIds, visionAttachmentIds, webSearch }
+          forwardedProps: { conversationId, client: "careerloop-web", attachmentIds, visionAttachmentIds, webSearch, webSearchMode }
         },
         subscriber
       );
@@ -1847,7 +1861,7 @@ function App({
       }
       if (error instanceof DOMException && error.name === "AbortError") return;
       setErrorMessage(error instanceof Error ? error.message : "消息发送失败");
-      setRetryChatDraft({ content, attachmentIds, visionAttachmentIds, webSearch });
+      setRetryChatDraft({ content, attachmentIds, visionAttachmentIds, webSearch, webSearchMode });
     } finally {
       if (chatAgentRef.current === agent) {
         chatAgentRef.current = null;
@@ -2139,7 +2153,7 @@ function App({
     ? {
         overview: pageMeta.settings,
         account: { title: "账号与安全", description: "管理跟随登录账号的昵称、头像和密码" },
-        profile: { title: "证据", description: "维护已确认事实、待确认队列和简历原文" },
+        profile: { title: "资料库", description: "维护个人资料、来源内容、已确认事实和待确认信息" },
         model: { title: "模型设置", description: "配置推理模型、服务地址和 API Key，并检查连接质量" },
         agent: { title: "Agent 执行记录", description: "查看 Agent 已完成的任务、工具使用和异常原因" }
       }[appRoute.page]
@@ -2167,7 +2181,7 @@ function App({
         : appRoute.page === "interview"
           ? { title: "面试准备", description: "围绕已确认项目证据练习问答" }
         : appRoute.page === "resume"
-          ? { title: "简历", description: "用已确认证据生成、编辑和导出投递简历" }
+          ? { title: "工作台", description: "编辑、整理和导出你的文档" }
         : appRoute.page === "detail"
           ? { title: "匹配分析", description: "对照这份岗位查看匹配、缺口和证据" }
           : pageMeta.workbench
@@ -2216,8 +2230,8 @@ function App({
         workbenchPage={appRoute.section === "workbench" ? appRoute.page : undefined}
         onSelectNav={(key) => {
           if (key === "dashboard") navigateRoute({ section: "dashboard" });
-          else if (key === "evidence") navigateRoute({ section: "settings", page: "profile" });
-          else if (key === "resume") navigateRoute({ section: "workbench", page: "resume" });
+          else if (key === "library") navigateRoute({ section: "settings", page: "profile" });
+          else if (key === "workspace") navigateRoute({ section: "workbench", page: "resume" });
           else navigateRoute({ section: "chat", conversationId: currentConversationId ?? undefined });
         }}
         identity={identityMenu}
@@ -2310,7 +2324,7 @@ function App({
               chatEndRef={chatEndRef}
               chatInputRef={chatInputRef}
               sessionContext={{
-                resumeLabel: hasSavedResume ? (candidateEditor.resumeFilename || "已保存简历") : null,
+                resumeLabel: hasSavedResume ? (candidateEditor.resumeFilename || "已保存资料") : null,
                 analysisLabel: jobEvaluation
                   ? [jobEvaluation.job?.company_name, jobEvaluation.job?.job_title].filter(Boolean).join(" · ") || "最近一次分析"
                   : null
@@ -2540,6 +2554,7 @@ function App({
                   enhancedParse={enhancedResumeParse}
                   privacyFindings={privacyFindings}
                   suggestion={resumeProfileSuggestion}
+                  pendingFacts={pendingCareerFacts}
                   returnToWorkbench={appRoute.returnTo === "workbench"}
                   onChange={(editor: CandidateEditor) => {
                     setCandidateEditor(editor);
@@ -2552,6 +2567,14 @@ function App({
                   onParseFiles={(files) => void parseResumeFiles(files)}
                   onScanPrivacy={() => void scanResumePrivacy()}
                   onFillSuggestion={fillProfileFromResume}
+                  onReviewFact={async (factId, action) => {
+                    await fetchJson(`/career-profile/facts/${factId}/review`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ action })
+                    });
+                    await refreshCandidateProfile();
+                  }}
                   onCareerChange={refreshCandidateProfile}
                   onClearResume={() => {
                     candidateProfileGenerationRef.current += 1;

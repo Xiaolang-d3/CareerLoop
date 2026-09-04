@@ -307,7 +307,7 @@ export function homeActionQueue(input: {
     return [{
       id: "profile-loading",
       kind: "profile",
-      label: "完善求职资料",
+      label: "完善资料库",
       detail: "资料读取后，这里会给出下一步。"
     }];
   }
@@ -316,13 +316,13 @@ export function homeActionQueue(input: {
       id: "save-resume",
       kind: "profile",
       label: "先保存简历",
-      detail: "证据账本和投递简历都需要一份已保存的原文。"
+      detail: "资料库和工作台需要一份可复用的基础资料。"
     });
   } else if (input.completeness != null && input.completeness < 80) {
     push({
       id: "complete-profile",
       kind: "profile",
-      label: "完善求职资料",
+      label: "完善资料库",
       detail: "补齐方向、城市和技能，后续判断会更准。"
     });
   }
@@ -333,7 +333,7 @@ export function homeActionQueue(input: {
       id: "review-facts",
       kind: "review",
       label: pendingFactCount === 1 ? "确认 1 条待审知识" : `确认 ${pendingFactCount} 条待审知识`,
-      detail: "待确认知识不会写入账本，先核对今天的证据。"
+      detail: "待确认内容不会写入资料库，请先核对。"
     });
   }
 
@@ -341,8 +341,8 @@ export function homeActionQueue(input: {
     push({
       id: "view-evidence",
       kind: "profile",
-      label: "查看证据",
-      detail: "今天先核对应确认的经历，再用证据出材料。"
+      label: "查看资料库",
+      detail: "核对已保存的信息，并继续用于分析或内容生成。"
     });
   }
 

@@ -2,14 +2,14 @@
 
 [![CI](https://github.com/Xiaolang-d3/CareerLoop/actions/workflows/ci.yml/badge.svg)](https://github.com/Xiaolang-d3/CareerLoop/actions/workflows/ci.yml)
 
-本地优先的 AI 求职工作台。CareerLoop 把经历沉淀为已确认证据账本，再用这些证据生成简历等材料；对话智能体是操作这些核心能力的受控入口，而不是第七个产品模块。
+本地优先、由个人资料驱动的 AI 协作工作台。CareerLoop 把长期资料沉淀为可复用上下文，通过对话完成搜索、分析和内容生成，并将结果保留在工作台。求职是当前最成熟的专业场景，但不是产品边界。
 
 当前版本为 **2.0.0 开发预览版**，尚未发布稳定的 GitHub Release。
 
 ## 核心能力
 
-- **证据账本**：维护脱敏简历、技能、目标与已确认事实；所有推导信息先进入待确认队列，确认后才进入正式材料。
-- **用证据出材料**：基于已确认证据生成、编辑和导出投递简历；面试准备挂在同一条项目证据链上。受控求职 Agent 是操作这两项能力的入口，按任务路由工具、限制计划外操作，联网结果要求引用，关键写入保留人工确认。
+- **资料库**：维护个人资料、来源内容与已确认事实；所有推导信息先进入待确认队列，确认后才进入可复用上下文。
+- **工作台与对话**：基于资料完成搜索、分析、生成、编辑和导出。求职相关的简历、岗位分析和面试辅助作为专业能力保留在同一套对话与工作台中，不再形成独立产品入口。
 
 界面模块与产品文案以 [`frontend/src/constants.ts`](frontend/src/constants.ts) 为准；智能体架构、工具、路由与维护约定见 [`docs/agent.md`](docs/agent.md)。
 
@@ -85,9 +85,9 @@ OPENAI_API_KEY=
 
 ## 可选：启用联网搜索
 
-CareerLoop 默认不依赖联网搜索即可运行。公司研究和公开网页搜索需要额外部署 AgentSearch；`scripts/dev.sh` 不会自动启动它。
+CareerLoop 默认不依赖联网搜索即可运行。对话中的公司研究和公开网页搜索需要额外部署 AgentSearch；`scripts/dev.sh` 不会自动启动它。
 
-CareerLoop 会使用 `general`、`news` 和 `company` 搜索策略。启用前请确认所部署的 AgentSearch 版本支持：
+CareerLoop 会使用 `general`、`news` 和 `company` 搜索策略。对话输入框可在“自动来源”“技术来源”和“通用来源”之间选择；技术来源会优先检索官方文档、GitHub 与 Stack Overflow。启用前请确认所部署的 AgentSearch 版本支持：
 
 ```bash
 curl "http://127.0.0.1:3939/health"
@@ -99,9 +99,9 @@ curl "http://127.0.0.1:3939/search?q=OpenAI&count=2&mode=company"
 确认兼容后，在 `backend/.env` 中启用集成并重启后端：
 
 ```dotenv
-WEB_RESEARCH_ENABLED=true
 AGENT_SEARCH_BASE_URL=http://127.0.0.1:3939
 # AGENT_SEARCH_TOKEN=
+WEB_RESEARCH_ENABLED=true
 ```
 
 `/health` 可能因单个上游引擎超时或验证码显示 `degraded`。应以实际 `/search` 请求能否返回结果为准。

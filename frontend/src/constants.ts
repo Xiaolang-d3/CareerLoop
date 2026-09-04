@@ -5,7 +5,7 @@ export const bossHomeUrl = "https://www.zhipin.com/";
 
 export const defaultAgentSettings: AgentSettings = {
   display_name: "CareerLoop",
-  persona_role: "主动、清晰、帮助用户用已确认证据推进材料的 AI 求职伙伴",
+  persona_role: "主动、清晰、基于用户资料协助分析、研究和内容创作的 AI 伙伴",
   response_style: "concise",
   custom_instructions: "",
   profile_memory_enabled: true,
@@ -15,26 +15,27 @@ export const defaultAgentSettings: AgentSettings = {
   context_message_limit: 12,
   model_name: "gpt-5.5",
   model_base_url: "",
+  model_protocol: "auto",
   api_key: "",
   api_key_configured: false
 };
 
 export const pageMeta: Record<ViewKey, { title: string; description: string }> = {
-  opportunities: { title: "岗位备忘", description: "旧链接仍可用；机会发现不再作为核心模块" },
-  workbench: { title: "分析", description: "对照岗位查看匹配；产品主路径是证据账本和用证据出材料" },
-  "interview-prep": { title: "面试准备", description: "围绕已确认项目证据练习问答和知识点" },
-  "project-lab": { title: "项目证据", description: "从已确认项目证据梳理表达，并进入同一扇面试门" },
-  dashboard: { title: "首页", description: "先确认今天的证据，再用证据生成简历等材料" },
-  chat: { title: "对话", description: "告诉 CareerLoop 你的目标，开始核对证据或生成材料" },
+  opportunities: { title: "对话", description: "旧的岗位发现链接已归入对话" },
+  workbench: { title: "工作台", description: "集中编辑、分析和导出生成的内容" },
+  "interview-prep": { title: "对话", description: "旧的准备入口已归入对话" },
+  "project-lab": { title: "资料库", description: "旧的项目入口已归入资料库" },
+  dashboard: { title: "首页", description: "查看最近资料、文档和对话" },
+  chat: { title: "对话", description: "基于你的资料进行问答、搜索、分析和内容生成" },
   settings: { title: "设置", description: "维护账号、模型连接和偏好" }
 };
 
 const sectionTitles: Record<ViewKey, string> = {
   dashboard: pageMeta.dashboard.title,
-  opportunities: pageMeta.opportunities.title,
-  workbench: pageMeta.workbench.title,
-  "interview-prep": "面试准备",
-  "project-lab": "项目证据",
+  opportunities: "对话",
+  workbench: "工作台",
+  "interview-prep": "对话",
+  "project-lab": "资料库",
   chat: "对话",
   settings: "设置"
 };
@@ -44,7 +45,7 @@ export function topbarSectionForPage(section: ViewKey, title: string): string | 
   return sectionTitles[section] === title ? undefined : sectionTitles[section];
 }
 
-export type SidebarHighlight = "dashboard" | "evidence" | "resume" | "chat" | null;
+export type SidebarHighlight = "dashboard" | "library" | "workspace" | "chat" | null;
 
 export function sidebarHighlightForView(
   view: ViewKey,
@@ -52,8 +53,8 @@ export function sidebarHighlightForView(
 ): SidebarHighlight {
   if (view === "dashboard") return "dashboard";
   if (view === "chat") return "chat";
-  if (view === "settings" && extras.settingsPage === "profile") return "evidence";
-  if (view === "workbench" && extras.workbenchPage === "resume") return "resume";
+  if (view === "settings" && extras.settingsPage === "profile") return "library";
+  if (view === "workbench" && extras.workbenchPage === "resume") return "workspace";
   return null;
 }
 

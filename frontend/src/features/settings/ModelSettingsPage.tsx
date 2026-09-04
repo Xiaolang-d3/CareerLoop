@@ -68,13 +68,68 @@ function formatTokens(value: number | null | undefined) {
   return new Intl.NumberFormat("zh-CN").format(value);
 }
 
-function modelListItems(defaultName: string, available: string[], providerLabel: string) {
+function modelListItems(
+  defaultName: string,
+  available: string[],
+  providerLabel: string,
+  monitor: ModelServiceMonitor | null
+) {
   const names = [defaultName, ...available].map((name) => name.trim()).filter(Boolean);
   return Array.from(new Set(names)).map((name) => ({
     name,
     providerLabel,
-    isDefault: name === defaultName.trim()
+    isDefault: name === defaultName.trim(),
+    availability: name !== defaultName.trim()
+      ? "仅目录可见"
+      : monitor?.model_name !== name
+        ? "未验证"
+        : monitor.status === "healthy"
+          ? "已验证"
+          : monitor.status === "degraded"
+            ? "服务波动"
+            : monitor.status === "unavailable"
+              ? "调用失败"
+              : "未验证"
   }));
+}
+
+function resolvedProtocol(modelName: string, configured: AgentSettings["model_protocol"], baseUrl: string) {
+  if (configured !== "auto") return configured;
+  const normalizedBaseUrl = baseUrl.trim();
+  if (/anthropic\.com/i.test(normalizedBaseUrl)) return "anthropic";
+  if (/generativelanguage\.googleapis\.com/i.test(normalizedBaseUrl)) return "gemini";
+  if (/ollama/i.test(normalizedBaseUrl) || /:11434(?:\/|$)/i.test(normalizedBaseUrl)) return "ollama";
+  if (/claude/i.test(modelName)) return "anthropic";
+  if (/gemini/i.test(modelName)) return "gemini";
+  return "openai";
+}
+
+function protocolLabel(protocol: Exclude<AgentSettings["model_protocol"], "auto">) {
+  return {
+    openai: "OpenAI 兼容 Chat Completions",
+    responses: "OpenAI Responses API",
+    anthropic: "Anthropic Messages API",
+    gemini: "Google Gemini generateContent",
+    ollama: "Ollama Chat API"
+  }[protocol];
+}
+
+function protocolBaseUrl(protocol: Exclude<AgentSettings["model_protocol"], "auto">) {
+  return {
+    openai: "https://api.openai.com/v1",
+    responses: "https://api.openai.com/v1",
+    anthropic: "https://api.anthropic.com",
+    gemini: "https://generativelanguage.googleapis.com/v1beta",
+    ollama: "http://127.0.0.1:11434"
+  }[protocol];
+}
+
+function protocolBaseUrlHelp(protocol: Exclude<AgentSettings["model_protocol"], "auto">) {
+  if (protocol === "anthropic") return "填写 Anthropic 服务根地址，系统按 Messages 协议请求 /v1/messages。";
+  if (protocol === "gemini") return "填写 Gemini API 版本根地址，系统按 generateContent 协议组装模型路径。";
+  if (protocol === "ollama") return "填写 Ollama 服务根地址，系统会请求 /api/chat 和 /api/tags。";
+  if (protocol === "responses") return "填写 Responses API 根地址；系统会在该根地址下请求 /responses。";
+  return "填写 Chat Completions 的完整 API 根地址；系统不会自动添加 /v1。";
 }
 
 function CapabilityRow({
@@ -119,10 +174,12 @@ export function ModelSettingsPage({
   onCancelEdit,
   onSave
 }: Props) {
-  const providerLabel = capabilities?.provider_label || "OpenAI 兼容";
+  const effectiveProtocol = resolvedProtocol(settings.model_name, settings.model_protocol, settings.model_base_url);
+  const effectiveProtocolLabel = protocolLabel(effectiveProtocol);
+  const providerLabel = capabilities?.protocol_label || effectiveProtocolLabel;
   const fieldsLocked = !editing;
   const catalog = Array.from(new Set(availableModels.map((name) => name.trim()).filter(Boolean)));
-  const models = modelListItems(settings.model_name, catalog, providerLabel);
+  const models = modelListItems(settings.model_name, catalog, providerLabel, monitor);
   const remainingQuota = monitor?.usage?.remaining_quota ?? null;
   const quotaAvailable = Boolean(monitor?.usage?.quota_available && remainingQuota != null);
   const usedTokens = monitor?.usage?.total_tokens ?? monitor?.summary.total_tokens ?? 0;
@@ -134,13 +191,27 @@ export function ModelSettingsPage({
         <section className="settings-card model-settings-card persona-settings">
           <div className="settings-card-heading model-connection-heading">
             <span><Cpu size={18} /></span>
-            <div><h3>模型连接</h3><p>对话、岗位分析和材料生成共用这一套 OpenAI 兼容连接。</p></div>
+            <div><h3>模型连接</h3><p>对话、岗位分析和材料生成共用这套连接；API 路径以 Base URL 为准。</p></div>
             <em className={editing ? "editing" : "locked"}>{editing ? "编辑中" : "已锁定"}</em>
           </div>
           <label>
-            <span>服务协议</span>
-            <input value="OpenAI 兼容" readOnly />
-            <small>没有单独的供应商市场；通过 Base URL 接入官方或兼容服务。</small>
+            <span>接口协议</span>
+            <select
+              value={settings.model_protocol}
+              disabled={fieldsLocked}
+              onChange={(event) => onSettingsChange({
+                ...settings,
+                model_protocol: event.target.value as AgentSettings["model_protocol"]
+              })}
+            >
+              <option value="auto">自动匹配（当前：{effectiveProtocolLabel}）</option>
+              <option value="openai">OpenAI 兼容 Chat Completions</option>
+              <option value="responses">OpenAI Responses API</option>
+              <option value="anthropic">Anthropic Messages API</option>
+              <option value="gemini">Google Gemini generateContent</option>
+              <option value="ollama">Ollama Chat API</option>
+            </select>
+            <small>当前生效：{effectiveProtocolLabel}。自动模式优先使用模型家族的原生协议；仅在确认路由或响应格式不匹配时受控回退，也可手动指定协议。</small>
           </label>
           <div className="model-name-setting">
             <div className="model-field-heading">
@@ -159,23 +230,23 @@ export function ModelSettingsPage({
             )}
             <small className={discoveryError ? "model-discovery-error" : ""}>
               {discoveryBusy
-                ? "正在从当前服务自动读取 /v1/models…"
+                ? "正在从当前协议的模型目录读取数据…"
                 : discoveryError
                   ? `${discoveryError}。也可以解锁后手动填写模型名称。`
                   : catalog.length
-                    ? `已自动识别 ${catalog.length} 个可用模型。`
+                    ? `模型目录返回了 ${catalog.length} 个名称；“目录可见”不代表当前账户可调用。`
                     : "保存的连接会自动读取模型列表；当前服务不支持时可手动输入。"}
             </small>
           </div>
           <label>
             <span>Base URL</span>
-            <input value={settings.model_base_url} readOnly={fieldsLocked} placeholder="https://api.openai.com/v1" onChange={(event) => onSettingsChange({ ...settings, model_base_url: event.target.value })} onBlur={() => { if (editing && (settings.api_key || settings.api_key_configured)) onDiscoverModels(true); }} />
-            <small>请填控制台里的 API 地址，不要填官网首页。兼容服务一般带 /v1，例如 https://cf.api.fan/v1。</small>
+            <input value={settings.model_base_url} readOnly={fieldsLocked} placeholder={protocolBaseUrl(effectiveProtocol)} onChange={(event) => onSettingsChange({ ...settings, model_base_url: event.target.value })} onBlur={() => { if (editing && (effectiveProtocol === "ollama" || settings.api_key || settings.api_key_configured)) onDiscoverModels(true); }} />
+            <small>{protocolBaseUrlHelp(effectiveProtocol)}</small>
           </label>
           <label>
             <span>API Key</span>
-            <input type="password" autoComplete="new-password" value={settings.api_key} readOnly={fieldsLocked} placeholder={settings.api_key_configured ? "已配置，留空则继续使用" : "请输入 API Key"} onChange={(event) => onSettingsChange({ ...settings, api_key: event.target.value })} onBlur={() => { if (editing && (settings.api_key || settings.api_key_configured)) onDiscoverModels(true); }} />
-            <small>{settings.api_key_configured ? "当前已有可用密钥，系统不会显示原文。" : "密钥仅保存在本机后端。"}</small>
+            <input type="password" autoComplete="new-password" value={settings.api_key} readOnly={fieldsLocked} placeholder={effectiveProtocol === "ollama" ? "本地 Ollama 可留空" : settings.api_key_configured ? "已配置，留空则继续使用" : "请输入 API Key"} onChange={(event) => onSettingsChange({ ...settings, api_key: event.target.value })} onBlur={() => { if (editing && (effectiveProtocol === "ollama" || settings.api_key || settings.api_key_configured)) onDiscoverModels(true); }} />
+            <small>{effectiveProtocol === "ollama" ? "本地 Ollama 不要求密钥；使用需认证的远程服务时仍可填写。" : settings.api_key_configured ? "当前已有可用密钥，系统不会显示原文。" : "密钥仅保存在本机后端。"}</small>
           </label>
           <div className="model-settings-actions">
             {editing ? (
@@ -198,13 +269,13 @@ export function ModelSettingsPage({
             {models.length ? (
               <div className="model-list-table" role="table" aria-label="模型列表">
                 <div className="model-list-head" role="row">
-                  <span>名称</span><span>服务商</span><span>默认</span>
+                  <span>名称</span><span>服务商</span><span>可用性</span>
                 </div>
                 {models.map((item) => (
                   <div className={`model-list-row${item.isDefault ? " default" : ""}`} role="row" key={item.name}>
                     <strong>{item.name}</strong>
                     <span>{item.providerLabel}</span>
-                    <em>{item.isDefault ? "默认" : "—"}</em>
+                    <em>{item.isDefault ? `默认 · ${item.availability}` : item.availability}</em>
                   </div>
                 ))}
               </div>
@@ -280,7 +351,7 @@ export function ModelSettingsPage({
           <article><span>成功率 · 24h</span><strong>{monitor?.summary.success_rate == null ? "—" : `${monitor.summary.success_rate}%`}</strong><small>{monitor ? `${monitor.summary.successful_requests} / ${monitor.summary.total_requests} 次成功` : "等待数据"}</small></article>
           <article><span>P95 响应耗时</span><strong>{formatLatency(monitor?.summary.p95_latency_ms ?? null)}</strong><small>平均 {formatLatency(monitor?.summary.average_latency_ms ?? null)}</small></article>
           <article><span>超时次数</span><strong>{monitor?.summary.timeout_count ?? "—"}</strong><small>{monitor?.summary.consecutive_failures ? `当前连续失败 ${monitor.summary.consecutive_failures} 次` : "当前无连续失败"}</small></article>
-          <article><span>当前服务</span><strong className="model-monitor-name">{monitor?.model_name || settings.model_name || "—"}</strong><small>{monitor?.base_url || "OpenAI 默认地址"}</small></article>
+          <article><span>当前服务</span><strong className="model-monitor-name">{monitor?.model_name || settings.model_name || "—"}</strong><small>{protocolLabel(monitor?.protocol || effectiveProtocol)} · {monitor?.base_url || "官方默认地址"}</small></article>
         </div>
         {monitor?.error_breakdown.length ? <div className="model-monitor-errors"><span>近 24 小时异常</span><div>{monitor.error_breakdown.map((item) => <em key={item.code}>{item.label} {item.count}</em>)}</div></div> : null}
         <div className="model-monitor-events">

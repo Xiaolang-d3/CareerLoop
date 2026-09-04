@@ -12,7 +12,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT_DIR / "data"
 DB_PATH = DATA_DIR / "careerloop.db"
 LEGACY_DB_PATH = DATA_DIR / "bosscopilot.db"
-DB_SCHEMA_VERSION = 19
+DB_SCHEMA_VERSION = 20
 
 
 def adopt_legacy_database() -> None:
@@ -288,7 +288,7 @@ def init_db(db_path: str | Path | None = None) -> None:
             CREATE TABLE IF NOT EXISTS agent_settings (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 display_name TEXT NOT NULL DEFAULT 'CareerLoop',
-                persona_role TEXT NOT NULL DEFAULT '理性、坦诚、尊重用户决定的本地求职顾问',
+                persona_role TEXT NOT NULL DEFAULT '理性、坦诚、尊重用户决定，并基于用户资料协助分析与创作的本地 AI 伙伴',
                 response_style TEXT NOT NULL DEFAULT 'concise',
                 custom_instructions TEXT NOT NULL DEFAULT '',
                 profile_memory_enabled INTEGER NOT NULL DEFAULT 1,
@@ -298,6 +298,7 @@ def init_db(db_path: str | Path | None = None) -> None:
                 context_message_limit INTEGER NOT NULL DEFAULT 12,
                 model_name TEXT NOT NULL DEFAULT '',
                 model_base_url TEXT NOT NULL DEFAULT '',
+                model_protocol TEXT NOT NULL DEFAULT 'auto',
                 model_api_key TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -312,6 +313,7 @@ def init_db(db_path: str | Path | None = None) -> None:
                 total_tokens INTEGER NOT NULL DEFAULT 0,
                 model_name TEXT NOT NULL DEFAULT '',
                 base_url TEXT NOT NULL DEFAULT '',
+                protocol TEXT NOT NULL DEFAULT 'openai',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -354,7 +356,9 @@ def init_db(db_path: str | Path | None = None) -> None:
         ensure_column("attachments", "vision_consent_at", "TEXT")
         ensure_column("agent_settings", "model_name", "TEXT NOT NULL DEFAULT ''")
         ensure_column("agent_settings", "model_base_url", "TEXT NOT NULL DEFAULT ''")
+        ensure_column("agent_settings", "model_protocol", "TEXT NOT NULL DEFAULT 'auto'")
         ensure_column("agent_settings", "model_api_key", "TEXT NOT NULL DEFAULT ''")
+        ensure_column("model_service_events", "protocol", "TEXT NOT NULL DEFAULT 'openai'")
         ensure_column("jobs", "career_strategy_id", "INTEGER REFERENCES career_strategies(id) ON DELETE SET NULL")
         ensure_column("jobs", "discovered_job_id", "INTEGER REFERENCES discovered_jobs(id) ON DELETE SET NULL")
         ensure_column("resume_versions", "evaluation_id", "INTEGER REFERENCES job_evaluations(id) ON DELETE SET NULL")
@@ -456,6 +460,7 @@ DROP TABLE IF EXISTS candidate_context_briefs;
 DROP TABLE IF EXISTS candidate_fact_evidence;
 DROP TABLE IF EXISTS candidate_facts;
 """),
+        (20, "model_protocol_metadata", _migrate_model_protocol_metadata),
     ]
     applied = {
         int(row["version"])
@@ -472,6 +477,16 @@ DROP TABLE IF EXISTS candidate_facts;
             "INSERT INTO schema_migrations (version, name) VALUES (?, ?)",
             (version, name),
         )
+
+
+def _migrate_model_protocol_metadata(conn: sqlite3.Connection) -> None:
+    for table, column, definition in (
+        ("agent_settings", "model_protocol", "TEXT NOT NULL DEFAULT 'auto'"),
+        ("model_service_events", "protocol", "TEXT NOT NULL DEFAULT 'openai'"),
+    ):
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 def _migrate_resume_versions_optional_job(conn: sqlite3.Connection) -> None:

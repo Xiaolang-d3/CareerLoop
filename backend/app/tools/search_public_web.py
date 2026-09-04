@@ -12,6 +12,25 @@ from .base import ToolContext
 from .local_data import invalid_arguments
 
 
+_TECHNICAL_QUERY_HINTS = (
+    "python", "javascript", "typescript", "react", "vue", "java", "golang", "rust",
+    "docker", "kubernetes", "nginx", "git", "sql", "api", "sdk", "代码", "报错",
+    "异常", "调试", "部署", "数据库", "服务", "接口",
+)
+
+
+def _technical_search_query(query: str, mode: str) -> tuple[str, str]:
+    technical = mode == "technical" or (
+        mode == "auto" and any(hint in query.lower() for hint in _TECHNICAL_QUERY_HINTS)
+    )
+    if not technical:
+        return query, "general"
+    return (
+        f"{query} site:stackoverflow.com OR site:github.com OR site:developer.mozilla.org OR site:docs.python.org",
+        "technical",
+    )
+
+
 class SearchPublicWebArguments(BaseModel):
     query: str = Field(min_length=2, max_length=500)
     category: Literal["general", "news", "company"] = "general"
@@ -59,6 +78,9 @@ class SearchPublicWebTool:
         )
         query = payload.query
         mode = {"news": "news", "company": "company"}.get(payload.category, "general")
+        search_mode = "general"
+        if payload.category == "general":
+            query, search_mode = _technical_search_query(query, context.web_search_mode)
         if payload.category == "news" and not any(token in query for token in ("最新", "新闻", "动态")):
             query = f"{query} 最新"
         try:
@@ -78,7 +100,7 @@ class SearchPublicWebTool:
             await asyncio.sleep(0.35)
             try:
                 sources = await client.search(
-                    payload.query,
+                    query,
                     min(payload.count, self._settings.web_research_max_sources),
                     mode=mode,
                 )
@@ -124,6 +146,7 @@ class SearchPublicWebTool:
             data={
                 "query": payload.query,
                 "category": payload.category,
+                "search_mode": search_mode,
                 "sources": sources,
                 "source_count": len(sources),
                 "evidence": evidence,

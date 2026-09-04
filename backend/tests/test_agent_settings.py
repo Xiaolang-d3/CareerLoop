@@ -38,6 +38,23 @@ class AgentSettingsTest(unittest.TestCase):
         self.assertIn("实际工具权限", prompt)
         self.assertIn("优先指出风险", prompt)
 
+    def test_model_protocol_is_persisted_and_custom_gateway_uses_model_family(self) -> None:
+        settings = get_agent_settings(self.db_path)
+        settings.update({
+            "model_name": "claude-sonnet-5-thinking",
+            "model_base_url": "https://gateway.example.test",
+            "model_protocol": "auto",
+        })
+
+        saved = save_agent_settings(settings, self.db_path)
+
+        self.assertEqual(saved["model_protocol"], "auto")
+        self.assertEqual(saved["resolved_model_protocol"], "anthropic")
+
+        settings["model_protocol"] = "openai"
+        overridden = save_agent_settings(settings, self.db_path)
+        self.assertEqual(overridden["resolved_model_protocol"], "openai")
+
     def test_context_reset_preserves_messages_and_moves_cutoff(self) -> None:
         conversation = create_conversation("上下文测试", self.db_path)
         task_id = ensure_active_task(conversation["id"], self.db_path)

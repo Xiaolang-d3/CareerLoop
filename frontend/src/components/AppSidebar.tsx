@@ -11,7 +11,7 @@ import { sidebarHighlightForView } from "../constants";
 import type { ViewKey } from "../types";
 import type { SettingsPage, WorkbenchPage } from "../routing";
 
-export type ProductNavKey = "dashboard" | "evidence" | "resume" | "chat";
+export type ProductNavKey = "dashboard" | "library" | "workspace" | "chat";
 type PrefetchPage = "chat" | "workbench" | "profile" | "dashboard";
 
 type SidebarItem = {
@@ -48,10 +48,10 @@ export function AppSidebar({
 }: AppSidebarProps) {
   const highlighted = sidebarHighlightForView(activeView, { settingsPage, workbenchPage });
   const navItems: SidebarItem[] = [
+    { key: "chat", label: "对话", icon: <MessageCircle size={18} />, active: highlighted === "chat", prefetch: "chat", onClick: () => onSelectNav("chat") },
     { key: "dashboard", label: "首页", icon: <Home size={18} />, active: highlighted === "dashboard", prefetch: "dashboard", onClick: () => onSelectNav("dashboard") },
-    { key: "evidence", label: "证据", icon: <NotebookPen size={18} />, active: highlighted === "evidence", prefetch: "profile", onClick: () => onSelectNav("evidence") },
-    { key: "resume", label: "简历", icon: <FileText size={18} />, active: highlighted === "resume", prefetch: "workbench", onClick: () => onSelectNav("resume") },
-    { key: "chat", label: "对话", icon: <MessageCircle size={18} />, active: highlighted === "chat", prefetch: "chat", onClick: () => onSelectNav("chat") }
+    { key: "library", label: "资料库", icon: <NotebookPen size={18} />, active: highlighted === "library", prefetch: "profile", onClick: () => onSelectNav("library") },
+    { key: "workspace", label: "工作台", icon: <FileText size={18} />, active: highlighted === "workspace", prefetch: "workbench", onClick: () => onSelectNav("workspace") }
   ];
 
   function renderItem(item: SidebarItem, extraClass = "") {
@@ -78,12 +78,12 @@ export function AppSidebar({
           <span className="brand-mark" aria-hidden="true">
             <img className="brand-mark-image" src="/careerloop-mark-v2.png" alt="" />
           </span>
-          <span className="brand-copy"><strong>CareerLoop</strong><small>求职，持续推进</small></span>
+          <span className="brand-copy"><strong>CareerLoop</strong><small>理解你，持续协作</small></span>
         </button>
       </div>
 
       <nav className="nav nav-desktop" aria-label="主导航">
-        <p className="nav-label">工作台</p>
+        <p className="nav-label">从对话开始</p>
         {navItems.map((item) => renderItem(item))}
       </nav>
 

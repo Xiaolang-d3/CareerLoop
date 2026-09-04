@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 
-from app.domain import AgentMessage
+from app.domain import AgentMessage, ModelRequest
 from app.models.base import ModelProviderError
 from app.models.openai_compatible import SYSTEM_PROMPT, OpenAICompatibleProvider
 
@@ -114,6 +114,73 @@ class OpenAICompatibleProviderTest(unittest.TestCase):
         self.assertEqual(result["status"], "unsupported")
         self.assertEqual(result["source"], "probe")
 
+    def test_generate_rejects_a_200_response_without_chat_choices(self) -> None:
+        provider = OpenAICompatibleProvider(
+            api_key="test-key",
+            model="test-model",
+            base_url="https://gateway.example.test",
+        )
+        upstream = SimpleNamespace(choices=[], usage=None, id=None, model=None)
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new=AsyncMock(return_value=upstream),
+        ):
+            with self.assertRaises(ModelProviderError) as caught:
+                asyncio.run(provider.generate(ModelRequest(messages=[AgentMessage(role="user", content="hi")])))
+
+        self.assertEqual(caught.exception.code, "invalid_provider_response")
+        self.assertIn("HTTP 200", str(caught.exception))
+        self.assertIn("Chat Completions", str(caught.exception))
+
+    def test_health_check_rejects_a_200_response_without_chat_choices(self) -> None:
+        provider = OpenAICompatibleProvider(
+            api_key="test-key",
+            model="test-model",
+            base_url="https://gateway.example.test",
+        )
+        upstream = SimpleNamespace(choices=[], usage=None, id=None, model=None)
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new=AsyncMock(return_value=upstream),
+        ):
+            with self.assertRaises(ModelProviderError) as caught:
+                asyncio.run(provider.check_connection())
+
+        self.assertEqual(caught.exception.code, "invalid_provider_response")
+
+    def test_stream_rejects_a_200_response_without_any_sse_chunks(self) -> None:
+        provider = OpenAICompatibleProvider(
+            api_key="test-key",
+            model="test-model",
+            base_url="https://gateway.example.test",
+        )
+
+        class EmptyStream:
+            def __aiter__(self):
+                async def events():
+                    if False:
+                        yield None
+
+                return events()
+
+            async def close(self):
+                return None
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new=AsyncMock(return_value=EmptyStream()),
+        ):
+            async def collect():
+                return [event async for event in provider.stream(ModelRequest(messages=[AgentMessage(role="user", content="hi")]))]
+
+            with self.assertRaises(ModelProviderError) as caught:
+                asyncio.run(collect())
+
+        self.assertEqual(caught.exception.code, "invalid_provider_response")
+
 
 class ListModelsUpstreamTest(unittest.TestCase):
     """Every upstream shape must end up as a classified ModelProviderError."""
@@ -127,7 +194,7 @@ class ListModelsUpstreamTest(unittest.TestCase):
             self.list_models(handler, base_url)
         return caught.exception
 
-    def test_base_url_without_v1_still_requests_the_v1_catalog(self) -> None:
+    def test_base_url_without_v1_is_used_as_the_exact_api_root(self) -> None:
         requested: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -139,8 +206,30 @@ class ListModelsUpstreamTest(unittest.TestCase):
 
         models = self.list_models(handler, "https://gateway.example.test")
 
-        self.assertEqual(requested, ["https://gateway.example.test/v1/models"])
+        self.assertEqual(requested, ["https://gateway.example.test/models"])
         self.assertEqual(models, ["gpt-4.1", "gpt-5.5"])
+
+    def test_base_url_with_v1_keeps_the_explicit_version_path(self) -> None:
+        requested: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requested.append(str(request.url))
+            return httpx.Response(200, json={"object": "list", "data": []})
+
+        self.list_models(handler, "https://gateway.example.test/v1/")
+
+        self.assertEqual(requested, ["https://gateway.example.test/v1/models"])
+
+    def test_custom_api_prefix_is_not_rewritten(self) -> None:
+        requested: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requested.append(str(request.url))
+            return httpx.Response(200, json={"object": "list", "data": []})
+
+        self.list_models(handler, "https://gateway.example.test/openai/")
+
+        self.assertEqual(requested, ["https://gateway.example.test/openai/models"])
 
     def test_html_catalog_response_explains_the_base_url_instead_of_crashing(self) -> None:
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -153,7 +242,7 @@ class ListModelsUpstreamTest(unittest.TestCase):
         error = self.expect_error(handler)
 
         self.assertEqual(error.code, "invalid_model_catalog")
-        self.assertIn("https://gateway.example.test/v1/models", str(error))
+        self.assertIn("https://gateway.example.test/models", str(error))
         self.assertIn("Base URL", str(error))
         self.assertFalse(error.retryable)
 
@@ -180,8 +269,31 @@ class ListModelsUpstreamTest(unittest.TestCase):
             )
         )
 
-        self.assertEqual(error.code, "provider_error")
-        self.assertIn("404", str(error))
+        self.assertEqual(error.code, "route_not_found")
+        self.assertIn("Chat Completions", str(error))
+        self.assertFalse(error.retryable)
+
+    def test_account_pool_exhaustion_is_classified_without_protocol_fallback(self) -> None:
+        error = self.expect_error(
+            lambda _request: httpx.Response(
+                503,
+                json={"error": {"message": "All available accounts exhausted"}},
+            )
+        )
+
+        self.assertEqual(error.code, "account_pool_exhausted")
+        self.assertTrue(error.retryable)
+        self.assertIn("上游账户", str(error))
+
+    def test_unsupported_model_is_distinct_from_a_missing_route(self) -> None:
+        error = self.expect_error(
+            lambda _request: httpx.Response(
+                404,
+                json={"error": {"message": "model is not supported by any configured account"}},
+            )
+        )
+
+        self.assertEqual(error.code, "model_unavailable")
         self.assertFalse(error.retryable)
 
     def test_bad_request_includes_the_upstream_reason(self) -> None:

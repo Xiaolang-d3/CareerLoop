@@ -4,7 +4,8 @@ from typing import Any
 
 from .settings import get_model_connection
 from ..config import get_settings
-from ..models import ModelProviderRegistry, OpenAICompatibleProvider
+from ..models import ModelProviderRegistry, build_model_provider
+from ..model_protocol import protocol_requires_api_key
 from ..tools import (
     AnalyzeResumeAgainstJdTool,
     AskUserTool,
@@ -41,6 +42,7 @@ def _runtime_cache_key() -> tuple[Any, ...]:
         current_user_id(),
         connection["model_name"],
         connection["model_base_url"],
+        connection.get("model_protocol", "auto"),
         connection["api_key"],
     )
 
@@ -50,17 +52,19 @@ def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
     model_connection = get_model_connection()
 
     models = ModelProviderRegistry()
-    if settings.model_provider != "openai":
-        raise ValueError(f"当前不支持模型提供商：{settings.model_provider}")
-    if not model_connection["api_key"]:
-        raise ValueError("MODEL_PROVIDER=openai 时必须配置 OPENAI_API_KEY")
-    openai_model = OpenAICompatibleProvider(
+    if (
+        protocol_requires_api_key(model_connection.get("resolved_model_protocol", "openai"))
+        and not model_connection["api_key"]
+    ):
+        raise ValueError("必须先配置模型服务 API Key")
+    model = build_model_provider(
         api_key=model_connection["api_key"],
         model=model_connection["model_name"],
         base_url=model_connection["model_base_url"] or None,
         timeout_seconds=settings.model_timeout_seconds,
+        protocol=model_connection.get("model_protocol", "auto"),
     )
-    models.register(openai_model.name, openai_model)
+    models.register(model.name, model)
 
     tools = ToolRegistry()
     tools.register_handler(AnalyzeResumeAgainstJdTool())
@@ -89,13 +93,13 @@ def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
     runtime = AgentRuntime(
         models=models,
         tools=tools,
-        model_provider=settings.model_provider,
+        model_provider=model.name,
         platform_name="manual",
         max_tool_rounds=settings.model_max_tool_rounds,
         tool_timeout_seconds=settings.tool_execution_timeout_seconds,
     )
     capabilities = {
-        "active_model_provider": settings.model_provider,
+        "active_model_provider": model.name,
         "active_model_name": model_connection["model_name"],
         "active_platform": "manual",
         "model_providers": models.names(),

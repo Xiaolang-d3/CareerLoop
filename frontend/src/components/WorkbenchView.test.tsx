@@ -510,13 +510,11 @@ describe("WorkbenchView 匹配分析工作台", () => {
 
     expect(screen.queryByRole("button", { name: "返回匹配分析" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("对照岗位")).not.toBeInTheDocument();
-    const modules = screen.getByRole("navigation", { name: "求职模块" });
-    expect(modules.closest(".topbar")).toBeTruthy();
+    expect(screen.queryByRole("navigation", { name: "求职模块" })).not.toBeInTheDocument();
+    expect(screen.getByText("编辑、预览并导出当前文档").closest(".topbar")).toBeTruthy();
     expect(screen.queryByRole("heading", { level: 1, name: "匹配分析" })).not.toBeInTheDocument();
-    expect(modules.closest(".resume-module-shell")).toHaveClass("is-studio");
-    expect(within(modules).getByRole("button", { name: "定制简历" })).toHaveAttribute("aria-current", "page");
-    expect(within(modules).getByRole("button", { name: "面试问答" })).toBeInTheDocument();
-    expect(screen.getByRole("complementary", { name: "定制简历" })).toBeInTheDocument();
+    expect(screen.getByText("编辑、预览并导出当前文档").closest(".resume-module-shell")).toHaveClass("is-studio");
+    expect(screen.getByRole("complementary", { name: "简历编辑器" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "内容" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "模板" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "排版" })).toBeInTheDocument();
@@ -601,7 +599,7 @@ describe("WorkbenchView 匹配分析工作台", () => {
     expect(screen.queryByRole("button", { name: "标记最终版" })).not.toBeInTheDocument();
     expect(screen.queryByText("草稿")).not.toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "DOCX" })).not.toBeInTheDocument();
-    const studio = screen.getByRole("complementary", { name: "定制简历" });
+    const studio = screen.getByRole("complementary", { name: "简历编辑器" });
     expect(within(studio).getByRole("button", { name: "导出" })).toBeInTheDocument();
     fireEvent.click(within(studio).getByRole("button", { name: "导出" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "PDF" }));
@@ -622,7 +620,7 @@ describe("WorkbenchView 匹配分析工作台", () => {
 
     fireEvent.change(screen.getByLabelText("编辑个人概述"), { target: { value: "补充一句再导出。" } });
     expect(screen.getByText("未保存")).toBeInTheDocument();
-    const studio = screen.getByRole("complementary", { name: "定制简历" });
+    const studio = screen.getByRole("complementary", { name: "简历编辑器" });
     fireEvent.click(within(studio).getByRole("button", { name: "导出" }));
     expect(screen.getByText("会先保存未保存的修改")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("menuitem", { name: "PDF" }));
@@ -943,15 +941,16 @@ CareerLoop 求职助手`
     expect(onCreateResumeVersion).toHaveBeenCalledWith(job);
   });
 
-  it("returns to analysis from the resume module tab", () => {
+  it("does not expose job-specific module tabs on the generic workspace route", () => {
     const onNavigateIndex = vi.fn();
     renderWorkbench({
       viewMode: "resume",
       onNavigateIndex
     });
 
-    fireEvent.click(within(screen.getByRole("navigation", { name: "求职模块" })).getByRole("button", { name: "匹配分析" }));
-    expect(onNavigateIndex).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("navigation", { name: "求职模块" })).not.toBeInTheDocument();
+    expect(screen.getByText("编辑、预览并导出当前文档")).toBeInTheDocument();
+    expect(onNavigateIndex).not.toHaveBeenCalled();
   });
 
   it("asks to save a resume before generating interview Q&A", () => {
@@ -1168,9 +1167,9 @@ CareerLoop 求职助手`
       onOpenProfile
     });
 
-    expect(screen.getByText("还没有保存简历")).toBeInTheDocument();
-    expect(screen.getByText("先在求职资料里上传并保存简历，再选择类型和模板编辑和导出。")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "去求职资料" }));
+    expect(screen.getByText("工作台还没有文档")).toBeInTheDocument();
+    expect(screen.getByText("先在资料库中导入一份来源材料，再到这里编辑和导出。")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "去资料库" }));
     expect(onOpenProfile).toHaveBeenCalled();
     expect(screen.queryByText("还没有对照过岗位")).not.toBeInTheDocument();
   });

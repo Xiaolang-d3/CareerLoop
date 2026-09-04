@@ -99,7 +99,7 @@ def test_analysis_run_model_error_falls_back_to_local(monkeypatch: pytest.Monkey
             raise ModelProviderError("timeout", "模型超时")
             yield  # pragma: no cover
 
-    monkeypatch.setattr(analysis_run, "OpenAICompatibleProvider", FakeProvider)
+    monkeypatch.setattr(analysis_run, "build_model_provider", FakeProvider)
 
     events = _collect()
     result_event = next(event for event in events if event["type"] == "result")
@@ -141,7 +141,7 @@ def test_analysis_run_model_stream_enriches_wording(monkeypatch: pytest.MonkeyPa
                 ),
             )
 
-    monkeypatch.setattr(analysis_run, "OpenAICompatibleProvider", FakeProvider)
+    monkeypatch.setattr(analysis_run, "build_model_provider", FakeProvider)
 
     events = _collect()
     result_event = next(event for event in events if event["type"] == "result")

@@ -122,7 +122,8 @@ from ..jobs.evaluations import (
     validate_evaluation_weights,
 )
 from ..observability.model_monitor import get_model_monitor_snapshot, record_model_service_event
-from ..models import ModelProviderError, OpenAICompatibleProvider
+from ..models import ModelProviderError, OpenAICompatibleProvider, build_model_provider
+from ..model_protocol import protocol_requires_api_key, resolve_model_protocol
 from ..interview.workflow import (
     add_job_event,
     create_interview_kit,
@@ -1031,14 +1032,18 @@ async def discover_models(payload: ModelDiscoveryIn) -> dict[str, Any]:
     connection = get_model_connection()
     api_key = payload.api_key.strip() or connection["api_key"]
     base_url = payload.model_base_url.strip()
-    if not api_key:
+    model_name = payload.model_name.strip() or connection["model_name"]
+    model_protocol = payload.model_protocol or connection.get("model_protocol", "auto")
+    resolved_protocol = resolve_model_protocol(model_name, model_protocol, base_url)
+    if protocol_requires_api_key(resolved_protocol) and not api_key:
         raise HTTPException(status_code=400, detail="请先填写或保存 API Key")
 
-    provider = OpenAICompatibleProvider(
+    provider = build_model_provider(
         api_key=api_key,
-        model=connection["model_name"],
+        model=model_name,
         base_url=base_url or None,
         timeout_seconds=min(get_settings().model_timeout_seconds, 20),
+        protocol=model_protocol,
     )
     try:
         models = await provider.list_models()
@@ -1064,13 +1069,14 @@ async def discover_models(payload: ModelDiscoveryIn) -> dict[str, Any]:
                 "请继续手动填写模型名称"
             ),
         )
-    provider_name = get_settings().model_provider
-    normalized_base = OpenAICompatibleProvider._normalize_base_url(base_url) or ""
+    provider_name = provider.name
+    normalized_base = base_url.rstrip("/")
     return {
         "models": models,
         "count": len(models),
-        "base_url": OpenAICompatibleProvider._normalize_base_url(base_url),
+        "base_url": normalized_base,
         "provider": provider_name,
+        "protocol": provider_name,
         "items": build_model_list(
             connection["model_name"],
             models,
@@ -1086,8 +1092,9 @@ def model_capabilities_get(model_name: str = "") -> dict[str, Any]:
     settings = get_settings()
     return infer_model_capabilities(
         model_name.strip() or connection["model_name"],
-        provider=settings.model_provider,
+        provider=connection.get("resolved_model_protocol", "openai"),
         base_url=connection["model_base_url"],
+        protocol=connection.get("model_protocol", "auto"),
     )
 
 
@@ -1097,24 +1104,28 @@ async def model_capabilities_probe(payload: ModelCapabilitiesIn) -> dict[str, An
     settings = get_settings()
     model_name = payload.model_name.strip() or connection["model_name"]
     base_url = payload.model_base_url.strip() or connection["model_base_url"]
+    model_protocol = payload.model_protocol or connection.get("model_protocol", "auto")
+    resolved_protocol = resolve_model_protocol(model_name, model_protocol, base_url)
     report = infer_model_capabilities(
         model_name,
-        provider=settings.model_provider,
+        provider=resolved_protocol,
         base_url=base_url,
+        protocol=model_protocol,
     )
     if not payload.probe:
         return report
 
     api_key = payload.api_key.strip() or connection["api_key"]
-    if not api_key:
+    if protocol_requires_api_key(resolved_protocol) and not api_key:
         report["probe_error"] = "请先填写或保存 API Key"
         return report
 
-    provider = OpenAICompatibleProvider(
+    provider = build_model_provider(
         api_key=api_key,
         model=model_name,
         base_url=base_url or None,
         timeout_seconds=min(settings.model_timeout_seconds, 20),
+        protocol=model_protocol,
     )
     try:
         report["vision"] = await provider.probe_vision()
@@ -1142,7 +1153,10 @@ def agent_operations_get(days: int = 7, limit: int = 20) -> dict[str, Any]:
 @router.post("/agent/model-monitor/check")
 async def model_monitor_check() -> dict[str, Any]:
     connection = get_model_connection()
-    if not connection["api_key"]:
+    if (
+        protocol_requires_api_key(connection.get("resolved_model_protocol", "openai"))
+        and not connection["api_key"]
+    ):
         record_model_service_event(
             request_kind="health_check",
             status="error",
@@ -1153,14 +1167,16 @@ async def model_monitor_check() -> dict[str, Any]:
             base_url=OpenAICompatibleProvider._normalize_base_url(
                 connection["model_base_url"]
             ),
+            protocol=connection.get("resolved_model_protocol", "openai"),
         )
         return get_model_monitor_snapshot()
 
-    provider = OpenAICompatibleProvider(
+    provider = build_model_provider(
         api_key=connection["api_key"],
         model=connection["model_name"],
         base_url=connection["model_base_url"] or None,
         timeout_seconds=get_settings().model_timeout_seconds,
+        protocol=connection.get("model_protocol", "auto"),
     )
     try:
         await provider.check_connection()
@@ -1178,6 +1194,7 @@ async def model_monitor_check() -> dict[str, Any]:
             base_url=OpenAICompatibleProvider._normalize_base_url(
                 connection["model_base_url"]
             ),
+            protocol=connection.get("resolved_model_protocol", "openai"),
         )
     return get_model_monitor_snapshot()
 

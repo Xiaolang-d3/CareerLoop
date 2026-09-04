@@ -8,6 +8,7 @@ const settings: AgentSettings = {
   ...defaultAgentSettings,
   model_name: "gpt-5.5",
   model_base_url: "https://api.openai.com/v1",
+  model_protocol: "auto",
   api_key: "",
   api_key_configured: true
 };
@@ -17,6 +18,7 @@ const monitor: ModelServiceMonitor = {
   status_message: "最近调用正常",
   model_name: "gpt-5.5",
   base_url: "https://api.openai.com/v1",
+  protocol: "openai",
   api_key_configured: true,
   window_hours: 24,
   summary: {
@@ -47,6 +49,8 @@ const capabilities: ModelCapabilityReport = {
   model_name: "gpt-5.5",
   provider: "openai",
   provider_label: "OpenAI",
+  protocol: "openai",
+  protocol_label: "OpenAI 兼容 Chat Completions",
   vision: { status: "supported", source: "model_id", detail: "该模型 ID 通常支持图片 / 多模态输入" },
   streaming: { status: "supported", source: "client", detail: "当前 OpenAI 兼容客户端会对该对话模型发起流式请求" },
   tools: { status: "supported", source: "client", detail: "当前客户端会向该对话模型发送工具 / function calling" },
@@ -95,12 +99,14 @@ describe("ModelSettingsPage", () => {
     expect(screen.getByRole("heading", { name: "模型列表" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "模型额度" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "模型能力检测" })).toBeInTheDocument();
-    expect(screen.getByDisplayValue("OpenAI 兼容")).toHaveAttribute("readonly");
+    expect(screen.getByDisplayValue("自动匹配（当前：OpenAI 兼容 Chat Completions）")).toBeDisabled();
+    expect(screen.getByText(/当前生效：OpenAI 兼容 Chat Completions/)).toBeInTheDocument();
     expect(screen.getByLabelText("模型名称")).toHaveValue("gpt-5.5");
     expect(screen.getByLabelText("模型名称")).toBeDisabled();
     expect(screen.getByRole("table", { name: "模型列表" })).toBeInTheDocument();
     expect(screen.getAllByText("gpt-4.1").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("默认").length).toBeGreaterThan(0);
+    expect(screen.getByText("默认 · 已验证")).toBeInTheDocument();
+    expect(screen.getByText("仅目录可见")).toBeInTheDocument();
     expect(screen.getByText("暂无额度数据")).toBeInTheDocument();
     expect(screen.getByText("1,280")).toBeInTheDocument();
     expect(screen.getByText("是否支持多模态")).toBeInTheDocument();
@@ -156,7 +162,7 @@ describe("ModelSettingsPage", () => {
     const select = screen.getByLabelText("模型名称");
     expect(select.tagName).toBe("SELECT");
     expect(select).not.toBeDisabled();
-    expect(screen.getByText("已自动识别 9 个可用模型。")).toBeInTheDocument();
+    expect(screen.getByText("模型目录返回了 9 个名称；“目录可见”不代表当前账户可调用。")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "确认并应用" })).toBeInTheDocument();
 
     fireEvent.change(select, { target: { value: "deepseek-v4-flash" } });
@@ -197,7 +203,7 @@ describe("ModelSettingsPage", () => {
   });
 
   it("shows the backend reason for a failed discovery instead of guessing the cause", () => {
-    const discoveryError = "模型目录 https://www.example.test/v1/models 没有返回 OpenAI 兼容的模型列表，请确认 Base URL 填写的是模型服务的 API 网关地址";
+    const discoveryError = "模型目录 https://www.example.test/models 没有返回 OpenAI 兼容的模型列表，请确认 Base URL 填写的是模型服务的 API 网关地址";
     render(<ModelSettingsPage {...props({ availableModels: [], discoveryError })} />);
 
     expect(screen.getByText(`${discoveryError}。也可以解锁后手动填写模型名称。`)).toBeInTheDocument();
@@ -208,5 +214,50 @@ describe("ModelSettingsPage", () => {
     render(<ModelSettingsPage {...props({ availableModels: [] })} />);
 
     expect(screen.getByText("保存的连接会自动读取模型列表；当前服务不支持时可手动输入。")).toBeInTheDocument();
+  });
+
+  it("shows the effective protocol and its Base URL behavior", () => {
+    render(<ModelSettingsPage {...props()} />);
+
+    expect(screen.getByText(/系统不会自动添加 \/v1/)).toBeInTheDocument();
+  });
+
+  it("prefers Anthropic Messages for Claude models on a custom gateway", () => {
+    const onSettingsChange = vi.fn();
+    render(<ModelSettingsPage {...props({
+      settings: { ...settings, model_name: "claude-sonnet-5-thinking", model_base_url: "https://api.example.test" },
+      editing: true,
+      capabilities: null,
+      onSettingsChange
+    })} />);
+
+    const protocol = screen.getByDisplayValue("自动匹配（当前：Anthropic Messages API）");
+    expect(protocol).not.toBeDisabled();
+    fireEvent.change(protocol, { target: { value: "openai" } });
+    expect(onSettingsChange).toHaveBeenCalledWith(expect.objectContaining({ model_protocol: "openai" }));
+  });
+
+  it("uses Anthropic Messages for the official Anthropic host", () => {
+    render(<ModelSettingsPage {...props({
+      settings: { ...settings, model_name: "claude-sonnet-5-thinking", model_base_url: "https://api.anthropic.com" },
+      capabilities: null
+    })} />);
+
+    expect(screen.getByDisplayValue("自动匹配（当前：Anthropic Messages API）")).toBeInTheDocument();
+  });
+
+  it("offers the common native protocols and recognizes Ollama without requiring a key", () => {
+    render(<ModelSettingsPage {...props({
+      settings: { ...settings, model_name: "qwen3", model_base_url: "http://localhost:11434" },
+      editing: true,
+      capabilities: null
+    })} />);
+
+    const protocol = screen.getByDisplayValue("自动匹配（当前：Ollama Chat API）");
+    expect(protocol).toContainHTML('<option value="responses">OpenAI Responses API</option>');
+    expect(protocol).toContainHTML('<option value="gemini">Google Gemini generateContent</option>');
+    expect(protocol).toContainHTML('<option value="ollama">Ollama Chat API</option>');
+    expect(screen.getByPlaceholderText("本地 Ollama 可留空")).toBeInTheDocument();
+    expect(screen.getByText(/本地 Ollama 不要求密钥/)).toBeInTheDocument();
   });
 });
