@@ -46,6 +46,7 @@ export type AgentRunResult = {
   platform: string;
   rounds: number;
   status: "done" | "failed" | "waiting_user" | "cancelled";
+  stop_reason?: string;
   error?: { code: string; message: string; retryable: boolean } | null;
   events: Array<{
     round: number;
@@ -554,7 +555,8 @@ const SYSTEM_THINKING_TOOLS = new Set([
   "agent_planner",
   "model_provider",
   "completion_validator",
-  "citation_validator"
+  "citation_validator",
+  "agent_loop_guard"
 ]);
 const TOOL_ACTIVITY_LABELS: Record<string, string> = {
   search_public_web: "正在检索公开资料",
@@ -581,6 +583,7 @@ const TOOL_ACTIVITY_LABELS: Record<string, string> = {
   model_provider: "正在生成回答",
   completion_validator: "正在补齐必要步骤",
   citation_validator: "正在核对引用",
+  agent_loop_guard: "正在纠正重复步骤",
   ask_user: "需要你确认",
   agent_tool: "正在执行任务"
 };

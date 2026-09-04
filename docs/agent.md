@@ -96,7 +96,7 @@ backend/app/
 
 实现：`backend/app/agent/runtime.py`。组装：`backend/app/agent/bootstrap.py`。
 
-默认上限：`MODEL_MAX_TOOL_ROUNDS=8`，单次工具超时 `TOOL_EXECUTION_TIMEOUT_SECONDS=60`。同一对话同时只允许一个运行中的任务（HTTP 409）。
+默认上限：`MODEL_MAX_TOOL_ROUNDS=8`，单次工具超时 `TOOL_EXECUTION_TIMEOUT_SECONDS=60`，模型与安全工具重试预算分别为 `MODEL_RETRY_ATTEMPTS=1`、`TOOL_RETRY_ATTEMPTS=1`。同一对话同时只允许一个运行中的任务（HTTP 409）。
 
 每轮顺序：
 
@@ -202,9 +202,21 @@ backend/app/
 
 协议分两层：`ToolHandler.definition` 是模型可见契约，包含 `name`、说明、输入 JSON Schema 和输出 JSON Schema；`ToolSpec` 是 runtime 契约，包含用户标题、风险、可检索 capability tags、工作流阶段、可选单工具超时与是否需要确认。`async execute(arguments, ToolContext) -> ToolResult` 是执行入口，`ToolResult.status` 为 `done` / `failed` / `waiting_approval` / `blocked`。`ToolExecutor` 统一应用单工具/全局超时、异常归一化和审计；runtime 不再分别维护 fresh/resume 的执行异常边界。参数用 Pydantic 校验；领域参数错误边界见 `tools/local_data.py`。
 
-`ToolRegistry.names_for_capabilities()` 已支持按能力发现工具；当前车道仍按名称选择工具，下一阶段会把 `tools_for_kind` 迁移成 capability composition。`/agent/capabilities` 同时返回 `tools` 和 `tool_specs`，便于运营与后续动态工具面检查。
+`ToolRegistry.names_for_capabilities()` 支持按能力发现工具，`tools_for_kind` 和必要工具义务都通过 capability composition 解析成当前注册表里的具体工具。同能力的新实现可以通过优先级替换旧实现，不需要把工具名再次写进车道分支。`/agent/capabilities` 同时返回 `tools`、`tool_specs` 和运行预算 `runtime`，便于运营与动态工具面检查。
 
-合成事件名（`agent_thinking`、`agent_planner`、`model_provider`、`completion_validator`、`citation_validator`）不是工具，不要写入 `TOOL_POLICIES`。
+## 执行循环与收敛
+
+新任务和 `waiting_user` 恢复任务共用同一个有界 model/tool loop，不再维护两份执行逻辑。`max_tool_rounds` 限制模型轮数；每轮先检查完成义务，再选择 `required` 或 `auto` 的 `tool_choice`。所有 `AgentRunResult` 都带 `stop_reason`：成功为 `completed`，等待为 `waiting_user`，失败时使用稳定错误码，便于 UI、运营看板和回归评测区分停止原因。
+
+循环有三层恢复与防失控规则：
+
+- 可重试的模型错误在当前轮自动重试一次，不消耗新的工具轮数；重试过程发布 `model_provider` 系统事件。
+- 只有 `read_only`、`derived_analysis`、`external_read` 工具会在明确返回 `retryable` 时安全重试一次；任何本地写工具都不会被 harness 自动重放。
+- 成功工具调用按“工具名 + 规范化参数”生成不透明指纹。同一任务第一次重复调用会被跳过并提示模型推进；再次重复则以 `tool_loop_detected` 终止。指纹和重复计数写入暂停快照，恢复任务也不会重复执行已经完成的副作用。
+
+`agent_loop_guard`、`model_provider`、`completion_validator`、`citation_validator` 都是系统活动，不算真实工具调用；前端只展示友好状态，详细信息仍可在研究详情中检查。
+
+合成事件名（`agent_thinking`、`agent_planner`、`model_provider`、`completion_validator`、`citation_validator`、`agent_loop_guard`）不是工具，不要写入 `TOOL_POLICIES`。
 
 ## 记忆与人审
 

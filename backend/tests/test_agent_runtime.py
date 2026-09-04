@@ -14,7 +14,7 @@ from app.domain import (
     ToolError,
     ToolResult,
 )
-from app.models import ModelProviderRegistry
+from app.models import ModelProviderError, ModelProviderRegistry
 from app.tooling import ToolSpec
 from app.tools import AskUserTool, ToolContext, ToolRegistry
 
@@ -1436,6 +1436,397 @@ class AgentRuntimeStatusTest(unittest.IsolatedAsyncioTestCase):
             max_tool_rounds=3,
         )
         return model, runtime
+
+
+class AgentLoopHarnessTest(unittest.IsolatedAsyncioTestCase):
+    async def test_retryable_model_failure_retries_inside_same_round(self) -> None:
+        class FlakyModel:
+            name = "flaky"
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def generate(self, request):
+                self.calls += 1
+                if self.calls == 1:
+                    raise ModelProviderError(
+                        "service_unavailable",
+                        "暂时不可用",
+                        retryable=True,
+                    )
+                return ModelResponse(content="你好，我在。")
+
+        model = FlakyModel()
+        models = ModelProviderRegistry()
+        models.register("flaky", model)
+        runtime = AgentRuntime(
+            models=models,
+            tools=ToolRegistry(),
+            model_provider="flaky",
+            platform_name="manual",
+            max_tool_rounds=2,
+        )
+
+        result = await runtime.run("你好")
+
+        self.assertEqual(result.status, "done")
+        self.assertEqual(result.stop_reason, "completed")
+        self.assertEqual(result.rounds, 1)
+        self.assertEqual(model.calls, 2)
+        retry = next(
+            event
+            for event in result.events
+            if event.tool_name == "model_provider" and event.status == "running"
+        )
+        self.assertEqual(retry.data["retry_number"], 1)
+
+    async def test_non_retryable_model_failure_stops_immediately(self) -> None:
+        class InvalidModel:
+            name = "invalid"
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def generate(self, request):
+                self.calls += 1
+                raise ModelProviderError("invalid_request", "请求无效", retryable=False)
+
+        model = InvalidModel()
+        models = ModelProviderRegistry()
+        models.register("invalid", model)
+        runtime = AgentRuntime(
+            models=models,
+            tools=ToolRegistry(),
+            model_provider="invalid",
+            platform_name="manual",
+            max_tool_rounds=2,
+        )
+
+        result = await runtime.run("你好")
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.stop_reason, "invalid_request")
+        self.assertEqual(model.calls, 1)
+        self.assertFalse(any(event.status == "running" for event in result.events))
+
+    async def test_completed_tool_call_is_not_executed_twice(self) -> None:
+        model, tool, runtime = self._repeating_tool_runtime(final_after_repeat=True)
+
+        result = await runtime.run("帮我调查一下示例科技这家公司怎么样")
+
+        self.assertEqual(result.status, "done")
+        self.assertEqual(result.stop_reason, "completed")
+        self.assertEqual(tool.calls, 1)
+        self.assertEqual(model.calls, 4)
+        guard = next(event for event in result.events if event.tool_name == "agent_loop_guard")
+        self.assertEqual(guard.status, "running")
+        self.assertEqual(guard.data["repeat_count"], 1)
+
+    async def test_retryable_read_tool_failure_is_retried_once(self) -> None:
+        class ReadTool:
+            definition = ToolDefinition(
+                name="research_company",
+                description="搜索公司",
+                input_schema={"type": "object", "properties": {}},
+            )
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def execute(self, arguments, context):
+                self.calls += 1
+                if self.calls == 1:
+                    return ToolResult(
+                        ok=False,
+                        status="failed",
+                        message="搜索服务暂时不可用",
+                        error=ToolError(
+                            code="service_unavailable",
+                            message="搜索服务暂时不可用",
+                            retryable=True,
+                        ),
+                    )
+                return ToolResult(ok=True, status="done", message="研究完成")
+
+        class ToolModel:
+            name = "tool-retry"
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def generate(self, request):
+                self.calls += 1
+                if self.calls == 1:
+                    return ModelResponse(
+                        content=(
+                            '{"goal":"研究公司","steps":['
+                            '{"tool_name":"research_company","title":"检索公开资料"}]}'
+                        )
+                    )
+                if self.calls == 2:
+                    return ModelResponse(
+                        tool_calls=[
+                            ToolCall(
+                                id="research-retry",
+                                name="research_company",
+                                arguments={"company_name": "示例科技"},
+                            )
+                        ]
+                    )
+                return ModelResponse(content="研究完成。")
+
+        model = ToolModel()
+        tool = ReadTool()
+        models = ModelProviderRegistry()
+        models.register("tool-retry", model)
+        tools = ToolRegistry()
+        tools.register_handler(tool)
+        runtime = AgentRuntime(
+            models=models,
+            tools=tools,
+            model_provider="tool-retry",
+            platform_name="manual",
+            max_tool_rounds=3,
+        )
+
+        result = await runtime.run("帮我调查一下示例科技这家公司怎么样")
+
+        self.assertEqual(result.status, "done")
+        self.assertEqual(tool.calls, 2)
+        retry = next(
+            event
+            for event in result.events
+            if event.tool_name == "research_company" and event.status == "running"
+        )
+        self.assertEqual(retry.data["retry_number"], 1)
+
+    async def test_retryable_write_tool_is_never_automatically_replayed(self) -> None:
+        class PendingWriteTool:
+            definition = ToolDefinition(
+                name="propose_candidate_knowledge",
+                description="写入待确认知识",
+                input_schema={"type": "object", "properties": {}},
+            )
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def execute(self, arguments, context):
+                self.calls += 1
+                return ToolResult(
+                    ok=False,
+                    status="failed",
+                    message="本地写入状态未知",
+                    error=ToolError(
+                        code="write_state_unknown",
+                        message="本地写入状态未知",
+                        retryable=True,
+                    ),
+                )
+
+        tool = PendingWriteTool()
+        tools = ToolRegistry()
+        tools.register_handler(tool)
+        runtime = AgentRuntime(
+            models=ModelProviderRegistry(),
+            tools=tools,
+            model_provider="unused",
+            platform_name="manual",
+            max_tool_rounds=2,
+        )
+        events = []
+
+        result = await runtime._execute_tool_with_retry(
+            ToolCall(
+                id="write-once",
+                name="propose_candidate_knowledge",
+                arguments={"claim": "测试"},
+            ),
+            ToolContext(platform_name="manual", user_content="记住这个"),
+            round_number=1,
+            conversation_id=None,
+            event_callback=None,
+            events=events,
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(tool.calls, 1)
+        self.assertEqual(events, [])
+
+    async def test_second_repeated_tool_call_stops_the_loop(self) -> None:
+        _, tool, runtime = self._repeating_tool_runtime(final_after_repeat=False)
+
+        result = await runtime.run("帮我调查一下示例科技这家公司怎么样")
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.error.code, "tool_loop_detected")
+        self.assertEqual(result.stop_reason, "tool_loop_detected")
+        self.assertEqual(tool.calls, 1)
+        guards = [event for event in result.events if event.tool_name == "agent_loop_guard"]
+        self.assertEqual([event.status for event in guards], ["running", "failed"])
+
+    async def test_resume_snapshot_preserves_completed_tool_guard(self) -> None:
+        class ResearchThenAskModel:
+            name = "research-then-ask"
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def generate(self, request):
+                self.calls += 1
+                if self.calls == 1:
+                    return ModelResponse(
+                        content=(
+                            '{"goal":"研究公司","steps":['
+                            '{"tool_name":"research_company","title":"检索公开资料"}]}'
+                        )
+                    )
+                if self.calls == 2:
+                    return ModelResponse(
+                        tool_calls=[ToolCall(
+                            id="research-before-wait",
+                            name="research_company",
+                            arguments={"company_name": "示例科技"},
+                        )]
+                    )
+                return ModelResponse(
+                    tool_calls=[ToolCall(
+                        id="ask-after-research",
+                        name="ask_user",
+                        arguments={
+                            "question": "继续整理哪一部分？",
+                            "options": [{"label": "风险"}, {"label": "业务"}],
+                        },
+                    )]
+                )
+
+        class CountingResearchTool:
+            definition = ToolDefinition(
+                name="research_company",
+                description="搜索公司",
+                input_schema={"type": "object", "properties": {}},
+            )
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def execute(self, arguments, context):
+                self.calls += 1
+                return ToolResult(ok=True, status="done", message="研究完成")
+
+        first_model = ResearchThenAskModel()
+        tool = CountingResearchTool()
+        models = ModelProviderRegistry()
+        models.register("research-then-ask", first_model)
+        tools = ToolRegistry()
+        tools.register_handler(tool)
+        tools.register_handler(AskUserTool())
+        runtime = AgentRuntime(
+            models=models,
+            tools=tools,
+            model_provider="research-then-ask",
+            platform_name="manual",
+            max_tool_rounds=4,
+        )
+
+        waiting = await runtime.run("帮我调查一下示例科技这家公司怎么样")
+
+        self.assertEqual(waiting.status, "waiting_user")
+        self.assertEqual(tool.calls, 1)
+        self.assertEqual(waiting.snapshot.completed_tools, ["research_company"])
+        self.assertEqual(len(waiting.snapshot.completed_tool_calls), 1)
+
+        class ResumeModel:
+            name = "resume-guard"
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def generate(self, request):
+                self.calls += 1
+                if self.calls == 1:
+                    return ModelResponse(
+                        tool_calls=[ToolCall(
+                            id="research-after-wait",
+                            name="research_company",
+                            arguments={"company_name": "示例科技"},
+                        )]
+                    )
+                return ModelResponse(content="已继续整理风险。")
+
+        resume_models = ModelProviderRegistry()
+        resume_models.register("resume-guard", ResumeModel())
+        resume_runtime = AgentRuntime(
+            models=resume_models,
+            tools=tools,
+            model_provider="resume-guard",
+            platform_name="manual",
+            max_tool_rounds=5,
+        )
+
+        result = await resume_runtime.run("风险", resume=waiting.snapshot)
+
+        self.assertEqual(result.status, "done")
+        self.assertEqual(tool.calls, 1)
+        self.assertTrue(any(event.tool_name == "agent_loop_guard" for event in result.events))
+
+    @staticmethod
+    def _repeating_tool_runtime(*, final_after_repeat: bool):
+        class RepeatingModel:
+            name = "repeating"
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def generate(self, request):
+                self.calls += 1
+                if self.calls == 1:
+                    return ModelResponse(
+                        content=(
+                            '{"goal":"研究公司","steps":['
+                            '{"tool_name":"research_company","title":"检索公开资料"}]}'
+                        )
+                    )
+                if final_after_repeat and self.calls >= 4:
+                    return ModelResponse(content="已根据公开资料完成研究。")
+                return ModelResponse(
+                    tool_calls=[
+                        ToolCall(
+                            id=f"research-{self.calls}",
+                            name="research_company",
+                            arguments={"company_name": "示例科技"},
+                        )
+                    ]
+                )
+
+        class CountingResearchTool:
+            definition = ToolDefinition(
+                name="research_company",
+                description="搜索公司",
+                input_schema={"type": "object", "properties": {}},
+            )
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def execute(self, arguments, context):
+                self.calls += 1
+                return ToolResult(ok=True, status="done", message="研究完成")
+
+        model = RepeatingModel()
+        tool = CountingResearchTool()
+        models = ModelProviderRegistry()
+        models.register("repeating", model)
+        tools = ToolRegistry()
+        tools.register_handler(tool)
+        runtime = AgentRuntime(
+            models=models,
+            tools=tools,
+            model_provider="repeating",
+            platform_name="manual",
+            max_tool_rounds=5,
+        )
+        return model, tool, runtime
 
 
 if __name__ == "__main__":

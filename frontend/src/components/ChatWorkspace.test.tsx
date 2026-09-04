@@ -641,6 +641,40 @@ describe("ChatWorkspace", () => {
       .toHaveTextContent("必要步骤尚未完成，正在继续执行");
   });
 
+  it("shows loop correction without exposing the tool fingerprint", () => {
+    renderChat([
+      message,
+      {
+        id: -1,
+        role: "assistant",
+        content: "",
+        created_at: "2026-08-11T00:01:00Z",
+        payload: {
+          agent: {
+            provider: "test",
+            platform: "local",
+            rounds: 2,
+            status: "done",
+            events: [{
+              round: 2,
+              tool_call_id: "research-repeat",
+              tool_name: "agent_loop_guard",
+              status: "running",
+              message: "已跳过重复工具调用，正在推进下一步",
+              data: { tool_name: "research_company", fingerprint: "opaque-secret" }
+            }]
+          }
+        }
+      }
+    ], { chatBusy: true });
+
+    const toggle = screen.getByRole("button", { name: /正在纠正重复步骤/ });
+    expect(toggle).not.toHaveTextContent("opaque-secret");
+    fireEvent.click(toggle);
+    expect(screen.getByRole("complementary", { name: "研究详情" }))
+      .toHaveTextContent("已跳过重复工具调用，正在推进下一步");
+  });
+
   it("appends fetched source hosts after a research tool finishes", () => {
     renderChat([{
       id: 12,

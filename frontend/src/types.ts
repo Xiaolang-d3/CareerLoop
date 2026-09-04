@@ -878,6 +878,7 @@ export type AgentOperationsSnapshot = {
     conversation_title: string;
     task_id: number | null;
     status: "done" | "failed" | "waiting_user" | "cancelled";
+    stop_reason: string;
     provider: string;
     platform: string;
     route: string;

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ToolDefinition(BaseModel):
@@ -118,6 +118,9 @@ class AgentRunSnapshot(BaseModel):
     citation_retry_used: bool = False
     rounds_used: int = 0
     clarification: AgentClarification | None = None
+    completed_tools: list[str] = Field(default_factory=list)
+    completed_tool_calls: list[str] = Field(default_factory=list)
+    repeated_tool_calls: dict[str, int] = Field(default_factory=dict)
 
 
 class AgentRunResult(BaseModel):
@@ -130,6 +133,24 @@ class AgentRunResult(BaseModel):
     events: list[ToolEvent] = Field(default_factory=list)
     plan: AgentPlan | None = None
     snapshot: AgentRunSnapshot | None = None
+    stop_reason: str = ""
+
+    @model_validator(mode="after")
+    def infer_stop_reason(self) -> "AgentRunResult":
+        """Keep every terminal result machine-readable without duplicating status logic."""
+        if self.stop_reason:
+            return self
+        if self.status == "done":
+            self.stop_reason = "completed"
+        elif self.status == "waiting_user":
+            self.stop_reason = "waiting_user"
+        elif self.status == "cancelled":
+            self.stop_reason = "cancelled"
+        elif self.error is not None:
+            self.stop_reason = self.error.code
+        else:
+            self.stop_reason = "failed"
+        return self
 
 
 class AgentStreamEvent(BaseModel):

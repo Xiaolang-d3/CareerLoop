@@ -25,6 +25,7 @@ class AgentOperationsSnapshotTest(unittest.TestCase):
                 "platform": "manual",
                 "rounds": 2,
                 "status": "done",
+                "stop_reason": "completed",
                 "plan": {"route": "company_research", "goal": "核验公司"},
                 "events": [
                     {"tool_call_id": "call-1", "tool_name": "research_company", "status": "running"},
@@ -57,6 +58,7 @@ class AgentOperationsSnapshotTest(unittest.TestCase):
         self.assertEqual(snapshot["summary"]["total_tokens"], 345)
         self.assertEqual(snapshot["tool_breakdown"][0]["count"], 1)
         self.assertEqual(snapshot["recent_runs"][0]["route"], "company_research")
+        self.assertEqual(snapshot["recent_runs"][0]["stop_reason"], "completed")
 
     def test_snapshot_rejects_unsupported_window(self) -> None:
         with self.assertRaisesRegex(ValueError, "仅支持"):

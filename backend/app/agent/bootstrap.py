@@ -97,6 +97,8 @@ def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
         platform_name="manual",
         max_tool_rounds=settings.model_max_tool_rounds,
         tool_timeout_seconds=settings.tool_execution_timeout_seconds,
+        max_model_retries=settings.model_retry_attempts,
+        max_tool_retries=settings.tool_retry_attempts,
     )
     capabilities = {
         "active_model_provider": model.name,
@@ -106,6 +108,12 @@ def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
         "platforms": ["manual"],
         "tools": tools.names(),
         "tool_specs": [spec.model_dump(mode="json") for spec in tools.specs()],
+        "runtime": {
+            "max_tool_rounds": settings.model_max_tool_rounds,
+            "model_retry_attempts": settings.model_retry_attempts,
+            "tool_retry_attempts": settings.tool_retry_attempts,
+            "tool_timeout_seconds": settings.tool_execution_timeout_seconds,
+        },
         "web_research": {
             "enabled": settings.web_research_enabled,
             "provider": "agent_search" if settings.web_research_enabled else "disabled",

@@ -42,7 +42,9 @@ class Settings(BaseModel):
     openai_api_key: str | None = None
     model_timeout_seconds: float = Field(default=60, gt=0, le=300)
     model_max_tool_rounds: int = Field(default=8, ge=1, le=20)
+    model_retry_attempts: int = Field(default=1, ge=0, le=3)
     tool_execution_timeout_seconds: float = Field(default=60, gt=0, le=300)
+    tool_retry_attempts: int = Field(default=1, ge=0, le=3)
     attachment_storage: Literal["local", "minio"] = "local"
     minio_endpoint: str | None = None
     minio_access_key: str | None = None
@@ -99,7 +101,9 @@ def get_settings() -> Settings:
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         model_timeout_seconds=os.getenv("MODEL_TIMEOUT_SECONDS", "60"),
         model_max_tool_rounds=os.getenv("MODEL_MAX_TOOL_ROUNDS", "8"),
+        model_retry_attempts=os.getenv("MODEL_RETRY_ATTEMPTS", "1"),
         tool_execution_timeout_seconds=os.getenv("TOOL_EXECUTION_TIMEOUT_SECONDS", "60"),
+        tool_retry_attempts=os.getenv("TOOL_RETRY_ATTEMPTS", "1"),
         attachment_storage=os.getenv("ATTACHMENT_STORAGE", "local"),
         minio_endpoint=os.getenv("MINIO_ENDPOINT") or None,
         minio_access_key=os.getenv("MINIO_ACCESS_KEY") or None,

@@ -108,6 +108,19 @@ class ToolHarnessTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(validate_completion(route, [], plan).complete)
 
+    def test_completion_accepts_tools_restored_from_snapshot(self) -> None:
+        route = TaskRoute(
+            kind="company_research",
+            needs_plan=False,
+            allowed_tools=("test_search",),
+            required_tools=("test_search",),
+        )
+
+        validation = validate_completion(route, [], None, {"test_search"})
+
+        self.assertTrue(validation.complete)
+        self.assertEqual(validation.missing_tools, ())
+
     async def test_executor_normalizes_success_and_records_audit(self) -> None:
         with patch("app.agent.tool_executor.record_tool_call_event") as record:
             result = await self.executor.execute(

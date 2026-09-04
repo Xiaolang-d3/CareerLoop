@@ -31,6 +31,7 @@ def validate_completion(
     route: TaskRoute,
     events: list[ToolEvent],
     plan: AgentPlan | None = None,
+    completed_tools: set[str] | None = None,
 ) -> CompletionValidation:
     """Use successful events and persisted plan state as completion evidence."""
 
@@ -40,6 +41,7 @@ def validate_completion(
         for event in events
         if event.status == "done"
     }
+    completed.update(completed_tools or ())
     if plan is not None:
         completed.update(
             step.tool_name for step in plan.steps if step.status == "done"

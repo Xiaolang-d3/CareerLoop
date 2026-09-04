@@ -17,6 +17,7 @@ SYSTEM_EVENT_TOOLS = {
     "model_provider",
     "completion_validator",
     "citation_validator",
+    "agent_loop_guard",
 }
 TOOL_LABELS = {
     "analyze_resume_against_jd": "简历与 JD 分析",
@@ -171,6 +172,7 @@ def get_agent_operations_snapshot(
                     "conversation_title": row["conversation_title"],
                     "task_id": row["task_id"],
                     "status": status,
+                    "stop_reason": str(agent.get("stop_reason") or error.get("code") or status),
                     "provider": str(agent.get("provider") or ""),
                     "platform": str(agent.get("platform") or ""),
                     "route": route,
