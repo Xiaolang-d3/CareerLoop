@@ -66,6 +66,7 @@ class AgentRunStoreTest(unittest.TestCase):
         self.assertEqual(loaded["route_kind"], "company_research")
         self.assertEqual(loaded["round_number"], 2)
         self.assertEqual(loaded["checkpoint"].allowed_tools, ["research_company"])
+        self.assertFalse(loaded["checkpoint_invalid"])
         self.assertEqual(self.store.list_steps("run-1")[0]["status"], "pending")
 
         snapshot.plan.steps[0].status = "done"
@@ -85,6 +86,7 @@ class AgentRunStoreTest(unittest.TestCase):
         self.assertEqual(finished["status"], "completed")
         self.assertEqual(finished["stop_reason"], "completed")
         self.assertEqual(finished["result"].content, "完成")
+        self.assertFalse(finished["result_invalid"])
 
     def test_start_is_idempotent_and_does_not_replace_terminal_result(self) -> None:
         self.store.start_run(
@@ -287,6 +289,61 @@ class AgentRunStoreTest(unittest.TestCase):
             self.store.get_run("resume-child")["parent_run_id"],
             "waiting-parent",
         )
+
+    def test_latest_run_survives_incompatible_and_corrupt_persisted_json(self) -> None:
+        self.store.start_run(
+            "run-stale",
+            conversation_id=self.conversation_id,
+            task_id=self.task_id,
+            user_content="旧检查点",
+        )
+        with connect(self.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE agent_execution_runs
+                SET status = 'interrupted',
+                    checkpoint_json = ?, result_json = ?
+                WHERE run_id = 'run-stale'
+                """,
+                ('{"route_kind": "conversation"}', '{"provider": "test"}'),
+            )
+            conn.execute(
+                """
+                INSERT INTO agent_tool_executions
+                    (run_id, fingerprint, tool_call_id, tool_name, arguments_json, result_json, risk)
+                VALUES ('run-stale', 'broken', 'call-1', 'search_public_web', ?, ?, 'external_read')
+                """,
+                ('{not-json', 'also-not-json'),
+            )
+
+        loaded = self.store.latest_for_conversation(self.conversation_id)
+        self.assertEqual(loaded["run_id"], "run-stale")
+        self.assertEqual(loaded["status"], "interrupted")
+        self.assertIsNone(loaded["checkpoint"])
+        self.assertIsNone(loaded["result"])
+        self.assertTrue(loaded["checkpoint_invalid"])
+        self.assertTrue(loaded["result_invalid"])
+        self.assertIsNone(self.store.load_checkpoint("run-stale"))
+        self.assertIsNone(self.store.load_result("run-stale"))
+
+        tools = self.store.list_tool_executions("run-stale")
+        self.assertEqual(tools[0]["tool_name"], "search_public_web")
+        self.assertTrue(tools[0]["arguments_invalid"])
+        self.assertTrue(tools[0]["result_invalid"])
+
+        with connect(self.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE agent_execution_runs
+                SET checkpoint_json = '{truncated', result_json = 'not-json'
+                WHERE run_id = 'run-stale'
+                """
+            )
+        corrupt = self.store.latest_for_conversation(self.conversation_id)
+        self.assertEqual(corrupt["run_id"], "run-stale")
+        self.assertIsNone(corrupt["checkpoint"])
+        self.assertTrue(corrupt["checkpoint_invalid"])
+        self.assertTrue(corrupt["result_invalid"])
 
 
 if __name__ == "__main__":
