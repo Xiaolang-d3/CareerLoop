@@ -517,6 +517,21 @@ def _ag_ui_web_search_mode(payload: RunAgentInput) -> str:
     return value
 
 
+
+def _require_configured_agent_runtime():
+    """Ensure model is configured before AG-UI streaming starts.
+
+    Missing API key must surface as HTTP 400 (not an in-stream 200 failure or 500).
+    """
+    try:
+        return get_agent_runtime()
+    except ValueError as exc:
+        detail = str(exc)
+        if "必须先配置模型服务 API Key" in detail or "API Key" in detail:
+            raise HTTPException(status_code=400, detail="必须先配置模型服务 API Key") from exc
+        raise
+
+
 async def _stream_chat_message_response(
     payload: ChatMessageIn,
     *,
@@ -629,6 +644,10 @@ async def _stream_chat_message_response(
         )
         maybe_title_from_first_message(conversation_id, payload.content)
         history = _agent_history(conversation_id, user_message["id"])
+    # Local workflow-status answers do not need a model provider; real Agent runs do.
+    if cached_execution is None and not _is_workflow_status_query(payload.content):
+        _require_configured_agent_runtime()
+
     queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue()
 
     async def execute() -> None:

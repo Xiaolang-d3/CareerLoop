@@ -1146,8 +1146,26 @@ function App({
   }
 
   async function refreshCapabilities() {
-    const next = await fetchJson<AgentCapabilities>("/agent/capabilities");
-    setCapabilities(next);
+    try {
+      const next = await fetchJson<AgentCapabilities>("/agent/capabilities");
+      setCapabilities(next);
+      return next;
+    } catch (error) {
+      // Missing model key used to 500 here; keep chat/home usable and surface setup later.
+      const fallback: AgentCapabilities = {
+        configured: false,
+        setup_message: "必须先在设置中配置模型服务 API Key 后才能使用对话 Agent",
+        active_model_provider: "",
+        active_model_name: savedAgentSettings.model_name || "",
+        active_platform: "manual",
+        model_providers: [],
+        platforms: ["manual"],
+        tools: [],
+        web_research: { enabled: false, provider: "disabled" }
+      };
+      setCapabilities(fallback);
+      return fallback;
+    }
   }
 
   async function refreshAttachmentConfig() {
@@ -1653,6 +1671,15 @@ function App({
     const content = contentOverride.trim();
     const targetConversationId = conversationIdOverride ?? currentConversationId;
     if (!content || chatBusy || !targetConversationId) return;
+    const protocol = savedAgentSettings.resolved_model_protocol
+      ?? (savedAgentSettings.model_protocol === "auto" ? undefined : savedAgentSettings.model_protocol);
+    const keyOptional = protocol === "ollama";
+    const modelReady = savedAgentSettings.api_key_configured || keyOptional || capabilities?.configured === true;
+    if (!modelReady && !keyOptional) {
+      setErrorMessage(capabilities?.setup_message || "请先配置模型服务 API Key，再开始对话");
+      navigateRoute({ section: "settings", page: "model" });
+      return;
+    }
     const { HttpAgent } = await import("@ag-ui/client");
     const conversationId = targetConversationId;
     const executionRunId = runIdOverride ?? createClientId();

@@ -591,6 +591,8 @@ export type CandidateEditor = {
 };
 
 export type AgentCapabilities = {
+  configured?: boolean;
+  setup_message?: string;
   active_model_provider: string;
   active_model_name: string;
   active_platform: string;
