@@ -606,8 +606,6 @@ async def _stream_chat_message_response(
         history = []
         agent_input = str(persisted_run.get("user_content") or payload.content)
     else:
-        # Fail closed with HTTP 400 before the SSE stream starts when the model key is missing.
-        _require_configured_agent_runtime()
         task_id = ensure_active_task(conversation_id)
         attachment_context, attachment_summaries, image_urls = _attachment_context(
             conversation_id, payload.attachment_ids, payload.vision_attachment_ids
@@ -646,6 +644,10 @@ async def _stream_chat_message_response(
         )
         maybe_title_from_first_message(conversation_id, payload.content)
         history = _agent_history(conversation_id, user_message["id"])
+    # Local workflow-status answers do not need a model provider; real Agent runs do.
+    if cached_execution is None and not _is_workflow_status_query(payload.content):
+        _require_configured_agent_runtime()
+
     queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue()
 
     async def execute() -> None:
