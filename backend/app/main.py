@@ -517,6 +517,21 @@ def _ag_ui_web_search_mode(payload: RunAgentInput) -> str:
     return value
 
 
+
+def _require_configured_agent_runtime():
+    """Ensure model is configured before AG-UI streaming starts.
+
+    Missing API key must surface as HTTP 400 (not an in-stream 200 failure or 500).
+    """
+    try:
+        return get_agent_runtime()
+    except ValueError as exc:
+        detail = str(exc)
+        if "必须先配置模型服务 API Key" in detail or "API Key" in detail:
+            raise HTTPException(status_code=400, detail="必须先配置模型服务 API Key") from exc
+        raise
+
+
 async def _stream_chat_message_response(
     payload: ChatMessageIn,
     *,
@@ -591,6 +606,8 @@ async def _stream_chat_message_response(
         history = []
         agent_input = str(persisted_run.get("user_content") or payload.content)
     else:
+        # Fail closed with HTTP 400 before the SSE stream starts when the model key is missing.
+        _require_configured_agent_runtime()
         task_id = ensure_active_task(conversation_id)
         attachment_context, attachment_summaries, image_urls = _attachment_context(
             conversation_id, payload.attachment_ids, payload.vision_attachment_ids

@@ -36,6 +36,8 @@ from ..workspace import current_user_id
 
 _components: dict[tuple[Any, ...], tuple[AgentRuntime, dict[str, Any]]] = {}
 
+SETUP_MESSAGE = "必须先在设置中配置模型服务 API Key 后才能使用对话 Agent"
+
 
 def _runtime_cache_key() -> tuple[Any, ...]:
     connection = get_model_connection()
@@ -48,25 +50,14 @@ def _runtime_cache_key() -> tuple[Any, ...]:
     )
 
 
-def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
-    settings = get_settings()
-    model_connection = get_model_connection()
+def _model_is_configured(model_connection: dict[str, Any]) -> bool:
+    protocol = model_connection.get("resolved_model_protocol", "openai")
+    if not protocol_requires_api_key(protocol):
+        return True
+    return bool(model_connection.get("api_key"))
 
-    models = ModelProviderRegistry()
-    if (
-        protocol_requires_api_key(model_connection.get("resolved_model_protocol", "openai"))
-        and not model_connection["api_key"]
-    ):
-        raise ValueError("必须先配置模型服务 API Key")
-    model = build_model_provider(
-        api_key=model_connection["api_key"],
-        model=model_connection["model_name"],
-        base_url=model_connection["model_base_url"] or None,
-        timeout_seconds=settings.model_timeout_seconds,
-        protocol=model_connection.get("model_protocol", "auto"),
-    )
-    models.register(model.name, model)
 
+def _build_tool_registry(settings: Any) -> ToolRegistry:
     tools = ToolRegistry()
     tools.register_handler(AnalyzeResumeAgainstJdTool())
     tools.register_handler(AskUserTool())
@@ -90,23 +81,25 @@ def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
     tools.register_handler(GetJobEvaluationTool())
     tools.register_handler(ReviewJobEvaluationTool())
     tools.register_handler(CompareJobEvaluationsTool())
+    return tools
 
-    runtime = AgentRuntime(
-        models=models,
-        tools=tools,
-        model_provider=model.name,
-        platform_name="manual",
-        max_tool_rounds=settings.model_max_tool_rounds,
-        tool_timeout_seconds=settings.tool_execution_timeout_seconds,
-        max_model_retries=settings.model_retry_attempts,
-        max_tool_retries=settings.tool_retry_attempts,
-        run_store=AgentRunStore(),
-    )
-    capabilities = {
-        "active_model_provider": model.name,
+
+def _capabilities_payload(
+    *,
+    settings: Any,
+    model_connection: dict[str, Any],
+    tools: ToolRegistry,
+    model_providers: list[str],
+    active_model_provider: str,
+    configured: bool,
+    setup_message: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "configured": configured,
+        "active_model_provider": active_model_provider,
         "active_model_name": model_connection["model_name"],
         "active_platform": "manual",
-        "model_providers": models.names(),
+        "model_providers": model_providers,
         "platforms": ["manual"],
         "tools": tools.names(),
         "tool_specs": [spec.model_dump(mode="json") for spec in tools.specs()],
@@ -121,6 +114,64 @@ def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
             "provider": "agent_search" if settings.web_research_enabled else "disabled",
         },
     }
+    if setup_message:
+        payload["setup_message"] = setup_message
+    return payload
+
+
+def _build_unconfigured_capabilities() -> dict[str, Any]:
+    settings = get_settings()
+    model_connection = get_model_connection()
+    tools = _build_tool_registry(settings)
+    return _capabilities_payload(
+        settings=settings,
+        model_connection=model_connection,
+        tools=tools,
+        model_providers=[],
+        active_model_provider="",
+        configured=False,
+        setup_message=SETUP_MESSAGE,
+    )
+
+
+def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
+    settings = get_settings()
+    model_connection = get_model_connection()
+
+    if not _model_is_configured(model_connection):
+        raise ValueError("必须先配置模型服务 API Key")
+
+    models = ModelProviderRegistry()
+    model = build_model_provider(
+        api_key=model_connection["api_key"],
+        model=model_connection["model_name"],
+        base_url=model_connection["model_base_url"] or None,
+        timeout_seconds=settings.model_timeout_seconds,
+        protocol=model_connection.get("model_protocol", "auto"),
+    )
+    models.register(model.name, model)
+
+    tools = _build_tool_registry(settings)
+
+    runtime = AgentRuntime(
+        models=models,
+        tools=tools,
+        model_provider=model.name,
+        platform_name="manual",
+        max_tool_rounds=settings.model_max_tool_rounds,
+        tool_timeout_seconds=settings.tool_execution_timeout_seconds,
+        max_model_retries=settings.model_retry_attempts,
+        max_tool_retries=settings.tool_retry_attempts,
+        run_store=AgentRunStore(),
+    )
+    capabilities = _capabilities_payload(
+        settings=settings,
+        model_connection=model_connection,
+        tools=tools,
+        model_providers=models.names(),
+        active_model_provider=model.name,
+        configured=True,
+    )
     return runtime, capabilities
 
 
@@ -139,6 +190,9 @@ def get_agent_runtime() -> AgentRuntime:
 
 
 def get_agent_capabilities() -> dict[str, Any]:
+    model_connection = get_model_connection()
+    if not _model_is_configured(model_connection):
+        return _build_unconfigured_capabilities()
     _, capabilities = _cached_components()
     return capabilities
 
