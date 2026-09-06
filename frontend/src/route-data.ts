@@ -18,20 +18,22 @@ export function requiredDataForRoute(route: AppRoute): RouteDataKey[] {
     case "chat":
       return ["conversations", "capabilities", "attachmentConfig"];
     case "dashboard":
-      return ["candidateProfile"];
+      return ["candidateProfile", "conversations", "capabilities", "attachmentConfig"];
     case "workbench":
-      return ["jobs", "candidateProfile", "workflow"];
+      return ["jobs", "candidateProfile", "workflow", "conversations", "capabilities", "attachmentConfig"];
     case "settings":
-      if (route.page === "agent") return ["agentOperations"];
-      if (route.page === "model") return ["agentSettings", "modelMonitor", "modelCapabilities"];
-      if (route.page === "overview") return ["candidateProfile", "agentSettings"];
-      return ["candidateProfile"];
+      if (route.page === "agent") return ["agentOperations", "conversations", "capabilities", "attachmentConfig"];
+      if (route.page === "model") return ["agentSettings", "modelMonitor", "modelCapabilities", "conversations", "capabilities", "attachmentConfig"];
+      if (route.page === "overview") return ["candidateProfile", "agentSettings", "conversations", "capabilities", "attachmentConfig"];
+      return ["candidateProfile", "conversations", "capabilities", "attachmentConfig"];
     case "interview-prep":
       return ["interviewPreparation"];
     case "project-lab":
       return [];
     case "opportunities":
       return [];
+    case "placeholder":
+      return ["conversations", "capabilities", "attachmentConfig"];
   }
 }
 

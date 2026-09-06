@@ -6,6 +6,7 @@ export type WorkbenchPage = "index" | "new" | "detail" | "resume" | "interview" 
 export type PreparationPage = "projects" | "knowledge" | "records";
 export type PreparationFocus = "questions" | "knowledge" | "gaps";
 export type ProjectStudioPage = "overview" | "architecture" | "materials" | "interview";
+export type PlaceholderPage = "organize" | "notes" | "review" | "graph" | "tools";
 
 export type AppRoute =
   | { section: "opportunities"; page?: OpportunitiesPage; runId?: number; discoveredJobId?: number }
@@ -14,24 +15,22 @@ export type AppRoute =
   | { section: "project-lab"; projectId?: string; page?: ProjectStudioPage }
   | { section: "dashboard" }
   | { section: "chat"; conversationId?: number }
+  | { section: "placeholder"; page: PlaceholderPage }
   | { section: "settings"; page: SettingsPage; returnTo?: "workbench" };
 
-const legacyViewMap: Record<string, ViewKey> = {
-  profile: "settings",
-  agent: "settings",
-  tools: "dashboard",
-  opportunities: "opportunities",
-  workbench: "workbench",
-  "interview-prep": "interview-prep",
-  dashboard: "dashboard",
-  chat: "chat",
-  settings: "settings"
+const PLACEHOLDER_PATHS: Record<PlaceholderPage, string> = {
+  organize: "organize",
+  notes: "notes",
+  review: "review",
+  graph: "graph",
+  tools: "tools"
 };
 
 export function routeForSection(section: ViewKey): AppRoute {
   if (section === "opportunities" || section === "interview-prep") return { section: "chat" };
   if (section === "workbench") return { section, page: "index" };
   if (section === "project-lab") return { section: "settings", page: "profile" };
+  if (section === "placeholder") return { section: "placeholder", page: "organize" };
   return section === "settings" ? { section, page: "overview" } : { section };
 }
 
@@ -85,6 +84,11 @@ export function parseAppHash(hash: string): AppRoute | null {
   if (path === "chat") return { section: "chat" };
   const chatRoute = path.match(/^chat\/(\d+)$/);
   if (chatRoute) return { section: "chat", conversationId: Number(chatRoute[1]) };
+  if (path === "organize" || path === "knowledge-organize") return { section: "placeholder", page: "organize" };
+  if (path === "notes" || path === "inspiration") return { section: "placeholder", page: "notes" };
+  if (path === "review" || path === "reflection") return { section: "placeholder", page: "review" };
+  if (path === "graph" || path === "knowledge-graph") return { section: "placeholder", page: "graph" };
+  if (path === "tools") return { section: "placeholder", page: "tools" };
   if (path === "settings" || path === "settings/overview") {
     return { section: "settings", page: "overview" };
   }
@@ -105,7 +109,7 @@ export function parseAppHash(hash: string): AppRoute | null {
 export function initialAppRoute(hash: string, _legacyView: string | null): AppRoute {
   const parsed = parseAppHash(hash);
   if (parsed) return parsed;
-  return { section: "chat" };
+  return { section: "dashboard" };
 }
 
 export function appRouteHash(route: AppRoute): string {
@@ -131,6 +135,7 @@ export function appRouteHash(route: AppRoute): string {
   }
   if (route.section === "dashboard") return "#/home";
   if (route.section === "chat") return route.conversationId ? `#/chat/${route.conversationId}` : "#/chat";
+  if (route.section === "placeholder") return `#/${PLACEHOLDER_PATHS[route.page]}`;
   if (route.page === "overview") return "#/settings";
   if (route.page === "profile") {
     const query = route.returnTo === "workbench" ? "?return=workbench" : "";

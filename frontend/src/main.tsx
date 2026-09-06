@@ -5,7 +5,7 @@ import { createApiClient, fetchWithTimeout } from "./api/client";
 import { readAnalysisRunStream, type AnalysisRunEvent } from "./features/jobs/analysis-run";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { AuthGate, type AuthUser } from "./components/AuthGate";
-import { AppSidebar } from "./components/AppSidebar";
+import { AppSidebar, type ProductNavKey } from "./components/AppSidebar";
 import { AppIdentityMenu } from "./components/AppIdentityMenu";
 import { AppTopBar } from "./components/AppTopBar";
 import { createClientId } from "./api/clientId";
@@ -17,13 +17,14 @@ import {
   defaultAgentSettings,
   emptyCandidateEditor,
   pageMeta,
+  placeholderPageMeta,
   topbarSectionForPage
 } from "./constants";
 import { inboxFactLabel, isSettingsProfileReady } from "./features/home/home-metrics";
 import { createPagePrefetcher } from "./page-prefetch";
 import { createRouteDataCache, requiredDataForRoute, type RouteDataKey } from "./route-data";
 import { useAsyncPolling } from "./hooks/useAsyncPolling";
-import { appRouteHash, initialAppRoute, parseAppHash, routeForSection, type AppRoute, type PreparationFocus } from "./routing";
+import { appRouteHash, initialAppRoute, parseAppHash, routeForSection, type AppRoute, type PlaceholderPage, type PreparationFocus } from "./routing";
 import type {
   AgentCapabilities,
   AgentOperationsSnapshot,
@@ -72,6 +73,7 @@ import "./AppStyles";
 const loadChatWorkspace = () => import("./components/ChatWorkspace");
 const loadWorkspaceViews = () => import("./components/WorkspaceViews");
 const loadHomePage = () => import("./features/home/HomePage");
+const loadPlaceholderPage = () => import("./features/placeholder/PlaceholderPage");
 const loadSettingsWorkspace = () => import("./features/settings/SettingsWorkspace");
 const loadProfileSettingsPage = () => import("./features/settings/ProfileSettingsPage");
 const loadAccountSettingsPage = () => import("./features/settings/AccountSettingsPage");
@@ -87,6 +89,10 @@ const WorkbenchView = lazy(() => loadWorkspaceViews().then((module) => ({
 
 const HomePage = lazy(() => loadHomePage().then((module) => ({
   default: module.HomePage
+})));
+
+const PlaceholderPage = lazy(() => loadPlaceholderPage().then((module) => ({
+  default: module.PlaceholderPage
 })));
 
 const AgentOperationsDashboard = lazy(() => import("./features/settings/AgentOperationsDashboard").then((module) => ({
@@ -184,7 +190,7 @@ function readPreference(base: string, email: string) {
 }
 
 function appTopBarShowsTitle(route: AppRoute): boolean {
-  if (route.section === "dashboard" || route.section === "chat" || route.section === "interview-prep" || route.section === "project-lab") return false;
+  if (route.section === "dashboard" || route.section === "chat" || route.section === "interview-prep" || route.section === "project-lab" || route.section === "placeholder") return false;
   if (route.section === "workbench") {
     return ["evaluation", "evaluation_section", "comparison"].includes(route.page || "");
   }
@@ -259,6 +265,7 @@ function App({
   const hasStoredResumeRef = useRef(false);
   const candidateProfileGenerationRef = useRef(0);
   const [confirmedCareerFactCount, setConfirmedCareerFactCount] = useState(0);
+  const [careerSourceCount, setCareerSourceCount] = useState(0);
   const [pendingCareerFacts, setPendingCareerFacts] = useState<Array<{
     id: number;
     statement: string;
@@ -1379,6 +1386,7 @@ function App({
     setResumeProfileSuggestion(null);
     if (!bundle.profile) {
       setConfirmedCareerFactCount(0);
+      setCareerSourceCount(0);
       setPendingCareerFacts([]);
       hasStoredResumeRef.current = false;
       setCandidateEditor(emptyCandidateEditor);
@@ -1406,6 +1414,7 @@ function App({
       skills.push(name);
     }
     setConfirmedCareerFactCount(confirmedFacts.length);
+    setCareerSourceCount(bundle.sources.length);
     setPendingCareerFacts(pendingFacts.map((fact) => ({
       id: fact.id,
       statement: fact.statement,
@@ -2240,7 +2249,9 @@ function App({
           : appRoute.page === "records"
             ? { title: "面试记录", description: "记录真实问题、原回答与复盘，把反馈变成下一次准备" }
             : { title: "面试准备", description: "把已确认项目拆成可讲证据，并通过文字追问练习" }
-      : pageMeta[appRoute.section];
+      : appRoute.section === "placeholder"
+        ? placeholderPageMeta[appRoute.page]
+        : pageMeta[appRoute.section];
 
   const documentPageTitle = appRoute.section === "chat"
     ? currentConversation?.title || "新对话"
@@ -2267,8 +2278,23 @@ function App({
     />
   );
 
+  const placeholderPage: PlaceholderPage | undefined = appRoute.section === "placeholder" ? appRoute.page : undefined;
+
+  function selectProductNav(key: ProductNavKey) {
+    if (key === "dashboard") navigateRoute({ section: "dashboard" });
+    else if (key === "library") navigateRoute({ section: "settings", page: "profile" });
+    else if (key === "chat") navigateRoute({ section: "chat", conversationId: currentConversationId ?? undefined });
+    else if (key === "organize") navigateRoute({ section: "placeholder", page: "organize" });
+    else if (key === "workspace") navigateRoute({ section: "workbench", page: "resume" });
+    else if (key === "notes") navigateRoute({ section: "placeholder", page: "notes" });
+    else if (key === "review") navigateRoute({ section: "placeholder", page: "review" });
+    else if (key === "graph") navigateRoute({ section: "placeholder", page: "graph" });
+    else if (key === "tools") navigateRoute({ section: "placeholder", page: "tools" });
+    else if (key === "settings") navigateRoute({ section: "settings", page: "overview" });
+  }
+
   return (
-    <main className="app-shell">
+    <main className={`app-shell has-chat-dock shell-light${activeView === "chat" ? " chat-focused" : ""}`}>
       <AppSidebar
         collapsed={sidebarCollapsed}
         activeView={activeView}
@@ -2277,16 +2303,12 @@ function App({
         onPrefetchPage={(page) => void pagePrefetcher.prefetch(page)}
         settingsPage={appRoute.section === "settings" ? appRoute.page : undefined}
         workbenchPage={appRoute.section === "workbench" ? appRoute.page : undefined}
-        onSelectNav={(key) => {
-          if (key === "dashboard") navigateRoute({ section: "dashboard" });
-          else if (key === "library") navigateRoute({ section: "settings", page: "profile" });
-          else if (key === "workspace") navigateRoute({ section: "workbench", page: "resume" });
-          else navigateRoute({ section: "chat", conversationId: currentConversationId ?? undefined });
-        }}
+        placeholderPage={placeholderPage}
+        onSelectNav={selectProductNav}
         identity={identityMenu}
       />
 
-      <section className={`content${activeView === "chat" ? " chat-content" : ""}${topbarTitle ? "" : " is-titleless"}`}>
+      <section className={`content${activeView === "chat" ? " chat-content is-chat-focus" : ""}${topbarTitle ? "" : " is-titleless"}`}>
         <AppTopBar
           section={topbarSection}
           title={topbarTitle}
@@ -2329,6 +2351,8 @@ function App({
               jobsLoaded={jobsLoaded}
               conversations={conversations}
               pendingFacts={pendingCareerFacts}
+              confirmedFactCount={confirmedCareerFactCount}
+              sourceCount={careerSourceCount}
               onOpenAnalysis={() => navigateRoute({ section: "workbench", page: "index" })}
               onOpenResume={() => navigateRoute({ section: "workbench", page: "resume" })}
               onOpenInterview={() => navigateRoute({ section: "project-lab" })}
@@ -2338,6 +2362,7 @@ function App({
                   : { section: "settings", page: "profile" }
               )}
               onOpenProfile={() => navigateRoute({ section: "settings", page: "profile" })}
+              onOpenOrganize={() => navigateRoute({ section: "placeholder", page: "organize" })}
               onOpenJob={(jobId) => {
                 const job = jobs.find((item) => item.id === jobId);
                 navigateRoute(
@@ -2357,70 +2382,45 @@ function App({
         ) : null}
 
         {activeView === "chat" ? (
-          <Suspense fallback={<PageLoading label="正在加载对话…" />}>
-            <ChatWorkspace
-              conversationTitle={currentConversation?.title}
-              messages={visibleChatMessages}
-              hiddenMessageCount={hiddenMessageCount}
-              chatBusy={chatBusy}
-              currentConversationId={currentConversationId}
-              conversations={conversations}
-              conversationBusy={conversationBusy}
-              waitingForUser={waitingForUser}
-              latestAgent={latestAgent}
-              taskCancelBusy={taskCancelBusy}
-              retryDraft={retryChatDraft}
-              chatEndRef={chatEndRef}
-              chatInputRef={chatInputRef}
-              sessionContext={{
-                resumeLabel: hasSavedResume ? (candidateEditor.resumeFilename || "已保存资料") : null,
-                analysisLabel: jobEvaluation
-                  ? [jobEvaluation.job?.company_name, jobEvaluation.job?.job_title].filter(Boolean).join(" · ") || "最近一次分析"
-                  : null
-              }}
-              onLoadMore={() => setVisibleMessageCount((count) => count + 12)}
-              onSelectConversation={(conversationId) => {
-                setCurrentConversationId(conversationId);
-                setActiveView("chat");
-              }}
-              onCreateConversation={() => void createNewConversation()}
-              onRenameConversation={(conversation) => setConversationDialog({ kind: "rename", conversation })}
-              onArchiveConversation={(conversation) => void archiveConversation(conversation)}
-              onRemoveConversation={(conversation) => setConversationDialog({ kind: "delete", conversation })}
-              attachmentBusy={chatAttachmentBusy}
-              attachmentConfig={attachmentConfig}
-              webSearchAvailable={Boolean(capabilities?.web_research?.enabled)}
-              onUploadAttachment={uploadChatAttachment}
-              onRemoveAttachment={removeChatAttachment}
-              onAttachmentInvalid={setErrorMessage}
-              onSuggestedAction={handleSuggestedAction}
-              onCancelTask={() => void cancelCurrentTask()}
-              onSend={sendChatMessage}
-              onRetry={(draft) => sendChatMessage(
-                draft.content,
-                draft.attachmentIds,
-                draft.visionAttachmentIds,
-                draft.webSearch,
-                draft.webSearchMode,
-                undefined,
-                draft.runId
+          <section className="chat-focus-page" aria-labelledby="chat-focus-title">
+            <div className="chat-focus-card">
+              <span className="chat-focus-kicker"><MessageCircle size={16} aria-hidden="true" /> AI 问答</span>
+              <h2 id="chat-focus-title">对话常驻在右侧</h2>
+              <p>在桌面端，CareerLoop 会把问答面板固定在右侧，方便你一边整理知识库或创作内容，一边继续追问。</p>
+              <div className="chat-focus-actions">
+                <button type="button" className="ui-button is-primary" onClick={() => void createNewConversation()}>新建对话</button>
+                <button type="button" className="ui-button" onClick={() => chatInputRef.current?.focus()}>聚焦输入框</button>
+              </div>
+              {conversations.length ? (
+                <ul className="chat-focus-list" aria-label="最近对话">
+                  {conversations.slice(0, 6).map((conversation) => (
+                    <li key={conversation.id}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCurrentConversationId(conversation.id);
+                          navigateRoute({ section: "chat", conversationId: conversation.id });
+                        }}
+                      >
+                        <strong>{conversation.title || "未命名对话"}</strong>
+                        <small>{conversation.summary || "继续上次对话"}</small>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="chat-focus-empty">还没有对话记录。从右侧输入第一个问题即可开始。</p>
               )}
-              onStop={stopChatGeneration}
-              onEdit={editChatMessage}
-              onRegenerate={regenerateChatMessage}
-              onOpenResume={() => {
-                navigateRoute({ section: "settings", page: "profile" });
-                const startedAt = Date.now();
-                const tryScroll = () => {
-                  const target = document.getElementById("resume-upload");
-                  if (target) {
-                    target.scrollIntoView({ behavior: "smooth", block: "start" });
-                    return;
-                  }
-                  if (Date.now() - startedAt < 2000) window.requestAnimationFrame(tryScroll);
-                };
-                window.requestAnimationFrame(tryScroll);
-              }}
+            </div>
+          </section>
+        ) : null}
+
+        {activeView === "placeholder" && appRoute.section === "placeholder" ? (
+          <Suspense fallback={<PageLoading label="正在加载…" />}>
+            <PlaceholderPage
+              page={appRoute.page}
+              onOpenChat={() => navigateRoute({ section: "chat", conversationId: currentConversationId ?? undefined })}
+              onOpenLibrary={() => navigateRoute({ section: "settings", page: "profile" })}
             />
           </Suspense>
         ) : null}
@@ -2698,7 +2698,89 @@ function App({
           </Suspense>
         ) : null}
 
+
       </section>
+
+      <aside className="chat-dock" aria-label="常驻 AI 问答">
+        <div className="chat-dock-header">
+          <span className="chat-dock-mark" aria-hidden="true" />
+          <div>
+            <strong>CareerLoop</strong>
+            <small>随时为你服务</small>
+          </div>
+        </div>
+        <div className="chat-dock-body">
+
+        <Suspense fallback={<PageLoading label="正在加载对话…" />}>
+            <ChatWorkspace
+              density="dock"
+              focused={activeView === "chat"}
+              conversationTitle={currentConversation?.title}
+              messages={visibleChatMessages}
+              hiddenMessageCount={hiddenMessageCount}
+              chatBusy={chatBusy}
+              currentConversationId={currentConversationId}
+              conversations={conversations}
+              conversationBusy={conversationBusy}
+              waitingForUser={waitingForUser}
+              latestAgent={latestAgent}
+              taskCancelBusy={taskCancelBusy}
+              retryDraft={retryChatDraft}
+              chatEndRef={chatEndRef}
+              chatInputRef={chatInputRef}
+              sessionContext={{
+                resumeLabel: hasSavedResume ? (candidateEditor.resumeFilename || "已保存资料") : null,
+                analysisLabel: jobEvaluation
+                  ? [jobEvaluation.job?.company_name, jobEvaluation.job?.job_title].filter(Boolean).join(" · ") || "最近一次分析"
+                  : null
+              }}
+              onLoadMore={() => setVisibleMessageCount((count) => count + 12)}
+              onSelectConversation={(conversationId) => {
+                setCurrentConversationId(conversationId);
+                navigateRoute({ section: "chat", conversationId });
+              }}
+              onCreateConversation={() => void createNewConversation()}
+              onRenameConversation={(conversation) => setConversationDialog({ kind: "rename", conversation })}
+              onArchiveConversation={(conversation) => void archiveConversation(conversation)}
+              onRemoveConversation={(conversation) => setConversationDialog({ kind: "delete", conversation })}
+              attachmentBusy={chatAttachmentBusy}
+              attachmentConfig={attachmentConfig}
+              webSearchAvailable={Boolean(capabilities?.web_research?.enabled)}
+              onUploadAttachment={uploadChatAttachment}
+              onRemoveAttachment={removeChatAttachment}
+              onAttachmentInvalid={setErrorMessage}
+              onSuggestedAction={handleSuggestedAction}
+              onCancelTask={() => void cancelCurrentTask()}
+              onSend={sendChatMessage}
+              onRetry={(draft) => sendChatMessage(
+                draft.content,
+                draft.attachmentIds,
+                draft.visionAttachmentIds,
+                draft.webSearch,
+                draft.webSearchMode,
+                undefined,
+                draft.runId
+              )}
+              onStop={stopChatGeneration}
+              onEdit={editChatMessage}
+              onRegenerate={regenerateChatMessage}
+              onOpenResume={() => {
+                navigateRoute({ section: "settings", page: "profile" });
+                const startedAt = Date.now();
+                const tryScroll = () => {
+                  const target = document.getElementById("resume-upload");
+                  if (target) {
+                    target.scrollIntoView({ behavior: "smooth", block: "start" });
+                    return;
+                  }
+                  if (Date.now() - startedAt < 2000) window.requestAnimationFrame(tryScroll);
+                };
+                window.requestAnimationFrame(tryScroll);
+              }}
+            />
+          </Suspense>
+        </div>
+      </aside>
     </main>
   );
 }

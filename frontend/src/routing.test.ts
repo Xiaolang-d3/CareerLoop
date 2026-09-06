@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { appRouteHash, initialAppRoute, parseAppHash, routeForSection } from "./routing";
 
 describe("primary route", () => {
-  it("opens conversation after login when no route is specified", () => {
-    expect(initialAppRoute("", null)).toEqual({ section: "chat" });
-    expect(initialAppRoute("#", "workbench")).toEqual({ section: "chat" });
+  it("opens home after login when no route is specified", () => {
+    expect(initialAppRoute("", null)).toEqual({ section: "dashboard" });
+    expect(initialAppRoute("#", "workbench")).toEqual({ section: "dashboard" });
     expect(parseAppHash("#/home")).toEqual({ section: "dashboard" });
     expect(parseAppHash("#/dashboard")).toEqual({ section: "dashboard" });
     expect(parseAppHash("#/search")).toEqual({ section: "chat" });
@@ -104,5 +104,17 @@ describe("model settings route", () => {
     expect(parseAppHash("#/settings/model")).toEqual({ section: "settings", page: "model" });
     expect(parseAppHash("#/settings/models")).toEqual({ section: "settings", page: "model" });
     expect(appRouteHash({ section: "settings", page: "model" })).toBe("#/settings/model");
+  });
+});
+
+describe("placeholder routes", () => {
+  it("keeps organize/notes/review/graph/tools addressable", () => {
+    expect(parseAppHash("#/organize")).toEqual({ section: "placeholder", page: "organize" });
+    expect(parseAppHash("#/notes")).toEqual({ section: "placeholder", page: "notes" });
+    expect(parseAppHash("#/review")).toEqual({ section: "placeholder", page: "review" });
+    expect(parseAppHash("#/graph")).toEqual({ section: "placeholder", page: "graph" });
+    expect(parseAppHash("#/tools")).toEqual({ section: "placeholder", page: "tools" });
+    expect(appRouteHash({ section: "placeholder", page: "organize" })).toBe("#/organize");
+    expect(appRouteHash({ section: "placeholder", page: "notes" })).toBe("#/notes");
   });
 });

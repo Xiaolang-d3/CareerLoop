@@ -231,39 +231,32 @@ describe("home-metrics", () => {
 });
 
 describe("HomePage", () => {
-  it("shows a profile greeting and honest metrics without analysis data", () => {
+  it("shows a greeting, quick actions, and honest knowledge overview", () => {
     renderHome();
 
-    expect(screen.getByRole("heading", { name: "你好，张三" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(/张三/);
     expect(screen.getByText("当前资料方向：后端工程师 · 上海")).toBeInTheDocument();
-    expect(screen.getByText("核对已保存的信息，并继续用于分析或内容生成。")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "查看资料库" })).toBeInTheDocument();
-    expect(screen.getByText("工作台")).toBeInTheDocument();
-    expect(screen.getByText("已保存")).toBeInTheDocument();
-    expect(screen.getByText("cv.pdf")).toBeInTheDocument();
-    expect(screen.getByText("资料库")).toBeInTheDocument();
-    expect(screen.getByText("已核对")).toBeInTheDocument();
+    expect(screen.getByLabelText("快捷操作")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /添加内容/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /向我提问/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /整理知识/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /生成内容/ })).toBeInTheDocument();
+    expect(screen.getByLabelText("我的知识概览")).toBeInTheDocument();
+    expect(screen.getByLabelText("最近添加")).toBeInTheDocument();
+    expect(screen.getByLabelText("最近对话")).toBeInTheDocument();
+    expect(screen.getByLabelText("正在进行的任务")).toBeInTheDocument();
+    expect(screen.getByLabelText("今日灵感")).toBeInTheDocument();
     expect(screen.queryByText("岗位推进")).not.toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "查看资料库" })).toHaveLength(1);
-    expect(screen.queryByLabelText("接下来还可以")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("最近工作")).toBeInTheDocument();
-    expect(screen.queryByText("资料完整度")).not.toBeInTheDocument();
-    expect(screen.queryByText("Python")).not.toBeInTheDocument();
-    expect(screen.queryByText("FastAPI")).not.toBeInTheDocument();
-    expect(screen.queryByText("求职流程阶段")).not.toBeInTheDocument();
-    expect(screen.queryByText("最近任务")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("技能标签")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("项目证据")).not.toBeInTheDocument();
+    expect(screen.queryByText("机会中心")).not.toBeInTheDocument();
   });
 
   it("keeps detailed skill information in the library instead of crowding the home page", () => {
     renderHome({
       skills: "Python，FastAPI，熟练掌握 LangChain、RAG 检索增强、Prompt 工程、多模态 AI 开发，具备 LLM 模型接入、微调优化、结构化输出约束能力。"
     });
-
     expect(screen.queryByLabelText("技能标签")).not.toBeInTheDocument();
     expect(screen.queryByText("LangChain")).not.toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: /资料库/ }).length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("我的知识概览")).toBeInTheDocument();
   });
 
   it("uses a calm empty state when profile and jobs are not ready yet", () => {
@@ -277,15 +270,10 @@ describe("HomePage", () => {
       jobsLoaded: false,
       jobs: []
     });
-
-    expect(screen.getByRole("heading", { name: "你好，小林" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(/小林/);
     expect(screen.getByText("资料读取后，这里会给出下一步。")).toBeInTheDocument();
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText("资料尚未读取").length).toBeGreaterThanOrEqual(1);
-    expect(screen.queryByText("资料读取后会显示完整度。")).not.toBeInTheDocument();
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
-    expect(screen.queryByText("正在加载")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("技能标签")).not.toBeInTheDocument();
   });
 
   it("keeps the global top bar above the home greeting", () => {
@@ -312,13 +300,10 @@ describe("HomePage", () => {
         <HomePage {...props} />
       </section>
     );
-
     const bar = document.querySelector("header.app-topbar");
     expect(bar).toBeTruthy();
-    expect(screen.queryByRole("heading", { level: 1, name: "首页" })).not.toBeInTheDocument();
-    expect(document.querySelectorAll("h1")).toHaveLength(0);
-    expect(screen.getByRole("button", { name: "账号菜单" }).closest(".app-topbar")).toBe(bar);
-    expect(screen.getByRole("heading", { name: "你好，张三" }).closest(".app-topbar")).toBeNull();
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(/张三/);
+    expect(screen.getByRole("heading", { level: 2 }).closest(".app-topbar")).toBeNull();
   });
 
   it("does not show a weekly report", () => {
@@ -327,142 +312,39 @@ describe("HomePage", () => {
     expect(screen.queryByLabelText("求职周报")).not.toBeInTheDocument();
   });
 
-  it("keeps one primary action and removes job-specific shortcut clusters", () => {
-    const props = renderHome({ jobs: [sampleJob()] });
-
-    fireEvent.click(screen.getByRole("button", { name: "查看资料库" }));
-
+  it("wires quick actions to library, chat, organize, and workspace", () => {
+    const props = renderHome({ onOpenOrganize: vi.fn() });
+    fireEvent.click(screen.getByRole("button", { name: /添加内容/ }));
+    fireEvent.click(screen.getByRole("button", { name: /向我提问/ }));
+    fireEvent.click(screen.getByRole("button", { name: /整理知识/ }));
+    fireEvent.click(screen.getByRole("button", { name: /生成内容/ }));
+    expect(props.onOpenProfile).toHaveBeenCalled();
+    expect(props.onOpenChat).toHaveBeenCalled();
+    expect(props.onOpenOrganize).toHaveBeenCalled();
+    expect(props.onOpenResume).toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: /机会中心/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /项目解析/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /岗位推进/ })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("项目证据")).not.toBeInTheDocument();
-
-    expect(screen.queryByRole("button", { name: /继续分析/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /定制简历/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /面试准备/ })).not.toBeInTheDocument();
-    expect(props.onOpenProfile).toHaveBeenCalledOnce();
   });
 
-  it("sends the evidence snapshot to the ledger and the resume snapshot to the studio", () => {
+  it("sends knowledge overview cards to library or workspace", () => {
     const props = renderHome({ jobs: [sampleJob()] });
     const snapshot = screen.getByLabelText("内容概览");
-
-    fireEvent.click(within(snapshot).getByRole("button", { name: /资料库/ }));
-    fireEvent.click(within(snapshot).getByRole("button", { name: /工作台/ }));
-
-    expect(props.onOpenProfile).toHaveBeenCalledOnce();
-    expect(props.onOpenResume).toHaveBeenCalledOnce();
-    expect(props.onOpenAnalysis).not.toHaveBeenCalled();
+    fireEvent.click(within(snapshot).getByRole("button", { name: /知识条目/ }));
+    fireEvent.click(within(snapshot).getByRole("button", { name: /文件/ }));
+    expect(props.onOpenProfile).toHaveBeenCalled();
+    expect(props.onOpenResume).toHaveBeenCalled();
     expect(props.onOpenOpportunities).not.toHaveBeenCalled();
   });
 
-  it("prioritizes the active conversation and sends pending review work to the library", () => {
+  it("lists recent chats and active tasks when present", () => {
     const props = renderHome({
-      jobs: [sampleJob({ latest_evaluation_at: null })],
-      conversations: [sampleConversation()],
-      pendingFacts: [{ id: 21, statement: "主导过检索评测", category: "project" }]
-    });
-
-    expect(screen.getByRole("button", { name: "继续上次对话" })).toBeInTheDocument();
-    expect(screen.getByLabelText("最近工作")).toHaveTextContent("示例 · 后端工程师");
-    expect(screen.queryByLabelText("待确认")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "继续上次对话" }));
-    fireEvent.click(within(screen.getByLabelText("内容概览")).getByRole("button", { name: /资料库/ }));
-
-    expect(props.onOpenChat).toHaveBeenCalledWith(3);
-    expect(props.onOpenProfile).toHaveBeenCalledOnce();
-  });
-
-  it("summarizes pending items without rendering a review inbox on the home page", () => {
-    const props = renderHome({
-      skills: "Python",
-      resumeText: "专业技能 Python、Redis\n实时语音链路项目\n负责支付网关，接口性能提升 30%。",
-      pendingFacts: [
-        { id: 21, statement: "具备 Redis 相关经验", category: "skill", value: { name: "Redis" }, sourceKind: "resume_parser" },
-        { id: 22, statement: "实时语音链路", category: "skill", value: { name: "实时语音链路" } },
-        { id: 23, statement: "接口性能提升 30%", category: "achievement", evidence: [{ excerpt: "负责支付网关，接口性能提升 30%。" }] },
-        { id: 24, statement: "分布式服务架构", category: "skill", value: { name: "分布式服务架构" } }
+      conversations: [
+        sampleConversation(),
+        sampleConversation({ id: 9, title: "整理本周笔记", task_status: "active", summary: "进行中" })
       ]
     });
-
-    expect(screen.getByRole("button", { name: "确认 4 条待审知识" })).toBeInTheDocument();
-    expect(screen.queryByLabelText("待确认")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("内容概览")).toHaveTextContent("4 条待确认");
-
-    fireEvent.click(screen.getByRole("button", { name: "确认 4 条待审知识" }));
-    expect(props.onOpenProfile).toHaveBeenCalledOnce();
-  });
-
-  it("hides the inbox when leftover items are chips or garbled skill wrappers", () => {
-    renderHome({
-      skills: "Python，Redis，FastAPI",
-      resumeText: "专业技能\nPython、Redis、FastAPI\n擅长实时语音链路、分布式服务架构、缓存优化与任务调度。",
-      pendingFacts: [
-        { id: 1, statement: "具备 Redis 相关经验", category: "skill", value: { name: "Redis" } },
-        { id: 2, statement: "具备 FastAPI 相关经验", category: "skill", value: { name: "FastAPI" } },
-        {
-          id: 3,
-          statement: "具备 擅长实时语音链路、分布式服务架构、缓存优化与任务调度。 相关经验",
-          category: "skill",
-          value: { name: "擅长实时语音链路、分布式服务架构、缓存优化与任务调度。" }
-        }
-      ]
-    });
-
-    expect(screen.queryByLabelText("待确认")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /待审知识/ })).not.toBeInTheDocument();
-  });
-
-  it("keeps project evidence in the library instead of the home page", () => {
-    const props = renderHome({
-      projects: [{
-        id: "project-1",
-        title: "智能会议总结",
-        evidence: "智能会议总结\n- 基于 LangChain 搭建统一 LLM 接入网关。",
-        fields: [
-          { label: "个人职责", value: "负责统一 LLM 接入网关" },
-          { label: "技术方案", value: "LangChain + 多厂商模型路由" },
-          { label: "结果", value: "新模型接入周期由 3 天缩短至 4 小时" }
-        ],
-        gaps: [{ completed: false }]
-      }],
-      onOpenProject: vi.fn()
-    });
-
-    expect(screen.queryByLabelText("项目证据")).not.toBeInTheDocument();
-    expect(screen.queryByText("智能会议总结")).not.toBeInTheDocument();
-    expect(props.onOpenProject).not.toHaveBeenCalled();
-  });
-
-  it("does not fetch project evidence while rendering the home page", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      if (String(input).endsWith("/interview-preparation")) {
-        return new Response(JSON.stringify({
-          experiences: [{
-            id: "project-9",
-            title: "实时语音链路",
-            evidence: "麦克风采集后做 Opus 编码并流式上行。",
-            fields: [
-              { label: "个人职责", value: "音频采集与分片上行" },
-              { label: "技术方案", value: "Ogg/Opus 编码与流控重连" },
-              { label: "结果", value: "首字时延控制在 800ms 内" }
-            ],
-            gaps: []
-          }]
-        }), { status: 200, headers: { "Content-Type": "application/json" } });
-      }
-      return new Response("{}", { status: 404 });
-    }));
-
-    renderHome({
-      apiBase: "http://localhost:8000",
-      accessToken: "token",
-      onOpenProject: vi.fn()
-    });
-
-    await Promise.resolve();
-    expect(screen.queryByLabelText("项目证据")).not.toBeInTheDocument();
-    expect(fetch).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("最近对话")).toHaveTextContent("对照字节后端");
+    expect(screen.getByLabelText("正在进行的任务")).toHaveTextContent("整理本周笔记");
+    fireEvent.click(within(screen.getByLabelText("正在进行的任务")).getByRole("button", { name: /整理本周笔记/ }));
+    expect(props.onOpenChat).toHaveBeenCalledWith(9);
   });
 });
