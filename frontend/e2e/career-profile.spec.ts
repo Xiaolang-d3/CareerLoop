@@ -57,10 +57,10 @@ test("saved profile and resume remain available in the library", async ({ page }
 
   await page.goto("/#/library");
   await expect(page).toHaveURL(/#\/library/);
-  await expect(page.getByRole("heading", { name: "资料库", level: 1 })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "基本资料" }).first()).toBeVisible();
-  await expect(page.getByText("端到端用户", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "我的知识库", level: 1 })).toBeVisible();
+  await expect(page.getByRole("button", { name: /基本资料/ }).first()).toBeVisible();
+  await expect(page.getByText(/端到端用户/).first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "来源材料" }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "检查隐私" })).toBeVisible();
-  await expect(page.getByText("允许使用简历原文优化内容")).toBeVisible();
+  await expect(page.getByText("允许使用材料原文生成内容")).toBeVisible();
 });

@@ -612,6 +612,7 @@ export type ViewKey =
   | "project-lab"
   | "dashboard"
   | "chat"
+  | "placeholder"
   | "settings";
 
 export type ProjectBriefingLayer = {

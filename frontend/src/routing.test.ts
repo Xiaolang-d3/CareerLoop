@@ -2,14 +2,15 @@ import { describe, expect, it } from "vitest";
 import { appRouteHash, initialAppRoute, parseAppHash, routeForSection } from "./routing";
 
 describe("primary route", () => {
-  it("opens conversation after login when no route is specified", () => {
-    expect(initialAppRoute("", null)).toEqual({ section: "chat" });
-    expect(initialAppRoute("#", "workbench")).toEqual({ section: "chat" });
+  it("opens home after login when no route is specified", () => {
+    expect(initialAppRoute("", null)).toEqual({ section: "dashboard" });
+    expect(initialAppRoute("#", "workbench")).toEqual({ section: "dashboard" });
     expect(parseAppHash("#/home")).toEqual({ section: "dashboard" });
     expect(parseAppHash("#/dashboard")).toEqual({ section: "dashboard" });
     expect(parseAppHash("#/search")).toEqual({ section: "chat" });
     expect(parseAppHash("#/library")).toEqual({ section: "settings", page: "profile" });
-    expect(parseAppHash("#/workspace")).toEqual({ section: "workbench", page: "resume" });
+    expect(parseAppHash("#/workspace")).toEqual({ section: "workbench", page: "create" });
+    expect(appRouteHash({ section: "workbench", page: "create" })).toBe("#/workspace");
     expect(appRouteHash({ section: "dashboard" })).toBe("#/home");
     expect(routeForSection("dashboard")).toEqual({ section: "dashboard" });
     expect(routeForSection("workbench")).toEqual({ section: "workbench", page: "index" });
@@ -27,7 +28,7 @@ describe("workbench route hierarchy", () => {
     expect(appRouteHash({ section: "workbench", page: "resume", jobId: 42 })).toBe("#/workbench/jobs/42/resume");
     expect(appRouteHash({ section: "workbench", page: "interview", jobId: 42 })).toBe("#/chat");
     expect(appRouteHash({ section: "workbench", page: "interview" })).toBe("#/chat");
-    expect(appRouteHash({ section: "workbench", page: "resume" })).toBe("#/workspace");
+    expect(appRouteHash({ section: "workbench", page: "resume" })).toBe("#/workbench/resume");
     expect(parseAppHash("#/workbench/jobs/42")).toEqual({ section: "workbench", page: "detail", jobId: 42 });
     expect(appRouteHash({ section: "workbench", page: "detail", jobId: 42 })).toBe("#/workbench/jobs/42");
     expect(parseAppHash("#/workbench/jobs/42/evaluation")).toEqual({ section: "workbench", page: "evaluation", jobId: 42 });
@@ -104,5 +105,17 @@ describe("model settings route", () => {
     expect(parseAppHash("#/settings/model")).toEqual({ section: "settings", page: "model" });
     expect(parseAppHash("#/settings/models")).toEqual({ section: "settings", page: "model" });
     expect(appRouteHash({ section: "settings", page: "model" })).toBe("#/settings/model");
+  });
+});
+
+describe("placeholder routes", () => {
+  it("keeps organize/notes/review/graph/tools addressable", () => {
+    expect(parseAppHash("#/organize")).toEqual({ section: "placeholder", page: "organize" });
+    expect(parseAppHash("#/notes")).toEqual({ section: "placeholder", page: "notes" });
+    expect(parseAppHash("#/review")).toEqual({ section: "placeholder", page: "review" });
+    expect(parseAppHash("#/graph")).toEqual({ section: "placeholder", page: "graph" });
+    expect(parseAppHash("#/tools")).toEqual({ section: "placeholder", page: "tools" });
+    expect(appRouteHash({ section: "placeholder", page: "organize" })).toBe("#/organize");
+    expect(appRouteHash({ section: "placeholder", page: "notes" })).toBe("#/notes");
   });
 });

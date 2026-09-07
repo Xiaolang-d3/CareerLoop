@@ -15,22 +15,44 @@ describe("requiredDataForRoute", () => {
     ]);
     expect(requiredDataForRoute({ section: "settings", page: "overview" })).toEqual([
       "candidateProfile",
-      "agentSettings"
+      "agentSettings",
+      "conversations",
+      "capabilities",
+      "attachmentConfig"
     ]);
     expect(requiredDataForRoute({ section: "settings", page: "model" })).toEqual([
       "agentSettings",
       "modelMonitor",
-      "modelCapabilities"
+      "modelCapabilities",
+      "conversations",
+      "capabilities",
+      "attachmentConfig"
     ]);
     expect(requiredDataForRoute({ section: "settings", page: "agent" })).toEqual([
-      "agentOperations"
+      "agentOperations",
+      "conversations",
+      "capabilities",
+      "attachmentConfig"
     ]);
-    expect(requiredDataForRoute({ section: "dashboard" })).toEqual(["candidateProfile"]);
+    expect(requiredDataForRoute({ section: "dashboard" })).toEqual([
+      "candidateProfile",
+      "conversations",
+      "capabilities",
+      "attachmentConfig"
+    ]);
     expect(requiredDataForRoute({ section: "project-lab" })).toEqual([]);
+    expect(requiredDataForRoute({ section: "placeholder", page: "organize" })).toEqual([
+      "conversations",
+      "capabilities",
+      "attachmentConfig"
+    ]);
     expect(requiredDataForRoute({ section: "workbench", page: "index" })).toEqual([
       "jobs",
       "candidateProfile",
-      "workflow"
+      "workflow",
+      "conversations",
+      "capabilities",
+      "attachmentConfig"
     ]);
   });
 });

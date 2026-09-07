@@ -278,9 +278,8 @@ def startup() -> None:
         return
     user_ids = list_user_ids()
     if not user_ids:
-        AgentRunStore().interrupt_active_runs()
-        interrupt_active_runs()
-        interrupt_active_evaluations()
+        # A fresh installation only has the auth database. Business tables are
+        # created with the first user's workspace, so there is nothing to recover.
         return
     for user_id in user_ids:
         root = ensure_workspace(user_id)

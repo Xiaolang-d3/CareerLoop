@@ -60,7 +60,7 @@ describe("AppTopBar", () => {
       title: pageMeta.workbench.title
     });
 
-    expect(screen.getByRole("heading", { level: 1, name: "工作台" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "内容创作" })).toBeInTheDocument();
     expect(document.querySelector(".app-topbar-context > span")).toBeNull();
   });
 
@@ -145,7 +145,8 @@ describe("AppTopBar", () => {
     expect(homeBar).toBeTruthy();
     expect(screen.queryByRole("heading", { level: 1, name: "首页" })).not.toBeInTheDocument();
     expect(homeTrigger.closest(".app-topbar")).toBe(homeBar);
-    expect(screen.getByRole("heading", { name: "你好，张三" }).closest(".app-topbar")).toBeNull();
+    expect(screen.getByRole("heading", { level: 2 }).closest(".app-topbar")).toBeNull();
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(/张三/);
 
     rerender(
       <section className="content">

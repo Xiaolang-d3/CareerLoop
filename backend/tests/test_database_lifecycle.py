@@ -95,3 +95,16 @@ def test_existing_migration_ledger_receives_additive_upgrade() -> None:
             assert conn.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'profiles'"
             ).fetchone()
+
+
+def test_fresh_application_startup_without_users(tmp_path, monkeypatch) -> None:
+    from app import main as main_module
+    from app.workspace import auth_db_path, list_user_ids
+
+    monkeypatch.setattr(db_module, "DB_PATH", tmp_path / "careerloop.db")
+    monkeypatch.setattr(db_module, "LEGACY_DB_PATH", tmp_path / "bosscopilot.db")
+    main_module.startup()
+    main_module.startup()
+    assert auth_db_path().exists()
+    assert list_user_ids() == []
+    assert not db_module.DB_PATH.exists()
