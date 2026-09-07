@@ -4205,6 +4205,12 @@ button.composer-context-status {
     linear-gradient(180deg, #ffffff 0%, #f7f6fb 100%);
   border-right: 1px solid var(--color-border);
 }
+/* Keep the visual rail and the content offset in sync when navigation folds.
+   The light-shell selector above is intentionally more specific than the base
+   .sidebar.collapsed rule, so it needs its own collapsed width override. */
+.app-shell.has-chat-dock .sidebar.shell-light.collapsed {
+  width: 72px;
+}
 .app-shell.has-chat-dock .sidebar.shell-light .brand strong { color: var(--color-text); }
 .app-shell.has-chat-dock .sidebar.shell-light .brand small { color: var(--color-text-muted); }
 .app-shell.has-chat-dock .sidebar.shell-light .nav-label { color: var(--color-text-muted); }
@@ -4566,8 +4572,19 @@ button.composer-context-status {
 }
 @media (max-width: 820px) {
   .app-shell.has-chat-dock { --chat-dock-width: 0px; }
+  /* The desktop light-shell selector sets a fixed rail width. On a narrow
+     viewport the navigation becomes a full-width top bar instead. */
+  .app-shell.has-chat-dock.shell-light .sidebar.shell-light,
+  .app-shell.has-chat-dock.shell-light .sidebar.shell-light.collapsed,
+  .app-shell.has-chat-dock .sidebar.shell-light,
+  .app-shell.has-chat-dock .sidebar.shell-light.collapsed {
+    width: 100%;
+  }
   .app-shell.has-chat-dock .content {
     margin-right: 0;
+  }
+  .app-shell.has-chat-dock .sidebar.shell-light .sidebar-quick-search {
+    display: none;
   }
   .chat-dock { display: none; }
   .app-shell.chat-focused .chat-dock {
