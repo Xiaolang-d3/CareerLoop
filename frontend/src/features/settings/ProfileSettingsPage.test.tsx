@@ -50,13 +50,21 @@ describe("ProfileSettingsPage 2.0", () => {
 
   it("keeps a single, concise personal-information heading", () => {
     render(<ProfileSettingsPage {...props()} />);
-    expect(screen.getByRole("heading", { name: "资料库" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "我的知识库" })).toBeInTheDocument();
     expect(screen.getByText("来源已就绪")).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "资料库内容" })).toBeInTheDocument();
     expect(screen.queryByText("JOB SEARCH")).not.toBeInTheDocument();
     expect(screen.queryByText("我的求职资料")).not.toBeInTheDocument();
     expect(screen.queryByText("我的亮点")).not.toBeInTheDocument();
     expect(screen.queryByText("待确认亮点")).not.toBeInTheDocument();
+  });
+
+  it("preserves ordinary notes as source material", () => {
+    render(<ProfileSettingsPage {...props()} editor={{ ...editor, resumeFilename: "读书笔记.md", resumeText: "# 学习笔记\n今天阅读了关于习惯的章节。\n下一步：每天记录一个问题。" }} />);
+    const preview = screen.getByLabelText("材料预览");
+    expect(preview).toHaveTextContent("读书笔记.md");
+    expect(preview).toHaveTextContent("下一步：每天记录一个问题。");
+    expect(preview).not.toHaveTextContent("我的简历");
   });
 
   it("names the return destination when opened from the workbench flow", () => {
@@ -93,10 +101,10 @@ describe("ProfileSettingsPage 2.0", () => {
   it("shows a readable resume preview by default and keeps raw editing available", () => {
     render(<ProfileSettingsPage {...props()} />);
     expect(screen.getByRole("heading", { name: "材料预览" })).toBeInTheDocument();
-    expect(screen.getByLabelText("简历预览")).toHaveClass("profile-resume-preview");
+    expect(screen.getByLabelText("材料预览")).toHaveClass("profile-resume-preview");
 
     fireEvent.click(screen.getByRole("tab", { name: "编辑原文" }));
-    expect(screen.getByRole("textbox", { name: "简历内容" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "材料内容" })).toBeInTheDocument();
   });
 
   it("reviews pending facts inside the library instead of on the home page", async () => {
@@ -115,7 +123,7 @@ describe("ProfileSettingsPage 2.0", () => {
     expect(screen.queryByLabelText("待确认内容")).not.toBeInTheDocument();
   });
 
-  it("renders education like other preview sections: full-width card with heading and award lines", () => {
+  it("preserves education and award text without splitting source content", () => {
     render(<ProfileSettingsPage {...props()} editor={{
       ...editor,
       resumeText: `项目经历
@@ -127,23 +135,13 @@ CareerLoop 求职助手
 国家奖学金、校级优秀毕业生`
     }} />);
 
-    const preview = screen.getByLabelText("简历预览");
-    const education = preview.querySelector("section.resume-preview-section.education");
-    const projects = preview.querySelector("section.resume-preview-section.projects");
-    expect(education).toBeTruthy();
-    expect(projects).toBeTruthy();
-    expect(education?.parentElement).toHaveClass("resume-preview-sections");
-    expect(projects?.parentElement).toBe(education?.parentElement);
-    expect(education?.querySelector(".resume-preview-entry-list")).toBeTruthy();
-    expect(projects?.querySelector(".resume-preview-entry-list")).toBeTruthy();
-    expect(education?.querySelector("strong")).toHaveTextContent("复旦大学｜计算机科学与技术｜2018.09-2022.06");
-    expect([...education?.querySelectorAll("p") || []].map((node) => node.textContent)).toEqual([
-      "国家奖学金",
-      "校级优秀毕业生"
-    ]);
+    const preview = screen.getByLabelText("材料预览");
+    expect(preview).toHaveTextContent("复旦大学｜计算机科学与技术｜2018.09-2022.06");
+    expect(preview).toHaveTextContent("国家奖学金、校级优秀毕业生");
+    expect(preview.querySelector(".resume-preview-section")).toBeNull();
   });
 
-  it("renders three titled capabilities as 个人优势 entries, not summary", () => {
+  it("preserves original titles without reclassifying them as resume sections", () => {
     render(<ProfileSettingsPage {...props()} editor={{
       ...editor,
       resumeText: `陈露鑫｜AI 应用工程师
@@ -158,24 +156,9 @@ GitHub：https://github.com/example
 示例科技｜AI 应用工程师`
     }} />);
 
-    const preview = screen.getByLabelText("简历预览");
-    const strengths = preview.querySelector("section.resume-preview-section.strengths");
-    const summary = preview.querySelector("section.resume-preview-section.summary");
-    const articles = [...strengths?.querySelectorAll(".resume-preview-entry-list article") || []];
-    expect(strengths?.querySelector("h4")).toHaveTextContent("个人优势");
-    expect(articles).toHaveLength(3);
-    expect(articles.map((node) => node.querySelector("strong")?.textContent)).toEqual([
-      "「AIGC 与大模型落地能力」",
-      "「AI 工程化全栈交付能力」",
-      "「产品从 0 到 1 落地迭代能力」"
-    ]);
-    expect(articles.map((node) => node.querySelector("p")?.textContent)).toEqual([
-      "熟练掌握 LangChain、Prompt 工程与多模型协同。",
-      "能独立完成从接口、编排到前端工作台的交付。",
-      "从需求拆解到上线闭环，带过完整产品。"
-    ]);
-    expect(summary?.textContent || "").not.toContain("AIGC 与大模型落地能力");
-    expect(summary?.querySelectorAll("article")).not.toHaveLength(3);
+    const preview = screen.getByLabelText("材料预览");
+    expect(preview).toHaveTextContent("「AIGC 与大模型落地能力」：熟练掌握 LangChain、Prompt 工程与多模型协同。");
+    expect(preview.querySelector(".resume-preview-section")).toBeNull();
   });
 
   it("clears the resume workspace after 清除", () => {
@@ -197,7 +180,7 @@ GitHub：https://github.com/example
     expect(screen.getByText("导入材料")).toBeInTheDocument();
     expect(screen.getByText("待导入材料")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "清除" })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("简历预览")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("材料预览")).not.toBeInTheDocument();
     expect(screen.getByDisplayValue("小林")).toBeInTheDocument();
   });
 

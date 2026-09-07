@@ -1418,6 +1418,9 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
           </div>
         </header>
         <ThreadPrimitive.Viewport className="chat-thread" role="log" aria-live="polite" aria-relevant="additions">
+          {props.messages.length === 0 && props.density === "dock" ? (
+            <div className="chat-welcome"><span className="assistant-welcome-mark" aria-hidden="true">✦</span><h2>有什么可以帮你？</h2><p>提问、整理资料，或一起完成一段创作。</p></div>
+          ) : null}
           {props.hiddenMessageCount > 0 ? (
             <button className="load-history-button" onClick={props.onLoadMore}>
               查看更早消息 · 还有 {props.hiddenMessageCount} 条
@@ -1452,7 +1455,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
         </ThreadPrimitive.Viewport>
 
         <div className="chat-composer">
-          {props.messages.length === 0 ? (
+          {props.messages.length === 0 && props.density !== "dock" ? (
             <div className="chat-welcome">
               <h2>你想完成什么？</h2>
               <p>在这里搜索公开信息、核对来源、分析资料并生成内容，不用在多个工具之间来回切换。</p>

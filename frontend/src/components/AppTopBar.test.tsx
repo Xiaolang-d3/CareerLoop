@@ -60,7 +60,7 @@ describe("AppTopBar", () => {
       title: pageMeta.workbench.title
     });
 
-    expect(screen.getByRole("heading", { level: 1, name: "工作台" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "内容创作" })).toBeInTheDocument();
     expect(document.querySelector(".app-topbar-context > span")).toBeNull();
   });
 

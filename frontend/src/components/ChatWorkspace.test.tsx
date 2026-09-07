@@ -55,12 +55,14 @@ function fencedMermaid(source: string): string {
 }
 
 function renderChat(messages: ChatMessage[] = [message], extras: {
+  density?: "page" | "dock";
   chatBusy?: boolean;
   latestAgent?: AgentRunResult;
   webSearchAvailable?: boolean;
   retryDraft?: ChatRetryDraft | null;
 } = {}) {
   const props = {
+    density: extras.density,
     conversationTitle: conversation.title,
     messages,
     hiddenMessageCount: 0,
@@ -1090,3 +1092,11 @@ describe("ChatWorkspace", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
+
+ it("keeps the popup welcome in the message area above the composer", () => {
+   renderChat([], { density: "dock" });
+   const welcome = screen.getByRole("heading", { name: "有什么可以帮你？" });
+   expect(welcome.closest(".chat-thread")).not.toBeNull();
+   expect(welcome.closest(".chat-composer")).toBeNull();
+   expect(screen.getByRole("textbox", { name: "输入消息" })).toBeInTheDocument();
+ });

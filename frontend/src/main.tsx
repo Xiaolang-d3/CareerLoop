@@ -5,6 +5,8 @@ import { createApiClient, fetchWithTimeout } from "./api/client";
 import { readAnalysisRunStream, type AnalysisRunEvent } from "./features/jobs/analysis-run";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { AuthGate, type AuthUser } from "./components/AuthGate";
+import { AssistantSurface } from "./components/AssistantSurface";
+import { CreationPage } from "./features/creation/CreationPage";
 import { AppSidebar, type ProductNavKey } from "./components/AppSidebar";
 import { AppIdentityMenu } from "./components/AppIdentityMenu";
 import { AppTopBar } from "./components/AppTopBar";
@@ -59,7 +61,6 @@ import {
   CheckCircle2,
   Database,
   LoaderCircle,
-  MessageCircle,
   TriangleAlert,
   X
 } from "lucide-react";
@@ -260,6 +261,7 @@ function App({
   const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
   const [attachmentConfig, setAttachmentConfig] = useState<AttachmentConfig | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const [candidateEditor, setCandidateEditor] = useState(emptyCandidateEditor);
   const hasStoredResumeRef = useRef(false);
@@ -2211,7 +2213,7 @@ function App({
     ? {
         overview: pageMeta.settings,
         account: { title: "账号与安全", description: "管理跟随登录账号的昵称、头像和密码" },
-        profile: { title: "资料库", description: "维护个人资料、来源内容、已确认事实和待确认信息" },
+        profile: { title: "我的知识库", description: "管理来源材料、已确认知识和待确认内容" },
         model: { title: "模型设置", description: "配置推理模型、服务地址和 API Key，并检查连接质量" },
         agent: { title: "Agent 执行记录", description: "查看 Agent 已完成的任务、工具使用和异常原因" }
       }[appRoute.page]
@@ -2239,7 +2241,7 @@ function App({
         : appRoute.page === "interview"
           ? { title: "面试准备", description: "围绕已确认项目证据练习问答" }
         : appRoute.page === "resume"
-          ? { title: "工作台", description: "编辑、整理和导出你的文档" }
+          ? { title: "简历编辑", description: "编辑、预览和导出简历" }
         : appRoute.page === "detail"
           ? { title: "匹配分析", description: "对照这份岗位查看匹配、缺口和证据" }
           : pageMeta.workbench
@@ -2285,7 +2287,7 @@ function App({
     else if (key === "library") navigateRoute({ section: "settings", page: "profile" });
     else if (key === "chat") navigateRoute({ section: "chat", conversationId: currentConversationId ?? undefined });
     else if (key === "organize") navigateRoute({ section: "placeholder", page: "organize" });
-    else if (key === "workspace") navigateRoute({ section: "workbench", page: "resume" });
+    else if (key === "workspace") navigateRoute({ section: "workbench", page: "create" });
     else if (key === "notes") navigateRoute({ section: "placeholder", page: "notes" });
     else if (key === "review") navigateRoute({ section: "placeholder", page: "review" });
     else if (key === "graph") navigateRoute({ section: "placeholder", page: "graph" });
@@ -2354,7 +2356,7 @@ function App({
               confirmedFactCount={confirmedCareerFactCount}
               sourceCount={careerSourceCount}
               onOpenAnalysis={() => navigateRoute({ section: "workbench", page: "index" })}
-              onOpenResume={() => navigateRoute({ section: "workbench", page: "resume" })}
+              onOpenResume={() => navigateRoute({ section: "workbench", page: "create" })}
               onOpenInterview={() => navigateRoute({ section: "project-lab" })}
               onOpenProject={(experienceId) => navigateRoute(
                 experienceId
@@ -2379,40 +2381,6 @@ function App({
               onFactsChanged={() => void refreshCandidateProfile()}
             />
           </Suspense>
-        ) : null}
-
-        {activeView === "chat" ? (
-          <section className="chat-focus-page" aria-labelledby="chat-focus-title">
-            <div className="chat-focus-card">
-              <span className="chat-focus-kicker"><MessageCircle size={16} aria-hidden="true" /> AI 问答</span>
-              <h2 id="chat-focus-title">对话常驻在右侧</h2>
-              <p>在桌面端，CareerLoop 会把问答面板固定在右侧，方便你一边整理知识库或创作内容，一边继续追问。</p>
-              <div className="chat-focus-actions">
-                <button type="button" className="ui-button is-primary" onClick={() => void createNewConversation()}>新建对话</button>
-                <button type="button" className="ui-button" onClick={() => chatInputRef.current?.focus()}>聚焦输入框</button>
-              </div>
-              {conversations.length ? (
-                <ul className="chat-focus-list" aria-label="最近对话">
-                  {conversations.slice(0, 6).map((conversation) => (
-                    <li key={conversation.id}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCurrentConversationId(conversation.id);
-                          navigateRoute({ section: "chat", conversationId: conversation.id });
-                        }}
-                      >
-                        <strong>{conversation.title || "未命名对话"}</strong>
-                        <small>{conversation.summary || "继续上次对话"}</small>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="chat-focus-empty">还没有对话记录。从右侧输入第一个问题即可开始。</p>
-              )}
-            </div>
-          </section>
         ) : null}
 
         {activeView === "placeholder" && appRoute.section === "placeholder" ? (
@@ -2451,7 +2419,9 @@ function App({
           </Suspense>
         ) : null}
 
-        {activeView === "workbench" ? (
+        {activeView === "workbench" && appRoute.section === "workbench" && appRoute.page === "create" ? <CreationPage busy={chatBusy || !currentConversationId} onGenerate={(prompt) => { setAssistantOpen(true); void sendChatMessage(prompt); }} onOpenLibrary={() => navigateRoute({ section: "settings", page: "profile" })} onOpenResume={() => navigateRoute({ section: "workbench", page: "resume" })} /> : null}
+
+        {activeView === "workbench" && !(appRoute.section === "workbench" && appRoute.page === "create") ? (
           <Suspense fallback={<PageLoading label={appRoute.section === "workbench" && appRoute.page === "resume" ? "正在加载定制简历…" : appRoute.section === "workbench" && appRoute.page === "interview" ? "正在加载面试问答…" : "正在加载匹配分析…"} />}>
             {appRoute.section === "workbench" && ["evaluation", "evaluation_section", "comparison"].includes(appRoute.page || "") ? (
               <JobEvaluationPage
@@ -2701,19 +2671,11 @@ function App({
 
       </section>
 
-      <aside className="chat-dock" aria-label="常驻 AI 问答">
-        <div className="chat-dock-header">
-          <span className="chat-dock-mark" aria-hidden="true" />
-          <div>
-            <strong>CareerLoop</strong>
-            <small>随时为你服务</small>
-          </div>
-        </div>
-        <div className="chat-dock-body">
+      <AssistantSurface page={activeView === "chat"} open={assistantOpen} busy={chatBusy} onOpen={() => setAssistantOpen(true)} onClose={() => setAssistantOpen(false)} onExpand={() => { setAssistantOpen(false); navigateRoute({ section: "chat", conversationId: currentConversationId ?? undefined }); }}>
 
         <Suspense fallback={<PageLoading label="正在加载对话…" />}>
             <ChatWorkspace
-              density="dock"
+              density={activeView === "chat" ? "page" : "dock"}
               focused={activeView === "chat"}
               conversationTitle={currentConversation?.title}
               messages={visibleChatMessages}
@@ -2779,8 +2741,7 @@ function App({
               }}
             />
           </Suspense>
-        </div>
-      </aside>
+      </AssistantSurface>
     </main>
   );
 }

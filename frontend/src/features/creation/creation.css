@@ -1,0 +1,13 @@
+.creation-page { display: grid; gap: 22px; max-width: 960px; margin: 0 auto; width: 100%; }
+.creation-page h2 { margin: 0 0 8px; }
+.creation-page p { color: #64748b; line-height: 1.7; }
+.creation-form { display: grid; gap: 18px; padding: 24px; border: 1px solid #e5e7f0; border-radius: 16px; background: #fff; }
+.creation-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.creation-tabs button { padding: 10px 16px; border: 0; border-radius: 8px; background: #f5f6fc; color: #475569; cursor: pointer; }
+.creation-tabs button[aria-pressed="true"] { background: #eeeaff; color: #6246e5; }
+.creation-form label { display: grid; gap: 10px; font-weight: 600; }
+.creation-form textarea, .creation-form select { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid #dfe3ef; border-radius: 8px; background: #fff; color: #172033; font: inherit; }
+.creation-form textarea { resize: vertical; line-height: 1.8; }
+.creation-options { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.creation-page footer { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+@media (max-width: 600px) { .creation-form { padding: 16px; } .creation-options { grid-template-columns: 1fr; } }

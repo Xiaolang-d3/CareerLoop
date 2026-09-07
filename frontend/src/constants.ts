@@ -22,7 +22,7 @@ export const defaultAgentSettings: AgentSettings = {
 
 export const pageMeta: Record<ViewKey, { title: string; description: string }> = {
   opportunities: { title: "AI 问答", description: "旧的岗位发现链接已归入对话" },
-  workbench: { title: "工作台", description: "集中编辑、分析和导出生成的内容" },
+  workbench: { title: "内容创作", description: "集中编辑、分析和导出生成的内容" },
   "interview-prep": { title: "AI 问答", description: "旧的准备入口已归入对话" },
   "project-lab": { title: "我的知识库", description: "旧的项目入口已归入知识库" },
   dashboard: { title: "首页", description: "查看最近资料、文档和对话" },
@@ -42,7 +42,7 @@ export const placeholderPageMeta: Record<PlaceholderPage, { title: string; descr
 const sectionTitles: Record<ViewKey, string> = {
   dashboard: pageMeta.dashboard.title,
   opportunities: "AI 问答",
-  workbench: "工作台",
+  workbench: "内容创作",
   "interview-prep": "AI 问答",
   "project-lab": "我的知识库",
   chat: "AI 问答",
@@ -77,7 +77,7 @@ export function sidebarHighlightForView(
   if (view === "settings" && extras.settingsPage === "profile") return "library";
   if (view === "settings" && extras.settingsPage && extras.settingsPage !== "profile") return "settings";
   if (view === "settings") return "settings";
-  if (view === "workbench" && (extras.workbenchPage === "resume" || extras.workbenchPage === "index" || !extras.workbenchPage)) {
+  if (view === "workbench" && (extras.workbenchPage === "create" || extras.workbenchPage === "resume" || extras.workbenchPage === "index" || !extras.workbenchPage)) {
     return "workspace";
   }
   if (view === "placeholder" && extras.placeholderPage) return extras.placeholderPage;

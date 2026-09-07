@@ -2,7 +2,7 @@ import type { ViewKey } from "./types";
 
 export type SettingsPage = "overview" | "account" | "profile" | "model" | "agent";
 type OpportunitiesPage = "index" | "new" | "pipeline" | "sources" | "run" | "job";
-export type WorkbenchPage = "index" | "new" | "detail" | "resume" | "interview" | "evaluation" | "evaluation_section" | "comparison";
+export type WorkbenchPage = "create" | "index" | "new" | "detail" | "resume" | "interview" | "evaluation" | "evaluation_section" | "comparison";
 export type PreparationPage = "projects" | "knowledge" | "records";
 export type PreparationFocus = "questions" | "knowledge" | "gaps";
 export type ProjectStudioPage = "overview" | "architecture" | "materials" | "interview";
@@ -47,7 +47,7 @@ export function parseAppHash(hash: string): AppRoute | null {
       returnTo: query.get("return") === "workbench" ? "workbench" : undefined
     };
   }
-  if (path === "workspace") return { section: "workbench", page: "resume" };
+  if (path === "workspace") return { section: "workbench", page: "create" };
   if (path === "opportunities" || path.startsWith("opportunities/")) return { section: "chat" };
   if (path === "workbench") return { section: "workbench", page: "index" };
   if (path === "workbench/new") return { section: "workbench", page: "index" };
@@ -119,7 +119,8 @@ export function appRouteHash(route: AppRoute): string {
   if (route.section === "workbench") {
     if (route.page === "new") return "#/workbench";
     if (route.page === "resume" && route.jobId) return `#/workbench/jobs/${route.jobId}/resume`;
-    if (route.page === "resume") return "#/workspace";
+    if (route.page === "create") return "#/workspace";
+    if (route.page === "resume") return "#/workbench/resume";
     if (route.page === "interview") return "#/chat";
     if (route.page === "detail" && route.jobId) return `#/workbench/jobs/${route.jobId}`;
     if (route.page === "evaluation_section" && route.jobId && route.sectionKey) return `#/workbench/jobs/${route.jobId}/evaluation/${route.sectionKey}`;
