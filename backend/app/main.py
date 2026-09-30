@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -42,9 +43,7 @@ from .config import get_settings
 from .auth import (
     authenticate,
     avatar_path,
-    captcha_svg,
     change_password,
-    create_captcha,
     create_initial_user,
     current_user,
     delete_avatar,
@@ -88,8 +87,6 @@ from .chat.service import (
     workflow_summary as _workflow_summary,
 )
 from .workflow.engine import refresh_workflow_status
-from .opportunities.runs import interrupt_active_runs
-from .jobs.evaluations import interrupt_active_evaluations
 from .profile.candidate_core import ensure_resume_knowledge_indexed
 from .version import APP_VERSION
 
@@ -120,7 +117,6 @@ _active_chat_runs: dict[tuple[int, int], asyncio.Task[None]] = {}
 _OPEN_AUTH_PATHS = {
     "/health",
     "/auth/config",
-    "/auth/captcha",
     "/auth/bootstrap",
     "/auth/login",
     "/auth/register",
@@ -141,7 +137,7 @@ def static_asset_cache_control(path: str) -> str | None:
 async def require_login(request: Request, call_next: Any) -> Any:
     path = request.url.path
     is_frontend_asset = path == "/" or path.startswith("/assets/") or path in _PUBLIC_FRONTEND_FILES
-    if request.method == "OPTIONS" or is_frontend_asset or path in _REQUIRE_LOGIN_WHITELIST or path.startswith("/auth/captcha/"):
+    if request.method == "OPTIONS" or is_frontend_asset or path in _REQUIRE_LOGIN_WHITELIST:
         response = await call_next(request)
         cache_control = static_asset_cache_control(path)
         if cache_control and response.status_code == 200:
@@ -171,26 +167,11 @@ def get_auth_config() -> dict[str, bool]:
     return public_auth_config()
 
 
-@app.get("/auth/captcha")
-def get_captcha() -> dict[str, str]:
-    return create_captcha()
-
-
-@app.get("/auth/captcha/{captcha_id}.svg")
-def get_captcha_image(captcha_id: str) -> Response:
-    image = captcha_svg(captcha_id)
-    if image is None:
-        raise HTTPException(status_code=404, detail="验证码已过期")
-    return Response(content=image, media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
-
-
 @app.post("/auth/login")
 def login(payload: LoginIn, request: Request) -> dict[str, Any]:
     token = authenticate(
         payload.email,
         payload.password,
-        payload.captcha_id,
-        payload.captcha_code,
         client=request.client.host if request.client else None,
     )
     user = current_user(f"Bearer {token}")
@@ -199,14 +180,14 @@ def login(payload: LoginIn, request: Request) -> dict[str, Any]:
 
 @app.post("/auth/register")
 def register(payload: LoginIn) -> dict[str, Any]:
-    token = register_user(payload.email, payload.password, payload.captcha_id, payload.captcha_code)
+    token = register_user(payload.email, payload.password)
     user = current_user(f"Bearer {token}")
     return {"access_token": token, "token_type": "bearer", "user": get_account(int(user["id"]))}
 
 
 @app.post("/auth/bootstrap")
 def bootstrap_admin(payload: LoginIn) -> dict[str, Any]:
-    token = create_initial_user(payload.email, payload.password, payload.captcha_id, payload.captcha_code)
+    token = create_initial_user(payload.email, payload.password)
     user = current_user(f"Bearer {token}")
     return {"access_token": token, "token_type": "bearer", "user": get_account(int(user["id"]))}
 
@@ -264,8 +245,6 @@ def _chat_run_key(conversation_id: int) -> tuple[int, int]:
 def _startup_workspace(user_id: int, root: Path) -> None:
     with use_workspace(user_id, root):
         AgentRunStore().interrupt_active_runs()
-        interrupt_active_runs()
-        interrupt_active_evaluations()
         try:
             ensure_resume_knowledge_indexed()
         except Exception:
@@ -288,7 +267,12 @@ def startup() -> None:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "service": "careerloop",
+        "version": APP_VERSION,
+        "instance_id": os.getenv("CAREERLOOP_INSTANCE_ID", "web"),
+    }
 
 
 @app.get("/system/database-status")
@@ -692,11 +676,6 @@ async def _stream_chat_message_response(
                 )
                 if payload.web_search:
                     trusted_routing_content += "\n[系统可信开关：本轮允许联网搜索]"
-                if any(
-                    item.get("kind") == "job_screenshot"
-                    for item in attachment_summaries
-                ):
-                    trusted_routing_content += "\n[系统确认：本轮请求分析岗位截图]"
                 resume_snapshot = load_run_snapshot(conversation_id)
                 if resume_snapshot is not None and should_abandon_snapshot(
                     payload.content,

@@ -1247,3 +1247,271 @@
     transition: none;
   }
 }
+
+/*
+ * Focus-page empty state
+ *
+ * The page shell and the legacy chat styles both used to position this state.
+ * That made the session rail follow one column while the welcome composer
+ * followed another, which is especially conspicuous in the desktop app. Keep
+ * every empty-state element on one deliberate reading axis instead.
+ */
+@media (min-width: 821px) {
+  .assistant-page .chat-workspace {
+    --chat-column: min(760px, calc(100% - 64px));
+    --chat-gutter: max(32px, calc((100% - var(--chat-column)) / 2));
+    height: 100%;
+    max-height: 100%;
+  }
+
+  .assistant-page .chat-workspace.is-empty {
+    overflow: hidden;
+  }
+
+  .assistant-page .chat-workspace.is-empty .chat-main {
+    display: grid;
+    grid-template-rows: 64px minmax(0, 1fr);
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .assistant-page .chat-workspace.is-empty .chat-main > .chat-session-header {
+    grid-row: 1;
+    min-height: 64px;
+    padding: 12px var(--chat-gutter);
+    border-bottom: 1px solid color-mix(in srgb, var(--color-border) 76%, transparent);
+  }
+
+  .assistant-page .chat-workspace.is-empty .chat-session-title {
+    max-width: 30rem;
+    font-family: var(--font-sans);
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -.015em;
+  }
+
+  .assistant-page .chat-workspace.is-empty .chat-session-mark {
+    width: 2px;
+    height: .9em;
+    margin-right: 8px;
+    box-shadow: 0 0 0 3px var(--color-brand-soft);
+  }
+
+  .assistant-page .chat-workspace.is-empty .chat-thread {
+    grid-row: 2;
+    width: 100%;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .assistant-page .chat-workspace.is-empty .chat-composer {
+    grid-row: 2;
+    align-self: center;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 0 var(--chat-gutter) 18px;
+    background: transparent;
+    transform: none;
+  }
+
+  .assistant-page .chat-workspace.is-empty .chat-welcome {
+    width: 100%;
+    max-width: none;
+    margin: 0 auto 20px;
+  }
+
+  .assistant-page .chat-workspace.is-empty .chat-welcome h2 {
+    font-size: clamp(26px, 2vw, 32px);
+    font-weight: 520;
+    letter-spacing: -.04em;
+  }
+
+  .assistant-page .chat-workspace.is-empty .chat-welcome p {
+    max-width: 42rem;
+    margin-top: 12px;
+    font-size: 14px;
+    line-height: 1.65;
+  }
+
+  .assistant-page .chat-workspace.is-empty .composer-input {
+    min-height: 116px !important;
+    border-radius: 18px !important;
+    box-shadow: 0 10px 28px rgba(48, 38, 110, .075) !important;
+  }
+
+  .assistant-page .chat-workspace.is-empty .composer-input textarea {
+    min-height: 48px !important;
+  }
+
+  .assistant-page .chat-workspace.is-empty .composer-drafts {
+    margin-top: 14px;
+  }
+}
+
+/*
+ * AI workspace layout
+ *
+ * Keep every main-surface element in the same explicit grid column. Without
+ * this, the empty thread and composer create implicit columns and push the
+ * prompt to the right side of the window. The conversation rail becomes an
+ * in-flow, collapsible column on wide desktops and remains a drawer below it.
+ */
+.assistant-page .chat-workspace {
+  --chat-column: min(880px, calc(100% - 48px));
+  --chat-gutter: max(24px, calc((100% - var(--chat-column)) / 2));
+  display: flex;
+  flex-direction: row !important;
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  background: #fbfbfd;
+}
+
+.assistant-page .chat-workspace .chat-main,
+.assistant-page .chat-workspace.is-empty .chat-main,
+.assistant-page .chat-workspace.has-history .chat-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 64px minmax(0, 1fr) auto;
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.assistant-page .chat-workspace .chat-main > .chat-session-header,
+.assistant-page .chat-workspace .chat-main > .chat-thread,
+.assistant-page .chat-workspace .chat-main > .chat-composer {
+  grid-column: 1;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  box-sizing: border-box;
+}
+
+.assistant-page .chat-workspace .chat-main > .chat-session-header {
+  grid-row: 1;
+  min-height: 64px;
+  padding: 12px var(--chat-gutter);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 76%, transparent);
+  background: rgba(255, 255, 255, .9);
+}
+
+.assistant-page .chat-workspace .chat-main > .chat-thread,
+.assistant-page .chat-workspace.has-history .chat-thread,
+.assistant-page .chat-workspace.is-empty .chat-thread {
+  grid-row: 2;
+  min-height: 0;
+  padding: 22px var(--chat-gutter) 28px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.assistant-page .chat-workspace .chat-main > .chat-composer,
+.assistant-page .chat-workspace.has-history .chat-composer,
+.assistant-page .chat-workspace.is-empty .chat-composer {
+  grid-row: 3;
+  align-self: end;
+  padding: 12px var(--chat-gutter) 20px;
+  border: 0;
+  background: #fbfbfd;
+  transform: none;
+}
+
+.assistant-page .chat-workspace.is-empty .chat-thread {
+  visibility: hidden;
+  padding-block: 0;
+}
+
+.assistant-page .chat-workspace.is-empty .chat-welcome {
+  width: min(100%, var(--chat-column));
+  max-width: var(--chat-column);
+  margin: 0 auto 20px;
+}
+
+.assistant-page .chat-workspace.is-empty .chat-welcome h2 {
+  font-size: clamp(26px, 2.1vw, 32px);
+  font-weight: 520;
+}
+
+.assistant-page .chat-workspace.is-empty .chat-welcome p {
+  max-width: 44rem;
+  margin-top: 10px;
+  font-size: 14px;
+}
+
+.assistant-page .chat-workspace .composer-dropzone,
+.assistant-page .chat-workspace .composer-drafts {
+  width: min(100%, var(--chat-column));
+  max-width: var(--chat-column);
+  margin-inline: auto;
+}
+
+.assistant-page .chat-workspace .chat-thread .message.assistant,
+.assistant-page .chat-workspace.has-history .message.assistant {
+  width: 100%;
+  max-width: 100%;
+}
+
+@media (min-width: 1280px) {
+  .assistant-page .conversation-history-panel.drawer-open {
+    position: relative;
+    inset: auto;
+    z-index: 3;
+    order: -1;
+    display: flex;
+    flex: 0 0 276px;
+    width: 276px;
+    height: 100%;
+    max-width: 276px;
+    border-width: 0 1px 0 0;
+    border-radius: 0;
+    background: #f8f7fb;
+    box-shadow: none;
+  }
+
+  .assistant-page .conversation-history-backdrop {
+    display: none;
+  }
+}
+
+@media (min-width: 960px) and (max-width: 1279px) {
+  .assistant-page .conversation-history-panel.drawer-open {
+    position: absolute;
+    inset: 0 0 0 auto;
+    z-index: 72;
+    width: min(320px, calc(100% - 48px));
+    height: 100%;
+    border-width: 0 0 0 1px;
+    border-radius: 0;
+  }
+
+  .assistant-page .conversation-history-backdrop {
+    position: absolute;
+    inset: 0;
+  }
+}
+
+@media (max-width: 959px) {
+  .assistant-page .chat-workspace {
+    --chat-column: min(100%, 800px);
+    --chat-gutter: 16px;
+  }
+
+  .assistant-page .chat-workspace .chat-main > .chat-session-header,
+  .assistant-page .chat-workspace .chat-main > .chat-thread {
+    padding-inline: 16px;
+  }
+
+  .assistant-page .chat-workspace .chat-main > .chat-composer {
+    padding: 10px 16px max(14px, env(safe-area-inset-bottom));
+  }
+}

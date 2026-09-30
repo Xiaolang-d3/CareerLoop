@@ -2,14 +2,14 @@
 
 [![CI](https://github.com/Xiaolang-d3/CareerLoop/actions/workflows/ci.yml/badge.svg)](https://github.com/Xiaolang-d3/CareerLoop/actions/workflows/ci.yml)
 
-本地优先、由个人资料驱动的 AI 协作工作台：沉淀可复用上下文，通过可恢复 Agent 完成搜索、分析与内容生成。结果可追踪、可恢复，并持续保留在工作台；求职是当前最成熟的专业场景，但不是产品边界。
+本地优先、由个人资料驱动的 AI 协作工作台：沉淀可复用上下文，通过可恢复 Agent 完成搜索、分析与内容生成。资料与对话持续保存在本地，任务支持中断恢复。产品聚焦知识库、AI 问答和内容创作，不再提供专用求职功能。
 
 当前版本为 **2.0.0 开发预览版**，尚未发布稳定的 GitHub Release。
 
 ## 核心能力
 
-- **资料库**：维护个人资料、来源内容与已确认事实；所有推导信息先进入待确认队列，确认后才进入可复用上下文。
-- **工作台与对话**：基于资料完成搜索、分析、生成、编辑和导出。求职相关的简历、岗位分析和面试辅助作为专业能力保留在同一套对话与工作台中，不再形成独立产品入口。
+- **资料库**：逐份上传或粘贴资料，支持预览、重命名、校正提取文字、下载原文件、停用和删除；校正文字会更新问答索引，但不改写上传的原文件。所有推导信息先进入待确认队列，确认后才进入可复用上下文。
+- **问答与创作**：基于资料完成问答、总结、改写、文章和 PPT 大纲创作；结果在对话中展示和继续修改。没有专用简历导出、岗位匹配或面试入口。
 
 界面模块与产品文案以 [`frontend/src/constants.ts`](frontend/src/constants.ts) 为准；智能体架构、工具、路由与维护约定见 [`docs/agent.md`](docs/agent.md)。
 
@@ -82,6 +82,31 @@ OPENAI_API_KEY=
 ```bash
 ./scripts/stop-dev.sh
 ```
+
+## 桌面安装包（当前：macOS ARM64 内部测试）
+
+桌面版使用 Tauri 2：React 前端仍复用 `frontend/`，FastAPI 以受限的
+loopback sidecar 运行；每次启动使用动态端口，并在显示窗口前校验服务名、版本和
+实例 ID。退出应用时会终止并等待 sidecar，SQLite、附件和工作区写入操作系统的
+用户级应用数据目录，不会写入应用安装目录。浏览器开发模式和 `scripts/dev.sh`
+不受影响。
+
+在每个目标系统的发布构建机上执行：
+
+```bash
+cd desktop
+npm install
+../backend/.venv/bin/pip install -r ../backend/requirements.txt -r ../backend/requirements-dev.txt
+npm run package-sidecar
+npm run build
+```
+
+当前 CI 只生成未签名、未公证的 macOS ARM64 `.app` / `.dmg` 内部制品。Tauri
+要求 sidecar 带目标三元组后缀，不要把本机生成的二进制复制到其他系统或架构。
+Python 后端以 PyInstaller onedir runtime 放入应用资源目录，Tauri 通过同架构的原生
+launcher 启动它；开发桌面壳可运行 `npm run dev`，但仍需要先生成当前平台的真实
+sidecar，不能用占位脚本构建。为控制内部包体积，首版桌面包不包含可选的图片 OCR
+推理栈；PDF、DOCX、纯文本和粘贴文本仍可正常导入，图片 OCR 在浏览器开发环境可用。
 
 ## 可选：启用联网搜索
 

@@ -190,7 +190,7 @@ export function homeInboxItems(
       items.push({
         id: fact.id,
         title,
-        consequence: `确认后会把「${title}」写入画像技能，并参与岗位评分`,
+        consequence: `确认后会把「${title}」写入已确认知识，用于问答与创作`,
         source,
         sourceLabel: inboxSourceLabel(fact, source)
       });
@@ -211,10 +211,10 @@ export function homeInboxItems(
 }
 
 function inboxConsequence(category: string) {
-  if (category === "achievement") return "确认后会把这条成果写入画像，并参与岗位评分";
-  if (category === "project") return "确认后会把这个项目写入已确认知识，并参与岗位评分";
-  if (category === "experience") return "确认后会把这条经历写入已确认知识，并参与岗位评分";
-  return "确认后会写入已确认知识，并参与岗位评分";
+  if (category === "achievement") return "确认后会把这条成果写入已确认知识，用于问答与创作";
+  if (category === "project") return "确认后会把这个项目写入已确认知识，用于问答与创作";
+  if (category === "experience") return "确认后会把这条经历写入已确认知识，用于问答与创作";
+  return "确认后会写入已确认知识，用于问答与创作";
 }
 
 function inboxSourceQuote(fact: HomePendingFact, title: string, resumeText: string) {
@@ -227,11 +227,11 @@ function inboxSourceQuote(fact: HomePendingFact, title: string, resumeText: stri
 
 function inboxSourceLabel(fact: HomePendingFact, source: string) {
   const kind = fact.sourceKind || "";
-  if (kind === "interview_debrief" || kind === "profile_interview") return "面试记录";
+  if (kind === "interview_debrief" || kind === "profile_interview") return "历史记录";
   if (kind === "agent_proposal") return "对话提议";
   const title = fact.evidence?.[0]?.source_title?.trim() || "";
   if (title && title !== "候选人资料") return title;
-  if (kind === "resume_parser" || source) return "简历原句";
+  if (kind === "resume_parser" || source) return "材料原句";
   return "来源";
 }
 

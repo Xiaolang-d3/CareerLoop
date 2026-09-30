@@ -27,13 +27,13 @@ def extract_screenshot_text(filename: str, content: bytes) -> str:
         raise ValueError("无法识别该图片文件") from exc
 
     try:
-        from docling.document_converter import DocumentConverter
+        # RapidOCR keeps desktop startup and the sidecar compact while still
+        # performing all recognition locally.  Docling remains the optional
+        # enhanced parser for source development environments.
+        from rapidocr import RapidOCR
 
-        with TemporaryDirectory(prefix="careerloop-ocr-") as directory:
-            path = Path(directory) / f"image{suffix}"
-            path.write_bytes(content)
-            result = DocumentConverter().convert(path)
-            text = result.document.export_to_markdown()
+        result = RapidOCR()(content)
+        text = "\n".join(str(item).strip() for item in (result.txts or []) if str(item).strip())
     except Exception as exc:
         raise ValueError("本地图片文字识别失败，请上传更清晰的截图或改为粘贴文字") from exc
 

@@ -43,25 +43,16 @@ export type Conversation = {
 
 export type CareerProfileBundle = {
   profile: {
-    id: number;
     name: string;
-    locale: string;
     privacy_mode: "redacted" | "original";
-    resume_text: string;
-    resume_redacted_text: string;
-    resume_filename: string;
     knowledge_revision: number;
   } | null;
-  active_strategy: {
+  /** @deprecated Retired career screens may still read this during route cleanup. */
+  active_strategy?: {
     id: number;
     name: string;
     target_roles: string[];
     locations: string[];
-    salary: { min?: number | null; max?: number | null; currency?: string };
-    industries: string[];
-    hard_constraints: string[];
-    blocked_companies: string[];
-    blocked_keywords: string[];
   } | null;
   facts: Array<{
     id: number;
@@ -72,13 +63,29 @@ export type CareerProfileBundle = {
     source_kind?: string;
     evidence?: Array<{ excerpt?: string; source_title?: string }>;
   }>;
-  sources: Array<{
-    id: number;
-    title: string;
-    source_type: string;
-    privacy_mode: "redacted" | "original";
-    allow_model_original: boolean;
-  }>;
+  sources: LibrarySource[];
+};
+
+export type LibrarySource = {
+  id: number;
+  source_kind: "upload" | "paste" | "legacy";
+  title: string;
+  original_filename: string;
+  mime_type: string;
+  source_uri: string;
+  privacy_mode: "redacted" | "original";
+  enabled: boolean;
+  parse_status: "pending" | "ready" | "failed";
+  character_count: number;
+  file_available: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type LibrarySourceDetail = LibrarySource & {
+  content: string;
+  redacted_content: string;
+  metadata: Record<string, unknown>;
 };
 
 export type JobProject = {
@@ -606,13 +613,8 @@ export type AgentCapabilities = {
 };
 
 export type ViewKey =
-  | "opportunities"
-  | "workbench"
-  | "interview-prep"
-  | "project-lab"
   | "dashboard"
   | "chat"
-  | "placeholder"
   | "settings";
 
 export type ProjectBriefingLayer = {
@@ -759,6 +761,8 @@ export type AgentSettings = {
   resolved_model_protocol?: ResolvedModelProtocol;
   api_key: string;
   api_key_configured: boolean;
+  secret_storage?: "keyring" | "environment" | "memory";
+  secret_migration_warning?: string;
 };
 
 type ModelServiceEvent = {
@@ -831,6 +835,12 @@ export type ModelServiceMonitor = {
   last_success_at: string | null;
   last_check_at: string | null;
   recent_events: ModelServiceEvent[];
+};
+
+export type ModelServiceCheck = ModelServiceMonitor & {
+  available: boolean;
+  check_error_code: string | null;
+  check_error_message: string | null;
 };
 
 export type AgentOperationsSnapshot = {

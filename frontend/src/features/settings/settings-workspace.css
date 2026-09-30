@@ -235,6 +235,37 @@
 .profile-resume-empty .profile-paste-details { padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 .profile-resume-workspace-footer { display: grid; gap: 10px; padding-top: 13px; border-top: 1px solid var(--color-border, #e4e2ef); }
 .profile-resume-workspace-footer .profile-data-note { margin: 0; }
+
+.profile-source-paste { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--color-border, #e4e2ef); border-radius: 12px; background: #faf9ff; }
+.profile-source-paste > input, .profile-source-paste > textarea, .profile-source-title-editor input { box-sizing: border-box; width: 100%; border: 1px solid var(--color-border, #e4e2ef); border-radius: 9px; background: #fff; color: var(--color-text, #222338); font: inherit; }
+.profile-source-paste > input, .profile-source-title-editor input { min-height: 40px; padding: 0 12px; }
+.profile-source-paste > textarea { min-height: 160px; padding: 12px; resize: vertical; line-height: 1.65; }
+.profile-source-paste > footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.profile-source-list { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
+.profile-source-list > li { display: grid; grid-template-columns: auto minmax(180px, 1fr) auto; align-items: center; gap: 12px; padding: 13px 14px; border: 1px solid var(--color-border, #e4e2ef); border-radius: 11px; background: #fff; transition: border-color .16s ease, opacity .16s ease; }
+.profile-source-list > li:hover { border-color: #c9c4ed; }
+.profile-source-list > li.is-disabled { opacity: .58; background: #fafafa; }
+.profile-source-icon { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 9px; color: var(--color-brand-strong, #4e42ba); background: var(--color-brand-soft, #eeecff); }
+.profile-source-main { display: grid; min-width: 0; gap: 4px; }
+.profile-source-main > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.profile-source-main > span { overflow: hidden; color: var(--color-text-muted, #84859a); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.profile-source-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
+.profile-source-actions button, .profile-source-actions label, .profile-source-title-editor button, .profile-source-preview button { display: inline-flex; align-items: center; gap: 4px; min-height: 30px; padding: 0 8px; border: 1px solid var(--color-border, #e4e2ef); border-radius: 8px; color: var(--color-text-secondary, #50516a); background: #fff; font: inherit; font-size: 11px; cursor: pointer; }
+.profile-source-actions label { cursor: default; }
+.profile-source-actions .is-danger { color: #a63b45; }
+.profile-source-title-editor { display: flex; align-items: center; gap: 6px; }
+.profile-source-preview { display: grid; gap: 12px; padding: 20px; border: 1px solid var(--color-border, #e4e2ef); border-radius: 14px; background: #fff; box-shadow: var(--shadow-sm); }
+.profile-source-preview > header { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.profile-source-preview > header > div { display: grid; gap: 3px; }
+.profile-source-preview > header span { color: var(--color-text-muted, #84859a); font-size: 11px; }
+.profile-source-preview pre { overflow: auto; max-height: 440px; margin: 0; padding: 16px; border-radius: 10px; background: #f8f8fb; color: var(--color-text, #222338); font: inherit; font-size: 13px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
+.profile-source-content-editor { display: grid; gap: 8px; color: var(--color-text-secondary, #50516a); font-size: 12px; }
+.profile-source-content-editor textarea { box-sizing: border-box; width: 100%; min-height: 280px; padding: 16px; border: 1px solid var(--color-border, #e4e2ef); border-radius: 10px; background: #fff; color: var(--color-text, #222338); font: inherit; font-size: 13px; line-height: 1.75; resize: vertical; }
+.profile-source-original-note { color: var(--color-text-muted, #84859a); font-size: 11px; }
+.profile-source-preview-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.profile-inline-save { display: flex; justify-content: flex-end; margin-top: 12px; }
+.profile-local-security { display: flex; align-items: center; gap: 6px; margin: 2px 2px 0; color: var(--color-text-muted, #84859a); font-size: 11px; }
+.profile-resume-trigger input { display: none; }
 .profile-organized-card {
   display: grid;
   gap: 16px;
@@ -283,6 +314,12 @@
 
 @media (max-width: 880px) { .profile-editing-grid { grid-template-columns: 1fr; }.profile-editing-grid .profile-resume-editor > textarea { min-height: 300px; } }
 @media (max-width: 760px) { .profile-page-heading { display: grid; }.profile-heading-actions { padding-top: 0; }.profile-library-index { grid-template-columns: 1fr; }.profile-organized-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }.profile-organized-tags { grid-column: 1 / -1; justify-content: flex-start; }.profile-review-queue > header, .profile-review-queue li { flex-direction: column; }.profile-review-actions { width: 100%; }.profile-review-actions button { flex: 1; }.profile-foundation-grid { grid-template-columns: 1fr; }.profile-linear-layout .profile-foundation-form { grid-template-columns: 1fr; }.profile-linear-layout .profile-foundation-form label.wide-field { grid-column: auto; }.profile-resume-workspace-heading, .profile-resume-import, .profile-resume-editor > header { align-items: flex-start; flex-direction: column; }.profile-resume-heading-actions { padding-top: 0; }.profile-resume-import { gap: 10px; }.profile-resume-import .profile-resume-action, .profile-resume-view-switch { width: 100%; box-sizing: border-box; }.profile-resume-editor > header { gap: 10px; }.profile-resume-editor > footer { align-items: flex-start; flex-direction: column; }.profile-resume-workspace .profile-resume-editor > textarea { min-height: 280px; }.profile-save-bar.profile-simplified-save { display: grid; gap: 10px; padding: 12px; }.profile-save-bar.profile-simplified-save .primary-button { width: 100%; justify-content: center; } }
+
+@media (max-width: 900px) {
+  .profile-source-list > li { grid-template-columns: auto minmax(0, 1fr); }
+  .profile-source-actions { grid-column: 1 / -1; justify-content: flex-start; flex-wrap: wrap; padding-left: 46px; }
+  .profile-source-paste > footer { align-items: flex-start; flex-direction: column; }
+}
 
 /* Responsive profile workspace: desktop, tablet, and narrow mobile. */
 @media (max-width: 1024px) {

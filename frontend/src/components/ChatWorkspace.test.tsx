@@ -60,9 +60,14 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
   latestAgent?: AgentRunResult;
   webSearchAvailable?: boolean;
   retryDraft?: ChatRetryDraft | null;
+  modelChecking?: boolean;
+  modelUnavailable?: string;
 } = {}) {
   const props = {
     density: extras.density,
+    modelChecking: extras.modelChecking,
+    modelUnavailable: extras.modelUnavailable,
+    onOpenModelSettings: vi.fn(),
     conversationTitle: conversation.title,
     messages,
     hiddenMessageCount: 0,
@@ -111,6 +116,19 @@ describe("ChatWorkspace", () => {
   });
 
   afterEach(cleanup);
+
+  it("offers model settings when service is unavailable", () => {
+    const props = renderChat([], { modelUnavailable: "模型连接失败" });
+    expect(screen.getByRole("alert")).toHaveTextContent("模型连接失败");
+    fireEvent.click(screen.getByRole("button", { name: "去设置模型" }));
+    expect(props.onOpenModelSettings).toHaveBeenCalledOnce();
+    expect(props.onSend).not.toHaveBeenCalled();
+  });
+
+  it("announces the pre-send model check", () => {
+    renderChat([], { modelChecking: true, chatBusy: true });
+    expect(screen.getByText("正在检查模型服务…")).toBeInTheDocument();
+  });
 
   it("keeps conversation actions without a second route heading", () => {
     renderChat();

@@ -93,7 +93,7 @@ export function SettingsOverview({
           <span className="settings-entry-copy">
             <span className="settings-entry-title"><strong>资料库</strong>{profileReadyBadge(profileReady)}</span>
             <span className="settings-entry-primary">{profile.name || "尚未填写称呼"}</span>
-            <span className="settings-entry-meta"><FileText size={13} />{profile.resumeFilename || (profile.resumeText ? "已粘贴简历文本" : "尚未保存简历")}</span>
+            <span className="settings-entry-meta"><FileText size={13} />{profile.resumeFilename || (profile.resumeText ? "已粘贴资料文本" : "尚未保存资料")}</span>
             <span className="settings-entry-meta"><ShieldCheck size={13} />{profile.privacyMode === "original" ? "允许使用原文" : "脱敏模式"}</span>
           </span>
           <ChevronRight size={19} />

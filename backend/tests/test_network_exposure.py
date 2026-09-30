@@ -13,10 +13,8 @@ def isolated_database(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "exposure.db")
     db.init_db()
     get_settings.cache_clear()
-    auth._login_failures.clear()
     yield
     get_settings.cache_clear()
-    auth._login_failures.clear()
 
 
 def test_defaults_stay_on_loopback_with_docs_open(monkeypatch) -> None:
@@ -70,36 +68,33 @@ def test_explicit_allowed_origins_are_honoured(monkeypatch) -> None:
 
 def test_login_locks_out_after_repeated_failures(monkeypatch) -> None:
     monkeypatch.setenv("LOGIN_MAX_ATTEMPTS", "3")
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
-    captcha = auth.create_captcha()
-    auth.create_initial_user("owner@example.com", "a-long-test-password", captcha["captcha_id"], "AAAAA")
+    auth.create_initial_user("owner@example.com", "a-long-test-password")
 
     for _ in range(3):
-        captcha = auth.create_captcha()
         with pytest.raises(Exception) as failure:
-            auth.authenticate("owner@example.com", "wrong-password", captcha["captcha_id"], "AAAAA", client="192.168.1.9")
+            auth.authenticate("owner@example.com", "wrong-password", client="192.168.1.9")
         assert getattr(failure.value, "status_code", None) == 401
 
-    captcha = auth.create_captcha()
     with pytest.raises(Exception) as locked:
-        auth.authenticate("owner@example.com", "a-long-test-password", captcha["captcha_id"], "AAAAA", client="192.168.1.9")
+        auth.authenticate("owner@example.com", "a-long-test-password", client="192.168.1.9")
     assert getattr(locked.value, "status_code", None) == 429
+
+    with auth._connect_auth() as conn:
+        stored = conn.execute("SELECT failure_count, locked_until FROM auth_login_attempts").fetchone()
+    assert stored["failure_count"] == 3
+    assert stored["locked_until"] > 0
 
 
 def test_lockout_is_scoped_per_client(monkeypatch) -> None:
     monkeypatch.setenv("LOGIN_MAX_ATTEMPTS", "2")
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
-    captcha = auth.create_captcha()
-    auth.create_initial_user("owner@example.com", "a-long-test-password", captcha["captcha_id"], "AAAAA")
+    auth.create_initial_user("owner@example.com", "a-long-test-password")
 
     for _ in range(2):
-        captcha = auth.create_captcha()
         with pytest.raises(Exception):
-            auth.authenticate("owner@example.com", "wrong", captcha["captcha_id"], "AAAAA", client="192.168.1.9")
+            auth.authenticate("owner@example.com", "wrong", client="192.168.1.9")
 
-    captcha = auth.create_captcha()
     token = auth.authenticate(
-        "owner@example.com", "a-long-test-password", captcha["captcha_id"], "AAAAA", client="127.0.0.1"
+        "owner@example.com", "a-long-test-password", client="127.0.0.1"
     )
 
     assert auth.current_user(f"Bearer {token}")["email"] == "owner@example.com"
@@ -107,17 +102,18 @@ def test_lockout_is_scoped_per_client(monkeypatch) -> None:
 
 def test_successful_login_clears_failure_counter(monkeypatch) -> None:
     monkeypatch.setenv("LOGIN_MAX_ATTEMPTS", "3")
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
-    captcha = auth.create_captcha()
-    auth.create_initial_user("owner@example.com", "a-long-test-password", captcha["captcha_id"], "AAAAA")
+    auth.create_initial_user("owner@example.com", "a-long-test-password")
 
-    captcha = auth.create_captcha()
     with pytest.raises(Exception):
-        auth.authenticate("owner@example.com", "wrong", captcha["captcha_id"], "AAAAA", client="10.0.0.5")
-    captcha = auth.create_captcha()
-    auth.authenticate("owner@example.com", "a-long-test-password", captcha["captcha_id"], "AAAAA", client="10.0.0.5")
+        auth.authenticate("owner@example.com", "wrong", client="10.0.0.5")
+    auth.authenticate("owner@example.com", "a-long-test-password", client="10.0.0.5")
 
-    assert auth._throttle_key("owner@example.com", "10.0.0.5") not in auth._login_failures
+    with auth._connect_auth() as conn:
+        stored = conn.execute(
+            "SELECT 1 FROM auth_login_attempts WHERE throttle_key = ?",
+            (auth._throttle_key("owner@example.com", "10.0.0.5"),),
+        ).fetchone()
+    assert stored is None
 
 
 def test_loopback_detection_covers_ipv6() -> None:
@@ -128,7 +124,7 @@ def test_loopback_detection_covers_ipv6() -> None:
 def test_only_content_hashed_frontend_assets_receive_immutable_cache_policy() -> None:
     assert static_asset_cache_control("/assets/index-abc123.js") == "public, max-age=31536000, immutable"
     assert static_asset_cache_control("/") is None
-    assert static_asset_cache_control("/auth/captcha") is None
+    assert static_asset_cache_control("/auth/login") is None
 
 
 def test_public_brand_asset_path_bypasses_login() -> None:

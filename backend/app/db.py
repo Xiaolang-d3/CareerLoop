@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from contextlib import contextmanager
 from collections.abc import Callable, Iterator
@@ -9,10 +10,13 @@ from typing import Any, Iterable
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-DATA_DIR = ROOT_DIR / "data"
+# Desktop bundles are read-only after installation.  Let the launcher put all
+# mutable state in the operating system's per-user application-data directory,
+# while keeping the repository-local default for development and self-hosting.
+DATA_DIR = Path(os.getenv("CAREERLOOP_DATA_DIR", ROOT_DIR / "data")).expanduser()
 DB_PATH = DATA_DIR / "careerloop.db"
 LEGACY_DB_PATH = DATA_DIR / "bosscopilot.db"
-DB_SCHEMA_VERSION = 21
+DB_SCHEMA_VERSION = 22
 
 
 def adopt_legacy_database() -> None:
@@ -462,6 +466,7 @@ DROP TABLE IF EXISTS candidate_facts;
 """),
         (20, "model_protocol_metadata", _migrate_model_protocol_metadata),
         (21, "agent_execution_runs", _AGENT_EXECUTION_RUN_SCHEMA),
+        (22, "multi_source_library", _LIBRARY_SOURCES_SCHEMA),
     ]
     applied = {
         int(row["version"])
@@ -560,6 +565,13 @@ CREATE TABLE IF NOT EXISTS users (
     display_name TEXT NOT NULL DEFAULT '',
     avatar_relpath TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS auth_login_attempts (
+    throttle_key TEXT PRIMARY KEY,
+    failure_count INTEGER NOT NULL DEFAULT 0,
+    window_expires_at INTEGER NOT NULL DEFAULT 0,
+    locked_until INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """
 
@@ -1319,6 +1331,36 @@ CREATE TABLE IF NOT EXISTS candidate_sources (
     title TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+"""
+
+
+_LIBRARY_SOURCES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS library_sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_kind TEXT NOT NULL DEFAULT 'upload',
+    title TEXT NOT NULL,
+    original_filename TEXT NOT NULL DEFAULT '',
+    mime_type TEXT NOT NULL DEFAULT 'text/plain',
+    source_uri TEXT NOT NULL DEFAULT '',
+    stored_path TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL DEFAULT '',
+    redacted_content TEXT NOT NULL DEFAULT '',
+    privacy_mode TEXT NOT NULL DEFAULT 'redacted',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    parse_status TEXT NOT NULL DEFAULT 'ready',
+    content_hash TEXT NOT NULL,
+    character_count INTEGER NOT NULL DEFAULT 0,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (source_kind IN ('upload', 'paste', 'legacy')),
+    CHECK (privacy_mode IN ('redacted', 'original')),
+    CHECK (parse_status IN ('pending', 'ready', 'failed'))
+);
+CREATE INDEX IF NOT EXISTS idx_library_sources_enabled_updated
+    ON library_sources(enabled, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_library_sources_content_hash
+    ON library_sources(content_hash);
 """
 
 

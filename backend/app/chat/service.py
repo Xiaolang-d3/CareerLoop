@@ -51,32 +51,9 @@ def workflow_summary(status: dict[str, Any]) -> str:
 
 
 def is_workflow_status_query(content: str) -> bool:
-    text = " ".join(content.lower().split())
-    if any(
-        marker in text
-        for marker in (
-            "更新投递状态",
-            "记录已投递",
-            "记录已联系",
-            "记录面试",
-            "记录被拒",
-            "标记已投递",
-        )
-    ):
-        return False
-    return text in {"状态", "进度"} or any(
-        marker in text
-        for marker in (
-            "查看状态",
-            "查看当前状态",
-            "查看进度",
-            "查看当前进度",
-            "当前进度",
-            "任务进度",
-            "进行到哪",
-            "到哪了",
-        )
-    )
+    # Task status is handled by durable runs; generic messages must not surface
+    # the retired fixed career funnel.
+    return False
 
 
 def local_answer_result(
@@ -205,7 +182,7 @@ def attachment_context(
         if attachment["kind"] == "job_screenshot" and not wants_vision:
             raise HTTPException(
                 status_code=422,
-                detail=f"岗位截图“{attachment['original_filename']}”不会提取文本，请勾选“模型看图”后发送",
+                detail=f"图片材料“{attachment['original_filename']}”不会提取文本，请勾选“模型看图”后发送",
             )
         if wants_vision:
             try:
@@ -219,9 +196,9 @@ def attachment_context(
                     status_code=422,
                     detail=f"附件“{attachment['original_filename']}”没有可用文本",
                 )
-            blocks.append(f"[脱敏简历：{attachment['original_filename']}]\n{text}")
+            blocks.append(f"[脱敏资料：{attachment['original_filename']}]\n{text}")
         else:
-            blocks.append(f"[岗位截图：{attachment['original_filename']}，由模型直接查看]")
+            blocks.append(f"[图片材料：{attachment['original_filename']}，由模型直接查看]")
         summaries.append(
             {
                 "id": attachment["id"],

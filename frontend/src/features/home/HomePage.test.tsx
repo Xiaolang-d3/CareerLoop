@@ -59,7 +59,6 @@ function renderHome(overrides: Partial<ComponentProps<typeof HomePage>> = {}) {
     jobs: [] as JobProject[],
     jobsLoaded: true,
     onOpenAnalysis: vi.fn(),
-    onOpenResume: vi.fn(),
     onOpenInterview: vi.fn(),
     onOpenProfile: vi.fn(),
     onOpenJob: vi.fn(),
@@ -106,9 +105,9 @@ describe("home-metrics", () => {
       expect.objectContaining({
         id: 4,
         title: "接口性能提升 30%",
-        consequence: "确认后会把这条成果写入画像，并参与岗位评分",
+        consequence: "确认后会把这条成果写入已确认知识，用于问答与创作",
         source: "负责支付网关，接口性能提升 30%。",
-        sourceLabel: "简历原句"
+        sourceLabel: "材料原句"
       })
     ]);
     expect(profileCompleteness({
@@ -235,17 +234,16 @@ describe("HomePage", () => {
     renderHome();
 
     expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(/张三/);
-    expect(screen.getByText("当前资料方向：后端工程师 · 上海")).toBeInTheDocument();
+    expect(screen.queryByText("当前资料方向：后端工程师 · 上海")).not.toBeInTheDocument();
     expect(screen.getByLabelText("快捷操作")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /添加内容/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /向我提问/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /整理知识/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /生成内容/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /开始创作/ })).toBeInTheDocument();
     expect(screen.getByLabelText("我的知识概览")).toBeInTheDocument();
-    expect(screen.getByLabelText("最近添加")).toBeInTheDocument();
-    expect(screen.getByLabelText("最近对话")).toBeInTheDocument();
-    expect(screen.getByLabelText("正在进行的任务")).toBeInTheDocument();
-    expect(screen.getByLabelText("今日灵感")).toBeInTheDocument();
+    expect(screen.getByLabelText("待确认内容")).toBeInTheDocument();
+    expect(screen.getByLabelText("继续工作")).toBeInTheDocument();
+    expect(screen.queryByLabelText("今日寄语")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("今日灵感")).not.toBeInTheDocument();
     expect(screen.queryByText("岗位推进")).not.toBeInTheDocument();
     expect(screen.queryByText("机会中心")).not.toBeInTheDocument();
   });
@@ -266,12 +264,10 @@ describe("HomePage", () => {
       targetCity: "",
       resumeText: "",
       skills: "",
-      profileLoaded: false,
-      jobsLoaded: false,
-      jobs: []
+      profileLoaded: false
     });
     expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(/小林/);
-    expect(screen.getByText("资料读取后，这里会给出下一步。")).toBeInTheDocument();
+    expect(screen.getByText("集中保存资料，基于知识提问，再把想法写成内容。")).toBeInTheDocument();
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText("资料尚未读取").length).toBeGreaterThanOrEqual(1);
   });
@@ -287,10 +283,7 @@ describe("HomePage", () => {
       resumeFilename: "cv.pdf",
       skills: "Python，FastAPI",
       profileLoaded: true,
-      jobs: [] as JobProject[],
-      jobsLoaded: true,
       onOpenAnalysis: vi.fn(),
-      onOpenResume: vi.fn(),
       onOpenInterview: vi.fn(),
       onOpenProfile: vi.fn()
     };
@@ -312,39 +305,37 @@ describe("HomePage", () => {
     expect(screen.queryByLabelText("求职周报")).not.toBeInTheDocument();
   });
 
-  it("wires quick actions to library, chat, organize, and workspace", () => {
-    const props = renderHome({ onOpenOrganize: vi.fn() });
+  it("wires quick actions to the library and AI workspace", () => {
+    const props = renderHome();
     fireEvent.click(screen.getByRole("button", { name: /添加内容/ }));
     fireEvent.click(screen.getByRole("button", { name: /向我提问/ }));
-    fireEvent.click(screen.getByRole("button", { name: /整理知识/ }));
-    fireEvent.click(screen.getByRole("button", { name: /生成内容/ }));
+    fireEvent.click(screen.getByRole("button", { name: /开始创作/ }));
     expect(props.onOpenProfile).toHaveBeenCalled();
     expect(props.onOpenChat).toHaveBeenCalled();
-    expect(props.onOpenOrganize).toHaveBeenCalled();
-    expect(props.onOpenResume).toHaveBeenCalled();
+    expect(props.onOpenChat).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole("button", { name: /机会中心/ })).not.toBeInTheDocument();
   });
 
-  it("sends knowledge overview cards to library or workspace", () => {
-    const props = renderHome({ jobs: [sampleJob()] });
+  it("sends knowledge overview cards to the library", () => {
+    const props = renderHome();
     const snapshot = screen.getByLabelText("内容概览");
     fireEvent.click(within(snapshot).getByRole("button", { name: /知识条目/ }));
     fireEvent.click(within(snapshot).getByRole("button", { name: /文件/ }));
     expect(props.onOpenProfile).toHaveBeenCalled();
-    expect(props.onOpenResume).toHaveBeenCalled();
     expect(props.onOpenOpportunities).not.toHaveBeenCalled();
   });
 
-  it("lists recent chats and active tasks when present", () => {
+  it("lists recent chats and active tasks together as work to continue", () => {
     const props = renderHome({
       conversations: [
         sampleConversation(),
         sampleConversation({ id: 9, title: "整理本周笔记", task_status: "active", summary: "进行中" })
       ]
     });
-    expect(screen.getByLabelText("最近对话")).toHaveTextContent("对照字节后端");
-    expect(screen.getByLabelText("正在进行的任务")).toHaveTextContent("整理本周笔记");
-    fireEvent.click(within(screen.getByLabelText("正在进行的任务")).getByRole("button", { name: /整理本周笔记/ }));
+    const continueWork = screen.getByLabelText("继续工作");
+    expect(continueWork).toHaveTextContent("对照字节后端");
+    expect(continueWork).toHaveTextContent("整理本周笔记");
+    fireEvent.click(within(continueWork).getByRole("button", { name: /整理本周笔记/ }));
     expect(props.onOpenChat).toHaveBeenCalledWith(9);
   });
 });

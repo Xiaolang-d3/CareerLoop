@@ -116,6 +116,7 @@ export type ChatRetryDraft = {
   webSearch: boolean;
   webSearchMode: WebSearchMode;
   runId?: string;
+  rewindMessageId?: number;
   reason?: "send_failed" | "interrupted";
 };
 
@@ -181,6 +182,9 @@ const STARTER_PROMPTS: Array<{
 
 type ChatWorkspaceProps = {
   conversationTitle?: string;
+  modelChecking?: boolean;
+  modelUnavailable?: string | null;
+  onOpenModelSettings?: () => void;
   messages: ChatMessage[];
   hiddenMessageCount: number;
   chatBusy: boolean;
@@ -207,8 +211,8 @@ type ChatWorkspaceProps = {
   onAttachmentInvalid: (message: string) => void;
   onSuggestedAction: () => void;
   onCancelTask: () => void;
-  onSend: (content: string, attachmentIds?: string[], visionAttachmentIds?: string[], webSearch?: boolean, webSearchMode?: WebSearchMode) => Promise<void>;
-  onRetry?: (draft: ChatRetryDraft) => Promise<void>;
+  onSend: (content: string, attachmentIds?: string[], visionAttachmentIds?: string[], webSearch?: boolean, webSearchMode?: WebSearchMode) => Promise<void | boolean>;
+  onRetry?: (draft: ChatRetryDraft) => Promise<void | boolean>;
   onStop: () => Promise<void>;
   onEdit: (userMessageId: number, content: string) => Promise<void>;
   onRegenerate: (userMessageId: number) => Promise<void>;
@@ -572,6 +576,9 @@ const SYSTEM_THINKING_TOOLS = new Set([
 ]);
 const TOOL_ACTIVITY_LABELS: Record<string, string> = {
   search_public_web: "正在检索公开资料",
+  get_library_context: "正在读取知识库",
+  search_library: "正在检索资料",
+  propose_library_knowledge: "正在添加待确认知识",
   research_company: "正在检索公司资料",
   search_resume_evidence: "正在读取简历",
   get_candidate_context: "正在读取画像",
@@ -1487,6 +1494,15 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             </section>
           ) : null}
 
+          {props.modelChecking ? <div className="chat-retry-prompt" role="status">正在检查模型服务…</div> : null}
+          {props.modelUnavailable ? (
+            <section className="chat-retry-prompt" role="alert" aria-label="模型服务不可用">
+              <TriangleAlert size={14} />
+              <span>{props.modelUnavailable} 输入内容已保留。</span>
+              <button type="button" onClick={props.onOpenModelSettings}>去设置模型</button>
+              {props.retryDraft ? <details><summary>查看保留的内容</summary><p style={{ whiteSpace: "pre-wrap" }}>{props.retryDraft.content}</p></details> : null}
+            </section>
+          ) : null}
           {props.retryDraft && !props.chatBusy ? (
             <section
               className="chat-retry-prompt"
@@ -1735,6 +1751,8 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
           webSearchSelected,
           webSearchMode,
         );
+        // Failed sends keep content and attachment IDs in retryDraft; do not
+        // leave a second copy queued in the composer after a successful retry.
         setPendingAttachments([]);
         setVisionAttachmentIds([]);
         setWebSearchSelected(false);

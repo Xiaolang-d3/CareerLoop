@@ -23,7 +23,7 @@ import yaml
 from pydantic import BaseModel, Field, field_validator
 
 DOCUMENT_NAME = "career-profile.md"
-DEFAULT_PROFILE_NAME = "候选人"
+DEFAULT_PROFILE_NAME = "用户"
 
 # 每个小节分配一段 id 区间，行序号即区间内偏移。这样 id 由文档内容直接决定，
 # 不需要额外的计数器文件，手改文档后依然能算出同样的 id。
@@ -266,5 +266,4 @@ def update(
     """读-改-写。缺失时按默认值新建，便于写入路径直接调用。"""
     current = load(base_dir) or ProfileDocument()
     return save(current.model_copy(update=changes), base_dir)
-
 

@@ -12,17 +12,9 @@ def register_authenticated_client(
 ) -> TestClient:
     """Create a client through the same register/bootstrap flow used by the UI."""
     client = TestClient(app)
-    captcha_response = client.get("/auth/captcha")
-    captcha_response.raise_for_status()
-    captcha = captcha_response.json()
     response = client.post(
         endpoint,
-        json={
-            "email": email,
-            "password": password,
-            "captcha_id": captcha["captcha_id"],
-            "captcha_code": captcha["accessible_text"].replace(" ", ""),
-        },
+        json={"email": email, "password": password},
     )
     response.raise_for_status()
     client.headers["Authorization"] = f"Bearer {response.json()['access_token']}"

@@ -18,63 +18,36 @@ def isolated_auth_database(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
-def test_authentication_issues_and_validates_signed_token(monkeypatch) -> None:
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
-    captcha = auth.create_captcha()
-    auth.create_initial_user("owner@example.com", "a-long-test-password", captcha["captcha_id"], "AAAAA")
-    captcha = auth.create_captcha()
+def test_authentication_issues_and_validates_signed_token() -> None:
+    auth.create_initial_user("owner@example.com", "a-long-test-password")
 
-    token = auth.authenticate("OWNER@example.com", "a-long-test-password", captcha["captcha_id"], "AAAAA")
+    token = auth.authenticate("OWNER@example.com", "a-long-test-password")
 
     assert auth.current_user(f"Bearer {token}") == {"id": 1, "email": "owner@example.com"}
 
 
-def test_authentication_rejects_wrong_password(monkeypatch) -> None:
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
-    captcha = auth.create_captcha()
-    auth.create_initial_user("owner@example.com", "a-long-test-password", captcha["captcha_id"], "AAAAA")
-    captcha = auth.create_captcha()
+def test_authentication_rejects_wrong_password() -> None:
+    auth.create_initial_user("owner@example.com", "a-long-test-password")
     try:
-        auth.authenticate("owner@example.com", "wrong-password", captcha["captcha_id"], "AAAAA")
+        auth.authenticate("owner@example.com", "wrong-password")
     except Exception as exc:
         assert getattr(exc, "status_code", None) == 401
     else:
         raise AssertionError("wrong password must be rejected")
 
 
-def test_captcha_is_case_insensitive_and_one_time(monkeypatch) -> None:
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
-    captcha = auth.create_captcha()
-
-    assert auth.verify_captcha(captcha["captcha_id"], "aaaaa") is True
-    assert auth.verify_captcha(captcha["captcha_id"], "AAAAA") is False
-
-
-def test_captcha_payload_includes_its_svg(monkeypatch) -> None:
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
-
-    captcha = auth.create_captcha()
-
-    assert captcha["svg"].startswith("<svg")
-    assert captcha["svg"].count(">A</text>") == 5
-    assert captcha["accessible_text"] == "A A A A A"
-
-
-def test_auth_protects_business_routes(monkeypatch) -> None:
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
+def test_auth_protects_business_routes() -> None:
     client = TestClient(app)
 
     assert client.get("/jobs").status_code == 401
-    captcha = client.get("/auth/captcha").json()
     bootstrap = client.post(
         "/auth/bootstrap",
-        json={"email": "owner@example.com", "password": "a-long-test-password", "captcha_id": captcha["captcha_id"], "captcha_code": "AAAAA"},
+        json={"email": "owner@example.com", "password": "a-long-test-password"},
     )
     assert bootstrap.status_code == 200
-    captcha = client.get("/auth/captcha").json()
     login = client.post(
         "/auth/login",
-        json={"email": "owner@example.com", "password": "a-long-test-password", "captcha_id": captcha["captcha_id"], "captcha_code": "AAAAA"},
+        json={"email": "owner@example.com", "password": "a-long-test-password"},
     )
 
     assert login.status_code == 200
@@ -84,75 +57,42 @@ def test_auth_protects_business_routes(monkeypatch) -> None:
     ).json() == {"user": {"id": 1, "email": "owner@example.com", "display_name": "", "has_avatar": False}}
 
 
-def test_register_creates_a_second_user(monkeypatch) -> None:
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
+def test_register_creates_a_second_user() -> None:
     client = TestClient(app)
-    first = client.get("/auth/captcha").json()
     assert client.post(
         "/auth/register",
-        json={
-            "email": "owner@example.com",
-            "password": "a-long-test-password",
-            "captcha_id": first["captcha_id"],
-            "captcha_code": "AAAAA",
-        },
+        json={"email": "owner@example.com", "password": "a-long-test-password"},
     ).status_code == 200
-    second = client.get("/auth/captcha").json()
     created = client.post(
         "/auth/register",
-        json={
-            "email": "second@example.com",
-            "password": "another-long-password",
-            "captcha_id": second["captcha_id"],
-            "captcha_code": "AAAAA",
-        },
+        json={"email": "second@example.com", "password": "another-long-password"},
     )
     assert created.status_code == 200
     assert created.json()["user"] == {"id": 2, "email": "second@example.com", "display_name": "", "has_avatar": False}
 
 
-def test_register_rejects_duplicate_email(monkeypatch) -> None:
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
+def test_register_rejects_duplicate_email() -> None:
     client = TestClient(app)
-    first = client.get("/auth/captcha").json()
     client.post(
         "/auth/register",
-        json={
-            "email": "owner@example.com",
-            "password": "a-long-test-password",
-            "captcha_id": first["captcha_id"],
-            "captcha_code": "AAAAA",
-        },
+        json={"email": "owner@example.com", "password": "a-long-test-password"},
     ).raise_for_status()
-    second = client.get("/auth/captcha").json()
     conflict = client.post(
         "/auth/register",
-        json={
-            "email": "OWNER@example.com",
-            "password": "another-long-password",
-            "captcha_id": second["captcha_id"],
-            "captcha_code": "AAAAA",
-        },
+        json={"email": "OWNER@example.com", "password": "another-long-password"},
     )
     assert conflict.status_code == 409
     assert "已注册" in conflict.json()["detail"]
 
 
-def test_auth_config_stays_open_after_first_user(monkeypatch) -> None:
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
+def test_auth_config_stays_open_after_first_user() -> None:
     client = TestClient(app)
     empty = client.get("/auth/config").json()
     assert empty["setup_required"] is True
     assert empty["registration_open"] is True
-    captcha = client.get("/auth/captcha").json()
     client.post(
         "/auth/register",
-        json={
-            "email": "owner@example.com",
-            "password": "a-long-test-password",
-            "captcha_id": captcha["captcha_id"],
-            "captcha_code": "AAAAA",
-        },
+        json={"email": "owner@example.com", "password": "a-long-test-password"},
     ).raise_for_status()
     filled = client.get("/auth/config").json()
     assert filled["setup_required"] is False
@@ -160,22 +100,15 @@ def test_auth_config_stays_open_after_first_user(monkeypatch) -> None:
 
 
 def _register(client: TestClient, email: str = "owner@example.com", password: str = "a-long-test-password") -> str:
-    captcha = client.get("/auth/captcha").json()
     created = client.post(
         "/auth/register",
-        json={
-            "email": email,
-            "password": password,
-            "captcha_id": captcha["captcha_id"],
-            "captcha_code": "AAAAA",
-        },
+        json={"email": email, "password": password},
     )
     created.raise_for_status()
     return created.json()["access_token"]
 
 
-def test_account_nickname_follows_the_signed_in_user(monkeypatch) -> None:
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
+def test_account_nickname_follows_the_signed_in_user() -> None:
     client = TestClient(app)
     token = _register(client)
     headers = {"Authorization": f"Bearer {token}"}
@@ -194,8 +127,7 @@ def test_account_nickname_follows_the_signed_in_user(monkeypatch) -> None:
     assert too_long.status_code == 422
 
 
-def test_account_password_change_issues_a_new_token(monkeypatch) -> None:
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
+def test_account_password_change_issues_a_new_token() -> None:
     client = TestClient(app)
     old_token = _register(client)
     old_headers = {"Authorization": f"Bearer {old_token}"}
@@ -225,25 +157,18 @@ def test_account_password_change_issues_a_new_token(monkeypatch) -> None:
     assert client.get("/auth/me", headers=old_headers).status_code == 401
     assert client.get("/auth/me", headers={"Authorization": f"Bearer {new_token}"}).json()["user"]["email"] == "owner@example.com"
 
-    captcha = client.get("/auth/captcha").json()
     login = client.post(
         "/auth/login",
-        json={
-            "email": "owner@example.com",
-            "password": "brand-new-password",
-            "captcha_id": captcha["captcha_id"],
-            "captcha_code": "AAAAA",
-        },
+        json={"email": "owner@example.com", "password": "brand-new-password"},
     )
     assert login.status_code == 200
 
 
-def test_account_avatar_is_private_to_the_signed_in_user(monkeypatch) -> None:
+def test_account_avatar_is_private_to_the_signed_in_user() -> None:
     from io import BytesIO
 
     from PIL import Image
 
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
     client = TestClient(app)
     token = _register(client)
     headers = {"Authorization": f"Bearer {token}"}

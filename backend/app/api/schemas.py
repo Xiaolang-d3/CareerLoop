@@ -12,8 +12,6 @@ class PrivacyScanIn(BaseModel):
 class LoginIn(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=8, max_length=500)
-    captcha_id: str = Field(min_length=10, max_length=100)
-    captcha_code: str = Field(min_length=5, max_length=12)
 
 
 class AccountUpdateIn(BaseModel):
@@ -227,7 +225,7 @@ class ModelCapabilitiesIn(BaseModel):
 
 # CareerLoop 2.0 career operating system
 class CareerProfileInitIn(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
+    name: str = Field(default="", max_length=100)
     locale: str = Field(default="zh-CN", max_length=20)
     privacy_mode: Literal["redacted", "original"] = "redacted"
 
@@ -248,6 +246,20 @@ class CandidateSourceIn(BaseModel):
 class CandidateSourceAccessIn(BaseModel):
     allow_model_original: bool
     privacy_mode: Literal["redacted", "original"] | None = None
+
+
+class LibrarySourceIn(BaseModel):
+    title: str = Field(default="", max_length=255)
+    content: str = Field(min_length=1, max_length=200_000)
+    source_uri: str = Field(default="", max_length=2_000)
+    privacy_mode: Literal["redacted", "original"] = "redacted"
+
+
+class LibrarySourceUpdateIn(BaseModel):
+    title: str | None = Field(default=None, max_length=255)
+    content: str | None = Field(default=None, max_length=200_000)
+    privacy_mode: Literal["redacted", "original"] | None = None
+    enabled: bool | None = None
 
 
 class CandidateFactIn(BaseModel):

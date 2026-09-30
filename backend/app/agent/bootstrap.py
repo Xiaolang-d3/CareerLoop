@@ -6,29 +6,8 @@ from .settings import get_model_connection
 from ..config import get_settings
 from ..models import ModelProviderRegistry, build_model_provider
 from ..model_protocol import protocol_requires_api_key
-from ..tools import (
-    AnalyzeResumeAgainstJdTool,
-    AskUserTool,
-    GenerateInterviewAdviceTool,
-    GenerateTailoredResumeContentTool,
-    SearchResumeEvidenceTool,
-    ResearchCompanyTool,
-    SearchPublicWebTool,
-    AnalyzeJobAgainstStrategyTool,
-    CompareJobEvaluationsTool,
-    CreateJobEvaluationTool,
-    GenerateCandidateMaterialTool,
-    GetCandidateContextTool,
-    GetJobEvaluationTool,
-    ProposeCandidateKnowledgeTool,
-    RecordInterviewDebriefTool,
-    ReviewJobEvaluationTool,
-    SearchCandidateEvidenceTool,
-    StartProfileInterviewTool,
-    RecordProfileInterviewAnswerTool,
-    PauseProfileInterviewTool,
-    ToolRegistry,
-)
+from ..tools import AskUserTool, SearchPublicWebTool, ToolRegistry
+from ..tools.library import GetLibraryContextTool, SearchLibraryTool, ProposeLibraryKnowledgeTool
 from .runtime import AgentRuntime
 from .run_store import AgentRunStore
 from ..workspace import current_user_id
@@ -59,28 +38,11 @@ def _model_is_configured(model_connection: dict[str, Any]) -> bool:
 
 def _build_tool_registry(settings: Any) -> ToolRegistry:
     tools = ToolRegistry()
-    tools.register_handler(AnalyzeResumeAgainstJdTool())
     tools.register_handler(AskUserTool())
-    tools.register_handler(SearchResumeEvidenceTool())
-    tools.register_handler(GenerateTailoredResumeContentTool())
-    tools.register_handler(GenerateInterviewAdviceTool())
-    # Always expose the read-only definitions so the chat switch can produce a
-    # clear configuration error instead of silently falling back to offline chat.
-    tools.register_handler(ResearchCompanyTool(settings=settings))
     tools.register_handler(SearchPublicWebTool(settings=settings))
-    tools.register_handler(GetCandidateContextTool())
-    tools.register_handler(SearchCandidateEvidenceTool())
-    tools.register_handler(ProposeCandidateKnowledgeTool())
-    tools.register_handler(StartProfileInterviewTool())
-    tools.register_handler(RecordProfileInterviewAnswerTool())
-    tools.register_handler(PauseProfileInterviewTool())
-    tools.register_handler(AnalyzeJobAgainstStrategyTool())
-    tools.register_handler(GenerateCandidateMaterialTool())
-    tools.register_handler(RecordInterviewDebriefTool())
-    tools.register_handler(CreateJobEvaluationTool())
-    tools.register_handler(GetJobEvaluationTool())
-    tools.register_handler(ReviewJobEvaluationTool())
-    tools.register_handler(CompareJobEvaluationsTool())
+    tools.register_handler(GetLibraryContextTool())
+    tools.register_handler(SearchLibraryTool())
+    tools.register_handler(ProposeLibraryKnowledgeTool())
     return tools
 
 

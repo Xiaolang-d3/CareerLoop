@@ -14,7 +14,7 @@ class ResumeParserTest(unittest.TestCase):
         text = parse_resume("resume.txt", "张三\nPython 开发工程师\n五年后端开发经验".encode())
         self.assertIn("Python 开发工程师", text)
 
-    def test_parse_response_includes_profile_fill_suggestions(self) -> None:
+    def test_parse_response_does_not_infer_retired_career_fields(self) -> None:
         result = parse_candidate_resume(
             "resume.txt",
             "姓名：张三\n求职意向：后端工程师\n期望城市：上海\n技能：Python、Docker".encode(),
@@ -22,11 +22,11 @@ class ResumeParserTest(unittest.TestCase):
         )
 
         self.assertEqual(result["suggested_profile"]["name"], "")
-        self.assertEqual(result["suggested_profile"]["target_roles"], ["后端工程师"])
-        self.assertEqual(result["suggested_profile"]["target_cities"], ["上海"])
-        self.assertGreaterEqual(set(result["suggested_profile"]["skills"]), {"Python", "Docker"})
+        self.assertEqual(result["suggested_profile"]["target_roles"], [])
+        self.assertEqual(result["suggested_profile"]["target_cities"], [])
+        self.assertEqual(result["suggested_profile"]["skills"], [])
 
-    def test_parse_response_drops_contact_details_before_returning_text(self) -> None:
+    def test_parse_response_preserves_original_and_returns_separate_redacted_text(self) -> None:
         result = parse_candidate_resume(
             "resume.txt",
             (
@@ -40,11 +40,12 @@ class ResumeParserTest(unittest.TestCase):
 
         self.assertIn("求职方向：AI 应用研发", result["text"])
         self.assertIn("技能：Python", result["text"])
-        self.assertNotIn("李明", result["text"])
-        self.assertNotIn("13812345678", result["text"])
-        self.assertNotIn("candidate@example.com", result["text"])
-        self.assertNotIn("已隐藏", result["text"])
-        self.assertEqual(result["redacted_text"], result["text"])
+        self.assertIn("李明", result["text"])
+        self.assertIn("13812345678", result["text"])
+        self.assertIn("candidate@example.com", result["text"])
+        self.assertNotIn("13812345678", result["redacted_text"])
+        self.assertNotIn("candidate@example.com", result["redacted_text"])
+        self.assertIn("已隐藏", result["redacted_text"])
 
     def test_parses_docx_paragraphs_and_tables(self) -> None:
         document = Document()

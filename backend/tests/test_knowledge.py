@@ -48,7 +48,7 @@ class ResumeKnowledgeWiringTest(unittest.TestCase):
             self.assertEqual(results[0]["source_id"], str(PROFILE_ID))
             self.assertIn("FastAPI", results[0]["content"])
 
-    def test_structured_resume_indexes_stable_block_ids(self) -> None:
+    def test_documents_are_indexed_without_career_classification(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             db_path = Path(directory) / "profile.db"
             init_db(db_path)
@@ -62,8 +62,8 @@ class ResumeKnowledgeWiringTest(unittest.TestCase):
             results = search_knowledge("FastAPI", ["resume"], 3, db_path)
             self.assertTrue(results)
             metadata = results[0].get("metadata") or {}
-            self.assertTrue(str(metadata.get("block_id") or "").startswith("project-"))
-            self.assertEqual(metadata.get("kind"), "project")
+            self.assertNotIn("block_id", metadata)
+            self.assertNotIn("kind", metadata)
 
     def test_indexed_resume_text_is_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

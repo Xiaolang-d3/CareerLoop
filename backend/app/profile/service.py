@@ -25,18 +25,18 @@ def parse_candidate_resume(
         text = parsed.text
         parser = parsed.parser
         warnings = parsed.warnings
-    findings, safe_text = strip_resume_personal_info(text)
+    findings, redacted_text = scan_and_redact(text)
     return {
         "filename": filename[:255],
-        "text": safe_text,
-        "redacted_text": safe_text,
+        "text": text,
+        "redacted_text": redacted_text,
         "privacy_findings": findings,
-        "suggested_skills": extract_skill_tags(safe_text),
-        "suggested_profile": suggest_profile_fields(safe_text),
-        "character_count": len(safe_text),
+        "suggested_skills": [],
+        "suggested_profile": {"name": "", "target_roles": [], "target_cities": [], "skills": []},
+        "character_count": len(text),
         "parser": parser,
         "warnings": warnings,
-        "notice": "仅完成本地文本提取；姓名、联系方式和证件信息已移除，确认保存前不会写入人物画像。",
+        "notice": "仅完成本地文本提取；原文保留，默认仅向模型提供脱敏文本。保存前不会写入知识库。",
     }
 
 

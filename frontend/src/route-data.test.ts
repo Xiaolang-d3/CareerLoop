@@ -2,11 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import { createRouteDataCache, requiredDataForRoute } from "./route-data";
 
 describe("requiredDataForRoute", () => {
-  it("loads and shares the preparation data for its three sub-pages", () => {
-    expect(requiredDataForRoute({ section: "interview-prep", page: "projects" })).toEqual(["interviewPreparation"]);
-    expect(requiredDataForRoute({ section: "interview-prep", page: "knowledge" })).toEqual(["interviewPreparation"]);
-  });
-
   it("loads only the data needed when a route is opened", () => {
     expect(requiredDataForRoute({ section: "chat" })).toEqual([
       "conversations",
@@ -36,20 +31,6 @@ describe("requiredDataForRoute", () => {
     ]);
     expect(requiredDataForRoute({ section: "dashboard" })).toEqual([
       "candidateProfile",
-      "conversations",
-      "capabilities",
-      "attachmentConfig"
-    ]);
-    expect(requiredDataForRoute({ section: "project-lab" })).toEqual([]);
-    expect(requiredDataForRoute({ section: "placeholder", page: "organize" })).toEqual([
-      "conversations",
-      "capabilities",
-      "attachmentConfig"
-    ]);
-    expect(requiredDataForRoute({ section: "workbench", page: "index" })).toEqual([
-      "jobs",
-      "candidateProfile",
-      "workflow",
       "conversations",
       "capabilities",
       "attachmentConfig"

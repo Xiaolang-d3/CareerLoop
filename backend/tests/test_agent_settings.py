@@ -2,21 +2,44 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import os
 from pathlib import Path
 
-from app.agent.settings import get_agent_settings, persona_prompt, save_agent_settings
+from app.agent.settings import get_agent_settings, get_model_connection, persona_prompt, save_agent_settings
 from app.chat.conversations import create_conversation, ensure_active_task, reset_conversation_context
 from app.db import connect, init_db
+from app.secret_store import _MEMORY_SECRETS
 
 
 class AgentSettingsTest(unittest.TestCase):
     def setUp(self) -> None:
         self._temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self._temp_dir.name) / "test.db"
+        os.environ["CAREERLOOP_SECRET_BACKEND"] = "memory"
+        _MEMORY_SECRETS.clear()
         init_db(self.db_path)
 
     def tearDown(self) -> None:
+        os.environ.pop("CAREERLOOP_SECRET_BACKEND", None)
+        _MEMORY_SECRETS.clear()
         self._temp_dir.cleanup()
+
+    def test_model_api_key_uses_secret_store_instead_of_sqlite(self) -> None:
+        settings = get_agent_settings(self.db_path)
+        settings["api_key"] = "test-secret-not-for-network"
+
+        saved = save_agent_settings(settings, self.db_path)
+
+        with connect(self.db_path) as conn:
+            stored = conn.execute(
+                "SELECT model_api_key FROM agent_settings WHERE id = 1"
+            ).fetchone()["model_api_key"]
+        self.assertEqual(stored, "")
+        self.assertTrue(saved["api_key_configured"])
+        self.assertEqual(
+            get_model_connection(self.db_path)["api_key"],
+            "test-secret-not-for-network",
+        )
 
     def test_persona_and_memory_settings_are_persisted(self) -> None:
         settings = get_agent_settings(self.db_path)

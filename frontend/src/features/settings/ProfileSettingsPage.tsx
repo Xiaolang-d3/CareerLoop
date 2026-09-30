@@ -1,234 +1,202 @@
 import {
-  ArrowLeft,
-  FileText,
-  Layers3,
-  LoaderCircle,
-  Save,
-  ShieldCheck,
-  Trash2,
-  Upload,
-  UserRound,
-  WandSparkles
+  Eye, FileText, Layers3, LoaderCircle, Pencil, Save,
+  ShieldCheck, Trash2, Upload, UserRound
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { CandidateEditor, ResumeProfileSuggestion } from "../../types";
+import { useEffect, useRef, useState } from "react";
+import type { CandidateEditor, LibrarySource, LibrarySourceDetail } from "../../types";
 import { ActionButton } from "../../components/ui/ActionButton";
-import { HOME_INBOX_LIMIT, homeInboxItems, homeSkillTags, type HomePendingFact } from "../home/home-metrics";
-import { parseResumePreview, skillTags } from "./resume-preview";
+import { HOME_INBOX_LIMIT, homeInboxItems, type HomePendingFact } from "../home/home-metrics";
 
-type PrivacyFinding = { entity_type: string; preview: string };
 const EMPTY_PENDING_FACTS: HomePendingFact[] = [];
 
-function editorSnapshot(editor: CandidateEditor) {
-  return JSON.stringify({
-    name: editor.name,
-    targetRole: editor.targetRole,
-    targetCity: editor.targetCity,
-    salaryMin: editor.salaryMin,
-    salaryMax: editor.salaryMax,
-    skills: editor.skills,
-    industries: editor.industries,
-    blockedKeywords: editor.blockedKeywords,
-    blockedCompanies: editor.blockedCompanies,
-    resumeText: editor.resumeText,
-    resumeFilename: editor.resumeFilename,
-    privacyMode: editor.privacyMode,
-  });
-}
-
 type Props = {
-  apiBase: string;
   editor: CandidateEditor;
+  sources: LibrarySource[];
   busy: boolean;
-  resumeBusy: boolean;
+  sourceBusy: boolean;
   enhancedParse: boolean;
-  privacyFindings: PrivacyFinding[];
-  suggestion: ResumeProfileSuggestion | null;
   pendingFacts?: HomePendingFact[];
-  returnToWorkbench: boolean;
   onChange: (editor: CandidateEditor) => void;
   onEnhancedParseChange: (enabled: boolean) => void;
-  onParseFiles: (files: File[]) => void;
-  onScanPrivacy: () => void;
-  onFillSuggestion: () => void;
+  onImportFiles: (files: File[]) => void | Promise<void>;
+  onCreateText: (title: string, content: string, privacyMode: "redacted" | "original") => void | Promise<void>;
+  onLoadSource: (sourceId: number) => Promise<LibrarySourceDetail>;
+  onUpdateSource: (sourceId: number, changes: Partial<Pick<LibrarySource, "title" | "privacy_mode" | "enabled">> & { content?: string }) => void | Promise<void>;
+  onDownloadSource: (source: LibrarySourceDetail) => void | Promise<void>;
+  onDeleteSource: (sourceId: number) => void | Promise<void>;
   onReviewFact?: (factId: number, action: "confirm" | "reject") => void | Promise<void>;
-  onCareerChange: () => void | Promise<void>;
-  onClearResume: () => void;
-  onSave: () => void | Promise<void>;
-  onReturnToWorkbench: () => void;
+  onSave: () => void | boolean | Promise<void | boolean>;
 };
 
-function ResumePreview({ editor }: { editor: CandidateEditor }) {
-  return <article className="profile-resume-preview" aria-label="材料预览">
-    <header><strong>{editor.resumeFilename || "文本材料"}</strong><span> · {editor.resumeText.length.toLocaleString()} 字</span></header>
-    <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.8 }}>{editor.resumeText}</div>
-  </article>;
-}
-
 export function ProfileSettingsPage({
-  editor,
-  busy,
-  resumeBusy,
-  enhancedParse,
-  privacyFindings,
-  suggestion,
-  pendingFacts = EMPTY_PENDING_FACTS,
-  returnToWorkbench,
-  onChange,
-  onEnhancedParseChange,
-  onParseFiles,
-  onScanPrivacy,
-  onFillSuggestion,
-  onReviewFact,
-  onClearResume,
-  onSave,
-  onReturnToWorkbench
+  editor, sources, busy, sourceBusy, enhancedParse, pendingFacts = EMPTY_PENDING_FACTS,
+  onChange, onEnhancedParseChange, onImportFiles, onCreateText,
+  onLoadSource, onUpdateSource, onDownloadSource, onDeleteSource, onReviewFact, onSave
 }: Props) {
-  const ready = Boolean(editor.name.trim());
-  const hasResume = Boolean(editor.resumeText.trim());
-  const [showResumeImport, setShowResumeImport] = useState(!hasResume);
-  const [resumeView, setResumeView] = useState<"preview" | "edit">("preview");
-  const [isEdited, setIsEdited] = useState(false);
+  const [nameDirty, setNameDirty] = useState(false);
+  const [operationError, setOperationError] = useState("");
+  const [operationBusy, setOperationBusy] = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteTitle, setPasteTitle] = useState("");
+  const [pasteContent, setPasteContent] = useState("");
+  const [pastePrivacy, setPastePrivacy] = useState<"redacted" | "original">("redacted");
+  const [selectedSource, setSelectedSource] = useState<LibrarySourceDetail | null>(null);
+  const [contentDraft, setContentDraft] = useState<string | null>(null);
+  const [editingTitleId, setEditingTitleId] = useState<number | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
   const [reviewFacts, setReviewFacts] = useState(pendingFacts);
-  const [reviewingFactId, setReviewingFactId] = useState<number | null>(null);
   const [reviewExpanded, setReviewExpanded] = useState(false);
-  const savedEditor = useRef(editorSnapshot(editor));
-  const resumeSections = useMemo(() => parseResumePreview(editor.resumeText), [editor.resumeText]);
-  const organizedItemCount = resumeSections.reduce((total, section) => total + section.entries.length, 0);
-  const organizedSkills = useMemo(() => resumeSections
-    .filter((section) => section.kind === "skills")
-    .flatMap((section) => skillTags(section.entries))
-    .slice(0, 8), [resumeSections]);
-  const reviewableFacts = useMemo(() => homeInboxItems(reviewFacts, {
-    resumeText: editor.resumeText,
-    knownSkills: homeSkillTags(editor.skills)
-  }), [editor.resumeText, editor.skills, reviewFacts]);
-  const visibleReviewFacts = reviewExpanded ? reviewableFacts : reviewableFacts.slice(0, HOME_INBOX_LIMIT);
-  const hiddenReviewCount = Math.max(0, reviewableFacts.length - visibleReviewFacts.length);
-  const hasUnsavedChanges = isEdited || savedEditor.current !== editorSnapshot(editor);
-
-  function scrollToSection(id: string) {
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-
-  async function reviewFact(factId: number, action: "confirm" | "reject") {
-    setReviewingFactId(factId);
-    try {
-      await onReviewFact?.(factId, action);
-      setReviewFacts((current) => current.filter((item) => item.id !== factId));
-    } finally {
-      setReviewingFactId(null);
-    }
-  }
-
-  useEffect(() => {
-    setShowResumeImport(!hasResume);
-  }, [hasResume]);
+  const operationLock = useRef(false);
 
   useEffect(() => {
     setReviewFacts(pendingFacts);
     setReviewExpanded(false);
   }, [pendingFacts]);
 
-  async function saveChanges() {
-    await onSave();
-    savedEditor.current = editorSnapshot(editor);
-    setIsEdited(false);
+  const reviewableFacts = homeInboxItems(reviewFacts, { resumeText: "", knownSkills: [] });
+  const visibleReviewFacts = reviewExpanded ? reviewableFacts : reviewableFacts.slice(0, HOME_INBOX_LIMIT);
+
+  async function runOperation(action: () => void | Promise<void>, fallback: string) {
+    if (operationLock.current) return false;
+    operationLock.current = true;
+    setOperationBusy(true);
+    setOperationError("");
+    try {
+      await action();
+      return true;
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : fallback);
+      return false;
+    } finally {
+      operationLock.current = false;
+      setOperationBusy(false);
+    }
   }
 
-  function updateEditor(nextEditor: CandidateEditor) {
-    setIsEdited(true);
-    onChange(nextEditor);
+  async function saveName() {
+    const saved = await runOperation(async () => {
+      const result = await onSave();
+      if (result === false) throw new Error("保存失败，修改已保留，请重试。");
+    }, "保存失败，修改已保留，请重试。");
+    if (saved) setNameDirty(false);
   }
 
-  const informationCard = <article id="library-profile" className="profile-foundation-card">
-    <header className="profile-foundation-heading"><span><UserRound size={18} /></span><div><h3>基本资料</h3><p>维护称呼和长期使用的基础信息。</p></div></header>
-    <div className="candidate-form profile-foundation-form">
-      <label><span>称呼 <em className="required-mark">必填</em></span><input required value={editor.name} placeholder="例如：小林" onChange={(event) => updateEditor({ ...editor, name: event.target.value })} /></label>
-      <label><span>准备方向</span><input value={editor.targetRole} placeholder="例如：AI 应用开发工程师" onChange={(event) => updateEditor({ ...editor, targetRole: event.target.value })} /></label>
-      <label className="wide-field"><span>意向城市 <small>可选</small></span><input value={editor.targetCity} placeholder="例如：上海、杭州" onChange={(event) => updateEditor({ ...editor, targetCity: event.target.value })} /></label>
-    </div>
-  </article>;
+  async function createTextSource() {
+    if (!pasteContent.trim()) {
+      setOperationError("请先输入要保存的文本内容");
+      return;
+    }
+    const created = await runOperation(
+      () => onCreateText(pasteTitle.trim() || "粘贴文本", pasteContent, pastePrivacy),
+      "创建文本来源失败"
+    );
+    if (created) {
+      setPasteTitle("");
+      setPasteContent("");
+      setPasteOpen(false);
+    }
+  }
 
-  const resumeWorkspace = <section id="resume-upload" className={`profile-resume-workspace ${hasResume ? "has-resume" : "is-empty"}`}>
-    <header className="profile-resume-workspace-heading">
-      <div className="profile-foundation-heading"><span><FileText size={18} /></span><div><h3>来源材料</h3><p>{hasResume ? editor.resumeFilename || "已导入一份文本材料" : "导入材料后自动整理可复用信息。"}</p></div></div>
-      {hasResume ? <div className="profile-resume-heading-actions">
-        {!showResumeImport ? <button type="button" className="profile-resume-trigger" onClick={() => setShowResumeImport(true)}><Upload size={14} />重新导入</button> : null}
-        <button type="button" className="profile-privacy-check" onClick={onScanPrivacy} disabled={resumeBusy}><ShieldCheck size={14} />检查隐私</button>
-      </div> : null}
+  async function previewSource(sourceId: number) {
+    await runOperation(async () => {
+      setSelectedSource(await onLoadSource(sourceId));
+      setContentDraft(null);
+    }, "读取来源失败");
+  }
+
+  async function saveSourceContent() {
+    if (!selectedSource || contentDraft === null) return;
+    if (!contentDraft.trim()) {
+      setOperationError("资料内容不能为空");
+      return;
+    }
+    const saved = await runOperation(async () => {
+      await onUpdateSource(selectedSource.id, { content: contentDraft });
+      setSelectedSource(await onLoadSource(selectedSource.id));
+    }, "更新资料内容失败");
+    if (saved) setContentDraft(null);
+  }
+
+  async function reviewFact(factId: number, action: "confirm" | "reject") {
+    if (!onReviewFact) return;
+    const done = await runOperation(() => onReviewFact(factId, action), "确认操作失败，内容已保留，请重试。");
+    if (done) setReviewFacts((current) => current.filter((item) => item.id !== factId));
+  }
+
+  return <section className="profile-settings-page profile-simplified-page">
+    <header className="profile-page-heading">
+      <div><span className="ui-eyebrow">知识与来源</span><h2>我的知识库</h2><p>每个文件都是独立来源，可单独预览、停用、脱敏或删除。</p></div>
+      <div className="profile-heading-actions">
+        <span className={`profile-status ${sources.length ? "ready" : "pending"}`}><i />{sources.length ? `${sources.length} 个来源` : "待导入材料"}</span>
+      </div>
     </header>
 
-    {showResumeImport ? <div className="profile-resume-import">
-      <label className={`profile-resume-action ${resumeBusy ? "busy" : ""}`}>
-        {resumeBusy ? <LoaderCircle className="spinning" size={18} /> : <Upload size={18} />}
-        <span>{resumeBusy ? "正在整理…" : hasResume ? "上传新材料" : "导入材料"}</span>
-        <input type="file" multiple accept=".png,.jpg,.jpeg,.webp,.pdf,.docx,.txt,.md" disabled={resumeBusy} onChange={(event) => { onParseFiles(Array.from(event.target.files || [])); event.currentTarget.value = ""; }} />
-      </label>
-      <label className="profile-parse-option"><input type="checkbox" checked={enhancedParse} onChange={(event) => onEnhancedParseChange(event.target.checked)} /><span>复杂排版</span></label>
-    </div> : null}
+    <nav className="profile-library-index" aria-label="资料库内容">
+      <button type="button" onClick={() => document.getElementById("library-sources")?.scrollIntoView({ behavior: "smooth" })}><FileText size={16} /><span><strong>来源材料</strong><small>{sources.length ? `${sources.length} 个` : "待导入"}</small></span></button>
+      <button type="button" onClick={() => document.getElementById("library-organized")?.scrollIntoView({ behavior: "smooth" })}><Layers3 size={16} /><span><strong>已整理内容</strong><small>{reviewableFacts.length ? `${reviewableFacts.length} 条待确认` : "暂无待确认"}</small></span></button>
+      <button type="button" onClick={() => document.getElementById("library-profile")?.scrollIntoView({ behavior: "smooth" })}><UserRound size={16} /><span><strong>个性化</strong><small>{editor.name.trim() || "可选"}</small></span></button>
+    </nav>
 
-    {hasResume ? <section className="profile-resume-editor">
-      <header><h3>{resumeView === "preview" ? "材料预览" : "编辑原文"}</h3><div className="profile-resume-view-switch" role="tablist" aria-label="材料视图"><button type="button" role="tab" aria-selected={resumeView === "preview"} className={resumeView === "preview" ? "active" : ""} onClick={() => setResumeView("preview")}>预览</button><button type="button" role="tab" aria-selected={resumeView === "edit"} className={resumeView === "edit" ? "active" : ""} onClick={() => setResumeView("edit")}>编辑原文</button></div></header>
-      {resumeView === "preview" ? <ResumePreview editor={editor} /> : <><textarea value={editor.resumeText} aria-label="材料内容" placeholder="上传材料或直接粘贴笔记、文章、会议记录等文本。" onChange={(event) => updateEditor({ ...editor, resumeText: event.target.value, resumeRedactedText: "" })} />
-        {suggestion && (suggestion.name || suggestion.target_roles.length || suggestion.target_cities.length) ? <div className="profile-fill-suggestion"><WandSparkles size={17} /><div><strong>可补充的信息</strong><span>{[suggestion.name ? `称呼：${suggestion.name}` : "", suggestion.target_roles.length ? `准备方向：${suggestion.target_roles.join("、")}` : "", suggestion.target_cities.length ? `意向城市：${suggestion.target_cities.join("、")}` : ""].filter(Boolean).join("；")}</span></div><button type="button" onClick={onFillSuggestion}>填充</button></div> : null}</>}
-      <footer><label className="agent-privacy-choice"><input type="checkbox" checked={editor.privacyMode === "original"} onChange={(event) => updateEditor({ ...editor, privacyMode: event.target.checked ? "original" : "redacted" })} /><span>允许使用材料原文生成内容</span><small>关闭时会隐藏常见隐私信息</small></label><button type="button" className="clear-resume-button" onClick={() => { setIsEdited(true); onClearResume(); }}><Trash2 size={13} />清除</button></footer>
-    </section> : <div className="profile-resume-empty"><p>支持 PDF、Word、文本或图片格式。</p><details className="profile-paste-details"><summary>直接粘贴文本</summary><textarea aria-label="材料内容" placeholder="粘贴材料文本…" onChange={(event) => updateEditor({ ...editor, resumeText: event.target.value, resumeRedactedText: "" })} /></details></div>}
+    <section className="profile-linear-layout">
+      <section id="library-sources" className="profile-resume-workspace">
+        <header className="profile-resume-workspace-heading">
+          <div className="profile-foundation-heading"><span><FileText size={18} /></span><div><h3>来源材料</h3><p>支持一次导入多个文件；不会再拼接或覆盖已有内容。</p></div></div>
+          <div className="profile-resume-heading-actions">
+            <label className={`profile-resume-trigger ${sourceBusy ? "busy" : ""}`}>{sourceBusy ? <LoaderCircle className="spinning" size={14} /> : <Upload size={14} />}导入文件<input aria-label="导入文件" type="file" multiple accept=".png,.jpg,.jpeg,.webp,.pdf,.docx,.txt,.md" disabled={sourceBusy || operationBusy} onChange={(event) => { void onImportFiles(Array.from(event.target.files || [])); event.currentTarget.value = ""; }} /></label>
+            <button type="button" className="profile-resume-trigger" onClick={() => setPasteOpen((value) => !value)}><Pencil size={14} />粘贴文本</button>
+          </div>
+        </header>
 
-    <footer className="profile-resume-workspace-footer"><small className="profile-data-note">材料只用于你的搜索、分析和内容生成，不会自行对外发送。</small>{privacyFindings.length ? <div className="privacy-result"><ShieldCheck size={16} /><div><strong>检测到 {privacyFindings.length} 处敏感信息</strong><span>{privacyFindings.slice(0, 3).map((item) => item.preview).join("、")}；默认不会用于生成内容。</span></div></div> : null}</footer>
-  </section>;
+        <label className="profile-parse-option"><input type="checkbox" checked={enhancedParse} onChange={(event) => onEnhancedParseChange(event.target.checked)} /><span>复杂排版解析</span></label>
 
-  const organizedContent = <section id="library-organized" className="profile-organized-card">
-    <header className="profile-foundation-heading"><span><Layers3 size={18} /></span><div><h3>已整理内容</h3><p>从来源材料中提取，可直接在对话中作为上下文使用。</p></div></header>
-    {reviewableFacts.length ? (
-      <section className="profile-review-queue" aria-label="待确认内容">
-        <header><div><strong>待确认</strong><span>{reviewableFacts.length} 条</span></div><p>确认后才会进入可复用资料。</p></header>
-        <ul>
-          {visibleReviewFacts.map((item) => (
-            <li key={item.id}>
-              <div><strong>{item.title}</strong><p>{item.consequence}</p>{item.source ? <blockquote><cite>{item.sourceLabel}</cite>{item.source}</blockquote> : null}</div>
-              <div className="profile-review-actions">
-                <button type="button" disabled={reviewingFactId === item.id} onClick={() => void reviewFact(item.id, "confirm")}>确认</button>
-                <button type="button" className="is-quiet" disabled={reviewingFactId === item.id} onClick={() => void reviewFact(item.id, "reject")}>不是</button>
-              </div>
-            </li>
-          ))}
-        </ul>
-        {hiddenReviewCount ? <button type="button" className="profile-review-more" onClick={() => setReviewExpanded(true)}>查看其余 {hiddenReviewCount} 条</button> : null}
+        {pasteOpen ? <div className="profile-source-paste" aria-label="新建文本来源">
+          <input aria-label="来源标题" value={pasteTitle} placeholder="来源标题（可选）" onChange={(event) => setPasteTitle(event.target.value)} />
+          <textarea aria-label="来源内容" value={pasteContent} placeholder="粘贴笔记、文章、会议记录等文本…" onChange={(event) => setPasteContent(event.target.value)} />
+          <footer><label className="agent-privacy-choice"><input type="checkbox" checked={pastePrivacy === "original"} onChange={(event) => setPastePrivacy(event.target.checked ? "original" : "redacted")} /><span>允许模型使用原文</span><small>默认只使用脱敏文本</small></label><ActionButton variant="primary" type="button" disabled={operationBusy} onClick={() => void createTextSource()}>创建来源</ActionButton></footer>
+        </div> : null}
+
+        {sources.length ? <ul className="profile-source-list" aria-label="资料来源列表">
+          {sources.map((source) => <li key={source.id} className={!source.enabled ? "is-disabled" : ""}>
+            <div className="profile-source-icon"><FileText size={18} /></div>
+            <div className="profile-source-main">
+              {editingTitleId === source.id ? <div className="profile-source-title-editor"><input aria-label={`重命名 ${source.title}`} value={editingTitle} onChange={(event) => setEditingTitle(event.target.value)} /><button type="button" onClick={() => void runOperation(async () => { await onUpdateSource(source.id, { title: editingTitle }); setEditingTitleId(null); }, "重命名失败")}>保存</button></div> : <strong>{source.title}</strong>}
+              <span>{source.original_filename || (source.source_kind === "legacy" ? "历史资料" : "粘贴文本")} · {source.character_count.toLocaleString()} 字 · {source.parse_status === "ready" ? "已就绪" : source.parse_status}</span>
+            </div>
+            <div className="profile-source-actions">
+              <button type="button" aria-label={`预览 ${source.title}`} onClick={() => void previewSource(source.id)}><Eye size={14} />预览</button>
+              <button type="button" aria-label={`重命名 ${source.title}`} onClick={() => { setEditingTitleId(source.id); setEditingTitle(source.title); }}><Pencil size={14} /></button>
+              <label><input type="checkbox" checked={source.privacy_mode === "original"} onChange={(event) => void runOperation(() => onUpdateSource(source.id, { privacy_mode: event.target.checked ? "original" : "redacted" }), "隐私模式更新失败")} />原文</label>
+              <label><input type="checkbox" checked={source.enabled} onChange={(event) => void runOperation(() => onUpdateSource(source.id, { enabled: event.target.checked }), "来源状态更新失败")} />启用</label>
+              <button type="button" className="is-danger" aria-label={`删除 ${source.title}`} onClick={() => { if (window.confirm(`永久删除“${source.title}”及其本地原文件？`)) void runOperation(() => onDeleteSource(source.id), "删除来源失败"); }}><Trash2 size={14} /></button>
+            </div>
+          </li>)}
+        </ul> : <div className="profile-resume-empty"><p>还没有来源。导入文件或粘贴文本后即可开始知识库问答。</p></div>}
+        <footer className="profile-resume-workspace-footer"><small className="profile-data-note">原文件仅保存在当前本地账户工作区；删除来源时同步删除原文件与索引。</small></footer>
       </section>
-    ) : null}
-    {hasResume && organizedItemCount ? (
-      <div className="profile-organized-summary">
-        <div><strong>{organizedItemCount}</strong><span>条结构化内容</span></div>
-        <div><strong>{resumeSections.length}</strong><span>个内容分区</span></div>
-        {organizedSkills.length ? <div className="profile-organized-tags" aria-label="已整理技能">{organizedSkills.map((tag) => <span key={tag}>{tag}</span>)}</div> : null}
-      </div>
-    ) : <p className="profile-organized-empty">导入来源材料后，这里会显示已整理的经历、项目和技能。</p>}
-  </section>;
 
-  return (
-    <section className="profile-settings-page profile-simplified-page">
-      <header className="profile-page-heading">
-        <div>
-          <span className="ui-eyebrow">知识与来源</span>
-          <h2>我的知识库</h2>
-          <p>集中维护可信资料，后续对话和内容生成都会以这里为依据。</p>
-        </div>
-        <div className="profile-heading-actions">
-          <span className={`profile-status ${hasResume ? "ready" : "pending"}`}><i />{hasResume ? "来源已就绪" : "待导入材料"}</span>
-          {returnToWorkbench ? <ActionButton variant="secondary" type="button" onClick={onReturnToWorkbench}><ArrowLeft size={15} />返回分析</ActionButton> : null}
-        </div>
-      </header>
+      {selectedSource ? <section className="profile-source-preview" aria-label="来源预览">
+        <header><div><strong>{selectedSource.title}</strong><span>{selectedSource.privacy_mode === "original" ? "模型可使用原文" : "模型仅使用脱敏文本"}</span></div><button type="button" onClick={() => { setSelectedSource(null); setContentDraft(null); }}>关闭</button></header>
+        {contentDraft === null ? <pre>{selectedSource.content}</pre> : <label className="profile-source-content-editor"><span>编辑用于问答的文字</span><textarea aria-label="编辑资料正文" value={contentDraft} onChange={(event) => setContentDraft(event.target.value)} /></label>}
+        {selectedSource.source_kind === "upload" ? <small className="profile-source-original-note">{selectedSource.metadata.content_edited ? "正文已校正；原文件仍保留导入时的版本。" : "校正正文不会修改原文件。"}</small> : null}
+        <footer className="profile-source-preview-actions">
+          {contentDraft === null ? <button type="button" disabled={operationBusy} onClick={() => setContentDraft(selectedSource.content)}>编辑正文</button> : <><button type="button" disabled={operationBusy || !contentDraft.trim()} onClick={() => void saveSourceContent()}>保存正文</button><button type="button" disabled={operationBusy} onClick={() => setContentDraft(null)}>取消</button></>}
+          {selectedSource.file_available ? <button type="button" disabled={operationBusy} onClick={() => void runOperation(() => onDownloadSource(selectedSource), "下载原文件失败")}>下载原文件</button> : null}
+        </footer>
+      </section> : null}
 
-      <nav className="profile-library-index" aria-label="资料库内容">
-        <button type="button" onClick={() => { const section = document.getElementById("library-profile"); const details = section?.closest("details"); if (details) details.open = true; scrollToSection("library-profile"); }}><UserRound size={16} /><span><strong>基本资料</strong><small>{ready ? "已填写" : "待完善"}</small></span></button>
-        <button type="button" onClick={() => scrollToSection("library-sources")}><FileText size={16} /><span><strong>来源材料</strong><small>{hasResume ? editor.resumeFilename || "已导入" : "待导入"}</small></span></button>
-        <button type="button" onClick={() => scrollToSection("library-organized")}><Layers3 size={16} /><span><strong>已整理内容</strong><small>{reviewableFacts.length ? `${reviewableFacts.length} 条待确认` : organizedItemCount ? `${organizedItemCount} 条` : "等待整理"}</small></span></button>
-      </nav>
+      <section id="library-organized" className="profile-organized-card">
+        <header className="profile-foundation-heading"><span><Layers3 size={18} /></span><div><h3>已整理内容</h3><p>对话中提出的新知识需要你确认后，才会加入可信资料。</p></div></header>
+        {reviewableFacts.length ? <section className="profile-review-queue" aria-label="待确认内容"><ul>{visibleReviewFacts.map((item) => <li key={item.id}><div><strong>{item.title}</strong><p>{item.consequence}</p>{item.source ? <blockquote><cite>{item.sourceLabel}</cite>{item.source}</blockquote> : null}</div><div className="profile-review-actions"><button type="button" disabled={operationBusy || !onReviewFact} onClick={() => void reviewFact(item.id, "confirm")}>确认</button><button type="button" className="is-quiet" disabled={operationBusy || !onReviewFact} onClick={() => void reviewFact(item.id, "reject")}>不是</button></div></li>)}</ul>{visibleReviewFacts.length < reviewableFacts.length ? <button type="button" className="profile-review-more" onClick={() => setReviewExpanded(true)}>查看其余 {reviewableFacts.length - visibleReviewFacts.length} 条</button> : null}</section> : <p className="profile-organized-empty">暂无待确认内容。你可以在对话中要求记录知识。</p>}
+      </section>
 
-      <section className="profile-linear-layout"><div id="library-sources">{resumeWorkspace}</div>{organizedContent}<details><summary>个人背景（用于个性化回答）</summary>{informationCard}</details></section>
-
-      {hasUnsavedChanges ? <footer className="profile-save-bar profile-simplified-save"><span>{ready ? <ShieldCheck size={15} /> : <UserRound size={15} />}{ready ? "保存后用于问答与创作" : "填写称呼后即可保存"}</span><ActionButton variant="primary" type="button" onClick={() => void saveChanges()} disabled={busy || resumeBusy || !ready}>{busy ? <LoaderCircle className="spinning" size={16} /> : <Save size={16} />}{busy ? "保存中…" : "保存"}</ActionButton></footer> : null}
+      <section id="library-profile" className="profile-foundation-card">
+        <header className="profile-foundation-heading"><span><UserRound size={18} /></span><div><h3>个性化信息</h3><p>称呼是可选项，不会阻止导入或保存资料。</p></div></header>
+        <div className="candidate-form profile-foundation-form"><label><span>称呼 <em>可选</em></span><input value={editor.name} placeholder="例如：小林" onChange={(event) => { setNameDirty(true); onChange({ ...editor, name: event.target.value }); }} /></label></div>
+        {nameDirty ? <footer className="profile-inline-save"><ActionButton variant="primary" type="button" onClick={() => void saveName()} disabled={busy || operationBusy}>{busy || operationBusy ? <LoaderCircle className="spinning" size={15} /> : <Save size={15} />}保存个性化信息</ActionButton></footer> : null}
+      </section>
     </section>
-  );
+
+    {operationError ? <p role="alert">{operationError}</p> : null}
+    <p className="profile-local-security"><ShieldCheck size={14} />资料默认脱敏进入模型上下文，原文模式需逐个来源开启。</p>
+  </section>;
 }

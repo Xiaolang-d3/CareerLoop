@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, RefObject, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, ReactNode, RefObject, useEffect, useRef, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { createApiClient, fetchWithTimeout } from "../api/client";
 import "./auth-gate.css";
@@ -6,9 +6,8 @@ import "./auth-gate.css";
 type AuthConfig = { enabled: boolean; setup_required: boolean; registration_open?: boolean };
 export type AuthUser = { id?: number; email: string; display_name?: string; has_avatar?: boolean };
 type AuthSession = { access_token: string; user: AuthUser };
-type Captcha = { captcha_id: string; svg: string; accessible_text?: string };
-type FieldErrors = { email?: string; password?: string; passwordConfirmation?: string; captcha?: string };
-type LoginIssue = { kind: "captcha" | "credentials" | "network" | "throttled" | "exists" | "generic"; message: string; field?: keyof FieldErrors };
+type FieldErrors = { email?: string; password?: string; passwordConfirmation?: string };
+type LoginIssue = { kind: "credentials" | "network" | "throttled" | "exists" | "generic"; message: string; field?: keyof FieldErrors };
 
 const tokenStorageKey = "careerloop-auth-token";
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -68,10 +67,6 @@ async function restoreSession(apiBase: string, token: string) {
   return payload.user;
 }
 
-function normalizeCaptchaCode(value: string) {
-  return value.replace(/\s+/g, "").toUpperCase().slice(0, 5);
-}
-
 function classifyLoginError(reason: unknown, registering: boolean): LoginIssue {
   const message = reason instanceof Error ? reason.message : "登录失败，请稍后重试";
   const endpoint = registering ? "/auth/register" : "/auth/login";
@@ -81,14 +76,11 @@ function classifyLoginError(reason: unknown, registering: boolean): LoginIssue {
   if (message.includes("次数过多") || message.includes(`${endpoint} 请求失败（429）`)) {
     return { kind: "throttled", message: message.includes("请在") ? message : "登录失败次数过多，请稍后再试。" };
   }
-  if (message.includes("验证码") || message.includes(`${endpoint} 请求失败（422）`)) {
-    return { kind: "captcha", message: "验证码不正确或已过期，已为你更换，请重新输入。", field: "captcha" };
-  }
   if (message.includes("已注册") || message.includes(`${endpoint} 请求失败（409）`)) {
     return { kind: "exists", message: "该邮箱已注册，请直接登录。", field: "email" };
   }
   if (message.includes("邮箱或密码") || message.includes(`${endpoint} 请求失败（401）`)) {
-    return { kind: "credentials", message: "邮箱或密码不正确，请核对后重试。验证码已更新。", field: "password" };
+    return { kind: "credentials", message: "邮箱或密码不正确，请核对后重试。", field: "password" };
   }
   return { kind: "generic", message };
 }
@@ -97,8 +89,6 @@ function validateLoginFields(input: {
   email: string;
   password: string;
   passwordConfirmation: string;
-  captcha: Captcha | null;
-  captchaCode: string;
   registering: boolean;
 }): FieldErrors {
   const next: FieldErrors = {};
@@ -110,8 +100,6 @@ function validateLoginFields(input: {
     if (!input.passwordConfirmation) next.passwordConfirmation = "请再次输入密码";
     else if (input.password !== input.passwordConfirmation) next.passwordConfirmation = "两次输入的密码不一致";
   }
-  if (!input.captcha) next.captcha = "验证码正在加载，请稍后再试";
-  else if (normalizeCaptchaCode(input.captchaCode).length !== 5) next.captcha = "请输入图中的 5 位验证码";
   return next;
 }
 
@@ -126,11 +114,8 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
-  const [captcha, setCaptcha] = useState<Captcha | null>(null);
-  const [captchaCode, setCaptchaCode] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [captchaRefreshing, setCaptchaRefreshing] = useState(false);
   const [bootNonce, setBootNonce] = useState(0);
   const [error, setError] = useState("");
   const [errorKind, setErrorKind] = useState<LoginIssue["kind"] | "">("");
@@ -139,20 +124,6 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
   const emailInputRef = useRef<HTMLInputElement>(null);
   const passwordInputRef = useRef<HTMLInputElement>(null);
   const passwordConfirmationRef = useRef<HTMLInputElement>(null);
-  const captchaInputRef = useRef<HTMLInputElement>(null);
-
-  const refreshCaptcha = useCallback(async () => {
-    setCaptchaCode("");
-    setCaptchaRefreshing(true);
-    try {
-      const nextCaptcha = await createApiClient(apiBase)<Captcha>("/auth/captcha");
-      setCaptcha(nextCaptcha);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "验证码加载失败，请重试");
-    } finally {
-      setCaptchaRefreshing(false);
-    }
-  }, [apiBase]);
 
   useEffect(() => {
     // A saved token is sufficient to start validation. The configuration is
@@ -165,15 +136,13 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
         setRegistering(Boolean(next.setup_required));
         setError("");
       })
-      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "无法连接登录服务"));
+      .catch((reason: unknown) => {
+        const raw = reason instanceof Error ? reason.message : "无法连接登录服务";
+        setError(/failed to fetch|networkerror|load failed/i.test(raw)
+          ? "无法连接本地服务，请点重新连接。若反复失败，请完全退出后重开 CareerLoop。"
+          : raw);
+      });
   }, [apiBase, token, bootNonce]);
-
-  useEffect(() => {
-    // A returning, signed-in visitor never sees the login form. Avoid a
-    // needless uncached captcha request on every app refresh.
-    if (token) return;
-    void refreshCaptcha();
-  }, [refreshCaptcha, token]);
 
   useEffect(() => {
     if (!token || token === validatedToken) return;
@@ -213,7 +182,6 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
     if (next.email) emailInputRef.current?.focus();
     else if (next.password) passwordInputRef.current?.focus();
     else if (next.passwordConfirmation) passwordConfirmationRef.current?.focus();
-    else if (next.captcha) captchaInputRef.current?.focus();
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -223,8 +191,6 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
       email,
       password,
       passwordConfirmation,
-      captcha,
-      captchaCode,
       registering
     });
     setFieldErrors(nextFields);
@@ -233,7 +199,6 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
       focusFirstInvalid(nextFields);
       return;
     }
-    if (!captcha) return;
     setBusy(true);
     setError("");
     setErrorKind("");
@@ -241,7 +206,7 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
       const session = await createApiClient(apiBase)<AuthSession>(registering ? "/auth/register" : "/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, captcha_id: captcha.captcha_id, captcha_code: normalizeCaptchaCode(captchaCode) })
+        body: JSON.stringify({ email, password })
       });
       writeStoredToken(session.access_token);
       setEntering(true);
@@ -258,9 +223,7 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
       setError(issue.message);
       setErrorKind(issue.kind);
       setFieldErrors(issue.field ? { [issue.field]: issue.message } : {});
-      await refreshCaptcha();
-      if (issue.kind === "captcha") captchaInputRef.current?.focus();
-      else if (issue.kind === "credentials") passwordInputRef.current?.focus();
+      if (issue.kind === "credentials") passwordInputRef.current?.focus();
     } finally {
       setBusy(false);
       setEntering(false);
@@ -297,7 +260,7 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
     </>;
   }
   if (error && !config) {
-    return <AuthStatus message={error} alert onRetry={() => { setError(""); setBootNonce((value) => value + 1); void refreshCaptcha(); }} />;
+    return <AuthStatus message={error} alert onRetry={() => { setError(""); setBootNonce((value) => value + 1); }} />;
   }
   if (!config) return <AuthStatus message="正在连接登录服务…" />;
   const confirmMismatch = Boolean(registering && passwordConfirmation && password !== passwordConfirmation);
@@ -307,7 +270,7 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
         <aside className="auth-intro" aria-label="CareerLoop 如何与你协作">
           <p className="auth-intro-kicker">让资料在每次对话中持续发挥作用</p>
           <h2>从真实资料出发，完成分析与创作。</h2>
-          <p>CareerLoop 帮你整理长期资料，在对话中完成搜索、分析和内容生成，并把结果沉淀到工作台。</p>
+          <p>CareerLoop 帮你整理长期资料，在对话中完成搜索、分析和内容生成，并把结果沉淀到你的本地知识库。</p>
           <ol className="auth-intro-steps">
             <li>整理资料</li>
             <li>开始对话</li>
@@ -404,52 +367,15 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
                 {fieldErrors.passwordConfirmation || confirmMismatch ? <small id="auth-password-confirm-error" className="auth-field-error">{fieldErrors.passwordConfirmation || "两次输入的密码不一致"}</small> : null}
               </div>
             ) : null}
-            <div className="auth-field">
-              <label htmlFor="auth-captcha">验证码</label>
-              <span className="auth-captcha-row">
-                {captcha && !captchaRefreshing ? (
-                  <button className="auth-captcha-preview" type="button" onClick={() => void refreshCaptcha()} disabled={busy} aria-label="点击更换验证码">
-                    <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(captcha.svg)}`} alt="图形验证码" />
-                  </button>
-                ) : <span className="auth-captcha-preview auth-captcha-skeleton" aria-hidden="true" />}
-                <span className="auth-captcha-entry">
-                  <input
-                    id="auth-captcha"
-                    ref={captchaInputRef}
-                    className="auth-captcha-input"
-                    type="text"
-                    name="captcha"
-                    inputMode="text"
-                    autoComplete="off"
-                    autoCapitalize="characters"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    enterKeyHint="go"
-                    minLength={5}
-                    maxLength={5}
-                    placeholder="输入 5 位字符"
-                    aria-invalid={Boolean(fieldErrors.captcha)}
-                    aria-describedby={fieldErrors.captcha ? "auth-captcha-error" : undefined}
-                    value={captchaCode}
-                    disabled={busy}
-                    onChange={(event) => {
-                      setCaptchaCode(normalizeCaptchaCode(event.target.value));
-                      if (fieldErrors.captcha) setFieldErrors((current) => ({ ...current, captcha: undefined }));
-                    }}
-                  />
-                  <button className="auth-refresh-captcha" type="button" onClick={() => void refreshCaptcha()} disabled={captchaRefreshing || busy} aria-label="更换验证码">{captchaRefreshing ? "更换中…" : "换一张"}</button>
-                </span>
-              </span>
-              {fieldErrors.captcha ? <small id="auth-captcha-error" className="auth-field-error" role="alert">{fieldErrors.captcha}</small> : null}
-            </div>
           </div>
-          {error && !fieldErrors.captcha && !fieldErrors.password ? (
+          <p className="auth-local-note">账户、资料和对话只保存在这台设备上，不是云端账号。</p>
+          {error && !fieldErrors.password ? (
             <p className="auth-error" role="alert">
               <span>{error}</span>
-              {errorKind === "network" ? <button type="button" className="auth-error-action" onClick={() => { setError(""); setErrorKind(""); void refreshCaptcha(); }}>重新连接</button> : null}
+              {errorKind === "network" ? <button type="button" className="auth-error-action" onClick={() => { setError(""); setErrorKind(""); setBootNonce((value) => value + 1); }}>重新连接</button> : null}
             </p>
           ) : null}
-          <button className="auth-submit" type="submit" disabled={busy || entering || !captcha} aria-busy={busy || entering}>{entering ? "正在进入…" : busy ? (registering ? "正在创建…" : "正在登录…") : registering ? "创建账号" : "登录"}</button>
+          <button className="auth-submit" type="submit" disabled={busy || entering} aria-busy={busy || entering}>{entering ? "正在进入…" : busy ? (registering ? "正在创建…" : "正在登录…") : registering ? "创建账号" : "登录"}</button>
           <p className="auth-mode-switch">
             {registering ? (
               <button type="button" onClick={() => { setRegistering(false); setPasswordConfirmation(""); setFieldErrors({}); setError(""); }} disabled={busy}>已有账号？去登录</button>

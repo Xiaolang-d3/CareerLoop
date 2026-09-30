@@ -77,7 +77,7 @@ describe("SettingsOverview", () => {
     expect(screen.getByText("待完善")).toBeInTheDocument();
     expect(screen.queryByText("资料已就绪")).not.toBeInTheDocument();
     expect(screen.getByText("尚未填写称呼")).toBeInTheDocument();
-    expect(screen.getByText("尚未保存简历")).toBeInTheDocument();
+    expect(screen.getByText("尚未保存资料")).toBeInTheDocument();
   });
 
   it("does not flash 待完善 while career profile is still loading", () => {

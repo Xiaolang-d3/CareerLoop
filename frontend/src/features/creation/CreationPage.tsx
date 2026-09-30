@@ -1,9 +1,9 @@
 import { useState } from "react";
 import "./creation.css";
 
-type Props = { busy: boolean; onGenerate: (prompt: string) => void; onOpenLibrary: () => void; onOpenResume: () => void };
+type Props = { busy: boolean; onGenerate: (prompt: string) => void; onOpenLibrary: () => void };
 const formats = ["写文章", "总结", "改写", "PPT 大纲"];
-export function CreationPage({ busy, onGenerate, onOpenLibrary, onOpenResume }: Props) {
+export function CreationPage({ busy, onGenerate, onOpenLibrary }: Props) {
   const [format, setFormat] = useState(formats[0]);
   const [brief, setBrief] = useState("");
   const [tone, setTone] = useState("专业清晰");
@@ -17,8 +17,7 @@ export function CreationPage({ busy, onGenerate, onOpenLibrary, onOpenResume }: 
       <button type="button" className="ui-button" onClick={onOpenLibrary}>查看我的知识库</button>
       <div className="creation-options"><label>风格<select value={tone} onChange={(event) => setTone(event.target.value)}>{["专业清晰", "轻松自然", "简洁直接"].map((item) => <option key={item}>{item}</option>)}</select></label><label>篇幅<select value={length} onChange={(event) => setLength(event.target.value)}>{["短篇", "中篇", "长篇"].map((item) => <option key={item}>{item}</option>)}</select></label></div>
       <button className="ui-button is-primary" disabled={busy || !brief.trim()} type="submit">{busy ? "正在准备或处理任务…" : "生成内容"}</button>
-      <p>生成时会打开 AI 助手，展示处理过程与结果，可继续追问和修改。</p>
+      <p>生成时会进入 AI 工作区，展示处理过程与结果，可继续追问和修改。</p>
     </form>
-    <footer><span>专业创作</span><button type="button" className="ui-button" onClick={onOpenResume}>简历编辑与导出</button></footer>
   </section>;
 }

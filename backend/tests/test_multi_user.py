@@ -10,6 +10,7 @@ import pytest
 from app import db
 from app.main import _active_chat_runs, app, cancel_current_agent_task
 from app.workspace import ensure_workspace, use_workspace
+from app.profile.library_sources import create_text_source
 from api_client import register_authenticated_client
 
 
@@ -20,24 +21,22 @@ def isolated_data_dir(tmp_path, monkeypatch):
     yield
 
 
-def test_second_user_cannot_see_first_user_jobs() -> None:
+def test_second_user_cannot_see_first_user_library_sources() -> None:
     owner = register_authenticated_client(app, "owner@example.com")
     created = owner.post(
-        "/jobs",
+        "/library/sources",
         json={
-            "job_title": "私有岗位",
-            "company_name": "仅自己可见",
-            "description": "这是一段足够长的岗位描述，用来满足创建岗位的最小长度要求。",
+            "title": "私有笔记",
+            "content": "这是一段只属于第一个本地账户的资料内容。",
         },
     )
     assert created.status_code == 200
-    job_id = created.json()["id"]
-    assert owner.get("/jobs").json()
-    assert any(item["id"] == job_id for item in owner.get("/jobs").json())
+    source_id = created.json()["source"]["id"]
+    assert any(item["id"] == source_id for item in owner.get("/library/sources").json())
 
     other = register_authenticated_client(app, "other@example.com")
-    assert other.get("/jobs").json() == []
-    assert other.get(f"/jobs/{job_id}").status_code == 404
+    assert other.get("/library/sources").json() == []
+    assert other.get(f"/library/sources/{source_id}").status_code == 404
 
 
 def test_second_user_cannot_read_first_user_conversation() -> None:
@@ -91,14 +90,13 @@ class ChatIsolationTest(unittest.IsolatedAsyncioTestCase):
 def test_legacy_instance_data_is_adopted_by_the_first_user(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "careerloop.db")
     db.init_db()
-    with db.connect(tmp_path / "careerloop.db") as conn:
-        conn.execute("INSERT INTO jobs (job_title, company_name, description) VALUES (?, ?, ?)", (
-            "旧岗位",
-            "旧公司",
-            "这是一段足够长的岗位描述，用来满足创建岗位的最小长度要求。",
-        ))
+    create_text_source(
+        title="旧资料",
+        content="这是一份升级前已经存在的本地资料。",
+        db_path=tmp_path / "careerloop.db",
+    )
     owner = register_authenticated_client(app, "legacy-owner@example.com")
-    titles = [item["job_title"] for item in owner.get("/jobs").json()]
-    assert "旧岗位" in titles
+    titles = [item["title"] for item in owner.get("/library/sources").json()]
+    assert "旧资料" in titles
     other = register_authenticated_client(app, "newcomer@example.com")
-    assert "旧岗位" not in [item["job_title"] for item in other.get("/jobs").json()]
+    assert "旧资料" not in [item["title"] for item in other.get("/library/sources").json()]

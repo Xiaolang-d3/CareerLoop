@@ -253,7 +253,6 @@ def parse_attachment(
         else:
             content = attachment_store.get(attachment["object_key"])
             from ..privacy import scan_and_redact
-            from ..profile.intelligence import extract_skills
             from ..resume.parser import parse_resume_result
 
             parsed = parse_resume_result(attachment["original_filename"], content, mode)
@@ -263,7 +262,7 @@ def parse_attachment(
                 "parser": parsed.parser,
                 "character_count": len(text),
                 "privacy_findings": findings,
-                "suggested_skills": extract_skills(text),
+                "suggested_skills": [],
                 "warnings": parsed.warnings,
             }
     except Exception as exc:

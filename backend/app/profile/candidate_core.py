@@ -83,7 +83,7 @@ PROFILE_ID = 1
 
 def _profile_response(document: profile_document.ProfileDocument) -> dict[str, Any]:
     """把文档还原成原先 ``profiles`` 表行的形状。"""
-    resume_text = strip_resume_personal_info(document.resume_text)[1]
+    resume_text = document.resume_text
     return {
         "id": PROFILE_ID,
         "name": document.name,
@@ -120,10 +120,6 @@ def _load_or_migrate_profile(
     """Load the document profile, upgrading a legacy SQLite profile once."""
     document = profile_document.load(db_path)
     if document is not None:
-        safe_resume = strip_resume_personal_info(document.resume_text)[1]
-        if safe_resume != document.resume_text:
-            document = profile_document.save(document.model_copy(update={"resume_text": safe_resume}), db_path)
-            _sync_profile_compat(document, db_path)
         return document
     with connect(db_path) as conn:
         row = conn.execute(
@@ -156,7 +152,7 @@ def _load_or_migrate_profile(
             updated_at=str(legacy.get("updated_at") or ""),
             skills="\n".join(f"- {item}" for item in skills),
             projects="\n".join(f"- {item}" for item in projects),
-            resume_text=strip_resume_personal_info(str(legacy.get("resume_text") or ""))[1],
+            resume_text=str(legacy.get("resume_text") or ""),
         ),
         db_path,
     )
@@ -233,36 +229,7 @@ def _sync_resume_knowledge(
     straight to the model.
     """
     if redacted_text.strip():
-        blocks = parse_resume_blocks(redacted_text)
-        structured = [block for block in blocks if block.kind in {"project", "work", "education"}]
-        if structured:
-            index_chunks(
-                "resume",
-                PROFILE_ID,
-                [
-                    {
-                        "title": block.title or "简历片段",
-                        "content": block.evidence,
-                        "metadata": {
-                            "block_id": block.id,
-                            "kind": block.kind,
-                            "section": block.section,
-                            "start_date": block.start_date,
-                        },
-                    }
-                    for block in blocks
-                    if block.evidence.strip()
-                ],
-                db_path=db_path,
-            )
-        else:
-            index_document(
-                "resume",
-                PROFILE_ID,
-                "候选人简历",
-                redacted_text,
-                db_path=db_path,
-            )
+        index_document("resume", PROFILE_ID, "来源资料", redacted_text, db_path=db_path)
     else:
         delete_document("resume", PROFILE_ID, db_path=db_path)
 
@@ -297,14 +264,13 @@ def _touch_profile_revision(
 
 def create_or_update_profile(
     *,
-    name: str,
+    name: str = "",
     locale: str = "zh-CN",
     privacy_mode: str = "redacted",
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    clean_name = name.strip()
-    if not clean_name:
-        raise ValueError("称呼不能为空")
+    existing = _load_or_migrate_profile(db_path)
+    clean_name = name.strip() or (existing.name if existing is not None else DEFAULT_PROFILE_NAME)
     document = profile_document.update(
         db_path,
         name=clean_name[:100],
@@ -381,9 +347,6 @@ def create_candidate_source(
     if not clean_content:
         raise ValueError("资料内容不能为空")
     if source_type == "resume":
-        clean_content = strip_resume_personal_info(clean_content)[1].strip()
-        if not clean_content:
-            raise ValueError("移除联系方式后没有可保存的简历内容")
         document = profile_document.update(db_path, resume_text=clean_content)
         _sync_profile_compat(document, db_path)
     else:
@@ -434,7 +397,7 @@ def list_candidate_sources(
     document = _require_document(db_path)
     if not document.resume_text.strip():
         return []
-    return [_source_response(document, title="简历原文")]
+    return [_source_response(document, title="来源资料")]
 
 
 def update_candidate_source_access(
@@ -449,7 +412,7 @@ def update_candidate_source_access(
     next_privacy_mode = privacy_mode or ("original" if allow_model_original else "redacted")
     document = profile_document.update(db_path, privacy_mode=next_privacy_mode)
     _sync_profile_compat(document, db_path)
-    return _source_response(document, title="简历原文")
+    return _source_response(document, title="来源资料")
 
 
 def fact_skill_name(item: dict[str, Any]) -> str:

@@ -78,6 +78,10 @@ def _resolve_allowed_origins(bind_host: str) -> list[str]:
     origins.extend(_split_list(os.getenv("ALLOWED_ORIGINS")))
     if not _is_loopback(bind_host):
         origins.extend(_origins_for_hosts([bind_host]))
+    # Tauri's production WebView serves the bundled SPA from this origin while
+    # the API remains on loopback.  Never enable it for ordinary web hosting.
+    if os.getenv("CAREERLOOP_DESKTOP", "false").lower() == "true":
+        origins.extend(["http://tauri.localhost", "https://tauri.localhost", "tauri://localhost", "asset://localhost"])
     return list(dict.fromkeys(origins))
 
 
