@@ -1,100 +1,5 @@
 [
   {
-    "description": "分类器可把模糊靠谱问句升到公司研究",
-    "vars": {
-      "task": "classify",
-      "query": "这家靠谱吗",
-      "model_output": "{\"kind\":\"company_research\"}",
-      "expected": {
-        "keyword_kind": "conversation",
-        "kind": "company_research",
-        "contains_tools": ["research_company"],
-        "forbidden_tools": ["search_public_web", "ask_user"]
-      }
-    }
-  },
-  {
-    "description": "分类器输出工具名必须忽略",
-    "vars": {
-      "task": "classify",
-      "query": "这家靠谱吗",
-      "model_output": "{\"kind\":\"research_company\"}",
-      "expected": {
-        "keyword_kind": "conversation",
-        "kind": "conversation",
-        "empty_tools": true
-      }
-    }
-  },
-  {
-    "description": "分类器不能改写已经命中的 JD 车道",
-    "vars": {
-      "task": "classify",
-      "query": "分析这个岗位是否适合我",
-      "model_output": "{\"kind\":\"web_search\"}",
-      "expected": {
-        "keyword_kind": "jd_analysis",
-        "kind": "jd_analysis",
-        "contains_tools": ["analyze_resume_against_jd"],
-        "forbidden_tools": ["search_public_web"]
-      }
-    }
-  },
-  {
-    "description": "分类器输出已删除车道时保持普通对话",
-    "vars": {
-      "task": "classify",
-      "query": "帮我在 BOSS 搜索几个岗位",
-      "model_output": "{\"kind\":\"opportunity_discovery\"}",
-      "expected": {
-        "keyword_kind": "conversation",
-        "kind": "conversation",
-        "empty_tools": true,
-        "forbidden_tools": ["search_public_web"]
-      }
-    }
-  },
-  {
-    "description": "规划器点名联网工具时必须丢弃",
-    "vars": {
-      "task": "plan",
-      "query": "分析这个岗位是否适合我",
-      "kind": "jd_analysis",
-      "model_output": "{\"goal\":\"分析岗位\",\"steps\":[{\"tool_name\":\"analyze_resume_against_jd\",\"title\":\"对比\"},{\"tool_name\":\"search_public_web\",\"title\":\"上网搜\"}]}",
-      "expected": {
-        "parsed_tools": ["analyze_resume_against_jd"],
-        "dropped_tools": ["search_public_web"]
-      }
-    }
-  },
-  {
-    "description": "规划器不得把公司研究扩成简历分析",
-    "vars": {
-      "task": "plan",
-      "query": "帮我调查一下示例科技这家公司怎么样",
-      "kind": "company_research",
-      "model_output": "{\"goal\":\"调查公司\",\"steps\":[{\"tool_name\":\"research_company\",\"title\":\"搜公司\"},{\"tool_name\":\"analyze_resume_against_jd\",\"title\":\"对简历\"}]}",
-      "expected": {
-        "parsed_tools": ["research_company"],
-        "dropped_tools": ["analyze_resume_against_jd"]
-      }
-    }
-  },
-  {
-    "description": "规划器点名未知工具时走车道兜底且不含 ask_user",
-    "vars": {
-      "task": "plan",
-      "query": "帮我调查一下示例科技这家公司怎么样",
-      "kind": "company_research",
-      "model_output": "{\"goal\":\"调查公司\",\"steps\":[{\"tool_name\":\"invented_scraper\",\"title\":\"抓网页\"}]}",
-      "expected": {
-        "parsed_tools": ["research_company"],
-        "dropped_tools": ["invented_scraper"],
-        "forbidden_tools": ["ask_user"]
-      }
-    }
-  },
-  {
     "description": "未出现在证据里的经历不得写成事实",
     "vars": {
       "task": "invent",
@@ -139,6 +44,130 @@
         "used_ask_user": true,
         "should_ask_user": false,
         "violation": false
+      }
+    }
+  },
+  {
+    "description": "分类器可识别通用资料问答",
+    "vars": {
+      "task": "classify",
+      "query": "帮我回答刚才的问题",
+      "model_output": "{\"kind\":\"library_search\"}",
+      "expected": {
+        "keyword_kind": "conversation",
+        "kind": "library_search",
+        "allowed_tools": [
+          "get_library_context",
+          "search_library"
+        ]
+      }
+    }
+  },
+  {
+    "description": "分类器不能点名工具",
+    "vars": {
+      "task": "classify",
+      "query": "帮我回答刚才的问题",
+      "model_output": "{\"kind\":\"search_library\"}",
+      "expected": {
+        "kind": "conversation",
+        "empty_tools": true
+      }
+    }
+  },
+  {
+    "description": "分类器不能恢复旧路由",
+    "vars": {
+      "task": "classify",
+      "query": "这家靠谱吗",
+      "model_output": "{\"kind\":\"company_research\"}",
+      "expected": {
+        "kind": "conversation",
+        "empty_tools": true
+      }
+    }
+  },
+  {
+    "description": "分类器不能改写已经命中的资料车道",
+    "vars": {
+      "task": "classify",
+      "query": "根据我的知识库回答问题",
+      "model_output": "{\"kind\":\"web_search\"}",
+      "expected": {
+        "keyword_kind": "library_search",
+        "kind": "library_search",
+        "allowed_tools": [
+          "get_library_context",
+          "search_library"
+        ]
+      }
+    }
+  },
+  {
+    "description": "规划器不得给本地问答添加联网",
+    "vars": {
+      "task": "plan",
+      "query": "根据我的资料回答问题",
+      "kind": "library_search",
+      "model_output": "{\"steps\":[{\"tool_name\":\"get_library_context\"},{\"tool_name\":\"search_public_web\"}]}",
+      "expected": {
+        "parsed_tools": [
+          "get_library_context"
+        ],
+        "dropped_tools": [
+          "search_public_web"
+        ]
+      }
+    }
+  },
+  {
+    "description": "规划器不得把公开查询扩成知识写入",
+    "vars": {
+      "task": "plan",
+      "query": "联网查询天文资料",
+      "kind": "web_search",
+      "model_output": "{\"steps\":[{\"tool_name\":\"search_public_web\"},{\"tool_name\":\"propose_library_knowledge\"}]}",
+      "expected": {
+        "parsed_tools": [
+          "search_public_web"
+        ],
+        "dropped_tools": [
+          "propose_library_knowledge"
+        ]
+      }
+    }
+  },
+  {
+    "description": "未知工具回退仍受完成义务限制",
+    "vars": {
+      "task": "plan",
+      "query": "记录知识",
+      "kind": "library_update",
+      "model_output": "{\"steps\":[{\"tool_name\":\"invented_writer\"}]}",
+      "expected": {
+        "parsed_tools": [
+          "propose_library_knowledge"
+        ],
+        "dropped_tools": [
+          "invented_writer"
+        ]
+      }
+    }
+  },
+  {
+    "description": "ask_user 不进入资料计划",
+    "vars": {
+      "task": "plan",
+      "query": "根据知识库写文章",
+      "kind": "content_creation",
+      "model_output": "{\"steps\":[{\"tool_name\":\"ask_user\"},{\"tool_name\":\"get_library_context\"}]}",
+      "expected": {
+        "parsed_tools": [
+          "get_library_context"
+        ],
+        "dropped_tools": [
+          "ask_user"
+        ]
       }
     }
   }

@@ -41,7 +41,7 @@ async function mockCurrentProduct(page: Page) {
           active_platform: "local",
           model_providers: ["openai_compatible"],
           platforms: ["local"],
-          tools: ["get_library_context", "search_library", "search_web", "fetch_web", "propose_library_knowledge"],
+          tools: ["get_library_context", "search_library", "search_public_web", "ask_user", "propose_library_knowledge"],
           web_research: { enabled: true, provider: "mock" }
         }
       });
@@ -63,6 +63,7 @@ async function mockCurrentProduct(page: Page) {
 }
 
 test.beforeEach(async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-09-22T08:00:00Z"));
   await mockCurrentProduct(page);
 });
 
