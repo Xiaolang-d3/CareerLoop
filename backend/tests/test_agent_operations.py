@@ -28,8 +28,8 @@ class AgentOperationsSnapshotTest(unittest.TestCase):
                 "stop_reason": "completed",
                 "plan": {"route": "company_research", "goal": "核验公司"},
                 "events": [
-                    {"tool_call_id": "call-1", "tool_name": "research_company", "status": "running"},
-                    {"tool_call_id": "call-1", "tool_name": "research_company", "status": "done"},
+                    {"tool_call_id": "call-1", "tool_name": "search_public_web", "status": "running"},
+                    {"tool_call_id": "call-1", "tool_name": "search_public_web", "status": "done"},
                     {"tool_call_id": "thinking", "tool_name": "agent_thinking", "status": "done"},
                 ],
             }

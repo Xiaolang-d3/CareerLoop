@@ -46,7 +46,7 @@ from .tool_executor import ToolExecutor
 
 
 StreamCallback = Callable[[AgentStreamEvent], Awaitable[None]]
-WEB_RESEARCH_TOOLS = {"research_company", "search_public_web"}
+WEB_RESEARCH_TOOLS = {"search_public_web"}
 MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\((https?://[^)\s]+)\)")
 COMPANY_REFERENCE_PHRASES = ("这家公司", "该公司", "这个公司", "这家企业", "该企业")
 COMPANY_SUFFIX = r"(?:有限责任公司|股份有限公司|有限公司)"

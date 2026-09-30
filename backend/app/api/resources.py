@@ -52,7 +52,7 @@ from ..model_protocol import protocol_requires_api_key, resolve_model_protocol
 from ..library.service import get_library
 from ..documents import service as document_service
 from .dependencies import require_conversation
-from .schemas import AgentSettingsIn, CandidateFactIn, CandidateFactMergeIn, CandidateFactReviewIn, LibrarySourceIn, LibrarySourceUpdateIn, CareerProfileInitIn, ConversationIn, ConversationUpdate, ModelCapabilitiesIn, ModelDiscoveryIn, PrivacyScanIn
+from .schemas import AgentSettingsIn, LibraryKnowledgeIn, LibraryKnowledgeMergeIn, LibraryKnowledgeReviewIn, LibrarySourceIn, LibrarySourceUpdateIn, LibraryMetadataIn, ConversationIn, ConversationUpdate, ModelCapabilitiesIn, ModelDiscoveryIn, PrivacyScanIn
 
 
 router = APIRouter()
@@ -472,7 +472,7 @@ def library_get() -> dict[str, Any]:
 
 
 @router.put("/library")
-def library_put(payload: CareerProfileInitIn) -> dict[str, Any]:
+def library_put(payload: LibraryMetadataIn) -> dict[str, Any]:
     save_metadata(**payload.model_dump())
     return get_library()
 
@@ -573,7 +573,7 @@ def library_facts_get(
 
 
 @router.post("/library/facts")
-def library_facts_post(payload: CandidateFactIn) -> dict[str, Any]:
+def library_facts_post(payload: LibraryKnowledgeIn) -> dict[str, Any]:
     try:
         return propose_knowledge(**payload.model_dump(exclude={"profile_id"}))
     except ValueError as exc:
@@ -583,7 +583,7 @@ def library_facts_post(payload: CandidateFactIn) -> dict[str, Any]:
 @router.post("/library/facts/{fact_id}/review")
 def library_fact_review(
     fact_id: int,
-    payload: CandidateFactReviewIn,
+    payload: LibraryKnowledgeReviewIn,
 ) -> dict[str, Any]:
     status_value = {
         "confirm": "confirmed",
@@ -601,7 +601,7 @@ def library_fact_review(
 @router.post("/library/facts/{fact_id}/merge")
 def library_fact_merge(
     fact_id: int,
-    payload: CandidateFactMergeIn,
+    payload: LibraryKnowledgeMergeIn,
 ) -> dict[str, Any]:
     try:
         return merge_knowledge(fact_id, payload.target_fact_id)

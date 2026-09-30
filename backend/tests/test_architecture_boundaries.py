@@ -16,6 +16,7 @@ retired = {
     'app.tools.research_company', 'app.jobs.evaluations',
 }
 assert not retired.intersection(sys.modules), retired.intersection(sys.modules)
+assert not any(name.startswith(('app.profile', 'app.jobs', 'app.resume', 'app.interview', 'app.opportunities', 'app.projects', 'app.workflow')) for name in sys.modules)
 """],
         cwd=Path(__file__).resolve().parents[1],
         check=True,
@@ -31,7 +32,7 @@ import sys
 from app.documents.parser import parse_document
 from app.documents.ocr import extract_image_text
 assert '保持资料原文' in parse_document('notes.md', '阅读笔记：保持资料原文，解析不推断职业方向或技能。'.encode())
-assert not any(name.startswith(('app.profile', 'app.jobs', 'app.resume')) for name in sys.modules)
+assert not any(name.startswith(('app.profile', 'app.jobs', 'app.resume', 'app.interview', 'app.opportunities', 'app.projects', 'app.workflow')) for name in sys.modules)
 """],
         cwd=Path(__file__).resolve().parents[1],
         check=True,

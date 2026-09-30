@@ -5,7 +5,6 @@ from unittest.mock import patch
 
 from app.config import Settings
 from app.tools import SearchPublicWebTool, ToolContext
-from app.tools.research_company import ResearchCompanyTool
 from app.research.web import AgentSearchClient, validate_backend_url
 
 
@@ -37,14 +36,6 @@ class FakeAgentSearchClient:
         return sources, []
 
 
-class PartiallyFailingAgentSearchClient(FakeAgentSearchClient):
-    async def search(self, query: str, count: int, *, mode: str = "general"):
-        if "最新消息" in query:
-            self.queries.append(query)
-            from app.research.web import WebResearchError
-
-            raise WebResearchError("agent_search_http_error", "临时失败", retryable=True)
-        return await super().search(query, count, mode=mode)
 
 
 class EmptyAgentSearchClient(FakeAgentSearchClient):
@@ -111,71 +102,9 @@ class WebResearchTest(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_company_research_returns_deduplicated_citable_sources(self) -> None:
-        client = FakeAgentSearchClient()
-        settings = Settings(web_research_enabled=True, web_research_max_sources=10)
-        result = await ResearchCompanyTool(settings=settings, client=client).execute(
-            {
-                "company_name": "示例科技",
-                "city": "上海",
-                "industry": "企业服务",
-                "focus": ["技术团队"],
-            },
-            ToolContext(platform_name="manual"),
-        )
 
-        self.assertTrue(result.ok)
-        self.assertEqual(result.data["source_count"], 5)
-        self.assertEqual(result.data["evidence_count"], 5)
-        self.assertEqual(result.data["evidence"][0]["source_tier"], 2)
-        self.assertEqual(len(client.queries), 5)
-        self.assertIn("技术团队", client.queries[0])
-        self.assertIn("citation_rule", result.data["research_requirements"])
-        self.assertIn("不可信外部内容", result.data["external_content_notice"])
 
-    async def test_company_research_collects_more_than_five_sources(self) -> None:
-        client = CountRespectingAgentSearchClient()
-        settings = Settings(web_research_enabled=True, web_research_max_sources=10)
-        result = await ResearchCompanyTool(settings=settings, client=client).execute(
-            {"company_name": "示例科技", "city": "上海"},
-            ToolContext(platform_name="manual"),
-        )
 
-        self.assertTrue(result.ok)
-        self.assertEqual(result.data["source_count"], 8)
-        self.assertEqual(result.data["evidence_count"], 8)
-        self.assertEqual(len(client.queries), 1)
-        self.assertLessEqual(result.data["source_count"], settings.web_research_max_sources)
-
-    async def test_company_research_rejects_invalid_identity(self) -> None:
-        result = await ResearchCompanyTool(
-            settings=Settings(web_research_enabled=True),
-            client=FakeAgentSearchClient(),
-        ).execute(
-            {"company_name": "A"},
-            ToolContext(platform_name="manual"),
-        )
-
-        self.assertFalse(result.ok)
-        self.assertEqual(result.error.code, "invalid_arguments")
-
-    async def test_company_research_keeps_partial_results_when_one_query_fails(self) -> None:
-        client = PartiallyFailingAgentSearchClient()
-        result = await ResearchCompanyTool(
-            settings=Settings(web_research_enabled=True, web_research_max_sources=10),
-            client=client,
-        ).execute(
-            {"company_name": "示例科技", "city": "杭州"},
-            ToolContext(platform_name="manual"),
-        )
-
-        self.assertTrue(result.ok)
-        self.assertGreater(result.data["source_count"], 0)
-        self.assertEqual(len(result.data["search_warnings"]), 1)
-        self.assertEqual(
-            result.data["search_warnings"][0]["code"],
-            "agent_search_http_error",
-        )
 
     async def test_generic_web_search_returns_sources_for_selected_turn(self) -> None:
         client = FakeAgentSearchClient()
@@ -237,43 +166,7 @@ class WebResearchTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("site:stackoverflow.com", client.queries[0])
         self.assertIn("site:docs.python.org", client.queries[0])
 
-    async def test_boss_job_search_zero_results_is_inconclusive_not_failed(self) -> None:
-        client = EmptyAgentSearchClient()
-        result = await ResearchCompanyTool(
-            settings=Settings(web_research_enabled=True),
-            client=client,
-        ).execute(
-            {
-                "company_name": "蔻蔻琪生物科技（杭州）有限公司",
-                "city": "杭州",
-                "focus": ["BOSS直聘", "招聘岗位"],
-            },
-            ToolContext(platform_name="manual"),
-        )
 
-        self.assertTrue(result.ok)
-        self.assertEqual(result.status, "done")
-        self.assertEqual(result.data["source_count"], 0)
-        self.assertEqual(result.data["search_outcome"]["kind"], "no_public_job_match")
-        self.assertIn("site:zhipin.com", client.queries[0])
-
-    async def test_company_search_uses_short_brand_alias(self) -> None:
-        client = EmptyAgentSearchClient()
-        result = await ResearchCompanyTool(
-            settings=Settings(web_research_enabled=True),
-            client=client,
-        ).execute(
-            {"company_name": "蔻蔻琪生物科技有限公司"},
-            ToolContext(platform_name="manual"),
-        )
-
-        self.assertTrue(result.ok)
-        self.assertEqual(result.status, "done")
-        self.assertEqual(result.data["search_outcome"]["kind"], "live_search_no_match")
-        self.assertIn('"蔻蔻琪" 公司', client.queries)
-        self.assertTrue(client.modes)
-        self.assertTrue(all(mode == "company" for mode in client.modes))
-        self.assertNotIn("请补充公司全称", result.message)
 
 
 if __name__ == "__main__":

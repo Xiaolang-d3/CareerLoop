@@ -37,8 +37,7 @@ ROUTE_LABELS = {
 
 
 WEB_SEARCH_MARKER = "[系统可信开关：本轮允许联网搜索]"
-JOB_SCREENSHOT_MARKER = "[系统确认：本轮请求分析岗位截图]"
-ROUTING_MARKERS = (WEB_SEARCH_MARKER, JOB_SCREENSHOT_MARKER)
+ROUTING_MARKERS = (WEB_SEARCH_MARKER,)
 SIMPLE_CONVERSATION_MESSAGES = frozenset(
     {
         "hi",
@@ -112,10 +111,8 @@ def build_task_route(
     content: str,
     available_tools: set[str],
     *,
-    profile_interview_active: bool = False,
     tool_specs: dict[str, ToolSpec] | None = None,
 ) -> TaskRoute:
-    # Historical interview sessions no longer change the tool surface.
     resolved = kind if kind in ROUTE_LABELS else "conversation"
     specs = tool_specs or TOOL_SPECS
     allowed = tools_for_kind(resolved, content, available_tools, specs)
@@ -130,7 +127,6 @@ def route_task(
     content: str,
     available_tools: set[str],
     *,
-    profile_interview_active: bool = False,
     tool_specs: dict[str, ToolSpec] | None = None,
 ) -> TaskRoute:
     """Keyword fast path plus hard gates. Does not call the model."""
@@ -139,7 +135,6 @@ def route_task(
         kind,
         content,
         available_tools,
-        profile_interview_active=profile_interview_active,
         tool_specs=tool_specs,
     )
 
@@ -192,7 +187,6 @@ def refine_route_from_classifier(
     available_tools: set[str],
     response: ModelResponse,
     *,
-    profile_interview_active: bool = False,
     tool_specs: dict[str, ToolSpec] | None = None,
 ) -> TaskRoute:
     """Apply a kind-only classifier result. Invalid output leaves the keyword route."""
@@ -205,7 +199,6 @@ def refine_route_from_classifier(
         classified,
         content,
         available_tools,
-        profile_interview_active=profile_interview_active,
         tool_specs=tool_specs,
     )
 
@@ -220,11 +213,8 @@ def route_summary(route: TaskRoute) -> str:
 def tool_progress_message(tool_name: str, arguments: dict | None = None) -> str:
     """User-visible line for a running tool, using the model's actual arguments."""
     args = arguments or {}
-    company = str(args.get("company_name") or "").strip()
     query = str(args.get("query") or "").strip()
     url = str(args.get("url") or args.get("official_website") or "").strip()
-    if tool_name == "research_company" and company:
-        return f"正在检索：{company}"
     question = str(args.get("question") or "").strip()
     if tool_name == "ask_user":
         return f"需要你确认：{question}" if question else "需要你确认后才能继续"

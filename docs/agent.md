@@ -51,7 +51,7 @@ launcher 定位后执行。浏览器开发与自托管仍保持原有的 FastAPI
  AgentRuntime.run_stream
         │
         ├─ detect_kind()          关键词只出 route.kind
-        ├─ apply_hard_gates()     联网 / 截图开关；访谈状态不进模型
+        ├─ apply_hard_gates()     联网开关
         ├─ classify kind（仅 conversation）  JSON {"kind":...}；失败则保持 conversation
         ├─ tools_for_kind()       按车道从 TOOL_POLICIES 展开 allowed_tools
         ├─ planner（可选）         生成 JSON 计划；失败则整轮终止
@@ -131,7 +131,7 @@ backend/app/
 
 ## 路由与计划
 
-实现：`backend/app/agent/orchestration.py`。关键词识别意图，未命中时可由模型分类；分类只能选择既有 kind，不能自行指定工具。联网可信开关只影响本轮，历史岗位截图标记和画像访谈状态不再开启专用路由。
+实现：`backend/app/agent/orchestration.py`。关键词识别意图，未命中时可由模型分类；分类只能选择既有 kind，不能自行指定工具。联网可信开关只影响本轮，路由不接受岗位截图或画像访谈状态参数。
 
 | kind | 作用 | 可用能力 |
 | --- | --- | --- |
@@ -236,7 +236,7 @@ Base URL 视为对应协议的 API 根地址：显式 OpenAI 兼容客户端不�
 - 输入框确认条只在工具返回 `data.clarification` 时出现；模型若只在正文里提问，界面不会自动抽出选项。
 - 未配置模型密钥时仍可登录并浏览资料库/工作台/首页；对话发送会引导到 `#/settings/model`。
 
-当前仍保留旧领域表和少量共享解析模块作为数据兼容层；退役求职测试已删除，活跃产品契约由 `test_agent_runtime.py`、`test_library_product.py`、`test_library_sources.py`、流式聊天测试和当前前端路由测试覆盖。
+旧库领域表仅保留原始记录，退役求职实现和测试已删除；当前解析位于 documents/，活跃产品契约由 `test_agent_runtime.py`、`test_library_product.py`、`test_library_sources.py`、流式聊天测试和当前前端路由测试覆盖。
 
 ## 验证
 
@@ -246,7 +246,7 @@ Base URL 视为对应协议的 API 根地址：显式 OpenAI 兼容客户端不�
 cd backend && .venv/bin/python -m pytest tests -q
 ```
 
-路由、工具面、引用校验、模型重试、写工具不重放与 `ask_user` 均使用模拟模型和网络结果，不调用真实模型。旧求职评测数据集只作历史资料，不再属于 CI 契约。可选仍可用 Promptfoo 做人工对比：
+路由、工具面、引用校验、模型重试、写工具不重放与 `ask_user` 均使用模拟模型和网络结果，不调用真实模型。离线评测保留退役请求作为负向契约，确保不会恢复旧工具；当前路由、计划、事实和 ask_user 契约纳入后端测试。可选仍可用 Promptfoo 做人工对比：
 
 ```bash
 cd evals && PROMPTFOO_PYTHON=../backend/.venv/bin/python npx --yes promptfoo@0.118.0 eval --no-cache

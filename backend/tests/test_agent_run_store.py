@@ -47,7 +47,7 @@ class AgentRunStoreTest(unittest.TestCase):
         snapshot = AgentRunSnapshot(
             route_kind="company_research",
             needs_plan=True,
-            allowed_tools=["research_company"],
+            allowed_tools=["search_public_web"],
             rounds_used=2,
             plan=AgentPlan(
                 goal="研究公司",
@@ -55,7 +55,7 @@ class AgentRunStoreTest(unittest.TestCase):
                 steps=[AgentPlanStep(
                     id="step-1",
                     title="检索资料",
-                    tool_name="research_company",
+                    tool_name="search_public_web",
                     risk="external_read",
                 )],
             ),
@@ -65,7 +65,7 @@ class AgentRunStoreTest(unittest.TestCase):
         loaded = self.store.get_run("run-1")
         self.assertEqual(loaded["route_kind"], "company_research")
         self.assertEqual(loaded["round_number"], 2)
-        self.assertEqual(loaded["checkpoint"].allowed_tools, ["research_company"])
+        self.assertEqual(loaded["checkpoint"].allowed_tools, ["search_public_web"])
         self.assertEqual(self.store.list_steps("run-1")[0]["status"], "pending")
 
         snapshot.plan.steps[0].status = "done"

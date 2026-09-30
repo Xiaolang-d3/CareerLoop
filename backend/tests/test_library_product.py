@@ -35,7 +35,7 @@ def test_only_general_tools_and_routes_are_exposed():
     paths = {route.path for route in app.routes}
     assert "/library" in paths
     assert not any(path.startswith(("/jobs", "/job-", "/quick-match", "/interview", "/resume-versions", "/career-profile", "/opportunit")) for path in paths)
-    route = route_task("根据我的知识库写文章", names, profile_interview_active=True)
+    route = route_task("根据我的知识库写文章", names)
     assert route.kind == "content_creation"
     assert "get_library_context" in route.required_tools
     assert route_task("分析岗位匹配并准备面试", names).kind == "conversation"
