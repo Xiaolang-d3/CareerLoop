@@ -433,6 +433,8 @@ def init_db(db_path: str | Path | None = None) -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_interview_tasks_kit ON interview_tasks(kit_id, sort_order, id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_interview_rounds_job ON interview_rounds(job_id, scheduled_at, id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_job_events_job ON job_events(job_id, occurred_at DESC, id DESC)")
+        from .persistence.library_schema import LIBRARY_CORE_SCHEMA
+        conn.executescript(LIBRARY_CORE_SCHEMA)
 
 
 def _apply_migrations(conn: sqlite3.Connection) -> None:

@@ -8,9 +8,10 @@ from pydantic import BaseModel, Field
 from ..domain import ToolDefinition, ToolResult
 from ..agent.settings import get_agent_settings
 from ..knowledge import search_knowledge
-from ..profile.candidate_core import ensure_profile, propose_fact
-from ..profile.library import model_context
-from ..profile.library_sources import SOURCE_TYPE, ensure_legacy_source_migrated, get_source
+from ..library.repository import ensure_library
+from ..library.knowledge import propose_knowledge
+from ..library.service import model_context
+from ..library.sources import SOURCE_TYPE, get_source
 from .base import ToolContext
 from .errors import tool_error_boundary
 
@@ -61,7 +62,6 @@ class SearchLibraryTool:
         settings = get_agent_settings(self._db_path)
         if not settings["profile_memory_enabled"] or not settings["knowledge_memory_enabled"]:
             return ToolResult(ok=True, status="done", data={"excerpts": [], "facts": [], "disabled": True}, message="知识库读取已关闭")
-        ensure_legacy_source_migrated(self._db_path)
         matches = search_knowledge(payload.query, source_types=[SOURCE_TYPE], limit=payload.limit, db_path=self._db_path)
         excerpts = [
             {"id": item["id"], "source_id": item["source_id"], "title": item.get("title") or "资料",
@@ -91,18 +91,18 @@ class ProposeLibraryKnowledgeTool:
         statements = [item.strip() for item in payload.statements]
         if any(not item or len(item) > 5000 for item in statements):
             raise ValueError("知识内容须为 1–5000 字")
-        ensure_profile(self._db_path)
+        ensure_library(self._db_path)
         source_id = payload.source_id
         if source_id is not None:
             get_source(source_id, db_path=self._db_path)
         locator = f"conversation:{context.conversation_id}" if context.conversation_id else "current_conversation"
         proposals = [
-            propose_fact(
+            propose_knowledge(
                 category="knowledge",
                 statement=item,
                 source_id=source_id,
                 locator=locator,
-                extraction_method="main_chat",
+                source_kind="main_chat",
                 db_path=self._db_path,
             )
             for item in statements

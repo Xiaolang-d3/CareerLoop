@@ -11,10 +11,11 @@ from app.db import init_db
 from app.domain import AgentRunSnapshot, ModelResponse, ToolCall
 from app.main import app
 from app.models import ModelProviderRegistry
-from app.profile.candidate_core import create_candidate_source, create_or_update_profile, review_fact
-from app.profile.library import get_library, model_context
-from app.profile.library_sources import create_text_source, update_source
-from app.profile.service import parse_candidate_resume
+from app.library.repository import save_metadata
+from app.library.knowledge import get_knowledge, merge_knowledge, propose_knowledge, review_knowledge
+from app.library.service import get_library, model_context
+from app.library.sources import create_text_source, update_source
+from app.documents.service import parse_document_upload
 from app.tools import ToolContext, ToolRegistry
 from app.tools.library import GetLibraryContextTool, ProposeLibraryKnowledgeTool, SearchLibraryTool
 
@@ -23,7 +24,7 @@ from app.tools.library import GetLibraryContextTool, ProposeLibraryKnowledgeTool
 def library_db(tmp_path):
     path = tmp_path / "library.db"
     init_db(path)
-    create_or_update_profile(name="读者", db_path=path)
+    save_metadata(name="读者", db_path=path)
     return path
 
 
@@ -65,21 +66,37 @@ def test_general_knowledge_stays_pending_until_review(library_db):
     fact = result.data["proposals"][0]
     assert fact["status"] == "pending"
     assert not model_context(library_db)["confirmed_facts"]
-    review_fact(fact["id"], status="confirmed", db_path=library_db)
+    review_knowledge(fact["id"], action="confirm", db_path=library_db)
     assert any(item["statement"] == "每周整理一次读书笔记" for item in model_context(library_db)["confirmed_facts"])
+
+
+def test_review_edit_retract_and_merge_have_stable_ids_without_document_writes(library_db):
+    first = propose_knowledge(category="knowledge", statement="第一个阅读结论", db_path=library_db)
+    second = propose_knowledge(category="knowledge", statement="第二个阅读结论", db_path=library_db)
+    reviewed = review_knowledge(first["id"], action="edit", statement="校正后的阅读结论", db_path=library_db)
+    assert reviewed["id"] == first["id"]
+    assert any(item["statement"] == "校正后的阅读结论" for item in model_context(library_db)["confirmed_facts"])
+    review_knowledge(first["id"], action="retract", db_path=library_db)
+    assert not model_context(library_db)["confirmed_facts"]
+    # A repeated proposal must not resurrect knowledge the reader rejected.
+    assert propose_knowledge(category="knowledge", statement="校正后的阅读结论", db_path=library_db)["status"] == "retracted"
+    merge_knowledge(first["id"], second["id"], db_path=library_db)
+    assert get_knowledge(first["id"], library_db)["status"] == "superseded"
+    assert get_knowledge(second["id"], library_db)["status"] == "pending"
+    assert not (library_db.parent / "career-profile.md").exists()
 
 
 def test_document_parser_does_not_infer_career_fields():
     content = "阅读笔记：每天记录一个问题，每周整理一次笔记。联系 reader@example.com"
-    parsed = parse_candidate_resume("notes.md", content.encode(), "fast")
+    parsed = parse_document_upload("notes.md", content.encode(), "fast")
     assert "reader@example.com" in parsed["text"]
     assert "reader@example.com" not in parsed["redacted_text"]
-    assert parsed["suggested_skills"] == []
-    assert not any(parsed["suggested_profile"].values())
+    assert "suggested_skills" not in parsed
+    assert "suggested_profile" not in parsed
 
 
 def test_disabled_memory_is_not_read(library_db):
-    create_candidate_source(source_type="resume", title="笔记", content="不会向模型公开的笔记内容", db_path=library_db)
+    create_text_source(title="笔记", content="不会向模型公开的笔记内容", db_path=library_db)
     save_agent_settings({**DEFAULT_AGENT_SETTINGS, "profile_memory_enabled": False}, db_path=library_db)
     assert model_context(library_db)["disabled"]
     result = asyncio.run(SearchLibraryTool(library_db).execute({"query": "笔记"}, ToolContext(platform_name="manual")))

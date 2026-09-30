@@ -85,7 +85,9 @@ backend/app/
 ├── tools/                   对话工具
 ├── chat/                    历史、摘要、落库
 ├── workflow/                阶段记账（不调度）
-├── profile/                 多来源资料、兼容画像、证据与待确认记忆
+├── library/                 独立来源、模型上下文与待确认知识
+├── documents/               共享文档提取与可选 OCR
+├── profile/                 迁移准备中的历史画像实现
 ├── knowledge/               本地检索（FastEmbed / 哈希回退）
 ├── resume/blocks.py         简历项目/工作块与稳定 ID
 └── observability/           工具审计、模型监控
@@ -153,7 +155,7 @@ backend/app/
 | search_public_web | external_read | 带来源的公开搜索，受联网开关与配置约束 |
 | ask_user | read_only | 提问并等待用户选择 |
 
-通用资料工具位于 `tools/library.py`，数据边界在 `profile/library.py`。`tools` 包只导出当前工具与基础协议，不加载退役工具；当前工具的参数校验和错误处理位于独立的 `tools/errors.py`。资料来源和聊天附件共用 `documents/parser.py` 与可选的 `documents/ocr.py`，不通过岗位模块执行解析。所有模型调用遵守资料即数据、不执行资料内嵌指令的规则。ToolExecutor 统一处理超时、异常与审计；本地写操作不自动重放。
+通用资料工具位于 `tools/library.py`，数据边界在 `library/service.py`。`tools` 包只导出当前工具与基础协议，不加载退役工具；当前工具的参数校验和错误处理位于独立的 `tools/errors.py`。资料来源和聊天附件共用 `documents/parser.py` 与可选的 `documents/ocr.py`，不通过岗位模块执行解析。所有模型调用遵守资料即数据、不执行资料内嵌指令的规则。ToolExecutor 统一处理超时、异常与审计；本地写操作不自动重放。
 
 ## 执行循环与收敛
 
@@ -190,11 +192,11 @@ runtime 在进入循环、完成每个工具轮、写入完成修复提示和引
 
 `library_sources` 是资料的权威目录，每个上传文件或粘贴文本独立保存标题、类型、原始文件名、正文、脱敏正文、隐私模式、启用状态、解析状态、哈希与元数据。上传原件位于当前账户工作区的 `library/<source_id>/`，目录权限 `0700`、文件权限 `0600`。禁用来源会同步移除其检索分块；删除来源会永久删除原件、正文与索引，只依赖该来源的待确认知识同步删除，已确认知识保留并标记原来源已删除。
 
-数据库迁移版本为 22。旧 `resume_text` 在首次读取资料库时按内容哈希和迁移标记幂等复制为一个“历史资料”来源，旧字段保留一个兼容周期，只读不再作为新来源写入，迁移不会清空原文。
+当前版本仍为 22；资料库核心新表已独立，旧工作区的数据升级在下一阶段以新版本执行。旧 `resume_text` 在首次读取资料库时按内容哈希和迁移标记幂等复制为一个“历史资料”来源，旧字段保留一个兼容周期，只读不再作为新来源写入，迁移不会清空原文。
 
 默认向模型提供 `scan_and_redact` 后的文本；用户只可对单个来源开启 original。`get_library_context` 每个启用来源最多取 4000 字、总量最多约 12000 字并附来源摘要；更长资料由 `search_library` 按 `library_source` 分块检索并返回来源 ID、标题和片段。
 
-Agent 新知识写入 candidate_memory 的 proposed 状态；用户确认后才进入 confirmed 上下文，否决或撤回内容不作为已确认事实。职业目标/策略不进入新知识库上下文。导入文档仅提取文本，不再推断求职方向、薪资或自动生成技能事实。
+Agent 新知识写入 library_knowledge 的 pending 状态；用户确认后才进入 confirmed 上下文，否决或撤回内容不作为已确认事实。职业目标/策略不进入新知识库上下文。导入文档仅提取文本，不再推断求职方向、薪资或自动生成技能事实。
 
 历史附件 kind `resume` / `job_screenshot` 作为存储兼容值保留，界面显示文档/图片；图片附件不再强制进入岗位分析。模型看图仍由用户授权。
 
@@ -263,3 +265,7 @@ cd evals && PROMPTFOO_PYTHON=../backend/.venv/bin/python npx --yes promptfoo@0.1
 `PUT /agent/settings` 只表示配置已保存；设置页保存后会额外调用一次 `POST /agent/model-monitor/check`，分别显示连接成功、连接失败或未完成检测。问答发送前不做真实模型预检，直接发起正式请求，避免一次用户操作产生两次模型调用。正式请求失败时，界面保留输入、附件和联网选项，并展示稳定错误码对应原因。`GET /agent/capabilities` 失败必须显示后端服务不可用，不能伪装为未配置密钥。
 
 macOS 桌面版的新密钥写入 Keychain；开发和无钥匙串环境可读取 `OPENAI_API_KEY`。新密钥不写 SQLite。发现旧明文密钥时，只在 Keychain 写入成功后清空旧字段；失败则保留旧值并返回迁移警告。日志、健康接口和错误响应不得出现密钥。
+
+## 架构收敛进度
+
+当前资料库的基础资料、知识审核和来源管理位于 `library/`，只使用 `library_metadata`、`library_knowledge`、`library_evidence` 与 `library_sources`。确认知识不再改写画像 Markdown 或技能小节。`/library`、`/library/sources`、`/library/facts` URL 保持；文档解析不再返回退役求职推断字段。历史存储仍保留，版本化升级完成前不删除旧实现。完整实施范围与验收见 `docs/refactoring-plan.md`。

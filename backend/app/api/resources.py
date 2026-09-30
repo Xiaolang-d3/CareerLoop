@@ -35,8 +35,9 @@ from ..chat.conversations import (
     update_conversation,
 )
 from ..db import connect
-from ..profile.candidate_core import clear_candidate_resume, create_or_update_profile, list_facts, merge_facts, propose_fact, review_fact
-from ..profile.library_sources import (
+from ..library.repository import save_metadata
+from ..library.knowledge import list_knowledge, merge_knowledge, propose_knowledge, review_knowledge
+from ..library.sources import (
     create_text_source,
     delete_source,
     get_source,
@@ -48,8 +49,8 @@ from ..profile.library_sources import (
 from ..observability.model_monitor import get_model_monitor_snapshot, record_model_service_event
 from ..models import ModelProviderError, OpenAICompatibleProvider, build_model_provider
 from ..model_protocol import protocol_requires_api_key, resolve_model_protocol
-from ..profile.library import get_library
-from ..profile import service as profile_service
+from ..library.service import get_library
+from ..documents import service as document_service
 from .dependencies import require_conversation
 from .schemas import AgentSettingsIn, CandidateFactIn, CandidateFactMergeIn, CandidateFactReviewIn, LibrarySourceIn, LibrarySourceUpdateIn, CareerProfileInitIn, ConversationIn, ConversationUpdate, ModelCapabilitiesIn, ModelDiscoveryIn, PrivacyScanIn
 
@@ -445,14 +446,14 @@ async def model_monitor_check() -> dict[str, Any]:
 
 
 @router.post("/library/document/parse")
-async def parse_candidate_resume(
+async def parse_library_document(
     file: UploadFile = File(...),
     mode: str = Form(default="fast"),
 ) -> dict[str, Any]:
     filename = (file.filename or "document").strip()
     try:
         content = await file.read()
-        result = profile_service.parse_candidate_resume(filename, content, mode)
+        result = document_service.parse_document_upload(filename, content, mode)
         return result
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -465,37 +466,29 @@ async def parse_candidate_resume(
         await file.close()
 
 
-@router.delete("/library/document")
-def career_profile_resume_delete() -> dict[str, Any]:
-    try:
-        return {"profile": clear_candidate_resume()}
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
 @router.post("/library/privacy/scan")
-def scan_candidate_privacy(payload: PrivacyScanIn) -> dict[str, Any]:
-    return profile_service.scan_candidate_privacy(payload.text)
+def scan_library_privacy(payload: PrivacyScanIn) -> dict[str, Any]:
+    return document_service.scan_document_privacy(payload.text)
 
 
 @router.get("/library")
-def career_profile_get() -> dict[str, Any]:
+def library_get() -> dict[str, Any]:
     return get_library()
 
 
 @router.put("/library")
-def career_profile_put(payload: CareerProfileInitIn) -> dict[str, Any]:
-    create_or_update_profile(**payload.model_dump())
+def library_put(payload: CareerProfileInitIn) -> dict[str, Any]:
+    save_metadata(**payload.model_dump())
     return get_library()
 
 
 @router.get("/library/sources")
-def career_profile_sources_get() -> list[dict[str, Any]]:
+def library_sources_get() -> list[dict[str, Any]]:
     return list_sources()
 
 
 @router.post("/library/sources")
-def career_profile_sources_post(payload: LibrarySourceIn) -> dict[str, Any]:
+def library_sources_post(payload: LibrarySourceIn) -> dict[str, Any]:
     try:
         source = create_text_source(
             title=payload.title,
@@ -574,26 +567,26 @@ def library_source_delete(source_id: int) -> dict[str, bool]:
 
 
 @router.get("/library/facts")
-def career_profile_facts_get(
+def library_facts_get(
     status: Literal["pending", "confirmed", "disputed", "retracted"] | None = None,
     category: str | None = None,
 ) -> list[dict[str, Any]]:
     try:
-        return list_facts(status=status, category=category)
+        return list_knowledge(status=status, category=category)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/library/facts")
-def career_profile_facts_post(payload: CandidateFactIn) -> dict[str, Any]:
+def library_facts_post(payload: CandidateFactIn) -> dict[str, Any]:
     try:
-        return propose_fact(**payload.model_dump())
+        return propose_knowledge(**payload.model_dump(exclude={"profile_id"}))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/library/facts/{fact_id}/review")
-def career_profile_fact_review(
+def library_fact_review(
     fact_id: int,
     payload: CandidateFactReviewIn,
 ) -> dict[str, Any]:
@@ -604,18 +597,18 @@ def career_profile_fact_review(
         "retract": "retracted",
     }[payload.action]
     try:
-        result = review_fact(fact_id, status=status_value, statement=payload.statement)
+        result = review_knowledge(fact_id, action=payload.action, statement=payload.statement)
         return result
     except ValueError as exc:
         raise HTTPException(status_code=404 if "不存在" in str(exc) else 422, detail=str(exc)) from exc
 
 
 @router.post("/library/facts/{fact_id}/merge")
-def career_profile_fact_merge(
+def library_fact_merge(
     fact_id: int,
     payload: CandidateFactMergeIn,
 ) -> dict[str, Any]:
     try:
-        return merge_facts(fact_id, payload.target_fact_id)
+        return merge_knowledge(fact_id, payload.target_fact_id)
     except ValueError as exc:
         raise HTTPException(status_code=404 if "不存在" in str(exc) else 422, detail=str(exc)) from exc

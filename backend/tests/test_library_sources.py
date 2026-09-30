@@ -6,11 +6,13 @@ import pytest
 
 from app.db import connect, init_db
 from app.profile import document
-from app.profile.candidate_core import create_or_update_profile, list_facts, propose_fact, review_fact
-from app.profile.library_sources import (
+from app.profile.candidate_core import create_or_update_profile
+from app.profile.library_sources import ensure_legacy_source_migrated
+from app.library.repository import save_metadata
+from app.library.knowledge import list_knowledge, propose_knowledge, review_knowledge
+from app.library.sources import (
     create_text_source,
     delete_source,
-    ensure_legacy_source_migrated,
     get_source,
     get_source_file,
     import_file_source,
@@ -102,17 +104,17 @@ def test_editing_extracted_text_updates_privacy_and_index_without_changing_origi
 def test_deleting_source_removes_file_index_and_only_unconfirmed_exclusive_memory(tmp_path):
     db_path = tmp_path / "careerloop.db"
     init_db(db_path)
-    create_or_update_profile(name="读者", db_path=db_path)
+    save_metadata(name="读者", db_path=db_path)
     source = import_file_source(filename="notes.txt", content_bytes="来源内容需要足够完整，用于验证删除原文件、索引和待确认知识。".encode(), db_path=db_path)
     file_path, _, _ = get_source_file(source["id"], db_path=db_path)
-    pending = propose_fact(category="knowledge", statement="待确认内容", source_id=source["id"], db_path=db_path)
-    confirmed = propose_fact(category="knowledge", statement="已确认内容", source_id=source["id"], db_path=db_path)
-    review_fact(confirmed["id"], status="confirmed", db_path=db_path)
+    pending = propose_knowledge(category="knowledge", statement="待确认内容", source_id=source["id"], db_path=db_path)
+    confirmed = propose_knowledge(category="knowledge", statement="已确认内容", source_id=source["id"], db_path=db_path)
+    review_knowledge(confirmed["id"], action="confirm", db_path=db_path)
 
     assert delete_source(source["id"], db_path=db_path)
     assert not file_path.exists()
-    assert all(item["id"] != pending["id"] for item in list_facts(db_path=db_path))
-    kept = next(item for item in list_facts(db_path=db_path) if item["id"] == confirmed["id"])
+    assert all(item["id"] != pending["id"] for item in list_knowledge(db_path=db_path))
+    kept = next(item for item in list_knowledge(db_path=db_path) if item["id"] == confirmed["id"])
     assert kept["status"] == "confirmed"
     assert kept["evidence"][0]["source_id"] is None
     assert "原来源已删除" in kept["evidence"][0]["locator"]
