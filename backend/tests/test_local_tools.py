@@ -7,11 +7,9 @@ from pathlib import Path
 from app.db import connect, init_db, json_dump
 from app.knowledge import index_document
 from app.profile import document as profile_document
-from app.tools import (
-    AnalyzeResumeAgainstJdTool,
-    SearchResumeEvidenceTool,
-    ToolContext,
-)
+from app.tools import ToolContext
+from app.tools.analyze_resume_against_jd import AnalyzeResumeAgainstJdTool
+from app.tools.search_resume_evidence import SearchResumeEvidenceTool
 
 
 class MinimalAgentToolTest(unittest.IsolatedAsyncioTestCase):

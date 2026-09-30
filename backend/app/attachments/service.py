@@ -253,9 +253,9 @@ def parse_attachment(
         else:
             content = attachment_store.get(attachment["object_key"])
             from ..privacy import scan_and_redact
-            from ..resume.parser import parse_resume_result
+            from ..documents.parser import parse_document_result
 
-            parsed = parse_resume_result(attachment["original_filename"], content, mode)
+            parsed = parse_document_result(attachment["original_filename"], content, mode)
             findings, redacted_text = scan_and_redact(parsed.text)
             text = parsed.text
             metadata = {

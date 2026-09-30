@@ -4,7 +4,8 @@ import unittest
 from unittest.mock import patch
 
 from app.config import Settings
-from app.tools import ResearchCompanyTool, SearchPublicWebTool, ToolContext
+from app.tools import SearchPublicWebTool, ToolContext
+from app.tools.research_company import ResearchCompanyTool
 from app.research.web import AgentSearchClient, validate_backend_url
 
 

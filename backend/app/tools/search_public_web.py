@@ -9,7 +9,7 @@ from ..config import Settings, get_settings
 from ..domain import ToolDefinition, ToolError, ToolResult
 from ..research.web import AgentSearchClient, WebResearchError, build_evidence_bundle
 from .base import ToolContext
-from .local_data import invalid_arguments
+from .errors import invalid_arguments
 
 
 _TECHNICAL_QUERY_HINTS = (

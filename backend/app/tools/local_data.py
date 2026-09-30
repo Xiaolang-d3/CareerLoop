@@ -67,13 +67,7 @@ def profile_for_agent(profile: dict[str, Any]) -> dict[str, Any]:
     return safe_profile
 
 
-def invalid_arguments(message: str, error: Exception) -> ToolResult:
-    return ToolResult(
-        ok=False,
-        status="failed",
-        message=message,
-        error=ToolError(code="invalid_arguments", message=str(error)),
-    )
+from .errors import invalid_arguments
 
 
 PROFILE_REQUIRED_GUIDANCE = (

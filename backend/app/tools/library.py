@@ -12,7 +12,7 @@ from ..profile.candidate_core import ensure_profile, propose_fact
 from ..profile.library import model_context
 from ..profile.library_sources import SOURCE_TYPE, ensure_legacy_source_migrated, get_source
 from .base import ToolContext
-from .local_data import tool_error_boundary
+from .errors import tool_error_boundary
 
 
 class EmptyArguments(BaseModel):

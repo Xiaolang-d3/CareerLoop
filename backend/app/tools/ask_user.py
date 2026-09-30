@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from ..domain import ToolDefinition, ToolError, ToolResult
 from .base import ToolContext
-from .local_data import invalid_arguments
+from .errors import invalid_arguments
 
 
 class AskUserOption(BaseModel):

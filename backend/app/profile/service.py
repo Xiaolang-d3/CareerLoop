@@ -3,9 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..privacy import scan_and_redact, strip_resume_personal_info
-from .intelligence import extract_skill_tags, suggest_profile_fields
-from ..resume.parser import parse_resume_result
+from ..privacy import scan_and_redact
+from ..documents.parser import parse_document_result
 
 
 def parse_candidate_resume(
@@ -15,13 +14,13 @@ def parse_candidate_resume(
 ) -> dict[str, Any]:
     suffix = Path(filename).suffix.lower()
     if suffix in {".png", ".jpg", ".jpeg", ".webp"}:
-        from ..jobs.screenshot_ocr import extract_screenshot_text
+        from ..documents.ocr import extract_image_text
 
-        text = extract_screenshot_text(filename, content)
+        text = extract_image_text(filename, content)
         parser = "local_ocr"
         warnings = ["截图 OCR 结果可能受清晰度和裁剪范围影响，请保存前检查文本。"]
     else:
-        parsed = parse_resume_result(filename, content, mode)
+        parsed = parse_document_result(filename, content, mode)
         text = parsed.text
         parser = parsed.parser
         warnings = parsed.warnings

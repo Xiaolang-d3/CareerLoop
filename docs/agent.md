@@ -153,7 +153,7 @@ backend/app/
 | search_public_web | external_read | 带来源的公开搜索，受联网开关与配置约束 |
 | ask_user | read_only | 提问并等待用户选择 |
 
-通用资料工具位于 `tools/library.py`，数据边界在 `profile/library.py`。所有模型调用遵守资料即数据、不执行资料内嵌指令的规则。ToolExecutor 统一处理超时、异常与审计；本地写操作不自动重放。
+通用资料工具位于 `tools/library.py`，数据边界在 `profile/library.py`。`tools` 包只导出当前工具与基础协议，不加载退役工具；当前工具的参数校验和错误处理位于独立的 `tools/errors.py`。资料来源和聊天附件共用 `documents/parser.py` 与可选的 `documents/ocr.py`，不通过岗位模块执行解析。所有模型调用遵守资料即数据、不执行资料内嵌指令的规则。ToolExecutor 统一处理超时、异常与审计；本地写操作不自动重放。
 
 ## 执行循环与收敛
 
