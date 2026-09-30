@@ -70,7 +70,8 @@ def use_workspace(user_id: int, root: Path | None = None) -> Iterator[Path]:
 def init_auth_db() -> None:
     path = auth_db_path()
     with db_module.connect(path) as conn:
-        conn.executescript(db_module._LOCAL_USER_AUTH_SCHEMA)
+        from .persistence.schema import AUTH_SCHEMA
+        conn.executescript(AUTH_SCHEMA)
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
         if "display_name" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN display_name TEXT NOT NULL DEFAULT ''")

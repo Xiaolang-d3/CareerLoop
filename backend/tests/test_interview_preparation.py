@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 from app.profile.candidate_core import create_or_update_profile
-from app.db import init_db
+from app.compatibility.schema_v22 import init_db
 from app.interview.preparation import (
     add_interview_preparation_record,
     analyze_interview_preparation_jd,

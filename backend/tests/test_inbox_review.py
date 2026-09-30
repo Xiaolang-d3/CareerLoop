@@ -24,7 +24,7 @@ from app.profile.candidate_core import (
     verify_candidate_material,
 )
 from app.profile.intelligence import extract_skill_tags, extract_skills
-from app.db import init_db
+from app.compatibility.schema_v22 import init_db
 from app.jobs.quick_match import analyze_job_description
 
 

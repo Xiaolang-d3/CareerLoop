@@ -188,7 +188,6 @@ function App({
     readPreference("careerloop-view", userEmail)
   ));
   const activeView: ViewKey = appRoute.section;
-  const [workflow, setWorkflow] = useState<WorkflowStatus | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentConversationId, setCurrentConversationId] = useState<number | null>(null);
   const currentConversationIdRef = useRef<number | null>(null);
@@ -967,7 +966,6 @@ function App({
     };
 
     const handleTerminal = (snapshot: {
-      workflow: WorkflowStatus;
       careerLoop: {
         status: "done" | "failed" | "cancelled" | "waiting_user";
         userMessage: ChatMessage;
@@ -975,7 +973,6 @@ function App({
       };
     }) => {
       terminalReceived = true;
-      setWorkflow(snapshot.workflow);
       const { userMessage, assistantMessage, status } = snapshot.careerLoop;
       if (currentConversationIdRef.current === conversationId) {
         setChatMessages((current) => [

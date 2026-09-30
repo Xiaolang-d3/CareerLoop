@@ -5,9 +5,8 @@ from pathlib import Path
 import pytest
 
 from app.db import connect, init_db
-from app.profile import document
-from app.profile.candidate_core import create_or_update_profile
-from app.profile.library_sources import ensure_legacy_source_migrated
+from app.compatibility import profile_document as document
+from app.compatibility.schema_v22 import init_db as init_legacy_db
 from app.library.repository import save_metadata
 from app.library.knowledge import list_knowledge, propose_knowledge, review_knowledge
 from app.library.sources import (
@@ -25,12 +24,10 @@ from app.tools.library import SearchLibraryTool
 
 def test_legacy_resume_migrates_once_without_deleting_original(tmp_path):
     db_path = tmp_path / "careerloop.db"
+    init_legacy_db(db_path)
+    document.document_path(db_path).write_text(document.render(document.ProfileDocument(name="读者", resume_text="旧资料内容：每周回顾一次。")))
     init_db(db_path)
-    create_or_update_profile(name="读者", db_path=db_path)
-    document.update(db_path, resume_text="旧资料内容：每周回顾一次。")
-
-    assert ensure_legacy_source_migrated(db_path) is True
-    assert ensure_legacy_source_migrated(db_path) is False
+    init_db(db_path)
     sources = list_sources(db_path)
     assert len(sources) == 1
     assert sources[0]["source_kind"] == "legacy"

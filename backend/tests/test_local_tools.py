@@ -4,7 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app.db import connect, init_db, json_dump
+from app.db import connect, json_dump
+from app.compatibility.schema_v22 import init_db
 from app.knowledge import index_document
 from app.profile import document as profile_document
 from app.tools import ToolContext

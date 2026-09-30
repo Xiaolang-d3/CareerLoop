@@ -14,11 +14,8 @@ from app.knowledge import (
     set_embedder,
 )
 from app.knowledge.embeddings import EmbeddingSpec, HashEmbedder, embed_text
-from app.profile.candidate_core import (
-    PROFILE_ID,
-    create_candidate_source,
-    create_or_update_profile,
-)
+from app.library.repository import save_metadata
+from app.library.sources import create_text_source
 
 
 class ResumeKnowledgeWiringTest(unittest.TestCase):
@@ -33,33 +30,31 @@ class ResumeKnowledgeWiringTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             db_path = Path(directory) / "profile.db"
             init_db(db_path)
-            create_or_update_profile(name="测试候选人", db_path=db_path)
+            save_metadata(name="测试候选人", db_path=db_path)
 
-            create_candidate_source(
-                source_type="resume",
+            create_text_source(
                 title="候选人简历",
                 content="使用 Python 和 FastAPI 构建本地求职 Agent，负责检索与评估模块。",
                 db_path=db_path,
             )
 
-            results = search_knowledge("FastAPI 检索", ["resume"], 3, db_path)
+            results = search_knowledge("FastAPI 检索", ["library_source"], 3, db_path)
             self.assertTrue(results, "保存简历后应能检索到简历证据")
-            self.assertEqual(results[0]["source_type"], "resume")
-            self.assertEqual(results[0]["source_id"], str(PROFILE_ID))
+            self.assertEqual(results[0]["source_type"], "library_source")
+            self.assertEqual(results[0]["source_id"], str(1))
             self.assertIn("FastAPI", results[0]["content"])
 
     def test_documents_are_indexed_without_career_classification(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             db_path = Path(directory) / "profile.db"
             init_db(db_path)
-            create_or_update_profile(name="测试候选人", db_path=db_path)
-            create_candidate_source(
-                source_type="resume",
+            save_metadata(name="测试候选人", db_path=db_path)
+            create_text_source(
                 title="候选人简历",
                 content="项目经历\n检索平台\n- 使用 FastAPI 做本地检索。",
                 db_path=db_path,
             )
-            results = search_knowledge("FastAPI", ["resume"], 3, db_path)
+            results = search_knowledge("FastAPI", ["library_source"], 3, db_path)
             self.assertTrue(results)
             metadata = results[0].get("metadata") or {}
             self.assertNotIn("block_id", metadata)
@@ -69,16 +64,15 @@ class ResumeKnowledgeWiringTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             db_path = Path(directory) / "profile.db"
             init_db(db_path)
-            create_or_update_profile(name="测试候选人", db_path=db_path)
+            save_metadata(name="测试候选人", db_path=db_path)
 
-            create_candidate_source(
-                source_type="resume",
+            create_text_source(
                 title="候选人简历",
                 content="联系邮箱 secret.person@example.com，负责 FastAPI 服务开发。",
                 db_path=db_path,
             )
 
-            results = search_knowledge("FastAPI 服务", ["resume"], 3, db_path)
+            results = search_knowledge("FastAPI 服务", ["library_source"], 3, db_path)
             self.assertTrue(results)
             indexed = " ".join(result["content"] for result in results)
             self.assertNotIn("secret.person@example.com", indexed)
@@ -90,19 +84,19 @@ class KnowledgeTest(unittest.TestCase):
             db_path = Path(directory) / "knowledge.db"
             init_db(db_path)
             count = index_document(
-                "resume", 1, "脱敏简历",
+                "library_source", 1, "脱敏简历",
                 "使用 Python 和 FastAPI 构建本地求职 Agent，并通过 Docker 部署。",
                 db_path=db_path,
             )
             self.assertEqual(count, 1)
 
-            results = search_knowledge("Python Agent", ["resume"], 3, db_path)
+            results = search_knowledge("Python Agent", ["library_source"], 3, db_path)
             self.assertTrue(results)
-            self.assertEqual(results[0]["source_type"], "resume")
+            self.assertEqual(results[0]["source_type"], "library_source")
             self.assertIn("Python", results[0]["content"])
 
-            self.assertEqual(delete_document("resume", 1, db_path), 1)
-            self.assertEqual(search_knowledge("Python Agent", ["resume"], 3, db_path), [])
+            self.assertEqual(delete_document("library_source", 1, db_path), 1)
+            self.assertEqual(search_knowledge("Python Agent", ["library_source"], 3, db_path), [])
 
 
 class PhraseEmbedder:
@@ -143,10 +137,10 @@ class SemanticKnowledgeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             db_path = Path(directory) / "knowledge.db"
             init_db(db_path)
-            index_document("resume", 1, "服务经历", "负责 FastAPI 与微服务接口开发。", db_path=db_path)
-            index_document("resume", 2, "销售经历", "负责线下门店销售管理与客情维护。", db_path=db_path)
+            index_document("library_source", 1, "服务经历", "负责 FastAPI 与微服务接口开发。", db_path=db_path)
+            index_document("library_source", 2, "销售经历", "负责线下门店销售管理与客情维护。", db_path=db_path)
 
-            results = search_knowledge("分布式服务架构", ["resume"], 2, db_path)
+            results = search_knowledge("分布式服务架构", ["library_source"], 2, db_path)
             self.assertEqual(results[0]["source_id"], "1")
             self.assertIn("微服务", results[0]["content"])
             self.assertGreater(results[0]["similarity"], results[1]["similarity"])
@@ -155,11 +149,11 @@ class SemanticKnowledgeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             db_path = Path(directory) / "knowledge.db"
             init_db(db_path)
-            index_document("resume", 1, "脱敏简历", "使用 Python 构建本地检索。", db_path=db_path)
+            index_document("library_source", 1, "脱敏简历", "使用 Python 构建本地检索。", db_path=db_path)
             self.assertEqual(knowledge_index_info(db_path)["table_dimensions"], 256)
 
             set_embedder(PhraseEmbedder({"Python": [1.0, 0.0, 0.0, 0.0]}, dimensions=4))
-            results = search_knowledge("Python", ["resume"], 1, db_path)
+            results = search_knowledge("Python", ["library_source"], 1, db_path)
             self.assertTrue(results)
             info = knowledge_index_info(db_path)
             self.assertEqual(info["table_dimensions"], 4)

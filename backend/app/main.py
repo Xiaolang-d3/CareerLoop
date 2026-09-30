@@ -79,15 +79,10 @@ from .chat.service import (
     agent_history as _agent_history,
     attachment_context as _attachment_context,
     default_conversation_id as _default_conversation_id,
-    is_workflow_status_query as _is_workflow_status_query,
-    local_answer_result as _local_answer_result,
     refresh_conversation_summary as _refresh_conversation_summary,
     save_chat_message as _save_chat_message,
     save_stream_result as _save_stream_result,
-    workflow_summary as _workflow_summary,
 )
-from .workflow.engine import refresh_workflow_status
-from .profile.candidate_core import ensure_resume_knowledge_indexed
 from .version import APP_VERSION
 
 
@@ -245,10 +240,6 @@ def _chat_run_key(conversation_id: int) -> tuple[int, int]:
 def _startup_workspace(user_id: int, root: Path) -> None:
     with use_workspace(user_id, root):
         AgentRunStore().interrupt_active_runs()
-        try:
-            ensure_resume_knowledge_indexed()
-        except Exception:
-            pass
 
 
 def startup() -> None:
@@ -378,18 +369,9 @@ async def cancel_current_agent_task(conversation_id: int | None = None) -> dict[
             cancelled = True
             break
 
-        conn.execute(
-            """
-            UPDATE workflow_nodes
-            SET status = 'pending', detail = '上一任务已由用户结束', updated_at = CURRENT_TIMESTAMP
-            WHERE status IN ('running', 'blocked') AND run_id = (
-                SELECT id FROM workflow_runs WHERE name = 'default' ORDER BY id DESC LIMIT 1
-            )
-            """,
-        )
     end_active_task(resolved_id)
     clear_run_snapshot(resolved_id)
-    return {"cancelled": cancelled, "workflow": refresh_workflow_status(resolved_id)}
+    return {"cancelled": cancelled}
 
 
 def _durable_run_payload(run: dict[str, Any]) -> dict[str, Any]:
@@ -627,8 +609,7 @@ async def _stream_chat_message_response(
         )
         maybe_title_from_first_message(conversation_id, payload.content)
         history = _agent_history(conversation_id, user_message["id"])
-    # Local workflow-status answers do not need a model provider; real Agent runs do.
-    if cached_execution is None and not _is_workflow_status_query(payload.content):
+    if cached_execution is None:
         _require_configured_agent_runtime()
 
     queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue()
@@ -650,71 +631,56 @@ async def _stream_chat_message_response(
                         {
                             "user_message": cached_execution["user_message"],
                             "assistant_message": cached_execution["assistant_message"],
-                            "workflow": refresh_workflow_status(conversation_id),
                         },
                     )
                 )
                 return
-            # Profile interview intent is no longer keyword-matched here: the
-            # interview is exposed as tools (start/record/pause) and the model
-            # decides, with an active session admitted via stored state.
-            if _is_workflow_status_query(payload.content):
-                workflow = refresh_workflow_status(conversation_id)
-                assistant_text = _workflow_summary(workflow)
-                result = _local_answer_result(
-                    assistant_text,
-                    "已识别为本地工作流进度查询，直接读取当前状态摘要，无需进入工具循环",
-                    "workflow_status",
+            result = None
+            trusted_routing_content = payload.content.replace(
+                "[系统可信开关：本轮允许联网搜索]",
+                "",
+            )
+            if payload.web_search:
+                trusted_routing_content += "\n[系统可信开关：本轮允许联网搜索]"
+            resume_snapshot = load_run_snapshot(conversation_id)
+            if resume_snapshot is not None and should_abandon_snapshot(
+                payload.content,
+                resume_snapshot,
+                routing_text=trusted_routing_content,
+            ):
+                clear_run_snapshot(conversation_id)
+                resume_snapshot = None
+            if resume_snapshot is not None:
+                run_store.link_waiting_resume(
+                    conversation_id,
+                    ag_ui_input.run_id,
                 )
-                await queue.put(("text_reset", {}))
-                await queue.put(("text_delta", {"delta": assistant_text}))
-            else:
-                result = None
-                trusted_routing_content = payload.content.replace(
-                    "[系统可信开关：本轮允许联网搜索]",
-                    "",
-                )
-                if payload.web_search:
-                    trusted_routing_content += "\n[系统可信开关：本轮允许联网搜索]"
-                resume_snapshot = load_run_snapshot(conversation_id)
-                if resume_snapshot is not None and should_abandon_snapshot(
-                    payload.content,
-                    resume_snapshot,
-                    routing_text=trusted_routing_content,
-                ):
-                    clear_run_snapshot(conversation_id)
-                    resume_snapshot = None
-                if resume_snapshot is not None:
-                    run_store.link_waiting_resume(
-                        conversation_id,
-                        ag_ui_input.run_id,
+            async for stream_event in get_agent_runtime().run_stream(
+                agent_input,
+                history=history,
+                conversation_id=conversation_id,
+                task_id=task_id,
+                image_urls=image_urls,
+                routing_content=trusted_routing_content,
+                web_search_mode=payload.web_search_mode,
+                resume=resume_snapshot,
+                run_id=ag_ui_input.run_id,
+            ):
+                if stream_event.type == "text_delta":
+                    partial_content += stream_event.delta
+                    await queue.put(("text_delta", {"delta": stream_event.delta}))
+                elif stream_event.type == "text_reset":
+                    partial_content = ""
+                    await queue.put(("text_reset", {}))
+                elif stream_event.type == "agent_event" and stream_event.event is not None:
+                    streamed_events[stream_event.event.tool_call_id] = stream_event.event
+                    await queue.put(
+                        ("agent_event", {"event": stream_event.event.model_dump(mode="json")})
                     )
-                async for stream_event in get_agent_runtime().run_stream(
-                    agent_input,
-                    history=history,
-                    conversation_id=conversation_id,
-                    task_id=task_id,
-                    image_urls=image_urls,
-                    routing_content=trusted_routing_content,
-                    web_search_mode=payload.web_search_mode,
-                    resume=resume_snapshot,
-                    run_id=ag_ui_input.run_id,
-                ):
-                    if stream_event.type == "text_delta":
-                        partial_content += stream_event.delta
-                        await queue.put(("text_delta", {"delta": stream_event.delta}))
-                    elif stream_event.type == "text_reset":
-                        partial_content = ""
-                        await queue.put(("text_reset", {}))
-                    elif stream_event.type == "agent_event" and stream_event.event is not None:
-                        streamed_events[stream_event.event.tool_call_id] = stream_event.event
-                        await queue.put(
-                            ("agent_event", {"event": stream_event.event.model_dump(mode="json")})
-                        )
-                    elif stream_event.type in {"completed", "error"}:
-                        result = stream_event.result
-                if result is None:
-                    raise RuntimeError("Agent 流已结束，但没有返回结果")
+                elif stream_event.type in {"completed", "error"}:
+                    result = stream_event.result
+            if result is None:
+                raise RuntimeError("Agent 流已结束，但没有返回结果")
 
             run_store.finish(ag_ui_input.run_id, result)
             completed = _save_stream_result(conversation_id, task_id, user_message, result)
@@ -874,7 +840,6 @@ async def _stream_chat_message_response(
                         else agent_payload.get("status", "done")
                     )
                     snapshot = {
-                        "workflow": data["workflow"],
                         "careerLoop": {
                             "status": status,
                             "userMessage": data["user_message"],

@@ -10,7 +10,7 @@ from app.profile.candidate_core import (
     review_fact,
     verify_candidate_material,
 )
-from app.db import init_db
+from app.compatibility.schema_v22 import init_db
 
 
 def _profile(tmp_path: Path) -> Path:

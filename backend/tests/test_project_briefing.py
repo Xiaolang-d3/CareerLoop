@@ -1,7 +1,7 @@
 import asyncio
 from pathlib import Path
 
-from app.db import init_db
+from app.compatibility.schema_v22 import init_db
 from app.profile import document as profile_document
 from app.profile.candidate_core import create_or_update_profile
 from app.projects.briefing import analyze_project_briefing, build_project_briefing, get_project_studio

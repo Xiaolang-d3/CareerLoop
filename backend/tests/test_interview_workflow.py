@@ -3,7 +3,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from app.db import connect, init_db, json_dump
+from app.db import connect, json_dump
+from app.compatibility.schema_v22 import init_db
 from app.interview.workflow import (
     _build_kit_content,
     _present_kit_content,

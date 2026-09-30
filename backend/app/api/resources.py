@@ -94,11 +94,6 @@ def conversations_delete(conversation_id: int) -> dict[str, Any]:
     clear_run_snapshot(conversation_id)
     if not delete_conversation(conversation_id):
         raise HTTPException(status_code=404, detail="对话不存在")
-    with connect() as conn:
-        conn.execute(
-            "DELETE FROM workflow_runs WHERE name = ?",
-            (f"conversation-{conversation_id}",),
-        )
     remaining = list_conversations()
     if not remaining:
         remaining = [create_conversation()]

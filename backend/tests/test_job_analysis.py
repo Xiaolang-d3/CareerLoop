@@ -3,7 +3,8 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from app.profile.candidate_core import create_strategy, propose_fact, review_fact
-from app.db import connect, init_db
+from app.db import connect
+from app.compatibility.schema_v22 import init_db
 from app.jobs.evaluations import (
     create_job_comparison,
     create_job_evaluation,

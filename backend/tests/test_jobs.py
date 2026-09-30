@@ -2,7 +2,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from app.db import init_db
+from app.compatibility.schema_v22 import init_db
 from app.jobs.service import create_job, delete_job, get_job, list_jobs, update_job
 
 

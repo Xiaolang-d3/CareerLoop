@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from app.profile.candidate_core import create_or_update_profile, create_strategy, propose_fact
-from app.db import init_db
+from app.compatibility.schema_v22 import init_db
 from app.opportunities.service import add_opportunity_source, detect_provider, import_visible_jobs, list_discovered_jobs
 from app.opportunities.runs import create_discovery_run, execute_discovery_run, get_discovery_run
 
