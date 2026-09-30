@@ -1,0 +1,95 @@
+name: Desktop macOS Internal
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "desktop/**"
+      - ".github/workflows/desktop-macos.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos-arm64:
+    name: macOS ARM64 internal package
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+      - name: Install Python dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements-dev.txt
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+      - name: Run backend tests
+        working-directory: backend
+        env:
+          CAREERLOOP_SECRET_BACKEND: memory
+        run: python -m pytest tests -q
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm run test
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+      - name: Build sidecar
+        working-directory: desktop
+        run: npm run package-sidecar
+      - name: Smoke-test sidecar identity and shutdown
+        run: |
+          set -euo pipefail
+          BINARY="desktop/src-tauri/binaries/careerloop-server-aarch64-apple-darwin"
+          DATA_DIR="$RUNNER_TEMP/careerloop-smoke"
+          "$BINARY" --data-dir "$DATA_DIR" --port 18766 --instance-id ci-smoke &
+          SIDECAR_PID=$!
+          trap 'kill "$SIDECAR_PID" 2>/dev/null || true' EXIT
+          for attempt in {1..120}; do
+            if curl --noproxy '*' --fail --silent http://127.0.0.1:18766/health | grep -q '"instance_id":"ci-smoke"'; then
+              break
+            fi
+            sleep 0.25
+          done
+          curl --noproxy '*' --fail --silent http://127.0.0.1:18766/health | grep -q '"service":"careerloop"'
+          kill "$SIDECAR_PID"
+          wait "$SIDECAR_PID" || true
+          trap - EXIT
+          ! kill -0 "$SIDECAR_PID" 2>/dev/null
+      - name: Check Rust shell
+        working-directory: desktop/src-tauri
+        run: |
+          cargo fmt --check
+          cargo check
+      - name: Build unsigned internal app
+        working-directory: desktop
+        env:
+          APPLE_SIGNING_IDENTITY: "-"
+        run: npm run build
+      - name: Upload internal package
+        uses: actions/upload-artifact@v4
+        with:
+          name: careerloop-macos-arm64-internal
+          path: |
+            desktop/src-tauri/target/release/bundle/macos/*.app
+            desktop/src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error

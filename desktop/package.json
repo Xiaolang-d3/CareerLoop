@@ -1,0 +1,14 @@
+{
+  "name": "careerloop-desktop",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "package-sidecar": "python3 scripts/package-sidecar.py"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}
