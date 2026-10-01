@@ -8,12 +8,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from app import db
-import app.api.resources as resources_module
-import app.main as main_module
+import app.api.attachments as resources_module
+import app.chat.execution as main_module
 from app.agent.snapshots import load_run_snapshot, save_run_snapshot
 from app.chat.conversations import create_conversation, ensure_active_task
 from app.domain import AgentClarification, AgentRunResult, AgentRunSnapshot, AgentStreamEvent, ClarificationOption, ToolError
-from app.main import _active_chat_runs, _chat_run_key, app, cancel_current_agent_task
+from app.main import app
+from app.chat.execution import _active_chat_runs, _chat_run_key, cancel_current_agent_task
 from api_client import create_authenticated_client
 
 

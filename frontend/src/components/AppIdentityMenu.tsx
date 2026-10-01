@@ -3,7 +3,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { ViewKey } from "../types";
 import type { SettingsPage } from "../routing";
 
-type PrefetchPage = "profile" | "account" | "settings";
+type PrefetchPage = "library" | "account" | "settings";
 
 export type AppIdentityMenuProps = {
   userEmail?: string;
@@ -39,7 +39,7 @@ export function AppIdentityMenu({
   const menuId = useId();
   const displayName = accountName?.trim() || userEmail || "";
   const accountActive = activeView === "settings" && settingsPage === "account";
-  const profileActive = activeView === "settings" && settingsPage === "profile";
+  const libraryActive = activeView === "settings" && settingsPage === "library";
 
   useEffect(() => {
     if (!open) return;
@@ -67,7 +67,7 @@ export function AppIdentityMenu({
   return (
     <div className="app-identity" ref={rootRef}>
       <button
-        className={`sidebar-identity ${accountActive || profileActive ? "active" : ""}`}
+        className={`sidebar-identity ${accountActive || libraryActive ? "active" : ""}`}
         type="button"
         onClick={() => setOpen((current) => !current)}
         title={accountName?.trim() ? `${accountName.trim()} · ${userEmail}` : userEmail}
@@ -98,10 +98,10 @@ export function AppIdentityMenu({
           <button
             type="button"
             role="menuitem"
-            aria-current={profileActive ? "page" : undefined}
+            aria-current={libraryActive ? "page" : undefined}
             onClick={() => closeAnd(onOpenProfile)}
-            onMouseEnter={() => onPrefetchPage?.("profile")}
-            onFocus={() => onPrefetchPage?.("profile")}
+            onMouseEnter={() => onPrefetchPage?.("library")}
+            onFocus={() => onPrefetchPage?.("library")}
           >
             <UserRound size={15} />
             资料库

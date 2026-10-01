@@ -13,7 +13,7 @@ import type { SettingsPage } from "../routing";
 
 export type ProductNavKey = "dashboard" | "library" | "chat" | "settings";
 
-type PrefetchPage = "chat" | "profile" | "dashboard" | "settings";
+type PrefetchPage = "chat" | "library" | "dashboard" | "settings";
 
 type SidebarItem = {
   key: ProductNavKey;
@@ -52,7 +52,7 @@ export function AppSidebar({
 
   const primaryItems: SidebarItem[] = [
     { key: "dashboard", label: "首页", icon: <Home size={18} />, active: isActive("dashboard"), prefetch: "dashboard", onClick: () => onSelectNav("dashboard") },
-    { key: "library", label: "我的知识库", icon: <BookOpen size={18} />, active: isActive("library"), prefetch: "profile", onClick: () => onSelectNav("library") },
+    { key: "library", label: "我的知识库", icon: <BookOpen size={18} />, active: isActive("library"), prefetch: "library", onClick: () => onSelectNav("library") },
     { key: "chat", label: "AI 工作区", icon: <MessageCircle size={18} />, active: isActive("chat"), prefetch: "chat", onClick: () => onSelectNav("chat") }
   ];
 

@@ -48,13 +48,13 @@ class AgentSettingsTest(unittest.TestCase):
             "persona_role": "坦诚、重视证据的求职顾问",
             "response_style": "detailed",
             "custom_instructions": "优先指出风险",
-            "profile_memory_enabled": False,
+            "library_memory_enabled": False,
             "context_message_limit": 20,
         })
         saved = save_agent_settings(settings, self.db_path)
 
         self.assertEqual(saved["display_name"], "机会顾问")
-        self.assertFalse(saved["profile_memory_enabled"])
+        self.assertFalse(saved["library_memory_enabled"])
         self.assertEqual(saved["context_message_limit"], 20)
         prompt = persona_prompt(saved)
         self.assertIn("不得覆盖", prompt)

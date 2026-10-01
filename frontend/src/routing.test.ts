@@ -8,7 +8,7 @@ describe("primary route", () => {
     expect(parseAppHash("#/home")).toEqual({ section: "dashboard" });
     expect(parseAppHash("#/dashboard")).toEqual({ section: "dashboard" });
     expect(parseAppHash("#/search")).toEqual({ section: "chat" });
-    expect(parseAppHash("#/library")).toEqual({ section: "settings", page: "profile" });
+    expect(parseAppHash("#/library")).toEqual({ section: "settings", page: "library" });
     expect(parseAppHash("#/workspace")).toEqual({ section: "chat" });
     expect(appRouteHash({ section: "dashboard" })).toBe("#/home");
     expect(routeForSection("dashboard")).toEqual({ section: "dashboard" });
@@ -34,24 +34,24 @@ describe("retired opportunity routes", () => {
 describe("retired preparation routes", () => {
   it("routes preparation into conversation and knowledge into the library", () => {
     expect(parseAppHash("#/interview-prep")).toEqual({ section: "chat" });
-    expect(parseAppHash("#/knowledge")).toEqual({ section: "settings", page: "profile" });
+    expect(parseAppHash("#/knowledge")).toEqual({ section: "settings", page: "library" });
     expect(parseAppHash("#/interview-records")).toEqual({ section: "chat" });
   });
 
   it("routes old project and knowledge deep links into the library", () => {
-    expect(parseAppHash("#/projects/experience-1/questions/experience-1-contribution")).toEqual({ section: "settings", page: "profile" });
-    expect(parseAppHash("#/knowledge/experience-1/experience-1-skill-fastapi")).toEqual({ section: "settings", page: "profile" });
+    expect(parseAppHash("#/projects/experience-1/questions/experience-1-contribution")).toEqual({ section: "settings", page: "library" });
+    expect(parseAppHash("#/knowledge/experience-1/experience-1-skill-fastapi")).toEqual({ section: "settings", page: "library" });
   });
 });
 
 describe("retired project studio routes", () => {
   it("routes project links into the library", () => {
-    expect(parseAppHash("#/project")).toEqual({ section: "settings", page: "profile" });
-    expect(parseAppHash("#/project/project-1")).toEqual({ section: "settings", page: "profile" });
-    expect(parseAppHash("#/project/project-1/architecture")).toEqual({ section: "settings", page: "profile" });
-    expect(parseAppHash("#/project/project-1/materials")).toEqual({ section: "settings", page: "profile" });
-    expect(parseAppHash("#/project/project-1/interview")).toEqual({ section: "settings", page: "profile" });
-    expect(parseAppHash("#/projects")).toEqual({ section: "settings", page: "profile" });
+    expect(parseAppHash("#/project")).toEqual({ section: "settings", page: "library" });
+    expect(parseAppHash("#/project/project-1")).toEqual({ section: "settings", page: "library" });
+    expect(parseAppHash("#/project/project-1/architecture")).toEqual({ section: "settings", page: "library" });
+    expect(parseAppHash("#/project/project-1/materials")).toEqual({ section: "settings", page: "library" });
+    expect(parseAppHash("#/project/project-1/interview")).toEqual({ section: "settings", page: "library" });
+    expect(parseAppHash("#/projects")).toEqual({ section: "settings", page: "library" });
   });
 });
 
@@ -66,10 +66,10 @@ describe("account settings route", () => {
   it("keeps account settings distinct from the library", () => {
     expect(parseAppHash("#/settings/account")).toEqual({ section: "settings", page: "account" });
     expect(appRouteHash({ section: "settings", page: "account" })).toBe("#/settings/account");
-    expect(parseAppHash("#/settings/profile")).toEqual({ section: "settings", page: "profile" });
-    expect(parseAppHash("#/evidence")).toEqual({ section: "settings", page: "profile" });
-    expect(parseAppHash("#/library?return=workbench")).toEqual({ section: "settings", page: "profile" });
-    expect(appRouteHash({ section: "settings", page: "profile" })).toBe("#/library");
+    expect(parseAppHash("#/settings/profile")).toEqual({ section: "settings", page: "library" });
+    expect(parseAppHash("#/evidence")).toEqual({ section: "settings", page: "library" });
+    expect(parseAppHash("#/library?return=workbench")).toEqual({ section: "settings", page: "library" });
+    expect(appRouteHash({ section: "settings", page: "library" })).toBe("#/library");
   });
 });
 

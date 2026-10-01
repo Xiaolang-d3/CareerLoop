@@ -63,7 +63,7 @@ describe("AppIdentityMenu", () => {
       <AppIdentityMenu
         userEmail="owner@example.com"
         activeView="settings"
-        settingsPage="profile"
+        settingsPage="library"
         onOpenProfile={onOpenProfile}
         onOpenAccount={onOpenAccount}
         onLogout={vi.fn()}
@@ -77,7 +77,7 @@ describe("AppIdentityMenu", () => {
     fireEvent.focus(profile);
     fireEvent.click(profile);
 
-    expect(onPrefetchPage).toHaveBeenCalledWith("profile");
+    expect(onPrefetchPage).toHaveBeenCalledWith("library");
     expect(onOpenProfile).toHaveBeenCalledOnce();
 
     fireEvent.click(screen.getByRole("button", { name: "账号菜单" }));

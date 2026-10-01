@@ -9,36 +9,24 @@ import {
   Wand2
 } from "lucide-react";
 import type { Conversation } from "../../types";
-import { homeInboxItems, type HomePendingFact, type HomeProjectInput } from "./home-metrics";
+import { homeInboxItems, type HomePendingFact } from "./home-metrics";
 
 const EMPTY_CONVERSATIONS: Conversation[] = [];
 const EMPTY_PENDING_FACTS: HomePendingFact[] = [];
 
 export type HomePageProps = {
-  apiBase?: string;
-  accessToken?: string;
   displayName?: string;
   email?: string;
-  profileName?: string;
-  targetRole?: string;
-  targetCity?: string;
-  resumeText?: string;
-  resumeFilename?: string;
-  skills?: string;
-  profileLoaded?: boolean;
+  libraryName?: string;
+  sourceTitle?: string;
+  libraryLoaded?: boolean;
   conversations?: Conversation[];
   pendingFacts?: HomePendingFact[];
-  projects?: HomeProjectInput[];
   sourceCount?: number;
+  enabledSourceCount?: number;
   confirmedFactCount?: number;
-  onOpenAnalysis?: () => void;
-  onOpenInterview?: () => void;
-  onOpenProject?: (experienceId: string) => void;
   onOpenProfile: () => void;
-  onOpenJob?: (jobId: number) => void;
   onOpenChat?: (conversationId?: number) => void;
-  onOpenOpportunities?: () => void;
-  onFactsChanged?: () => void;
 };
 
 function formatHomeTime(value: string) {
@@ -66,10 +54,10 @@ function metricValue(ready: boolean, value: string) {
 export function HomePage({
   displayName,
   email,
-  profileName,
-  resumeText,
-  resumeFilename,
-  profileLoaded = false,
+  libraryName,
+  sourceTitle,
+  enabledSourceCount = 0,
+  libraryLoaded = false,
   conversations = EMPTY_CONVERSATIONS,
   pendingFacts = EMPTY_PENDING_FACTS,
   sourceCount,
@@ -77,8 +65,8 @@ export function HomePage({
   onOpenProfile,
   onOpenChat,
 }: HomePageProps) {
-  const greetingName = profileName?.trim() || displayName?.trim() || email?.split("@")[0] || "";
-  const hasResume = Boolean((resumeText || "").trim());
+  const greetingName = libraryName?.trim() || displayName?.trim() || email?.split("@")[0] || "";
+  const hasSources = enabledSourceCount > 0;
   const reviewableInbox = homeInboxItems(pendingFacts);
   const recentChats = [...conversations]
     .sort((a, b) => (b.last_message_at || b.updated_at).localeCompare(a.last_message_at || a.updated_at))
@@ -87,15 +75,15 @@ export function HomePage({
   const recentWorkChats = [...conversations].filter((item) => item.task_status !== "active").sort((a, b) => (b.last_message_at || b.updated_at).localeCompare(a.last_message_at || a.updated_at)).slice(0, 4);
   const recentAdded = reviewableInbox.slice(0, 4);
   const knowledgeCount = confirmedFactCount ?? 0;
-  const fileCount = sourceCount ?? (profileLoaded ? (hasResume ? 1 : 0) : null);
+  const fileCount = sourceCount ?? (libraryLoaded ? 0 : null);
   const topicCount = pendingFacts.length;
   const chatCount = conversations.length;
 
-  const evidenceNote = !profileLoaded
+  const evidenceNote = !libraryLoaded
     ? "资料尚未读取"
     : reviewableInbox.length
       ? `${reviewableInbox.length} 条待确认`
-      : hasResume
+      : hasSources
         ? "已确认资料可用于分析和创作"
         : "知识库还是空的";
 
@@ -130,7 +118,7 @@ export function HomePage({
     {
       key: "knowledge",
       label: "知识条目",
-      value: metricValue(profileLoaded, knowledgeCount == null ? "—" : String(knowledgeCount)),
+      value: metricValue(libraryLoaded, knowledgeCount == null ? "—" : String(knowledgeCount)),
       note: evidenceNote,
       icon: <NotebookPen size={14} />,
       onClick: onOpenProfile
@@ -138,16 +126,16 @@ export function HomePage({
     {
       key: "files",
       label: "文件",
-      value: metricValue(profileLoaded, fileCount == null ? "—" : String(fileCount)),
-      note: !profileLoaded ? "资料尚未读取" : hasResume ? (resumeFilename || "已保存文档") : "还没有文件",
+      value: metricValue(libraryLoaded, fileCount == null ? "—" : String(fileCount)),
+      note: !libraryLoaded ? "资料尚未读取" : hasSources ? (sourceTitle || "已保存文档") : "还没有文件",
       icon: <FileText size={14} />,
       onClick: onOpenProfile
     },
     {
       key: "topics",
       label: "待确认",
-      value: metricValue(profileLoaded, topicCount == null ? "—" : String(topicCount)),
-      note: !profileLoaded ? "资料尚未读取" : topicCount ? "确认后用于问答与创作" : "暂无待确认内容",
+      value: metricValue(libraryLoaded, topicCount == null ? "—" : String(topicCount)),
+      note: !libraryLoaded ? "资料尚未读取" : topicCount ? "确认后用于问答与创作" : "暂无待确认内容",
       icon: <Sparkles size={14} />,
       onClick: onOpenProfile
     },
@@ -224,7 +212,7 @@ export function HomePage({
             </ul>
           ) : (
             <div className="home-recent-empty">
-              <p>{profileLoaded ? "还没有新的待确认内容。" : "资料读取后，这里会显示待确认内容的条目。"}</p>
+              <p>{libraryLoaded ? "还没有新的待确认内容。" : "资料读取后，这里会显示待确认内容的条目。"}</p>
               <button type="button" onClick={onOpenProfile}>去知识库添加<ArrowRight size={14} /></button>
             </div>
           )}

@@ -1,14 +1,10 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { CandidateEditor, LibrarySource, LibrarySourceDetail } from "../../types";
-import { ProfileSettingsPage } from "./ProfileSettingsPage";
+import type { LibraryEditor, LibrarySource, LibrarySourceDetail } from "../../types";
+import { LibraryPage } from "./LibraryPage";
 
-const editor: CandidateEditor = {
-  name: "小林", targetRole: "", targetCity: "", salaryMin: "", salaryMax: "",
-  skills: "", industries: "", blockedKeywords: "", blockedCompanies: "",
-  resumeText: "", resumeFilename: "", resumeRedactedText: "", privacyMode: "redacted"
-};
+const editor: LibraryEditor = { name: "小林", privacyMode: "redacted" };
 
 const source: LibrarySource = {
   id: 7, source_kind: "upload", title: "读书笔记", original_filename: "notes.md",
@@ -36,7 +32,7 @@ function props() {
   };
 }
 
-describe("ProfileSettingsPage multi-source library", () => {
+describe("LibraryPage multi-source library", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
@@ -44,7 +40,7 @@ describe("ProfileSettingsPage multi-source library", () => {
 
   it("shows independent sources and previews one without merging content", async () => {
     const pageProps = props();
-    render(<ProfileSettingsPage {...pageProps} />);
+    render(<LibraryPage {...pageProps} />);
     expect(screen.getByRole("list", { name: "资料来源列表" })).toHaveTextContent("读书笔记");
     expect(screen.getByText("notes.md · 120 字 · 已就绪")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "预览 读书笔记" }));
@@ -54,7 +50,7 @@ describe("ProfileSettingsPage multi-source library", () => {
 
   it("creates a pasted source with redacted mode by default", async () => {
     const pageProps = props();
-    render(<ProfileSettingsPage {...pageProps} sources={[]} />);
+    render(<LibraryPage {...pageProps} sources={[]} />);
     fireEvent.click(screen.getByRole("button", { name: "粘贴文本" }));
     fireEvent.change(screen.getByLabelText("来源标题"), { target: { value: "会议纪要" } });
     fireEvent.change(screen.getByLabelText("来源内容"), { target: { value: "本周完成检索评测" } });
@@ -64,7 +60,7 @@ describe("ProfileSettingsPage multi-source library", () => {
 
   it("edits the extracted text and offers the original file separately", async () => {
     const pageProps = props();
-    render(<ProfileSettingsPage {...pageProps} />);
+    render(<LibraryPage {...pageProps} />);
     fireEvent.click(screen.getByRole("button", { name: "预览 读书笔记" }));
     await screen.findByLabelText("来源预览");
     fireEvent.click(screen.getByRole("button", { name: "编辑正文" }));
@@ -77,7 +73,7 @@ describe("ProfileSettingsPage multi-source library", () => {
 
   it("updates enable and privacy state per source", async () => {
     const pageProps = props();
-    render(<ProfileSettingsPage {...pageProps} />);
+    render(<LibraryPage {...pageProps} />);
     fireEvent.click(screen.getByRole("checkbox", { name: "原文" }));
     await waitFor(() => expect(pageProps.onUpdateSource).toHaveBeenCalledWith(7, { privacy_mode: "original" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "启用" }));
@@ -87,7 +83,7 @@ describe("ProfileSettingsPage multi-source library", () => {
   it("requires confirmation before permanent source deletion", async () => {
     vi.stubGlobal("confirm", vi.fn(() => true));
     const pageProps = props();
-    render(<ProfileSettingsPage {...pageProps} />);
+    render(<LibraryPage {...pageProps} />);
     fireEvent.click(screen.getByRole("button", { name: "删除 读书笔记" }));
     await waitFor(() => expect(pageProps.onDeleteSource).toHaveBeenCalledWith(7));
   });
@@ -96,7 +92,7 @@ describe("ProfileSettingsPage multi-source library", () => {
     const pageProps = props();
     function Harness() {
       const [current, setCurrent] = useState({ ...editor, name: "" });
-      return <ProfileSettingsPage {...pageProps} editor={current} onChange={setCurrent} />;
+      return <LibraryPage {...pageProps} editor={current} onChange={setCurrent} />;
     }
     render(<Harness />);
     expect(screen.getByText("称呼是可选项，不会阻止导入或保存资料。")).toBeInTheDocument();
@@ -107,7 +103,7 @@ describe("ProfileSettingsPage multi-source library", () => {
   });
 
   it("retains pending knowledge when review fails", async () => {
-    render(<ProfileSettingsPage {...props()} pendingFacts={[{ id: 21, statement: "主导过检索评测", category: "project" }]} onReviewFact={vi.fn().mockRejectedValue(new Error("offline"))} />);
+    render(<LibraryPage {...props()} pendingFacts={[{ id: 21, statement: "主导过检索评测", category: "project" }]} onReviewFact={vi.fn().mockRejectedValue(new Error("offline"))} />);
     fireEvent.click(screen.getByRole("button", { name: "确认" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("offline");
     expect(screen.getByLabelText("待确认内容")).toHaveTextContent("主导过检索评测");

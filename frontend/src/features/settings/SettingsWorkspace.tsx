@@ -10,7 +10,7 @@ import {
   TriangleAlert,
   UserRound
 } from "lucide-react";
-import type { CandidateEditor } from "../../types";
+import type { LibraryEditor } from "../../types";
 import type { SettingsPage } from "../../routing";
 import "./settings-workspace.css";
 
@@ -22,7 +22,7 @@ type WorkspaceProps = {
 
 const pageLabels: Record<Exclude<SettingsPage, "overview">, string> = {
   account: "账号与安全",
-  profile: "资料库",
+  library: "资料库",
   model: "模型设置",
   agent: "Agent 执行记录"
 };
@@ -30,7 +30,7 @@ const pageLabels: Record<Exclude<SettingsPage, "overview">, string> = {
 export function SettingsWorkspace({ page, children, onBack }: WorkspaceProps) {
   return (
     <section className={`settings-workspace settings-${page}`}>
-      {page !== "overview" && page !== "profile" ? (
+      {page !== "overview" && page !== "library" ? (
         <nav className="settings-breadcrumb" aria-label="设置路径">
           <button type="button" onClick={onBack}><ArrowLeft size={14} />设置</button>
           <ChevronRight size={13} aria-hidden="true" />
@@ -43,8 +43,9 @@ export function SettingsWorkspace({ page, children, onBack }: WorkspaceProps) {
 }
 
 type OverviewProps = {
-  profile: CandidateEditor;
-  profileReady: boolean | null;
+  library: LibraryEditor;
+  libraryReady: boolean | null;
+  sourceTitle?: string;
   onOpen: (page: Exclude<SettingsPage, "overview">) => void;
   accountEmail?: string;
   accountName?: string;
@@ -52,21 +53,22 @@ type OverviewProps = {
   apiKeyConfigured?: boolean;
 };
 
-function profileReadyBadge(profileReady: boolean | null) {
-  if (profileReady == null) {
+function libraryReadyBadge(libraryReady: boolean | null) {
+  if (libraryReady == null) {
     return <em>检查中</em>;
   }
   return (
-    <em className={profileReady ? "success" : "warning"}>
-      {profileReady ? <CheckCircle2 size={13} /> : <TriangleAlert size={13} />}
-      {profileReady ? "资料已就绪" : "待完善"}
+    <em className={libraryReady ? "success" : "warning"}>
+      {libraryReady ? <CheckCircle2 size={13} /> : <TriangleAlert size={13} />}
+      {libraryReady ? "资料已就绪" : "待完善"}
     </em>
   );
 }
 
 export function SettingsOverview({
-  profile,
-  profileReady,
+  library,
+  libraryReady,
+  sourceTitle,
   onOpen,
   accountEmail,
   accountName,
@@ -88,13 +90,13 @@ export function SettingsOverview({
           </span>
           <ChevronRight size={19} />
         </button>
-        <button className="settings-entry-card profile" type="button" onClick={() => onOpen("profile")}>
+        <button className="settings-entry-card library" type="button" onClick={() => onOpen("library")}>
           <span className="settings-entry-icon"><UserRound size={21} /></span>
           <span className="settings-entry-copy">
-            <span className="settings-entry-title"><strong>资料库</strong>{profileReadyBadge(profileReady)}</span>
-            <span className="settings-entry-primary">{profile.name || "尚未填写称呼"}</span>
-            <span className="settings-entry-meta"><FileText size={13} />{profile.resumeFilename || (profile.resumeText ? "已粘贴资料文本" : "尚未保存资料")}</span>
-            <span className="settings-entry-meta"><ShieldCheck size={13} />{profile.privacyMode === "original" ? "允许使用原文" : "脱敏模式"}</span>
+            <span className="settings-entry-title"><strong>资料库</strong>{libraryReadyBadge(libraryReady)}</span>
+            <span className="settings-entry-primary">{library.name || "尚未填写称呼"}</span>
+            <span className="settings-entry-meta"><FileText size={13} />{sourceTitle || "尚未保存资料"}</span>
+            <span className="settings-entry-meta"><ShieldCheck size={13} />{library.privacyMode === "original" ? "允许使用原文" : "脱敏模式"}</span>
           </span>
           <ChevronRight size={19} />
         </button>

@@ -1,6 +1,7 @@
 """Fresh initialization and recoverable, serialized workspace upgrades."""
 from __future__ import annotations
 
+import json
 import shutil
 import sqlite3
 import threading
@@ -45,7 +46,7 @@ def initialize_workspace(db_path: str | Path | None = None) -> None:
         if version > DB_SCHEMA_VERSION:
             raise ValueError("数据库来自更新版本，请升级应用后打开")
         if tables:
-            if not 1 <= version <= 22:
+            if not 1 <= version <= 23:
                 raise ValueError("未知数据库格式，未修改原文件")
             _backup(path)
             if version < 22:
@@ -53,11 +54,26 @@ def initialize_workspace(db_path: str | Path | None = None) -> None:
                 upgrade_to_v22(path)
         with connect(path) as conn:
             conn.executescript(CURRENT_SCHEMA)
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(agent_settings)")}
+            if "profile_memory_enabled" in columns:
+                conn.execute("ALTER TABLE agent_settings RENAME COLUMN profile_memory_enabled TO library_memory_enabled")
+            conn.execute("UPDATE attachments SET kind = CASE kind WHEN 'resume' THEN 'document' WHEN 'job_screenshot' THEN 'image' ELSE kind END")
+            for row in conn.execute("SELECT id, payload_json FROM chat_messages WHERE payload_json LIKE '%attachments%'").fetchall():
+                payload = json.loads(row["payload_json"] or "{}")
+                if not isinstance(payload, dict):
+                    continue
+                changed = False
+                for attachment in payload.get("attachments") or []:
+                    if isinstance(attachment, dict) and attachment.get("kind") in {"resume", "job_screenshot"}:
+                        attachment["kind"] = {"resume": "document", "job_screenshot": "image"}[attachment["kind"]]
+                        changed = True
+                if changed:
+                    conn.execute("UPDATE chat_messages SET payload_json = ? WHERE id = ?", (json.dumps(payload, ensure_ascii=False), row["id"]))
             conn.execute("INSERT OR IGNORE INTO agent_settings (id) VALUES (1)")
             if conn.execute("SELECT 1 FROM conversations LIMIT 1").fetchone() is None:
                 cursor = conn.execute("INSERT INTO conversations (title) VALUES ('历史对话')")
                 conn.execute("INSERT INTO conversation_tasks (conversation_id, title) VALUES (?, '历史任务')", (cursor.lastrowid,))
-        if tables:
+        if tables and version < 23:
             from ..compatibility.library_v23 import migrate_library
             migrate_library(path)
         # Indexing is a recoverable phase. The completion version is written

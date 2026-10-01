@@ -60,7 +60,7 @@ class SearchLibraryTool:
     async def execute(self, arguments: dict[str, Any], context: ToolContext) -> ToolResult:
         payload = SearchArguments.model_validate(arguments)
         settings = get_agent_settings(self._db_path)
-        if not settings["profile_memory_enabled"] or not settings["knowledge_memory_enabled"]:
+        if not settings["library_memory_enabled"] or not settings["knowledge_memory_enabled"]:
             return ToolResult(ok=True, status="done", data={"excerpts": [], "facts": [], "disabled": True}, message="知识库读取已关闭")
         matches = search_knowledge(payload.query, source_types=[SOURCE_TYPE], limit=payload.limit, db_path=self._db_path)
         excerpts = [

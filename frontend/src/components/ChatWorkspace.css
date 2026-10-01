@@ -289,10 +289,6 @@
   margin-bottom: 0;
 }
 
-.chat-workspace .message-markdown.interview-drill p {
-  margin: .76em 0;
-}
-
 .chat-workspace .message-markdown ul,
 .chat-workspace .message-markdown ol {
   margin: .65em 0;
@@ -307,78 +303,6 @@
 .chat-workspace .message-markdown li::marker {
   color: var(--color-brand);
   font-variant-numeric: tabular-nums;
-}
-
-.chat-workspace .interview-question-stem {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: baseline;
-  gap: 8px 12px;
-  margin: 1.05em 0 .5em;
-  padding: 10px 0 0;
-  border-top: 1px solid var(--color-border);
-}
-
-.chat-workspace .message-markdown > .interview-question-stem:first-child {
-  margin-top: 0;
-  padding-top: 0;
-  border-top: 0;
-}
-
-.chat-workspace .interview-question-index {
-  color: var(--color-brand);
-  font-family: var(--font-display);
-  font-size: 1.18em;
-  font-weight: 400;
-  letter-spacing: -.02em;
-  line-height: 1.2;
-}
-
-.chat-workspace .interview-question-stem strong {
-  color: var(--color-text);
-  font-family: var(--font-sans);
-  font-size: 1.02em;
-  font-weight: 680;
-  letter-spacing: -.015em;
-  line-height: 1.45;
-}
-
-.chat-workspace .interview-followup {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: baseline;
-  gap: 8px;
-  color: var(--color-text-secondary);
-}
-
-.chat-workspace .interview-followup-label {
-  color: var(--color-brand-strong);
-  font-size: 11px;
-  font-weight: 720;
-  letter-spacing: .04em;
-}
-
-.chat-workspace .interview-hint {
-  display: grid;
-  gap: 3px;
-  margin: 1em 0 0;
-  padding: 10px 0 0;
-  border-top: 1px dashed color-mix(in srgb, var(--color-brand) 22%, var(--color-border));
-  background: transparent;
-}
-
-.chat-workspace .interview-hint-label {
-  color: var(--color-text-muted);
-  font-size: 10px;
-  font-weight: 720;
-  letter-spacing: .08em;
-}
-
-.chat-workspace .interview-hint p {
-  margin: 0;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  line-height: 1.65;
 }
 
 .chat-workspace .thinking-process {
@@ -1210,10 +1134,6 @@
 
   .chat-workspace .chat-thread .message.user .message-dialog {
     padding: 11px 13px;
-  }
-
-  .chat-workspace .interview-question-stem {
-    gap: 6px 10px;
   }
 
   .chat-workspace .composer-drafts {

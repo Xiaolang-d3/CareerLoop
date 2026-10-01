@@ -8,7 +8,8 @@ from tempfile import TemporaryDirectory
 import pytest
 
 from app import db
-from app.main import _active_chat_runs, app, cancel_current_agent_task
+from app.main import app
+from app.chat.execution import _active_chat_runs, cancel_current_agent_task
 from app.workspace import ensure_workspace, use_workspace
 from app.library.sources import create_text_source
 from api_client import register_authenticated_client

@@ -39,3 +39,19 @@ assert not any(name.startswith(('app.profile', 'app.jobs', 'app.resume', 'app.in
         capture_output=True,
         text=True,
     )
+
+
+def test_current_services_do_not_import_http_or_legacy_readers():
+    subprocess.run(
+        [sys.executable, "-c", """
+import sys
+from app.chat import execution
+from app.library import service
+assert 'app.main' not in sys.modules
+assert not any(name.startswith(('app.api', 'app.compatibility')) for name in sys.modules)
+"""],
+        cwd=Path(__file__).resolve().parents[1],
+        check=True,
+        capture_output=True,
+        text=True,
+    )

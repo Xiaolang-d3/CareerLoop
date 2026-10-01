@@ -50,7 +50,7 @@ class AttachmentServiceTest(unittest.TestCase):
     def test_resume_is_private_until_parsed_and_can_be_deleted(self) -> None:
         attachment = create_attachment(
             1,
-            "resume",
+            "document",
             "candidate.txt",
             "张三\nPython 工程师\nFastAPI 与 Agent 开发经验".encode(),
             db_path=self.db_path,
@@ -71,14 +71,14 @@ class AttachmentServiceTest(unittest.TestCase):
 
     def test_rejects_invalid_attachment_before_storage(self) -> None:
         with self.assertRaises(ValueError):
-            validate_attachment("job_screenshot", "resume.pdf", b"not an image")
+            validate_attachment("image", "resume.pdf", b"not an image")
         with self.assertRaises(ValueError):
-            validate_attachment("resume", "resume.exe", b"invalid")
+            validate_attachment("document", "resume.exe", b"invalid")
 
     def test_job_screenshot_skips_ocr_and_requires_vision(self) -> None:
         attachment = create_attachment(
             1,
-            "job_screenshot",
+            "image",
             "job.png",
             png_1x1(),
             db_path=self.db_path,
@@ -96,7 +96,7 @@ class AttachmentServiceTest(unittest.TestCase):
     def test_conversation_cleanup_deletes_database_rows_and_objects(self) -> None:
         first = create_attachment(
             1,
-            "resume",
+            "document",
             "candidate.txt",
             "Python 工程师，具有 Agent 开发经验".encode(),
             db_path=self.db_path,
@@ -104,14 +104,14 @@ class AttachmentServiceTest(unittest.TestCase):
         )
         second = create_attachment(
             1,
-            "job_screenshot",
+            "image",
             "job.png",
             png_1x1(),
             db_path=self.db_path,
             store=self.store,
         )
         object_paths = [
-            self.store.local_root / f"{item['id'][:2]}/{item['id']}{'.txt' if item['kind'] == 'resume' else '.png'}"
+            self.store.local_root / f"{item['id'][:2]}/{item['id']}{'.txt' if item['kind'] == 'document' else '.png'}"
             for item in (first, second)
         ]
         self.assertTrue(all(path.exists() for path in object_paths))
@@ -126,7 +126,7 @@ class AttachmentServiceTest(unittest.TestCase):
     def test_prepare_vision_url_requires_feature_flag(self) -> None:
         attachment = create_attachment(
             1,
-            "job_screenshot",
+            "image",
             "job.png",
             png_1x1(),
             db_path=self.db_path,
@@ -143,7 +143,7 @@ class AttachmentServiceTest(unittest.TestCase):
     def test_prepare_vision_url_returns_signed_url_when_enabled(self) -> None:
         attachment = create_attachment(
             1,
-            "job_screenshot",
+            "image",
             "job.png",
             png_1x1(),
             db_path=self.db_path,

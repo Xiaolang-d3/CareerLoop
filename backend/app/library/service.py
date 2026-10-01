@@ -23,7 +23,7 @@ def get_library(db_path: str | Path | None = None) -> dict[str, Any]:
 
 def model_context(db_path: str | Path | None = None) -> dict[str, Any]:
     settings = get_agent_settings(db_path)
-    if not settings["profile_memory_enabled"]:
+    if not settings["library_memory_enabled"]:
         return {"document": "", "confirmed_facts": [], "sources": [], "disabled": True}
     bundle = get_library(db_path)
     profile = bundle["profile"]

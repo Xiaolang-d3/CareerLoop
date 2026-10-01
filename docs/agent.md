@@ -2,7 +2,7 @@
 
 本文是 CareerLoop **智能体层的维护文档**。代码是行为的事实来源；本文记录意图、边界和同步点。改智能体行为时必须在同一变更中更新本文。
 
-最近校准：2026-09-30（产品边界收敛到五工具/五路由；知识库改为独立来源；发送消息不再执行额外模型预检；桌面 sidecar 完成身份校验与生命周期托管）。
+最近校准：2026-10-01（删除退役求职实现；资料库与持久化独立；拆分 API、聊天协调和 AG-UI 编码；数据库版本 24；真实后端闭环及桌面运行时验证）。
 
 ## 定位
 
@@ -44,7 +44,7 @@ launcher 定位后执行。浏览器开发与自托管仍保持原有的 FastAPI
 用户消息 / 附件 / 联网开关
         │
         ▼
- FastAPI 聊天流  (backend/app/main.py)
+ FastAPI 聊天流  (api/chat.py → chat/execution.py)
         │  任务进度 → durable Agent runs
         │  若有 waiting 快照：选项/未改口则 resume，改口则清快照
         ▼
@@ -83,13 +83,13 @@ backend/app/
 ├── models/                  模型协议、OpenAI 兼容与 Anthropic Messages 实现
 ├── tooling/specs.py         工具风险、能力标签、阶段与超时元数据
 ├── tools/                   对话工具
-├── chat/                    历史、摘要、落库
-├── workflow/                阶段记账（不调度）
+├── api/                     按职责划分的 HTTP 路由
+├── chat/                    协议、历史、运行协调、AG-UI 编码与落库
 ├── library/                 独立来源、模型上下文与待确认知识
 ├── documents/               共享文档提取与可选 OCR
-├── profile/                 迁移准备中的历史画像实现
+├── persistence/             当前表与版本升级
+├── compatibility/           仅供旧库升级读取的冻结历史格式
 ├── knowledge/               本地检索（FastEmbed / 哈希回退）
-├── resume/blocks.py         简历项目/工作块与稳定 ID
 └── observability/           工具审计、模型监控
 ```
 
@@ -101,7 +101,7 @@ backend/app/
 
 ## 对话运行时
 
-实现：`backend/app/agent/runtime.py`。组装：`backend/app/agent/bootstrap.py`。
+实现：`backend/app/agent/runtime.py`。组装：`backend/app/agent/bootstrap.py`。HTTP 路由在 `api/` 按认证、系统、资料库、会话、附件、模型及聊天划分；`main.py` 只组装服务、中间件和静态资源。`chat/execution.py` 管理任务幂等、恢复、并发、取消与保存，`chat/ag_ui.py` 将单一内部事件队列编码为 AG-UI SSE，不再混在入口中。业务模块不导入 main.py 的可变状态。
 
 默认上限：`MODEL_MAX_TOOL_ROUNDS=8`，单次工具超时 `TOOL_EXECUTION_TIMEOUT_SECONDS=60`，模型与安全工具重试预算分别为 `MODEL_RETRY_ATTEMPTS=1`、`TOOL_RETRY_ATTEMPTS=1`。同一对话同时只允许一个运行中的任务（HTTP 409）。
 
@@ -192,13 +192,13 @@ runtime 在进入循环、完成每个工具轮、写入完成修复提示和引
 
 `library_sources` 是资料的权威目录，每个上传文件或粘贴文本独立保存标题、类型、原始文件名、正文、脱敏正文、隐私模式、启用状态、解析状态、哈希与元数据。上传原件位于当前账户工作区的 `library/<source_id>/`，目录权限 `0700`、文件权限 `0600`。禁用来源会同步移除其检索分块；删除来源会永久删除原件、正文与索引，只依赖该来源的待确认知识同步删除，已确认知识保留并标记原来源已删除。
 
-当前版本为 23。`persistence/schema.py` 管理当前表，`persistence/upgrades.py` 串行执行版本升级；`compatibility/` 仅在旧库升级时加载。版本 1–22 先备份到 `.upgrade-backups/before-library-v23/`，再将旧 Markdown/画像基础资料、旧知识审核状态和证据导入独立资料表。历史公开知识标识保留；旧求职业务表和原始文件不删除。已有启用/禁用来源保持，完成升级后不再从旧原文补来源，已删除来源不会复活。索引成功后才记录版本 23；失败可重试且不会重复导入。
+当前版本为 24。`persistence/schema.py` 管理当前表，`persistence/upgrades.py` 串行执行版本升级；`compatibility/` 仅在旧库升级时加载。版本 1–23 先备份到 `.upgrade-backups/before-library-v23/`，再将旧 Markdown/画像基础资料、旧知识审核状态和证据导入独立资料表。历史公开知识标识保留；旧求职业务表和原始文件不删除。已有启用/禁用来源保持，完成升级后不再从旧原文补来源，已删除来源不会复活。来源导入和索引成功后记录当前版本；失败可重试且不会重复导入。
 
 默认向模型提供 `scan_and_redact` 后的文本；用户只可对单个来源开启 original。`get_library_context` 每个启用来源最多取 4000 字、总量最多约 12000 字并附来源摘要；更长资料由 `search_library` 按 `library_source` 分块检索并返回来源 ID、标题和片段。
 
 Agent 新知识写入 library_knowledge 的 pending 状态；用户确认后才进入 confirmed 上下文，否决或撤回内容不作为已确认事实。职业目标/策略不进入新知识库上下文。导入文档仅提取文本，不再推断求职方向、薪资或自动生成技能事实。
 
-历史附件 kind `resume` / `job_screenshot` 作为存储兼容值保留，界面显示文档/图片；图片附件不再强制进入岗位分析。模型看图仍由用户授权。
+当前附件 kind 使用 `document` / `image`，资料记忆开关使用 `library_memory_enabled`。升级将旧附件行、历史消息中的附件元数据和 `profile_memory_enabled` 设置转换到通用字段，保留原值语义。图片附件不强制进入岗位分析，模型看图仍由用户授权。短文本笔记不再沿用简历最低字数限制；删除原文件失败会回滚来源、证据和索引。知识写入工具成功后前端刷新待确认条目。前端资料库由 `features/library/useLibrary.ts` 管理来源及基本信息；聊天协议在 `features/chat/types.ts`，任务订阅与重试/取消在 `useChatRun.ts`，Markdown、来源和研究详情由 `MessagePresentation.tsx` 呈现。
 
 ## 工作流阶段
 
@@ -269,3 +269,14 @@ macOS 桌面版的新密钥写入 Keychain；开发和无钥匙串环境可读�
 ## 架构收敛进度
 
 当前资料库的基础资料、知识审核和来源管理位于 `library/`，只使用 `library_metadata`、`library_knowledge`、`library_evidence` 与 `library_sources`。确认知识不再改写画像 Markdown 或技能小节。`/library`、`/library/sources`、`/library/facts` URL 保持；文档解析不再返回退役求职推断字段。历史存储只在一次性兼容升级中读取，当前入口不再写旧工作流。完整实施范围与验收见 `docs/refactoring-plan.md`。
+
+## 兼容白名单与验证边界
+
+- `compatibility/schema_v22.py`、`profile_document.py`、`library_v23.py` 只供版本 1–22 的升级及合成迁移测试使用；版本 23–24 的业务不重新解析旧画像。升级入口统一在 `persistence/upgrades.py`，版本号完成后才标记迁移成功。
+- `career-profile.md`、`bosscopilot.db` 等历史文件名只用于工作区认领、备份及迁移；旧表保留原记录，当前业务无写入。新工作区没有这些表。
+- 历史附件 `resume/job_screenshot` 与设置 `profile_memory_enabled` 只在升级转换；新协议只写 `document/image` 和 `library_memory_enabled`。`/library` 的 `profile`、`facts` JSON 键保留接口兼容，内部对应通用元数据和知识条目。
+- 前端 `routing.ts` 集中重定向旧 hash，旧品牌本地存储键由应用入口读取；历史 `research_company` 事件只作为来源展示，不注册或执行旧工具。快照恢复必须符合当前路由与工具白名单。
+- `resume_policy.py`、`resume_mode` 和 `can_resume` 表示继续执行任务；`candidate` 在模型候选项、文件路径等位置是普通变量名。通用清洗保留已有文档的标题与联系方式格式，不推断职业字段。
+- 当前评测与测试使用合成资料并模拟外部模型/搜索。真实后端 E2E 保留账户、API、SQLite、五工具与 runtime 执行，只替换模型生成。桌面 smoke 使用打包可执行文件与临时数据；原生窗口交互、真实模型质量、外部搜索服务和未验证平台仍需发布验证。
+
+这些兼容项的退役条件记录在 `docs/refactoring-plan.md`；删除历史数据或结束旧版本升级支持需另行明确范围。

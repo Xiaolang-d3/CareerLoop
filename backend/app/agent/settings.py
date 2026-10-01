@@ -20,7 +20,7 @@ DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
     "persona_role": "理性、坦诚、尊重用户决定，并基于用户资料协助分析与创作的本地 AI 伙伴",
     "response_style": "concise",
     "custom_instructions": "",
-    "profile_memory_enabled": True,
+    "library_memory_enabled": True,
     "conversation_memory_enabled": True,
     "knowledge_memory_enabled": True,
     "summary_enabled": True,
@@ -60,7 +60,7 @@ def get_agent_settings(db_path: str | Path | None = None) -> dict[str, Any]:
     legacy_api_key = str(result.pop("model_api_key", "") or "")
     api_key, migration_warning = _resolved_model_api_key(db_path, legacy_api_key)
     for key in (
-        "profile_memory_enabled", "conversation_memory_enabled",
+        "library_memory_enabled", "conversation_memory_enabled",
         "knowledge_memory_enabled", "summary_enabled",
     ):
         result[key] = bool(result[key])
@@ -97,7 +97,7 @@ def save_agent_settings(values: dict[str, Any], db_path: str | Path | None = Non
             """
             INSERT INTO agent_settings (
                 id, display_name, persona_role, response_style, custom_instructions,
-                profile_memory_enabled, conversation_memory_enabled,
+                library_memory_enabled, conversation_memory_enabled,
                 knowledge_memory_enabled, summary_enabled, context_message_limit,
                 model_name, model_base_url, model_protocol, model_api_key
             ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -106,7 +106,7 @@ def save_agent_settings(values: dict[str, Any], db_path: str | Path | None = Non
                 persona_role = excluded.persona_role,
                 response_style = excluded.response_style,
                 custom_instructions = excluded.custom_instructions,
-                profile_memory_enabled = excluded.profile_memory_enabled,
+                library_memory_enabled = excluded.library_memory_enabled,
                 conversation_memory_enabled = excluded.conversation_memory_enabled,
                 knowledge_memory_enabled = excluded.knowledge_memory_enabled,
                 summary_enabled = excluded.summary_enabled,
@@ -119,7 +119,7 @@ def save_agent_settings(values: dict[str, Any], db_path: str | Path | None = Non
             """,
             (
                 values["display_name"], values["persona_role"], values["response_style"],
-                values["custom_instructions"], int(values["profile_memory_enabled"]),
+                values["custom_instructions"], int(values["library_memory_enabled"]),
                 int(values["conversation_memory_enabled"]), int(values["knowledge_memory_enabled"]),
                 int(values["summary_enabled"]), values["context_message_limit"],
                 values["model_name"], values["model_base_url"],

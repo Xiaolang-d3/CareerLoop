@@ -1,7 +1,7 @@
 """Per-user workspace routing.
 
 Business data stays in a single-tenant SQLite schema. Isolation comes from
-pointing ``connect()``, the profile document, and attachments at
+pointing ``connect()`` and current document/attachment storage at
 ``<data>/workspaces/<user_id>/`` for the authenticated request.
 """
 

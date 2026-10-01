@@ -214,14 +214,14 @@ export function AccountSettingsPage({
 
   return (
     <section className="account-settings-page">
-      <header className="profile-page-heading">
+      <header className="library-page-heading">
         <div>
           <p>这些信息跟随登录账号，和资料库内容分开。换设备登录后仍然有效。</p>
         </div>
       </header>
 
       <form className="account-card" onSubmit={(event) => void saveProfile(event)}>
-        <header className="profile-foundation-heading">
+        <header className="library-foundation-heading">
           <span><UserRound size={18} /></span>
           <div>
             <h3>账号信息</h3>
@@ -332,7 +332,7 @@ export function AccountSettingsPage({
       </form>
 
       <form className="account-card" onSubmit={(event) => void savePassword(event)}>
-        <header className="profile-foundation-heading">
+        <header className="library-foundation-heading">
           <span><ShieldCheck size={18} /></span>
           <div>
             <h3>修改密码</h3>

@@ -1,7 +1,8 @@
 import { createRef } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ChatWorkspace, interviewHintParts, interviewQuestionParts, type AgentRunResult, type ChatMessage, type ChatRetryDraft } from "./ChatWorkspace";
+import { ChatWorkspace } from "./ChatWorkspace";
+import type { AgentRunResult, ChatMessage, ChatRetryDraft } from "../features/chat/types";
 
 const mermaidMocks = vi.hoisted(() => ({
   initialize: vi.fn(),
@@ -100,7 +101,7 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
     onStop: vi.fn(),
     onEdit: vi.fn(),
     onRegenerate: vi.fn(),
-    onOpenResume: vi.fn()
+    onOpenLibrary: vi.fn()
   };
   render(<ChatWorkspace {...props} />);
   return props;
@@ -374,7 +375,7 @@ describe("ChatWorkspace", () => {
   });
 
   it("shows saved resume and analysis as attached composer context", () => {
-    const onOpenResume = vi.fn();
+    const onOpenLibrary = vi.fn();
     const onSend = vi.fn();
     render(
       <ChatWorkspace
@@ -409,8 +410,8 @@ describe("ChatWorkspace", () => {
           onStop: vi.fn(),
           onEdit: vi.fn(),
           onRegenerate: vi.fn(),
-          onOpenResume,
-          sessionContext: { resumeLabel: "resume.pdf", analysisLabel: "示例公司 · 后端" }
+          onOpenLibrary,
+          sessionContext: { sourceLabel: "resume.pdf", analysisLabel: "示例公司 · 后端" }
         }}
       />
     );
@@ -425,7 +426,7 @@ describe("ChatWorkspace", () => {
     expect(screen.getByRole("button", { name: "梳理已保存资料" })).toBeInTheDocument();
 
     fireEvent.click(resume);
-    expect(onOpenResume).toHaveBeenCalledOnce();
+    expect(onOpenLibrary).toHaveBeenCalledOnce();
     expect(onSend).not.toHaveBeenCalled();
     expect(screen.getByLabelText("输入消息")).toHaveValue("");
   });
@@ -601,7 +602,7 @@ describe("ChatWorkspace", () => {
               {
                 round: 1,
                 tool_call_id: "call-1",
-                tool_name: "research_company",
+                tool_name: "search_public_web",
                 status: "running",
                 message: "正在检索：腾讯科技",
                 data: { arguments: { company_name: "腾讯科技" } }
@@ -612,7 +613,7 @@ describe("ChatWorkspace", () => {
       }
     ], { chatBusy: true });
 
-    const toggle = screen.getByRole("button", { name: /正在检索公司资料/ });
+    const toggle = screen.getByRole("button", { name: /正在检索公开资料/ });
     fireEvent.click(toggle);
     const body = screen.getByRole("complementary", { name: "研究详情" });
     expect(body).not.toHaveTextContent("已识别为公司公开信息研究，需要先规划并限制可用工具");
@@ -672,7 +673,7 @@ describe("ChatWorkspace", () => {
               tool_name: "completion_validator",
               status: "running",
               message: "必要步骤尚未完成，正在继续执行",
-              data: { missing_tools: ["research_company"] }
+              data: { missing_tools: ["search_public_web"] }
             }]
           }
         }
@@ -680,7 +681,7 @@ describe("ChatWorkspace", () => {
     ], { chatBusy: true });
 
     const toggle = screen.getByRole("button", { name: /正在补齐必要步骤/ });
-    expect(toggle).not.toHaveTextContent("research_company");
+    expect(toggle).not.toHaveTextContent("search_public_web");
     fireEvent.click(toggle);
     expect(screen.getByRole("complementary", { name: "研究详情" }))
       .toHaveTextContent("必要步骤尚未完成，正在继续执行");
@@ -706,7 +707,7 @@ describe("ChatWorkspace", () => {
               tool_name: "agent_loop_guard",
               status: "running",
               message: "已跳过重复工具调用，正在推进下一步",
-              data: { tool_name: "research_company", fingerprint: "opaque-secret" }
+              data: { tool_name: "search_public_web", fingerprint: "opaque-secret" }
             }]
           }
         }
@@ -743,7 +744,7 @@ describe("ChatWorkspace", () => {
             {
               round: 1,
               tool_call_id: "call-1",
-              tool_name: "research_company",
+              tool_name: "search_public_web",
               status: "done",
               message: "已找到并读取 2 条公开公司资料，可生成带来源的公司研究报告",
               data: {
@@ -801,9 +802,9 @@ describe("ChatWorkspace", () => {
               {
                 round: 1,
                 tool_call_id: "call-1",
-                tool_name: "research_company",
+                tool_name: "search_public_web",
                 status: "running",
-                message: "正在执行 research_company"
+                message: "正在执行 search_public_web"
               }
             ],
             plan: {
@@ -813,7 +814,7 @@ describe("ChatWorkspace", () => {
               steps: [{
                 id: "s1",
                 title: "搜索公司资料",
-                tool_name: "research_company",
+                tool_name: "search_public_web",
                 risk: "read_only",
                 status: "running"
               }]
@@ -823,7 +824,7 @@ describe("ChatWorkspace", () => {
       }
     ], { chatBusy: true });
 
-    const toggle = screen.getByRole("button", { name: /正在检索公司资料/ });
+    const toggle = screen.getByRole("button", { name: /正在检索公开资料/ });
     expect(toggle).toHaveTextContent("搜索公司资料");
     expect(toggle).not.toHaveTextContent(thoughtBody);
     expect(screen.queryByText("思考过程")).not.toBeInTheDocument();
@@ -846,7 +847,7 @@ describe("ChatWorkspace", () => {
             events: [{
               round: 1,
               tool_call_id: "call-2",
-              tool_name: "search_resume_evidence",
+              tool_name: "search_library",
               status: "running",
               message: "正在从简历中定位项目证据"
             }]
@@ -855,7 +856,7 @@ describe("ChatWorkspace", () => {
       }
     ], { chatBusy: true });
 
-    const toggle = screen.getByRole("button", { name: /正在读取简历/ });
+    const toggle = screen.getByRole("button", { name: /正在检索资料/ });
     expect(toggle).toHaveTextContent("正在从简历中定位项目证据");
   });
 
@@ -1034,39 +1035,6 @@ describe("ChatWorkspace", () => {
     expect(screen.getByRole("button", { name: "复制源码" })).toBeInTheDocument();
   });
 
-  it("splits interview question stems and hints out of a long assistant answer", () => {
-    renderChat([
-      message,
-      assistantMessage([
-        "可以。先从检索质量开始。",
-        "",
-        "**Q1 | RAG 会议问答：检索到了，但答案仍偏泛，你怎么收？**",
-        "",
-        "追问：你怎么判断召回够不够用。",
-        "",
-        "Hint：先讲判断标准，再讲你改过的一处。"
-      ].join("\n"))
-    ]);
-
-    const stem = document.querySelector(".interview-question-stem");
-    expect(stem).toBeInTheDocument();
-    expect(stem?.querySelector(".interview-question-index")).toHaveTextContent("Q1");
-    expect(stem).toHaveTextContent("RAG 会议问答：检索到了，但答案仍偏泛，你怎么收？");
-    expect(stem).not.toHaveTextContent("Q1 |");
-    expect(document.querySelector(".interview-hint-label")).toHaveTextContent("Hint");
-    expect(screen.getByText("先讲判断标准，再讲你改过的一处。")).toBeInTheDocument();
-    expect(document.querySelector(".interview-followup-label")).toHaveTextContent("追问");
-    expect(document.querySelector(".message-markdown")).toHaveClass("interview-drill");
-
-    const dialog = screen.getByLabelText("输出结果");
-    const copy = screen.getByLabelText("复制回答");
-    const regenerate = screen.getByLabelText("重新生成回答");
-    expect(dialog).toHaveClass("message-dialog");
-    expect(dialog.contains(copy)).toBe(false);
-    expect(dialog.compareDocumentPosition(copy) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(regenerate).toBeInTheDocument();
-  });
-
   it("keeps user copy and edit under the cue bubble", () => {
     renderChat();
 
@@ -1076,18 +1044,6 @@ describe("ChatWorkspace", () => {
     expect(bubble).toHaveTextContent("围绕一个项目追问我");
     expect(bubble?.contains(copy)).toBe(false);
     expect(copy.compareDocumentPosition(edit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
-  it("parses Q-index and hint lines used in interview drills", () => {
-    expect(interviewQuestionParts("Q1 | RAG 会议问答：检索到了，但答案仍偏泛，你怎么收？")).toEqual({
-      index: "Q1",
-      title: "RAG 会议问答：检索到了，但答案仍偏泛，你怎么收？"
-    });
-    expect(interviewHintParts("Hint：先讲判断标准，再讲你改过的一处。")).toEqual({
-      label: "Hint",
-      body: "先讲判断标准，再讲你改过的一处。"
-    });
-    expect(interviewQuestionParts("可以。先从检索质量开始。")).toBeNull();
   });
 
   it("leaves non-Mermaid code blocks unchanged", () => {

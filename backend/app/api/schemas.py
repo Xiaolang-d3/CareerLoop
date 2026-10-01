@@ -18,13 +18,6 @@ class PasswordChangeIn(BaseModel):
     current_password: str = Field(min_length=1, max_length=500)
     new_password: str = Field(min_length=8, max_length=500)
 
-class ChatMessageIn(BaseModel):
-    content: str = Field(min_length=1)
-    conversation_id: int | None = None
-    attachment_ids: list[str] = Field(default_factory=list, max_length=8)
-    vision_attachment_ids: list[str] = Field(default_factory=list, max_length=4)
-    web_search: bool = False
-    web_search_mode: Literal["auto", "technical", "general"] = "auto"
 
 class ConversationIn(BaseModel):
     title: str = Field(default="新对话", max_length=80)
@@ -38,7 +31,7 @@ class AgentSettingsIn(BaseModel):
     persona_role: str = Field(min_length=1, max_length=300)
     response_style: Literal["concise", "balanced", "detailed"] = "concise"
     custom_instructions: str = Field(default="", max_length=1000)
-    profile_memory_enabled: bool = True
+    library_memory_enabled: bool = True
     conversation_memory_enabled: bool = True
     knowledge_memory_enabled: bool = True
     summary_enabled: bool = True

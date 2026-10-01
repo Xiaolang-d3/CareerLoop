@@ -36,7 +36,7 @@ class ModelDiscoveryApiTest(unittest.TestCase):
 
     def test_discovery_returns_the_exact_configured_api_root(self) -> None:
         with patch(
-            "app.api.resources.OpenAICompatibleProvider.list_models",
+            "app.api.model.OpenAICompatibleProvider.list_models",
             new=AsyncMock(return_value=["gpt-4.1", "gpt-5.5"]),
         ):
             response = self.discover()
@@ -51,10 +51,10 @@ class ModelDiscoveryApiTest(unittest.TestCase):
         list_models = AsyncMock(return_value=[])
         with (
             patch(
-                "app.api.resources.get_model_connection",
+                "app.api.model.get_model_connection",
                 return_value={"model_name": "gpt-5.5", "model_base_url": "", "api_key": ""},
             ),
-            patch("app.api.resources.OpenAICompatibleProvider.list_models", new=list_models),
+            patch("app.api.model.OpenAICompatibleProvider.list_models", new=list_models),
         ):
             response = self.discover(api_key="")
 
@@ -83,7 +83,7 @@ class ModelDiscoveryApiTest(unittest.TestCase):
 
     def test_invalid_catalog_returns_the_reason_not_a_server_error(self) -> None:
         with patch(
-            "app.api.resources.OpenAICompatibleProvider.list_models",
+            "app.api.model.OpenAICompatibleProvider.list_models",
             new=AsyncMock(
                 side_effect=ModelProviderError(
                     "invalid_model_catalog",
@@ -100,7 +100,7 @@ class ModelDiscoveryApiTest(unittest.TestCase):
 
     def test_retryable_upstream_failure_returns_503_with_the_reason(self) -> None:
         with patch(
-            "app.api.resources.OpenAICompatibleProvider.list_models",
+            "app.api.model.OpenAICompatibleProvider.list_models",
             new=AsyncMock(
                 side_effect=ModelProviderError(
                     "request_timeout", "模型服务响应超时，请稍后重试", retryable=True
@@ -114,7 +114,7 @@ class ModelDiscoveryApiTest(unittest.TestCase):
 
     def test_unexpected_provider_exception_returns_a_readable_502(self) -> None:
         with patch(
-            "app.api.resources.OpenAICompatibleProvider.list_models",
+            "app.api.model.OpenAICompatibleProvider.list_models",
             new=AsyncMock(side_effect=RuntimeError("unexpected parse failure")),
         ):
             response = self.discover()
@@ -126,7 +126,7 @@ class ModelDiscoveryApiTest(unittest.TestCase):
 
     def test_empty_catalog_points_at_manual_entry(self) -> None:
         with patch(
-            "app.api.resources.OpenAICompatibleProvider.list_models",
+            "app.api.model.OpenAICompatibleProvider.list_models",
             new=AsyncMock(return_value=[]),
         ):
             response = self.discover()
@@ -158,7 +158,7 @@ class ModelDiscoveryApiTest(unittest.TestCase):
             base_url="https://gateway.example.test",
             timeout_seconds=5,
         )
-        with patch("app.api.resources.build_model_provider", return_value=provider):
+        with patch("app.api.model.build_model_provider", return_value=provider):
             response = self.discover()
 
         self.assertEqual(response.status_code, 400)

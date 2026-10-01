@@ -4,7 +4,7 @@ export type RouteDataKey =
   | "attachmentConfig"
   | "agentOperations"
   | "agentSettings"
-  | "candidateProfile"
+  | "library"
   | "capabilities"
   | "conversations"
   | "modelMonitor"
@@ -15,12 +15,12 @@ export function requiredDataForRoute(route: AppRoute): RouteDataKey[] {
     case "chat":
       return ["conversations", "capabilities", "attachmentConfig"];
     case "dashboard":
-      return ["candidateProfile", "conversations", "capabilities", "attachmentConfig"];
+      return ["library", "conversations", "capabilities", "attachmentConfig"];
     case "settings":
       if (route.page === "agent") return ["agentOperations", "conversations", "capabilities", "attachmentConfig"];
       if (route.page === "model") return ["agentSettings", "modelMonitor", "modelCapabilities", "conversations", "capabilities", "attachmentConfig"];
-      if (route.page === "overview") return ["candidateProfile", "agentSettings", "conversations", "capabilities", "attachmentConfig"];
-      return ["candidateProfile", "conversations", "capabilities", "attachmentConfig"];
+      if (route.page === "overview") return ["library", "agentSettings", "conversations", "capabilities", "attachmentConfig"];
+      return ["library", "conversations", "capabilities", "attachmentConfig"];
   }
 }
 

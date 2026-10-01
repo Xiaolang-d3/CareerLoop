@@ -55,12 +55,15 @@ def propose_knowledge(
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
     clean_statement = " ".join(statement.split())
+    if library_id != 1:
+        raise ValueError("资料库标识不合法")
     if not clean_statement:
         raise ValueError("知识内容不能为空")
     if sensitivity not in {"public", "private", "sensitive"}:
         raise ValueError("知识敏感级别不合法")
     clean_key = canonical_key.strip()[:200]
     with connect(db_path) as conn:
+        conn.execute("INSERT OR IGNORE INTO library_metadata (id) VALUES (1)")
         if clean_key:
             keyed = conn.execute(
                 """
@@ -217,6 +220,8 @@ def review_knowledge(
         ).fetchone()
         if row is None:
             raise ValueError("知识条目不存在")
+        if row["status"] == "superseded":
+            raise ValueError("已合并的知识不能再次审核")
         clean_statement = " ".join(statement.split())
         if action == "edit" and not clean_statement:
             raise ValueError("编辑后内容不能为空")
@@ -229,7 +234,7 @@ def review_knowledge(
             """,
             (next_status, clean_statement[:5000], internal_id),
         )
-    _touch_revision(db_path)
+        _touch_revision(conn)
     return get_knowledge(item_id, db_path=db_path) or {}
 
 
@@ -243,10 +248,16 @@ def merge_knowledge(
     if source_id == target_id:
         raise ValueError("不能合并同一条知识")
     with connect(db_path) as conn:
-        source = conn.execute("SELECT library_id FROM library_knowledge WHERE id = ?", (source_id,)).fetchone()
-        target = conn.execute("SELECT library_id FROM library_knowledge WHERE id = ?", (target_id,)).fetchone()
+        source = conn.execute("SELECT library_id, status, superseded_by_id FROM library_knowledge WHERE id = ?", (source_id,)).fetchone()
+        target = conn.execute("SELECT library_id, status, superseded_by_id FROM library_knowledge WHERE id = ?", (target_id,)).fetchone()
         if source is None or target is None or source["library_id"] != target["library_id"]:
             raise ValueError("知识条目不存在或不属于同一资料库")
+        if target["status"] == "superseded":
+            raise ValueError("不能合并到已被替代的知识")
+        if source["status"] == "superseded":
+            if source["superseded_by_id"] == target_id:
+                return get_knowledge(target_item_id, db_path=db_path) or {}
+            raise ValueError("知识已合并到其他条目")
         rows = conn.execute(
             "SELECT source_id, excerpt, locator FROM library_evidence WHERE knowledge_id = ?",
             (source_id,),
@@ -266,9 +277,9 @@ def merge_knowledge(
             """,
             (target_id, source_id),
         )
+        _touch_revision(conn)
     return get_knowledge(target_item_id, db_path=db_path) or {}
 
 
-def _touch_revision(db_path=None):
-    with connect(db_path) as conn:
-        conn.execute("UPDATE library_metadata SET knowledge_revision = knowledge_revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = 1")
+def _touch_revision(conn):
+    conn.execute("UPDATE library_metadata SET knowledge_revision = knowledge_revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = 1")

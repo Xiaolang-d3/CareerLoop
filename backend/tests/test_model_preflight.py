@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.api import resources
+from app.api import model as resources
 from app.models import ModelProviderError
 
 

@@ -1,5 +1,10 @@
-// Side-effect only: importing this module pulls in the authenticated shell's
-// stylesheets. See main.tsx for why they are imported eagerly.
+// Load shell and feature styles eagerly so lazy pages share a stable cascade.
 import "./styles.css";
+import "./features/home/styles-base.css";
+import "./features/library/styles-base.css";
+import "./features/chat/styles-base.css";
 import "./styles/primitives.css";
 import "./styles/careerloop.css";
+import "./features/home/styles-theme.css";
+import "./features/library/styles-theme.css";
+import "./features/chat/styles-theme.css";

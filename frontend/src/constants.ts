@@ -1,14 +1,12 @@
-import type { AgentSettings, CandidateEditor, ViewKey } from "./types";
+import type { AgentSettings, LibraryEditor, ViewKey } from "./types";
 import type { SettingsPage } from "./routing";
-
-export const bossHomeUrl = "https://www.zhipin.com/";
 
 export const defaultAgentSettings: AgentSettings = {
   display_name: "CareerLoop",
   persona_role: "主动、清晰、基于用户资料协助分析、研究和内容创作的 AI 伙伴",
   response_style: "concise",
   custom_instructions: "",
-  profile_memory_enabled: true,
+  library_memory_enabled: true,
   conversation_memory_enabled: true,
   knowledge_memory_enabled: true,
   summary_enabled: true,
@@ -45,24 +43,10 @@ export function sidebarHighlightForView(
 ): SidebarHighlight {
   if (view === "dashboard") return "dashboard";
   if (view === "chat") return "chat";
-  if (view === "settings" && extras.settingsPage === "profile") return "library";
-  if (view === "settings" && extras.settingsPage && extras.settingsPage !== "profile") return "settings";
+  if (view === "settings" && extras.settingsPage === "library") return "library";
+  if (view === "settings" && extras.settingsPage && extras.settingsPage !== "library") return "settings";
   if (view === "settings") return "settings";
   return null;
 }
 
-export const emptyCandidateEditor: CandidateEditor = {
-  name: "",
-  targetRole: "",
-  targetCity: "",
-  salaryMin: "",
-  salaryMax: "",
-  skills: "",
-  industries: "",
-  blockedKeywords: "",
-  blockedCompanies: "",
-  resumeText: "",
-  resumeFilename: "",
-  resumeRedactedText: "",
-  privacyMode: "redacted"
-};
+export const emptyLibraryEditor: LibraryEditor = { name: "", privacyMode: "redacted" };

@@ -71,6 +71,20 @@ def test_disabled_or_deleted_migrated_source_never_reappears(tmp_path):
     assert document_path(path).exists()
 
 
+def test_v23_upgrade_does_not_reimport_deleted_legacy_source(tmp_path):
+    path = legacy_workspace(tmp_path)
+    init_db(path)
+    delete_source(list_sources(path)[0]["id"], path)
+    # v23 already owns its independent library; v24 only generalizes fields.
+    with connect(path) as conn:
+        conn.execute("UPDATE schema_migrations SET version = 23 WHERE version = 24")
+        conn.execute("ALTER TABLE agent_settings RENAME COLUMN library_memory_enabled TO profile_memory_enabled")
+    init_db(path)
+    assert list_sources(path) == []
+    assert document_path(path).exists()
+    assert get_knowledge(1_000_002, path)["status"] == "confirmed"
+
+
 def test_index_failure_does_not_complete_upgrade_and_retry_is_idempotent(tmp_path, monkeypatch):
     path = legacy_workspace(tmp_path)
     from app.library import sources
@@ -101,3 +115,17 @@ def test_older_upgrade_preserves_retired_records(tmp_path):
         for table in ("candidate_facts", "career_weekly_reports", "application_stage_events"):
             assert conn.execute(f"SELECT payload FROM {table}").fetchone()[0] == "历史原文"
     assert len(list_sources(path)) == 1
+
+
+def test_upgrade_converts_attachment_kinds_and_preserves_memory_preference(tmp_path):
+    path = legacy_workspace(tmp_path)
+    with connect(path) as conn:
+        conn.execute("UPDATE agent_settings SET profile_memory_enabled = 0")
+        conn.execute("INSERT INTO attachments (id, conversation_id, kind, object_key, original_filename, content_type, size_bytes, sha256) VALUES ('legacy-doc', 1, 'resume', 'original.txt', 'notes.txt', 'text/plain', 12, 'hash')")
+        conn.execute('UPDATE chat_messages SET payload_json = ? WHERE id = 1', ('{"attachments":[{"id":"legacy-doc","kind":"resume"}]}',))
+    init_db(path)
+    with connect(path) as conn:
+        assert conn.execute("SELECT library_memory_enabled FROM agent_settings").fetchone()[0] == 0
+        assert conn.execute("SELECT kind FROM attachments").fetchone()[0] == "document"
+        assert '"document"' in conn.execute("SELECT payload_json FROM chat_messages WHERE id = 1").fetchone()[0]
+    assert model_context(path)["disabled"]

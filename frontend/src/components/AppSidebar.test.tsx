@@ -93,7 +93,7 @@ describe("AppSidebar", () => {
     fireEvent.mouseEnter(screen.getAllByRole("button", { name: "我的知识库" })[0]);
     fireEvent.mouseEnter(screen.getAllByRole("button", { name: "AI 工作区" })[0]);
     expect(props.onPrefetchPage).toHaveBeenCalledWith("dashboard");
-    expect(props.onPrefetchPage).toHaveBeenCalledWith("profile");
+    expect(props.onPrefetchPage).toHaveBeenCalledWith("library");
     expect(props.onPrefetchPage).toHaveBeenCalledWith("chat");
   });
 
@@ -109,7 +109,7 @@ describe("AppSidebar", () => {
   });
 
   it("highlights library, the AI workspace, and settings on matching pages", () => {
-    renderSidebar(undefined, false, "settings", { settingsPage: "profile" });
+    renderSidebar(undefined, false, "settings", { settingsPage: "library" });
     const libraryNav = screen.getByRole("navigation", { name: "主导航" });
     expect(within(libraryNav).getByRole("button", { name: "我的知识库" })).toHaveAttribute("aria-current", "page");
     cleanup();

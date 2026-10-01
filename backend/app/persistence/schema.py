@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 CREATE TABLE IF NOT EXISTS attachments (
                 id TEXT PRIMARY KEY,
                 conversation_id INTEGER NOT NULL,
-                                kind TEXT NOT NULL,
+                kind TEXT NOT NULL,
                 object_key TEXT NOT NULL UNIQUE,
                 original_filename TEXT NOT NULL,
                 content_type TEXT NOT NULL,
@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS agent_settings (
                 persona_role TEXT NOT NULL DEFAULT '理性、坦诚、尊重用户决定，并基于用户资料协助分析与创作的本地 AI 伙伴',
                 response_style TEXT NOT NULL DEFAULT 'concise',
                 custom_instructions TEXT NOT NULL DEFAULT '',
-                profile_memory_enabled INTEGER NOT NULL DEFAULT 1,
+                library_memory_enabled INTEGER NOT NULL DEFAULT 1,
                 conversation_memory_enabled INTEGER NOT NULL DEFAULT 1,
                 knowledge_memory_enabled INTEGER NOT NULL DEFAULT 1,
                 summary_enabled INTEGER NOT NULL DEFAULT 1,

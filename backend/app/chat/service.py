@@ -138,7 +138,7 @@ def attachment_context(
                 detail=f"附件“{attachment['original_filename']}”尚未完成本地解析",
             )
         wants_vision = attachment_id in requested_vision_ids
-        if attachment["kind"] == "job_screenshot" and not wants_vision:
+        if attachment["kind"] == "image" and not wants_vision:
             raise HTTPException(
                 status_code=422,
                 detail=f"图片材料“{attachment['original_filename']}”不会提取文本，请勾选“模型看图”后发送",
@@ -148,7 +148,7 @@ def attachment_context(
                 image_urls.append(prepare_attachment_vision_url(attachment_id))
             except (RuntimeError, ValueError) as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
-        if attachment["kind"] == "resume":
+        if attachment["kind"] == "document":
             text = attachment["redacted_text"]
             if not text:
                 raise HTTPException(
