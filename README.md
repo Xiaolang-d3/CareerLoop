@@ -78,6 +78,8 @@ OPENAI_API_KEY=
 
 首次打开时在登录页创建本地账户，同一实例可使用多个相互隔离的账户。注册、登录、保持登录、退出撤销和改密规则见 [`docs/account-auth.md`](docs/account-auth.md)。默认只监听本机；局域网访问、安全选项、附件、MinIO、向量检索和外部服务配置见 [`backend/.env.example`](backend/.env.example)。
 
+登录页只显示居中的账户表单。登录框底部和设置首页的「了解 CareerLoop」可进入独立产品介绍页 `#/about`；该页面无需登录，提供返回登录或应用的入口。
+
 停止服务：
 
 ```bash
