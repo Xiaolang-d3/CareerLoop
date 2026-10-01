@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthGate } from "./AuthGate";
 
@@ -11,6 +11,7 @@ describe("AuthGate", () => {
     cleanup();
     window.sessionStorage.clear();
     window.localStorage.clear();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -28,8 +29,8 @@ describe("AuthGate", () => {
 
     await screen.findByText("应用已就绪");
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(window.localStorage.getItem("careerloop-auth-token")).toBe("saved-token");
-    expect(window.sessionStorage.getItem("careerloop-auth-token")).toBeNull();
+    expect(window.localStorage.getItem("careerloop-auth-token")).toBeNull();
+    expect(window.sessionStorage.getItem("careerloop-auth-token")).toBe("saved-token");
   });
 
   it("keeps a saved session when the backend is briefly unavailable", async () => {
@@ -38,7 +39,7 @@ describe("AuthGate", () => {
 
     render(<AuthGate apiBase="https://app.example.com">{() => <div>应用已就绪</div>}</AuthGate>);
 
-    expect(await screen.findByText("Failed to fetch")).toBeInTheDocument();
+    expect(await screen.findByText("登录服务暂时不可用，请重新连接。正在自动重试…")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重新连接" })).toBeInTheDocument();
     expect(window.localStorage.getItem("careerloop-auth-token")).toBe("saved-token");
   });
@@ -102,6 +103,7 @@ describe("AuthGate", () => {
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("邮箱或密码不正确，请核对后重试。");
+    expect(screen.getByLabelText("密码")).toHaveFocus();
   });
 
   it("offers reconnect when login cannot reach the server", async () => {
@@ -119,11 +121,11 @@ describe("AuthGate", () => {
     fireEvent.change(screen.getByLabelText("密码"), { target: { value: "password-123" } });
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
 
-    expect(await screen.findByText("网络已断开，请检查连接后点重新连接。")).toBeInTheDocument();
+    expect(await screen.findByText("暂时无法连接登录服务，请检查连接后重试。")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重新连接" })).toBeInTheDocument();
   });
 
-  it("validates fields before calling login", async () => {
+  it("validates registration fields before sending credentials", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).endsWith("/auth/config")) return authConfig();
       throw new Error(`Unexpected request: ${String(input)}`);
@@ -132,9 +134,10 @@ describe("AuthGate", () => {
 
     render(<AuthGate apiBase="https://app.example.com">{() => null}</AuthGate>);
     await screen.findByLabelText("邮箱");
+    fireEvent.click(screen.getByRole("button", { name: "没有账号？创建账号" }));
     fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "invalid" } });
     fireEvent.change(screen.getByLabelText("密码"), { target: { value: "short" } });
-    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+    fireEvent.click(screen.getByRole("button", { name: "创建账号" }));
 
     expect(await screen.findByText("请输入有效的邮箱地址")).toBeInTheDocument();
     expect(screen.getByText("密码至少 8 位")).toBeInTheDocument();
@@ -191,4 +194,259 @@ describe("AuthGate", () => {
     expect(gate.style.getPropertyValue("--cell-x")).toBe("");
     expect(raf).not.toHaveBeenCalled();
   });
+});
+
+describe("account session lifecycle", () => {
+  afterEach(() => {
+    cleanup();
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function mockAuth(extra?: (path: string, init?: RequestInit) => Response | Promise<Response> | undefined) {
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const response = extra?.(path, init);
+      if (response) return response;
+      if (path.endsWith("/auth/config")) return authConfig();
+      if (path.endsWith("/auth/me")) return new Response(JSON.stringify({ user: { email: "owner@example.com" } }));
+      if (path.endsWith("/auth/login")) return new Response(JSON.stringify({ access_token: "new-token", user: { email: "owner@example.com" } }));
+      if (path.endsWith("/auth/logout")) return new Response(null, { status: 204 });
+      throw new Error(`Unexpected request ${path}`);
+    });
+  }
+
+  it("stores a temporary login only in session storage and preserves normalized email", async () => {
+    const fetchMock = mockAuth((path, init) => {
+      if (path.endsWith("/auth/login")) {
+        expect(JSON.parse(String(init?.body))).toEqual({ email: "owner@example.com", password: "old" });
+      }
+      return undefined;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthGate apiBase="https://app.example.com">{() => <div>账户已就绪</div>}</AuthGate>);
+    await screen.findByLabelText("邮箱");
+    fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "  OWNER@Example.com  " } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "old" } });
+    fireEvent.click(screen.getByLabelText("保持登录"));
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+    await screen.findByText("账户已就绪");
+    expect(window.localStorage.getItem("careerloop-auth-token")).toBeNull();
+    expect(window.sessionStorage.getItem("careerloop-auth-token")).toBe("new-token");
+  });
+
+  it("revokes the session before clearing the saved login", async () => {
+    window.localStorage.setItem("careerloop-auth-token", "saved-token");
+    let finishLogout: (response: Response) => void = () => undefined;
+    const fetchMock = mockAuth((path, init) => {
+      if (path.endsWith("/auth/logout")) {
+        expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer saved-token");
+        return new Promise<Response>((resolve) => { finishLogout = resolve; });
+      }
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthGate apiBase="https://app.example.com">{(_token, logout) => <button onClick={logout}>退出登录</button>}</AuthGate>);
+    fireEvent.click(await screen.findByRole("button", { name: "退出登录" }));
+    expect(await screen.findByText("正在退出登录…")).toBeInTheDocument();
+    expect(window.localStorage.getItem("careerloop-auth-token")).toBe("saved-token");
+    await act(async () => finishLogout(new Response(null, { status: 204 })));
+    await screen.findByLabelText("邮箱");
+    expect(window.localStorage.getItem("careerloop-auth-token")).toBeNull();
+  });
+
+  it("keeps the session and offers retry when logout fails", async () => {
+    window.localStorage.setItem("careerloop-auth-token", "saved-token");
+    let attempts = 0;
+    vi.stubGlobal("fetch", mockAuth((path) => {
+      if (path.endsWith("/auth/logout") && ++attempts === 1) return Promise.reject(new TypeError("Failed to fetch"));
+    }));
+    render(<AuthGate apiBase="https://app.example.com">{(_token, logout) => <button onClick={logout}>退出登录</button>}</AuthGate>);
+    fireEvent.click(await screen.findByRole("button", { name: "退出登录" }));
+    await screen.findByText("退出未完成，请重新连接后重试。");
+    expect(window.localStorage.getItem("careerloop-auth-token")).toBe("saved-token");
+    fireEvent.click(screen.getByRole("button", { name: "重试退出" }));
+    await screen.findByLabelText("邮箱");
+    expect(window.localStorage.getItem("careerloop-auth-token")).toBeNull();
+  });
+
+  it("returns to login when a protected request rejects the session", async () => {
+    const { createApiClient } = await import("../api/client");
+    window.localStorage.setItem("careerloop-auth-token", "saved-token");
+    vi.stubGlobal("fetch", mockAuth((path) => path.endsWith("/library") ? new Response('{"detail":"登录失效"}', { status: 401 }) : undefined));
+    render(<AuthGate apiBase="https://app.example.com">{(token) => <button onClick={() => { void createApiClient("https://app.example.com", token)("/library").catch(() => undefined); }}>加载资料</button>}</AuthGate>);
+    fireEvent.click(await screen.findByRole("button", { name: "加载资料" }));
+    await screen.findByLabelText("邮箱");
+    expect(screen.getByRole("status")).toHaveTextContent("登录状态已失效，请重新登录");
+    expect(window.localStorage.getItem("careerloop-auth-token")).toBeNull();
+  });
+
+  it("ignores a late 401 belonging to a replaced session", async () => {
+    const { SESSION_EXPIRED_EVENT } = await import("../api/client");
+    window.localStorage.setItem("careerloop-auth-token", "saved-token");
+    vi.stubGlobal("fetch", mockAuth());
+    render(<AuthGate apiBase="https://app.example.com">{(token, _logout, user, update) => <button onClick={() => update("fresh-token", user)}>{token}</button>}</AuthGate>);
+    fireEvent.click(await screen.findByRole("button", { name: "saved-token" }));
+    await screen.findByRole("button", { name: "fresh-token" });
+    act(() => window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT, { detail: { token: "saved-token" } })));
+    expect(screen.getByRole("button", { name: "fresh-token" })).toBeInTheDocument();
+    expect(window.localStorage.getItem("careerloop-auth-token")).toBe("fresh-token");
+  });
+
+  it("synchronizes logout across persistent browser tabs", async () => {
+    window.localStorage.setItem("careerloop-auth-token", "saved-token");
+    vi.stubGlobal("fetch", mockAuth());
+    render(<AuthGate apiBase="https://app.example.com">{() => <div>账户已就绪</div>}</AuthGate>);
+    await screen.findByText("账户已就绪");
+    act(() => {
+      window.localStorage.removeItem("careerloop-auth-token");
+      window.dispatchEvent(new StorageEvent("storage", { key: "careerloop-auth-token", newValue: null }));
+    });
+    await screen.findByLabelText("邮箱");
+    expect(screen.getByRole("status")).toHaveTextContent("账户已在其他窗口退出");
+  });
+
+  it("retries session restoration through repeated identical network errors", async () => {
+    window.localStorage.setItem("careerloop-auth-token", "saved-token");
+    let attempts = 0;
+    const fetchMock = mockAuth((path) => {
+      if (path.endsWith("/auth/me") && ++attempts < 3) return Promise.reject(new TypeError("Failed to fetch"));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthGate apiBase="https://app.example.com">{() => <div>账户已就绪</div>}</AuthGate>);
+    await screen.findByRole("alert");
+    vi.useFakeTimers();
+    // Trigger a retry so its backoff timer is managed by the test clock.
+    fireEvent.click(screen.getByRole("button", { name: "重新连接" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(attempts).toBe(2);
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(screen.getByText("账户已就绪")).toBeInTheDocument();
+    expect(attempts).toBe(3);
+  });
+
+  it("offers direct login after duplicate registration and clears password on mode change", async () => {
+    vi.stubGlobal("fetch", mockAuth((path) => path.endsWith("/auth/register") ? new Response('{"detail":"该邮箱已注册"}', { status: 409 }) : undefined));
+    render(<AuthGate apiBase="https://app.example.com">{() => null}</AuthGate>);
+    await screen.findByLabelText("邮箱");
+    fireEvent.click(screen.getByRole("button", { name: "没有账号？创建账号" }));
+    fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "owner@example.com" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "password-123" } });
+    fireEvent.change(screen.getByLabelText("确认密码"), { target: { value: "password-123" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建账号" }));
+    fireEvent.click(await screen.findByRole("button", { name: "去登录" }));
+    expect(screen.getByLabelText("邮箱")).toHaveValue("owner@example.com");
+    expect(screen.getByLabelText("密码")).toHaveValue("");
+    expect(screen.queryByLabelText("确认密码")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "登录本地账户" })).toBeInTheDocument();
+  });
+
+  it("does not expose registration when the server closes it", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response('{"enabled":true,"setup_required":false,"registration_open":false}')));
+    render(<AuthGate apiBase="https://app.example.com">{() => null}</AuthGate>);
+    await screen.findByLabelText("邮箱");
+    expect(screen.queryByRole("button", { name: "没有账号？创建账号" })).not.toBeInTheDocument();
+  });
+
+  it("rejects malformed successful login data without saving an undefined token", async () => {
+    vi.stubGlobal("fetch", mockAuth((path) => path.endsWith("/auth/login") ? new Response('{"user":{"email":"owner@example.com"}}') : undefined));
+    render(<AuthGate apiBase="https://app.example.com">{() => <div>账户已就绪</div>}</AuthGate>);
+    await screen.findByLabelText("邮箱");
+    fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "owner@example.com" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "password-123" } });
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+    await screen.findByText("登录服务返回了无效数据，请重试");
+    expect(window.localStorage.getItem("careerloop-auth-token")).toBeNull();
+    expect(screen.queryByText("账户已就绪")).not.toBeInTheDocument();
+  });
+
+  it("blocks resubmission until Retry-After has elapsed", async () => {
+    vi.stubGlobal("fetch", mockAuth((path) => path.endsWith("/auth/login") ? new Response('{"detail":"登录失败次数过多"}', { status: 429, headers: { "Retry-After": "2" } }) : undefined));
+    render(<AuthGate apiBase="https://app.example.com">{() => null}</AuthGate>);
+    await screen.findByLabelText("邮箱");
+    vi.useFakeTimers();
+    fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "owner@example.com" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "password-123" } });
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(screen.getByRole("button", { name: "2 秒后重试" })).toBeDisabled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(screen.getByRole("button", { name: "登录" })).toBeEnabled();
+  });
+
+  it("expires an active login at the token deadline", async () => {
+    const expiry = Math.floor(Date.now() / 1000) + 10;
+    const token = `${btoa(JSON.stringify({ exp: expiry }))}.signature`;
+    window.localStorage.setItem("careerloop-auth-token", token);
+    vi.stubGlobal("fetch", mockAuth());
+    vi.useFakeTimers();
+    await act(async () => { render(<AuthGate apiBase="https://app.example.com">{() => <div>账户已就绪</div>}</AuthGate>); });
+    expect(screen.getByText("账户已就绪")).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(screen.getByLabelText("邮箱")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("登录已到期");
+    expect(window.localStorage.getItem("careerloop-auth-token")).toBeNull();
+  });
+});
+
+describe("restricted storage and request cancellation", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+  });
+
+  it("allows an in-memory login when browser storage is unavailable", async () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new DOMException("Blocked", "SecurityError"); });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("Blocked", "SecurityError"); });
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => { throw new DOMException("Blocked", "SecurityError"); });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/auth/config") ? authConfig() : new Response('{"access_token":"memory-token","user":{"email":"owner@example.com"}}')));
+    render(<AuthGate apiBase="https://app.example.com">{() => <div>账户已就绪</div>}</AuthGate>);
+    await screen.findByLabelText("邮箱");
+    fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "owner@example.com" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "password-123" } });
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+    expect(await screen.findByText("账户已就绪")).toBeInTheDocument();
+  });
+
+  it("does not save a login response that arrives after unmount", async () => {
+    let resolveLogin: (response: Response) => void = () => undefined;
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/auth/config")) return authConfig();
+      signal = init?.signal ?? undefined;
+      return new Promise<Response>((resolve) => { resolveLogin = resolve; });
+    }));
+    const rendered = render(<AuthGate apiBase="https://app.example.com">{() => null}</AuthGate>);
+    await screen.findByLabelText("邮箱");
+    fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "owner@example.com" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "password-123" } });
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+    rendered.unmount();
+    expect(signal?.aborted).toBe(true);
+    await act(async () => resolveLogin(new Response('{"access_token":"late-token","user":{"email":"owner@example.com"}}')));
+    expect(window.localStorage.getItem("careerloop-auth-token")).toBeNull();
+  });
+});
+
+it("restores a new persistent login in an already open signed-out tab", async () => {
+  window.localStorage.clear();
+  window.sessionStorage.clear();
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/auth/config") ? authConfig() : new Response('{"user":{"email":"owner@example.com"}}')));
+  const rendered = render(<AuthGate apiBase="https://app.example.com">{() => <div>同步登录成功</div>}</AuthGate>);
+  try {
+    await screen.findByLabelText("邮箱");
+    act(() => {
+      window.localStorage.setItem("careerloop-auth-token", "other-tab-token");
+      window.dispatchEvent(new StorageEvent("storage", { key: "careerloop-auth-token", newValue: "other-tab-token" }));
+    });
+    expect(await screen.findByText("同步登录成功")).toBeInTheDocument();
+  } finally {
+    rendered.unmount();
+    window.localStorage.clear();
+    vi.unstubAllGlobals();
+  }
 });

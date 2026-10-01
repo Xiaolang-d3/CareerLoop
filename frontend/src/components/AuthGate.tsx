@@ -1,85 +1,31 @@
 import { FormEvent, ReactNode, RefObject, useEffect, useRef, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
-import { createApiClient, fetchWithTimeout } from "../api/client";
+import { ApiError, createApiClient } from "../api/client";
+import { AuthSession, AuthUser, validateSession } from "../features/auth/session";
+import { useAuthSession } from "../features/auth/useAuthSession";
+export type { AuthUser } from "../features/auth/session";
 import "./auth-gate.css";
 
 type AuthConfig = { enabled: boolean; setup_required: boolean; registration_open?: boolean };
-export type AuthUser = { id?: number; email: string; display_name?: string; has_avatar?: boolean };
-type AuthSession = { access_token: string; user: AuthUser };
 type FieldErrors = { email?: string; password?: string; passwordConfirmation?: string };
-type LoginIssue = { kind: "credentials" | "network" | "throttled" | "exists" | "generic"; message: string; field?: keyof FieldErrors };
+type LoginIssue = { kind: "credentials" | "network" | "throttled" | "exists" | "generic"; message: string; field?: keyof FieldErrors; retryAfterSeconds?: number };
 
-const tokenStorageKey = "careerloop-auth-token";
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const successPauseMs = 320;
-const restoreRetryMs = 1500;
-
-function readStoredToken() {
-  const local = window.localStorage.getItem(tokenStorageKey);
-  if (local) return local;
-  const session = window.sessionStorage.getItem(tokenStorageKey);
-  if (!session) return null;
-  window.localStorage.setItem(tokenStorageKey, session);
-  window.sessionStorage.removeItem(tokenStorageKey);
-  return session;
-}
-
-function writeStoredToken(token: string) {
-  window.localStorage.setItem(tokenStorageKey, token);
-  window.sessionStorage.removeItem(tokenStorageKey);
-}
-
-function clearStoredToken() {
-  window.localStorage.removeItem(tokenStorageKey);
-  window.sessionStorage.removeItem(tokenStorageKey);
-}
-
-class SessionRestoreError extends Error {
-  status?: number;
-  constructor(message: string, status?: number) {
-    super(message);
-    this.status = status;
-  }
-}
-
-function isExpiredSession(reason: unknown) {
-  return reason instanceof SessionRestoreError && reason.status === 401;
-}
-
-async function restoreSession(apiBase: string, token: string) {
-  let response: Response;
-  try {
-    response = await fetchWithTimeout(`${apiBase}/auth/me`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-  } catch (reason) {
-    throw new SessionRestoreError(
-      reason instanceof Error ? reason.message : "登录服务暂时不可用，正在重试…"
-    );
-  }
-  if (response.status === 401) {
-    throw new SessionRestoreError("登录状态已失效，请重新登录", 401);
-  }
-  if (!response.ok) {
-    throw new SessionRestoreError("登录服务暂时不可用，正在重试…", response.status);
-  }
-  const payload = await response.json() as { user: AuthUser };
-  return payload.user;
-}
 
 function classifyLoginError(reason: unknown, registering: boolean): LoginIssue {
   const message = reason instanceof Error ? reason.message : "登录失败，请稍后重试";
   const endpoint = registering ? "/auth/register" : "/auth/login";
+  const status = reason instanceof ApiError ? reason.status : undefined;
   if (/failed to fetch|networkerror|load failed|网络|无法连接|请求超时/i.test(message)) {
-    return { kind: "network", message: "网络已断开，请检查连接后点重新连接。" };
+    return { kind: "network", message: "暂时无法连接登录服务，请检查连接后重试。" };
   }
-  if (message.includes("次数过多") || message.includes(`${endpoint} 请求失败（429）`)) {
-    return { kind: "throttled", message: message.includes("请在") ? message : "登录失败次数过多，请稍后再试。" };
+  if (status === 429 || message.includes("次数过多") || message.includes(`${endpoint} 请求失败（429）`)) {
+    return { kind: "throttled", message: message.includes("请在") ? message : "登录失败次数过多，请稍后再试。", retryAfterSeconds: reason instanceof ApiError ? reason.retryAfterSeconds : 0 };
   }
-  if (message.includes("已注册") || message.includes(`${endpoint} 请求失败（409）`)) {
+  if ((registering && status === 409) || message.includes("已注册") || message.includes(`${endpoint} 请求失败（409）`)) {
     return { kind: "exists", message: "该邮箱已注册，请直接登录。", field: "email" };
   }
-  if (message.includes("邮箱或密码") || message.includes(`${endpoint} 请求失败（401）`)) {
+  if (status === 401 || message.includes("邮箱或密码") || message.includes(`${endpoint} 请求失败（401）`)) {
     return { kind: "credentials", message: "邮箱或密码不正确，请核对后重试。", field: "password" };
   }
   return { kind: "generic", message };
@@ -93,9 +39,11 @@ function validateLoginFields(input: {
 }): FieldErrors {
   const next: FieldErrors = {};
   if (!input.email.trim()) next.email = "请输入邮箱";
-  else if (!emailPattern.test(input.email.trim())) next.email = "请输入有效的邮箱地址";
+  else if (input.email.trim().length > 320) next.email = "邮箱不能超过 320 个字符";
+  else if (input.registering && !emailPattern.test(input.email.trim())) next.email = "请输入有效的邮箱地址";
   if (!input.password) next.password = "请输入密码";
-  else if (input.password.length < 8) next.password = "密码至少 8 位";
+  else if (input.registering && input.password.length < 8) next.password = "密码至少 8 位";
+  else if (input.password.length > 500) next.password = "密码不能超过 500 位";
   if (input.registering) {
     if (!input.passwordConfirmation) next.passwordConfirmation = "请再次输入密码";
     else if (input.password !== input.passwordConfirmation) next.passwordConfirmation = "两次输入的密码不一致";
@@ -105,11 +53,8 @@ function validateLoginFields(input: {
 
 export function AuthGate({ apiBase, children }: { apiBase: string; children: (accessToken: string, onLogout: () => void, user: AuthUser, updateSession: (token: string, user: AuthUser) => void) => ReactNode }) {
   const [config, setConfig] = useState<AuthConfig | null>(null);
-  const [token, setToken] = useState<string | null>(() => readStoredToken());
-  const [validatedToken, setValidatedToken] = useState<string | null>(null);
-  const [sessionUser, setSessionUser] = useState<AuthUser | null>(null);
-  const [restoreError, setRestoreError] = useState("");
-  const [restoreNonce, setRestoreNonce] = useState(0);
+  const session = useAuthSession(apiBase);
+  const { token, authenticated, restoreError, notice, logoutBusy, logoutError, retryRestore, logout, updateSession } = session;
   const [registering, setRegistering] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -119,64 +64,73 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
   const [bootNonce, setBootNonce] = useState(0);
   const [error, setError] = useState("");
   const [errorKind, setErrorKind] = useState<LoginIssue["kind"] | "">("");
-  const [entering, setEntering] = useState(false);
+  const [remember, setRemember] = useState(true);
+  const [cooldownUntil, setCooldownUntil] = useState(0);
+  const [now, setNow] = useState(Date.now);
+  const cooldown = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
+  const chosenMode = useRef(false);
+  const submitController = useRef<AbortController | null>(null);
+  const focusAfterSubmit = useRef<keyof FieldErrors | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const emailInputRef = useRef<HTMLInputElement>(null);
   const passwordInputRef = useRef<HTMLInputElement>(null);
   const passwordConfirmationRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    // A saved token is sufficient to start validation. The configuration is
-    // only needed for the sign-in form, so fetching it here adds a round trip
-    // to every returning visitor's critical path.
+    if (busy || !focusAfterSubmit.current) return;
+    const field = focusAfterSubmit.current;
+    focusAfterSubmit.current = null;
+    const inputs = { email: emailInputRef, password: passwordInputRef, passwordConfirmation: passwordConfirmationRef };
+    inputs[field].current?.focus();
+  }, [busy]);
+
+  useEffect(() => {
     if (token) return;
-    void createApiClient(apiBase)<AuthConfig>("/auth/config")
+    const controller = new AbortController();
+    let cancelled = false;
+    void createApiClient(apiBase)<AuthConfig>("/auth/config", { signal: controller.signal })
       .then((next) => {
+        if (cancelled) return;
         setConfig(next);
-        setRegistering(Boolean(next.setup_required));
-        setError("");
+        if (!chosenMode.current) setRegistering(Boolean(next.setup_required && next.registration_open !== false));
+        if (next.registration_open === false) setRegistering(false);
       })
       .catch((reason: unknown) => {
+        if (cancelled) return;
         const raw = reason instanceof Error ? reason.message : "无法连接登录服务";
         setError(/failed to fetch|networkerror|load failed/i.test(raw)
           ? "无法连接本地服务，请点重新连接。若反复失败，请完全退出后重开 CareerLoop。"
           : raw);
       });
+    return () => { cancelled = true; controller.abort(); };
   }, [apiBase, token, bootNonce]);
 
   useEffect(() => {
-    if (!token || token === validatedToken) return;
-    let cancelled = false;
-    void restoreSession(apiBase, token)
-      .then((user) => {
-        if (cancelled) return;
-        writeStoredToken(token);
-        setSessionUser(user);
-        setValidatedToken(token);
-        setRestoreError("");
-      })
-      .catch((reason: unknown) => {
-        if (cancelled) return;
-        if (isExpiredSession(reason)) {
-          clearStoredToken();
-          setToken(null);
-          setValidatedToken(null);
-          setSessionUser(null);
-          setRestoreError("");
-          return;
-        }
-        setRestoreError(reason instanceof Error ? reason.message : "登录服务暂时不可用，正在重试…");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [apiBase, token, validatedToken, restoreNonce]);
+    setBusy(false);
+    return () => { submitController.current?.abort(); submitController.current = null; };
+  }, [apiBase, token]);
 
   useEffect(() => {
-    if (!token || token === validatedToken || !restoreError) return;
-    const timer = window.setTimeout(() => setRestoreNonce((value) => value + 1), restoreRetryMs);
-    return () => window.clearTimeout(timer);
-  }, [token, validatedToken, restoreError]);
+    if (!cooldownUntil) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => {
+      const next = Date.now();
+      setNow(next);
+      if (next >= cooldownUntil) setCooldownUntil(0);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [cooldownUntil]);
+
+  function switchMode(next: boolean) {
+    chosenMode.current = true;
+    setRegistering(next);
+    setPassword("");
+    setPasswordConfirmation("");
+    setPasswordVisible(false);
+    setFieldErrors({});
+    setError("");
+    setErrorKind("");
+  }
 
   function focusFirstInvalid(next: FieldErrors) {
     if (next.email) emailInputRef.current?.focus();
@@ -186,7 +140,7 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy) return;
+    if (busy || submitController.current || cooldown) return;
     const nextFields = validateLoginFields({
       email,
       password,
@@ -199,64 +153,54 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
       focusFirstInvalid(nextFields);
       return;
     }
+    const controller = new AbortController();
+    submitController.current = controller;
     setBusy(true);
     setError("");
     setErrorKind("");
     try {
-      const session = await createApiClient(apiBase)<AuthSession>(registering ? "/auth/register" : "/auth/login", {
+      const payload = await createApiClient(apiBase)<AuthSession>(registering ? "/auth/register" : "/auth/login", {
         method: "POST",
+        signal: controller.signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email: email.trim().toLowerCase(), password })
       });
-      writeStoredToken(session.access_token);
-      setEntering(true);
-      if (!prefersReducedMotion()) {
-        await new Promise((resolve) => window.setTimeout(resolve, successPauseMs));
-      }
+      if (controller.signal.aborted) return;
+      const next = validateSession(payload);
       setPassword("");
       setPasswordConfirmation("");
-      setSessionUser(session.user);
-      setToken(session.access_token);
-      setValidatedToken(session.access_token);
+      setPasswordVisible(false);
+      chosenMode.current = true;
+      setRegistering(false);
+      session.acceptSession(next, remember);
     } catch (reason) {
+      if (controller.signal.aborted) return;
       const issue = classifyLoginError(reason, registering);
       setError(issue.message);
       setErrorKind(issue.kind);
+      if (issue.retryAfterSeconds) setCooldownUntil(Date.now() + issue.retryAfterSeconds * 1000);
       setFieldErrors(issue.field ? { [issue.field]: issue.message } : {});
-      if (issue.kind === "credentials") passwordInputRef.current?.focus();
+      focusAfterSubmit.current = issue.field ?? null;
     } finally {
-      setBusy(false);
-      setEntering(false);
+      if (submitController.current === controller) submitController.current = null;
+      if (!controller.signal.aborted) setBusy(false);
     }
   }
 
-  function logout() {
-    clearStoredToken();
-    setValidatedToken(null);
-    setToken(null);
-    setSessionUser(null);
-    setRestoreError("");
-  }
-
-  function updateSession(nextToken: string, nextUser: AuthUser) {
-    writeStoredToken(nextToken);
-    setToken(nextToken);
-    setValidatedToken(nextToken);
-    setSessionUser(nextUser);
-    setRestoreError("");
-  }
-  if (token && token !== validatedToken) {
+  if (logoutBusy) return <AuthStatus message="正在退出登录…" />;
+  if (token && !authenticated) {
     return (
       <AuthStatus
         message={restoreError || "正在验证登录状态…"}
         alert={Boolean(restoreError)}
-        onRetry={restoreError ? () => { setRestoreError(""); setRestoreNonce((value) => value + 1); } : undefined}
+        onRetry={restoreError ? retryRestore : undefined}
       />
     );
   }
-  if (token && sessionUser) {
+  if (token && authenticated) {
     return <>
-      {children(token, logout, sessionUser, updateSession)}
+      {logoutError ? <div className="auth-session-error" role="alert">{logoutError}<button type="button" onClick={() => void logout()}>重试退出</button></div> : null}
+      {children(token, () => void logout(), authenticated.user, updateSession)}
     </>;
   }
   if (error && !config) {
@@ -288,13 +232,19 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
             <img className="auth-logo" src="/careerloop-mark-v2.png" alt="" draggable={false} />
             <h1 className="auth-eyebrow">CAREERLOOP</h1>
           </div>
+          <h2 className="auth-form-title">{registering ? "创建本地账户" : "登录本地账户"}</h2>
+          {notice ? <p className="auth-notice" role="status">{notice}</p> : null}
           <div className="auth-fields">
             <div className="auth-field">
               <label htmlFor="auth-email">邮箱</label>
               <input
                 id="auth-email"
                 ref={emailInputRef}
-                type="email"
+                type={registering ? "email" : "text"}
+                maxLength={320}
+                autoCapitalize="none"
+                spellCheck={false}
+                inputMode="email"
                 name="username"
                 autoComplete="username"
                 autoFocus
@@ -318,9 +268,10 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
                   ref={passwordInputRef}
                   type={passwordVisible ? "text" : "password"}
                   name="password"
-                  minLength={8}
+                  minLength={registering ? 8 : 1}
+                  maxLength={500}
                   autoComplete={registering ? "new-password" : "current-password"}
-                  placeholder="至少 8 位"
+                  placeholder={registering ? "8–500 位" : "输入账户密码"}
                   value={password}
                   disabled={busy}
                   aria-invalid={Boolean(fieldErrors.password)}
@@ -335,6 +286,7 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
                   type="button"
                   aria-label={passwordVisible ? "隐藏密码" : "显示密码"}
                   aria-pressed={passwordVisible}
+                  disabled={busy}
                   aria-controls="auth-password"
                   onClick={() => setPasswordVisible((visible) => !visible)}
                 >
@@ -352,6 +304,7 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
                     ref={passwordConfirmationRef}
                     type={passwordVisible ? "text" : "password"}
                     minLength={8}
+                    maxLength={500}
                     autoComplete="new-password"
                     placeholder="再次输入密码"
                     value={passwordConfirmation}
@@ -368,20 +321,22 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
               </div>
             ) : null}
           </div>
+          <label className="auth-remember"><input type="checkbox" checked={remember} disabled={busy} onChange={(event) => setRemember(event.target.checked)} />保持登录</label>
           <p className="auth-local-note">账户、资料和对话只保存在这台设备上，不是云端账号。</p>
           {error && !fieldErrors.password ? (
             <p className="auth-error" role="alert">
               <span>{error}</span>
+              {errorKind === "exists" ? <button type="button" className="auth-error-action" onClick={() => switchMode(false)}>去登录</button> : null}
               {errorKind === "network" ? <button type="button" className="auth-error-action" onClick={() => { setError(""); setErrorKind(""); setBootNonce((value) => value + 1); }}>重新连接</button> : null}
             </p>
           ) : null}
-          <button className="auth-submit" type="submit" disabled={busy || entering} aria-busy={busy || entering}>{entering ? "正在进入…" : busy ? (registering ? "正在创建…" : "正在登录…") : registering ? "创建账号" : "登录"}</button>
+          <button className="auth-submit" type="submit" disabled={busy || cooldown > 0} aria-busy={busy}>{cooldown ? `${cooldown} 秒后重试` : busy ? (registering ? "正在创建…" : "正在登录…") : registering ? "创建账号" : "登录"}</button>
           <p className="auth-mode-switch">
             {registering ? (
-              <button type="button" onClick={() => { setRegistering(false); setPasswordConfirmation(""); setFieldErrors({}); setError(""); }} disabled={busy}>已有账号？去登录</button>
-            ) : (
-              <button type="button" onClick={() => { setRegistering(true); setFieldErrors({}); setError(""); }} disabled={busy}>没有账号？创建账号</button>
-            )}
+              <button type="button" onClick={() => switchMode(false)} disabled={busy}>已有账号？去登录</button>
+            ) : config.registration_open !== false ? (
+              <button type="button" onClick={() => switchMode(true)} disabled={busy}>没有账号？创建账号</button>
+            ) : null}
           </p>
         </form>
       </div>

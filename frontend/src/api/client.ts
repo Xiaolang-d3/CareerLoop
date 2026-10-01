@@ -1,6 +1,15 @@
 const DEFAULT_API_TIMEOUT_MS = 30_000;
 
-type DesktopApiResponse = { status: number; body: string; bodyBase64?: string | null; contentType?: string | null };
+type DesktopApiResponse = { status: number; body: string; bodyBase64?: string | null; contentType?: string | null; retryAfter?: string | null };
+
+export const SESSION_EXPIRED_EVENT = "careerloop:session-expired";
+
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number, public readonly retryAfterSeconds = 0) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
 
 type DesktopFormField = {
   name: string;
@@ -77,9 +86,12 @@ async function tauriAwareFetch(input: RequestInfo | URL, init?: RequestInit): Pr
             authorization: headers.get("Authorization"),
           },
         });
-        return new Response(result.bodyBase64 ? decodeBase64(result.bodyBase64) : result.body, {
+        const responseHeaders = new Headers();
+        if (result.contentType) responseHeaders.set("Content-Type", result.contentType);
+        if (result.retryAfter) responseHeaders.set("Retry-After", result.retryAfter);
+        return new Response(result.status === 204 ? null : result.bodyBase64 ? decodeBase64(result.bodyBase64) : result.body, {
           status: result.status,
-          headers: result.contentType ? { "Content-Type": result.contentType } : undefined,
+          headers: responseHeaders,
         });
       } catch (reason) {
         const detail = reason instanceof Error ? reason.message : String(reason);
@@ -110,7 +122,12 @@ export async function fetchWithTimeout(
   }, timeoutMs);
 
   try {
-    return await tauriAwareFetch(input, { ...options, signal: controller.signal });
+    const response = await tauriAwareFetch(input, { ...options, signal: controller.signal });
+    const authorization = new Headers(options.headers).get("Authorization");
+    if (response.status === 401 && authorization?.startsWith("Bearer ")) {
+      window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT, { detail: { token: authorization.slice(7) } }));
+    }
+    return response;
   } catch (reason) {
     if (timedOut) throw new Error("请求超时，请检查网络后重试");
     throw reason;
@@ -159,8 +176,10 @@ export function createApiClient(apiBase: string, accessToken?: string) {
           message = `${message}：${plain}`;
         }
       }
-      throw new Error(message);
+      const retryAfter = Number(response.headers.get("Retry-After"));
+      throw new ApiError(message, response.status, Number.isFinite(retryAfter) && retryAfter > 0 ? Math.ceil(retryAfter) : 0);
     }
+    if (response.status === 204) return undefined as T;
     return response.json() as Promise<T>;
   };
 }

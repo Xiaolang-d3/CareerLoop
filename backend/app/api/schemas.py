@@ -8,6 +8,10 @@ class PrivacyScanIn(BaseModel):
     text: str = Field(default="", max_length=100_000)
 
 class LoginIn(BaseModel):
+    email: str = Field(min_length=1, max_length=320)
+    password: str = Field(min_length=1, max_length=500)
+
+class RegisterIn(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=8, max_length=500)
 

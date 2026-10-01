@@ -1,3 +1,55 @@
+.auth-form-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.auth-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.auth-remember input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary, #6557dc);
+}
+
+.auth-notice {
+  margin: 0 0 20px;
+  color: var(--color-text-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.auth-session-error {
+  position: fixed;
+  z-index: 100;
+  inset: 12px 12px auto;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #e9c2c2;
+  border-radius: 12px;
+  background: #fff5f5;
+  color: #8f2525;
+}
+
+.auth-session-error button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .auth-gate {
   --cell-x: 0px;
   --cell-y: 0px;
@@ -215,7 +267,7 @@
   font-size: 13px;
   font-weight: 600;
 }
-.auth-card input {
+.auth-card input:not([type="checkbox"]) {
   width: 100%;
   box-sizing: border-box;
   height: 46px;
@@ -238,27 +290,27 @@
   user-select: text;
   transition: border-color .16s ease, box-shadow .16s ease, background-color .16s ease, transform .16s ease;
 }
-.auth-card input::placeholder { color: #9a9aaf; }
-.auth-card input:hover {
+.auth-card input:not([type="checkbox"])::placeholder { color: #9a9aaf; }
+.auth-card input:not([type="checkbox"]):hover {
   border-color: var(--color-brand);
   background: rgba(255, 255, 255, .98);
   transform: translateY(-1px);
 }
-.auth-card input:focus {
+.auth-card input:not([type="checkbox"]):focus {
   border-color: #b7b0ee;
   background: #fff;
   box-shadow: var(--focus-ring);
   transform: none;
 }
-.auth-card input[aria-invalid="true"] {
+.auth-card input:not([type="checkbox"])[aria-invalid="true"] {
   border-color: #e3b4bc;
   background: #fff8f9;
 }
-.auth-card input[aria-invalid="true"]:focus {
+.auth-card input:not([type="checkbox"])[aria-invalid="true"]:focus {
   border-color: #c56b7c;
   box-shadow: 0 0 0 3px rgba(179, 77, 101, .14);
 }
-.auth-card input:disabled { opacity: .72; cursor: wait; }
+.auth-card input:not([type="checkbox"]):disabled { opacity: .72; cursor: wait; }
 .auth-field-error {
   color: var(--color-danger);
   font-size: 12px;

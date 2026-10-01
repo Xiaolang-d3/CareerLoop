@@ -223,7 +223,7 @@ def ensure_workspace(user_id: int) -> Path:
     """Create or adopt the on-disk workspace for ``user_id`` and apply migrations."""
     root = workspace_root_for(user_id)
     db_file = root / "careerloop.db"
-    if not db_file.exists() and not existing_workspace_roots() and _legacy_payload_exists():
+    if not db_file.exists() and _legacy_payload_exists() and list_user_ids()[:1] == [user_id]:
         adopt_legacy_into(root)
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     db_module.init_db(root / "careerloop.db")

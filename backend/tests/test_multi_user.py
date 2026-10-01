@@ -101,3 +101,23 @@ def test_legacy_instance_data_is_adopted_by_the_first_user(tmp_path, monkeypatch
     assert "旧资料" in titles
     other = register_authenticated_client(app, "newcomer@example.com")
     assert "旧资料" not in [item["title"] for item in other.get("/library/sources").json()]
+
+
+def test_first_account_keeps_legacy_data_when_second_workspace_initializes_first(tmp_path, monkeypatch) -> None:
+    from app import auth
+
+    create_text_source(
+        title="旧账户私有资料", content="历史资料只能交给第一个账户。",
+        db_path=tmp_path / "careerloop.db",
+    )
+    # Delay workspace creation to deterministically model interleaved registrations.
+    with monkeypatch.context() as delayed:
+        delayed.setattr(auth, "ensure_workspace", lambda user_id: tmp_path / "unused")
+        auth.register_user("first@example.com", "synthetic-test-password")
+        auth.register_user("second@example.com", "synthetic-test-password")
+    second = ensure_workspace(2)
+    first = ensure_workspace(1)
+    with db.connect(second / "careerloop.db") as conn:
+        assert conn.execute("SELECT COUNT(*) FROM library_sources").fetchone()[0] == 0
+    with db.connect(first / "careerloop.db") as conn:
+        assert conn.execute("SELECT title FROM library_sources").fetchone()[0] == "旧账户私有资料"

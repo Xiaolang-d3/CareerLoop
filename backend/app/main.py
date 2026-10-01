@@ -60,6 +60,8 @@ async def require_login(request: Request, call_next: Any) -> Any:
     is_frontend_asset = path == "/" or path.startswith("/assets/") or path in _PUBLIC_FRONTEND_FILES
     if request.method == "OPTIONS" or is_frontend_asset or path in _REQUIRE_LOGIN_WHITELIST:
         response = await call_next(request)
+        if path.startswith("/auth/"):
+            response.headers["Cache-Control"] = "no-store"
         cache_control = static_asset_cache_control(path)
         if cache_control and response.status_code == 200:
             response.headers["Cache-Control"] = cache_control
@@ -67,10 +69,14 @@ async def require_login(request: Request, call_next: Any) -> Any:
     try:
         user = current_user(request.headers.get("Authorization"))
     except HTTPException as exc:
-        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail},
+                            headers={**(exc.headers or {}), "Cache-Control": "no-store"})
     root = ensure_workspace(int(user["id"]))
     with use_workspace(int(user["id"]), root):
-        return await call_next(request)
+        response = await call_next(request)
+        if path.startswith("/auth/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
 
 app.add_middleware(
     CORSMiddleware,
@@ -78,6 +84,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Retry-After"],
 )
 
 app.include_router(api_router)

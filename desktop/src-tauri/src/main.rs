@@ -187,6 +187,7 @@ struct DesktopApiResponse {
     body: String,
     body_base64: Option<String>,
     content_type: Option<String>,
+    retry_after: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -325,6 +326,11 @@ async fn desktop_api_request(
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .map(|value| value.to_string());
+    let retry_after = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_string());
     let bytes = response
         .bytes()
         .await
@@ -342,6 +348,7 @@ async fn desktop_api_request(
         body,
         body_base64,
         content_type,
+        retry_after,
     })
 }
 

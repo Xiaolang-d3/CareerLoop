@@ -130,3 +130,27 @@ describe("fetchJson", () => {
     );
   });
 });
+
+describe("account API transport", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete (window as Window & { __TAURI__?: unknown }).__TAURI__;
+  });
+
+  it("retains retry metadata as a typed error", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response('{"detail":"请稍后重试"}', { status: 429, headers: { "Retry-After": "30" } })));
+    await expect(createApiClient("https://app.example.com")("/auth/login")).rejects.toMatchObject({ status: 429, retryAfterSeconds: 30, message: "请稍后重试" });
+  });
+
+  it("handles a desktop logout with an empty 204 response", async () => {
+    const invoke = vi.fn(async () => ({ status: 204, body: "", contentType: null }));
+    Object.assign(window, { __TAURI__: { core: { invoke } } });
+    await expect(createApiClient("http://127.0.0.1:8000", "test-token")("/auth/logout", { method: "POST" })).resolves.toBeUndefined();
+  });
+
+  it("retains Retry-After across the desktop proxy", async () => {
+    const invoke = vi.fn(async () => ({ status: 429, body: '{"detail":"请稍后重试"}', contentType: "application/json", retryAfter: "12" }));
+    Object.assign(window, { __TAURI__: { core: { invoke } } });
+    await expect(createApiClient("http://127.0.0.1:8000")("/auth/login")).rejects.toMatchObject({ status: 429, retryAfterSeconds: 12 });
+  });
+});

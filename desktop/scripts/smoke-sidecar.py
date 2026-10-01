@@ -10,7 +10,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, Request, build_opener
 
 
@@ -34,7 +34,17 @@ def main() -> None:
             headers["Authorization"] = f"Bearer {token}"
         data = json.dumps(payload).encode() if payload is not None else None
         with opener.open(Request(f"http://127.0.0.1:{port}{path}", data=data, headers=headers), timeout=2) as response:
+            if response.status == 204:
+                return None
             return json.load(response)
+
+    def assert_revoked(token: str) -> None:
+        try:
+            request("/library", token=token)
+        except HTTPError as error:
+            assert error.code == 401, error.code
+        else:
+            raise AssertionError("A revoked credential still accesses the library")
 
     with tempfile.TemporaryDirectory(prefix="careerloop-sidecar-smoke-") as directory:
         with (Path(directory) / "runtime.log").open("w+") as log:
@@ -63,7 +73,17 @@ def main() -> None:
                 request("/library/sources", {"title": "Smoke note", "content": "本地资料无需模型配置即可保存。"}, token)
                 assert len(request("/library", token=token)["sources"]) == 1
                 assert request("/agent/capabilities", token=token)["configured"] is False
-                print("Packaged runtime: health identity, registration, SQLite/library and missing-model mode passed.")
+                changed = request("/auth/me/password", {
+                    "current_password": "synthetic-smoke-password", "new_password": "synthetic-updated-password",
+                }, token)
+                assert_revoked(token)
+                refreshed = changed["access_token"]
+                assert len(request("/library", token=refreshed)["sources"]) == 1
+                request("/auth/logout", {}, refreshed)
+                assert_revoked(refreshed)
+                signed_in = request("/auth/login", {"email": "smoke@local.test", "password": "synthetic-updated-password"})
+                assert len(request("/library", token=signed_in["access_token"])["sources"]) == 1
+                print("Packaged runtime: health identity, registration/login, password rotation, logout revocation, SQLite/library and missing-model mode passed.")
             finally:
                 process.terminate()
                 try:
