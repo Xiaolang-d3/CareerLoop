@@ -316,50 +316,66 @@ def get_source_file(source_id: int, db_path: str | Path | None = None) -> tuple[
 
 
 def delete_source(source_id: int, db_path: str | Path | None = None) -> bool:
-    get_source(source_id, db_path=db_path)
-    with connect(db_path) as conn:
-        row = conn.execute(
-            "SELECT * FROM library_sources WHERE id = ?", (source_id,)
-        ).fetchone()
-        source = _source_from_row(row)
-        evidence = conn.execute(
-            """
-            SELECT e.id, e.knowledge_id, i.status
-            FROM library_evidence e
-            JOIN library_knowledge i ON i.id = e.knowledge_id
-            WHERE e.source_id = ?
-            """,
-            (source_id,),
-        ).fetchall()
-        for item in evidence:
-            memory_id = int(item["knowledge_id"])
-            if item["status"] == "pending":
-                conn.execute("DELETE FROM library_evidence WHERE id = ?", (item["id"],))
-                remaining = conn.execute(
-                    "SELECT 1 FROM library_evidence WHERE knowledge_id = ? LIMIT 1",
-                    (memory_id,),
-                ).fetchone()
-                if remaining is None:
-                    conn.execute("DELETE FROM library_knowledge WHERE id = ?", (memory_id,))
-            else:
-                conn.execute(
-                    """
-                    UPDATE library_evidence
-                    SET source_id = NULL,
-                        locator = CASE WHEN locator = '' THEN '原来源已删除'
-                          ELSE locator || ' · 原来源已删除' END
-                    WHERE id = ?
-                    """,
-                    (item["id"],),
-                )
-        conn.execute("DELETE FROM library_sources WHERE id = ?", (source_id,))
-    delete_document(SOURCE_TYPE, source_id, db_path=db_path)
-    stored = _stored_file(source, db_path)
+    stored: Path | None = None
+    original: bytes | None = None
+    try:
+        with connect(db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT * FROM library_sources WHERE id = ?", (source_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("资料来源不存在")
+            source = _source_from_row(row)
+            stored = _stored_file(source, db_path)
+            original = stored.read_bytes() if stored is not None and stored.is_file() else None
+            evidence = conn.execute(
+                """
+                SELECT e.id, e.knowledge_id, i.status
+                FROM library_evidence e
+                JOIN library_knowledge i ON i.id = e.knowledge_id
+                WHERE e.source_id = ?
+                """,
+                (source_id,),
+            ).fetchall()
+            for item in evidence:
+                memory_id = int(item["knowledge_id"])
+                if item["status"] == "pending":
+                    conn.execute("DELETE FROM library_evidence WHERE id = ?", (item["id"],))
+                    remaining = conn.execute(
+                        "SELECT 1 FROM library_evidence WHERE knowledge_id = ? LIMIT 1",
+                        (memory_id,),
+                    ).fetchone()
+                    if remaining is None:
+                        conn.execute("DELETE FROM library_knowledge WHERE id = ?", (memory_id,))
+                else:
+                    conn.execute(
+                        """
+                        UPDATE library_evidence
+                        SET source_id = NULL,
+                            locator = CASE WHEN locator = '' THEN '原来源已删除'
+                              ELSE locator || ' · 原来源已删除' END
+                        WHERE id = ?
+                        """,
+                        (item["id"],),
+                    )
+            conn.execute("DELETE FROM library_sources WHERE id = ?", (source_id,))
+            delete_document(SOURCE_TYPE, source_id, db_path=db_path, connection=conn)
+            if stored is not None:
+                try:
+                    stored.unlink(missing_ok=True)
+                except OSError as exc:
+                    raise ValueError("无法删除原文件，请检查文件权限后重试") from exc
+    except Exception:
+        if stored is not None and original is not None and not stored.exists():
+            stored.write_bytes(original)
+            stored.chmod(0o600)
+        raise
     if stored is not None:
         try:
-            stored.unlink(missing_ok=True)
             stored.parent.rmdir()
         except OSError:
+            # Empty directory cleanup is optional; original-file deletion is not.
             pass
     return True
 

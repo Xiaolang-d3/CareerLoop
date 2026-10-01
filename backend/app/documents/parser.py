@@ -61,22 +61,22 @@ def parse_document_result(filename: str, content: bytes, mode: str = "fast") -> 
         parser = "lightweight"
 
     normalized = normalize_document_text(text)
-    if len(normalized) < 20:
-        raise ValueError("未能从资料中提取足够文字；扫描版 PDF 请使用增强解析")
+    if not normalized:
+        raise ValueError("未能从资料中提取文字；扫描版 PDF 请使用增强解析")
     return DocumentParseResult(normalized[:100_000], parser, warnings)
 
 
 def normalize_document_text(text: str) -> str:
-    """Keep resume text readable after PDF/Word font extraction.
+    """Keep document text readable after PDF/Word font extraction.
 
     Some templates encode bullet points in the Unicode private-use area (for
     example ``\uf0b7``). Those glyphs are not meaningful text and otherwise end
-    up in the editable resume. Convert line-leading private-use glyphs into a
+    up in the editable document. Convert line-leading private-use glyphs into a
     normal dash and discard other invisible/control characters without touching
     URLs, Chinese text, punctuation, or tables.
 
     PDF/Word extractors also insert visual line breaks mid-sentence. Join those
-    wrapped fragments locally; do not send the resume to a model for cleanup.
+    wrapped fragments locally; do not send the document to a model for cleanup.
     """
     normalized = unicodedata.normalize("NFC", text).replace("\r\n", "\n").replace("\r", "\n")
     output: list[str] = []
@@ -108,22 +108,22 @@ def normalize_document_text(text: str) -> str:
         for line in "".join(output).splitlines()
         if line.strip()
     ]
-    return "\n".join(_split_jammed_profile_lines(_unwrap_extracted_lines(cleaned)))
+    return "\n".join(_split_jammed_contact_lines(_unwrap_extracted_lines(cleaned)))
 
 
-_PROFILE_FIELD_LABELS = (
+_CONTACT_FIELD_LABELS = (
     "电话|手机|邮箱|邮件|微信|地址|住址|联系方式|GitHub|Github|LinkedIn|"
     "求职意向|意向岗位|目标职位|求职目标|英语|日语|普通话|语言"
 )
-_PROFILE_FIELD_PATTERN = re.compile(rf"(?:{_PROFILE_FIELD_LABELS})[:：]", re.I)
+_CONTACT_FIELD_PATTERN = re.compile(rf"(?:{_CONTACT_FIELD_LABELS})[:：]", re.I)
 _JAMMED_CERT_GITHUB = re.compile(r"(CET-?\d)(?=[A-Za-z\u4e00-\u9fff])", re.I)
 _JAMMED_GITHUB_LABEL = re.compile(r"([^\s|/｜])((?:GitHub|Github|LinkedIn)[:：])", re.I)
 
 
-def _split_jammed_profile_line(line: str) -> list[str]:
+def _split_jammed_contact_line(line: str) -> list[str]:
     spaced = _JAMMED_CERT_GITHUB.sub(r"\1 ", line)
     spaced = _JAMMED_GITHUB_LABEL.sub(r"\1 \2", spaced)
-    starts = [match.start() for match in _PROFILE_FIELD_PATTERN.finditer(spaced)]
+    starts = [match.start() for match in _CONTACT_FIELD_PATTERN.finditer(spaced)]
     if len(starts) < 2:
         return [spaced.strip() or line]
     chunks: list[str] = []
@@ -139,10 +139,10 @@ def _split_jammed_profile_line(line: str) -> list[str]:
     return chunks or [line]
 
 
-def _split_jammed_profile_lines(lines: list[str]) -> list[str]:
+def _split_jammed_contact_lines(lines: list[str]) -> list[str]:
     expanded: list[str] = []
     for line in lines:
-        expanded.extend(_split_jammed_profile_line(line) if line else [line])
+        expanded.extend(_split_jammed_contact_line(line) if line else [line])
     return expanded
 
 

@@ -10,6 +10,11 @@ from app.documents.service import parse_document_upload
 
 
 class DocumentParserTest(unittest.TestCase):
+    def test_accepts_short_notes_and_rejects_whitespace_only(self) -> None:
+        self.assertEqual(parse_document("note.md", "按主题整理资料。".encode()), "按主题整理资料。")
+        with self.assertRaises(ValueError):
+            parse_document("note.txt", b" \n\t")
+
     def test_parses_utf8_text_resume(self) -> None:
         text = parse_document("resume.txt", "张三\nPython 开发工程师\n五年后端开发经验".encode())
         self.assertIn("Python 开发工程师", text)

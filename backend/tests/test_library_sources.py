@@ -120,3 +120,26 @@ def test_deleting_source_removes_file_index_and_only_unconfirmed_exclusive_memor
             "SELECT 1 FROM knowledge_chunks WHERE source_type = 'library_source' AND source_id = ?",
             (str(source["id"]),),
         ).fetchone() is None
+
+
+def test_failed_original_file_deletion_keeps_source_knowledge_and_index(tmp_path, monkeypatch):
+    db_path = tmp_path / "careerloop.db"
+    init_db(db_path)
+    source = import_file_source(filename="notes.txt", content_bytes="可供重试删除的原始笔记。".encode(), db_path=db_path)
+    file_path, _, _ = get_source_file(source["id"], db_path=db_path)
+    pending = propose_knowledge(category="knowledge", statement="待确认结论", source_id=source["id"], db_path=db_path)
+    original_unlink = Path.unlink
+
+    def deny_original(path, *args, **kwargs):
+        if path == file_path:
+            raise PermissionError("synthetic permission failure")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", deny_original)
+    with pytest.raises(ValueError, match="无法删除原文件"):
+        delete_source(source["id"], db_path=db_path)
+    assert get_source(source["id"], db_path=db_path)["content"]
+    assert file_path.read_text() == "可供重试删除的原始笔记。"
+    assert any(item["id"] == pending["id"] for item in list_knowledge(db_path=db_path))
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT 1 FROM knowledge_chunks WHERE source_type = 'library_source' AND source_id = ?", (str(source["id"]),)).fetchone()
