@@ -9,6 +9,15 @@ test("new account imports, corrects and reviews knowledge through the real backe
   await page.getByLabel("确认密码", { exact: true }).fill("synthetic-test-password");
   await page.getByRole("button", { name: "创建账号", exact: true }).click();
   await expect(page.getByRole("heading", { name: /reader/ })).toBeVisible();
+  await page.goto("/#/settings");
+  const token = await page.evaluate(() => localStorage.getItem("careerloop-auth-token"));
+  await page.getByRole("link", { name: "了解 CareerLoop" }).click();
+  await expect(page).toHaveURL(/#\/about$/);
+  await expect(page.getByRole("heading", { name: /从真实资料出发/ })).toBeVisible();
+  await page.getByRole("link", { name: "返回应用", exact: true }).click();
+  await expect(page).toHaveURL(/#\/settings$/);
+  await expect(page.getByRole("button", { name: /账号与安全/ })).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem("careerloop-auth-token"))).toBe(token);
   await page.goto("/#/library");
   await page.getByLabel("导入文件").setInputFiles([
     { name: "reading.md", mimeType: "text/markdown", buffer: Buffer.from("阅读结论：每周整理问题，联系 reader@example.test。") },

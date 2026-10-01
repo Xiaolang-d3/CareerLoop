@@ -16,6 +16,7 @@ import { createPagePrefetcher } from "../page-prefetch";
 import { createRouteDataCache, requiredDataForRoute, type RouteDataKey } from "../route-data";
 import { useAsyncPolling } from "../hooks/useAsyncPolling";
 import { appRouteHash, initialAppRoute, parseAppHash, routeForSection, type AppRoute } from "../routing";
+import { isProductIntroHash } from "./public-routing";
 import type { AgentCapabilities, AgentOperationsSnapshot, AgentSettings, LibraryEditor, LibrarySourceDetail, ModelCapabilityReport, ModelServiceCheck, ModelServiceMonitor, ViewKey } from "../types";
 import { CheckCircle2, TriangleAlert, X } from "lucide-react";
 import "../styles/foundations.css";
@@ -173,6 +174,7 @@ export function App({
       window.history.replaceState(null, "", canonicalHash);
     }
     function syncRoute() {
+      if (isProductIntroHash(window.location.hash)) return;
       const next = parseAppHash(window.location.hash) ?? { section: "chat" as const };
       const canonicalHash = appRouteHash(next);
       if (window.location.hash !== canonicalHash) {

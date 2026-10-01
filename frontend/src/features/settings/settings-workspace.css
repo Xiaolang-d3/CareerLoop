@@ -32,6 +32,8 @@
 .settings-breadcrumb span { color: var(--color-text-secondary, #50516a); }
 
 .settings-overview { display: flex; flex-direction: column; justify-content: flex-start; }
+.settings-product-link { display: inline-flex; align-self: flex-start; align-items: center; gap: 5px; min-height: 44px; margin-top: 16px; border-radius: 8px; color: var(--color-brand-strong); font-size: 13px; text-decoration: none; }
+.settings-product-link:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 .settings-overview-heading { margin-bottom: 18px; }
 .settings-eyebrow {

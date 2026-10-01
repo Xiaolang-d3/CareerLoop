@@ -3,6 +3,7 @@ import { Eye, EyeOff } from "lucide-react";
 import { ApiError, createApiClient } from "../api/client";
 import { AuthSession, AuthUser, validateSession } from "../features/auth/session";
 import { useAuthSession } from "../features/auth/useAuthSession";
+import { productIntroHash } from "../app/public-routing";
 export type { AuthUser } from "../features/auth/session";
 import "./auth-gate.css";
 
@@ -51,7 +52,8 @@ function validateLoginFields(input: {
   return next;
 }
 
-export function AuthGate({ apiBase, children }: { apiBase: string; children: (accessToken: string, onLogout: () => void, user: AuthUser, updateSession: (token: string, user: AuthUser) => void) => ReactNode }) {
+export function AuthGate({ apiBase, children, publicPage }: { apiBase: string; children: (accessToken: string, onLogout: () => void, user: AuthUser, updateSession: (token: string, user: AuthUser) => void) => ReactNode; publicPage?: (signedIn: boolean) => ReactNode }) {
+  const showingPublicPage = Boolean(publicPage);
   const [config, setConfig] = useState<AuthConfig | null>(null);
   const session = useAuthSession(apiBase);
   const { token, authenticated, restoreError, notice, logoutBusy, logoutError, retryRestore, logout, updateSession } = session;
@@ -85,7 +87,7 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
   }, [busy]);
 
   useEffect(() => {
-    if (token) return;
+    if (token || showingPublicPage) return;
     const controller = new AbortController();
     let cancelled = false;
     void createApiClient(apiBase)<AuthConfig>("/auth/config", { signal: controller.signal })
@@ -103,7 +105,21 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
           : raw);
       });
     return () => { cancelled = true; controller.abort(); };
-  }, [apiBase, token, bootNonce]);
+  }, [apiBase, token, bootNonce, showingPublicPage]);
+
+  useEffect(() => {
+    if (!showingPublicPage) return;
+    submitController.current?.abort();
+    submitController.current = null;
+    setBusy(false);
+    setPassword("");
+    setPasswordConfirmation("");
+    setPasswordVisible(false);
+    setFieldErrors({});
+    setError("");
+    setErrorKind("");
+    focusAfterSubmit.current = null;
+  }, [showingPublicPage]);
 
   useEffect(() => {
     setBusy(false);
@@ -187,6 +203,7 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
     }
   }
 
+  if (publicPage) return publicPage(Boolean(token && authenticated));
   if (logoutBusy) return <AuthStatus message="正在退出登录…" />;
   if (token && !authenticated) {
     return (
@@ -211,22 +228,6 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
   return (
     <AuthGateShell>
       <div className="auth-shell">
-        <aside className="auth-intro" aria-label="CareerLoop 如何与你协作">
-          <p className="auth-intro-kicker">让资料在每次对话中持续发挥作用</p>
-          <h2>从真实资料出发，完成分析与创作。</h2>
-          <p>CareerLoop 帮你整理长期资料，在对话中完成搜索、分析和内容生成，并把结果沉淀到你的本地知识库。</p>
-          <ol className="auth-intro-steps">
-            <li>整理资料</li>
-            <li>开始对话</li>
-            <li>沉淀成果</li>
-          </ol>
-          <ul>
-            <li><strong>有据可循</strong><span>分析和内容都能回到你提供的资料。</span></li>
-            <li><strong>始终可控</strong><span>联网研究和资料使用均由你决定。</span></li>
-            <li><strong>持续积累</strong><span>确认过的信息可以在后续任务中复用。</span></li>
-          </ul>
-        </aside>
-
         <form className="auth-card" onSubmit={submit} noValidate aria-busy={busy}>
           <div className="auth-brand">
             <img className="auth-logo" src="/careerloop-mark-v2.png" alt="" draggable={false} />
@@ -338,6 +339,7 @@ export function AuthGate({ apiBase, children }: { apiBase: string; children: (ac
               <button type="button" onClick={() => switchMode(true)} disabled={busy}>没有账号？创建账号</button>
             ) : null}
           </p>
+          <a className="auth-product-link" href={productIntroHash}>了解 CareerLoop <span aria-hidden="true">↗</span></a>
         </form>
       </div>
     </AuthGateShell>

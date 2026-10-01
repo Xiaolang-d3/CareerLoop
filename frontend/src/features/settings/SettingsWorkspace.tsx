@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import type { LibraryEditor } from "../../types";
 import type { SettingsPage } from "../../routing";
+import { productIntroHash } from "../../app/public-routing";
 import "./settings-workspace.css";
 
 type WorkspaceProps = {
@@ -117,6 +118,7 @@ export function SettingsOverview({
           <ChevronRight size={19} />
         </button>
       </div>
+      <a className="settings-product-link" href={productIntroHash}>了解 CareerLoop<ChevronRight size={15} aria-hidden="true" /></a>
     </div>
   );
 }

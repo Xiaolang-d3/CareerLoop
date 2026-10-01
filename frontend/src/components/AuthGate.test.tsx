@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthGate } from "./AuthGate";
 
@@ -76,8 +76,9 @@ describe("AuthGate", () => {
     expect(screen.getByText("账户、资料和对话只保存在这台设备上，不是云端账号。")).toBeInTheDocument();
     expect(screen.getByRole("main")).toHaveClass("auth-gate");
     expect(screen.getByRole("heading", { name: "CAREERLOOP" })).toBeInTheDocument();
-    expect(screen.getByRole("complementary", { name: "CareerLoop 如何与你协作" })).toBeInTheDocument();
-    expect(screen.getByText(/沉淀到你的本地知识库/)).toBeInTheDocument();
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+    expect(screen.queryByText(/沉淀到你的本地知识库/)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /了解 CareerLoop/ })).toHaveAttribute("href", "#/about");
 
     fireEvent.click(screen.getByRole("button", { name: "显示密码" }));
     expect(screen.getByLabelText("密码")).toHaveAttribute("type", "text");
@@ -103,7 +104,7 @@ describe("AuthGate", () => {
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("邮箱或密码不正确，请核对后重试。");
-    expect(screen.getByLabelText("密码")).toHaveFocus();
+    await waitFor(() => expect(screen.getByLabelText("密码")).toHaveFocus());
   });
 
   it("offers reconnect when login cannot reach the server", async () => {

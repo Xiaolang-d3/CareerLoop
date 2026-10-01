@@ -32,6 +32,7 @@ describe("SettingsOverview", () => {
     expect(screen.getByText("owner@example.com")).toBeInTheDocument();
     expect(screen.getByText("资料库")).toBeInTheDocument();
     expect(screen.getByText("资料库里的名字")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "了解 CareerLoop" })).toHaveAttribute("href", "#/about");
 
     fireEvent.click(screen.getByRole("button", { name: /账号与安全/ }));
     expect(onOpen).toHaveBeenCalledWith("account");
