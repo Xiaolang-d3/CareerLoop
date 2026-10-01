@@ -1,0 +1,4 @@
+# Optional enhanced document parsing, vector embeddings and image OCR.
+docling==2.112.0
+fastembed==0.8.0
+rapidocr==3.9.2

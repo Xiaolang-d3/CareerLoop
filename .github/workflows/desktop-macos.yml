@@ -57,29 +57,12 @@ jobs:
         working-directory: desktop
         run: npm run package-sidecar
       - name: Smoke-test sidecar identity and shutdown
-        run: |
-          set -euo pipefail
-          BINARY="desktop/src-tauri/binaries/careerloop-server-aarch64-apple-darwin"
-          DATA_DIR="$RUNNER_TEMP/careerloop-smoke"
-          "$BINARY" --data-dir "$DATA_DIR" --port 18766 --instance-id ci-smoke &
-          SIDECAR_PID=$!
-          trap 'kill "$SIDECAR_PID" 2>/dev/null || true' EXIT
-          for attempt in {1..120}; do
-            if curl --noproxy '*' --fail --silent http://127.0.0.1:18766/health | grep -q '"instance_id":"ci-smoke"'; then
-              break
-            fi
-            sleep 0.25
-          done
-          curl --noproxy '*' --fail --silent http://127.0.0.1:18766/health | grep -q '"service":"careerloop"'
-          kill "$SIDECAR_PID"
-          wait "$SIDECAR_PID" || true
-          trap - EXIT
-          ! kill -0 "$SIDECAR_PID" 2>/dev/null
+        run: python desktop/scripts/smoke-sidecar.py
       - name: Check Rust shell
         working-directory: desktop/src-tauri
         run: |
           cargo fmt --check
-          cargo check
+          cargo test
       - name: Build unsigned internal app
         working-directory: desktop
         env:

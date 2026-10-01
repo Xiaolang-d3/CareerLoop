@@ -90,6 +90,20 @@ fn new_instance_id() -> String {
     format!("{}-{timestamp}", std::process::id())
 }
 
+fn health_response_matches(response: &str, instance_id: &str) -> bool {
+    if !response.starts_with("HTTP/1.1 200") {
+        return false;
+    }
+    let body = response.split_once("\r\n\r\n").map(|(_, body)| body);
+    let Some(Ok(value)) = body.map(serde_json::from_str::<serde_json::Value>) else {
+        return false;
+    };
+    value["status"] == "ok"
+        && value["service"] == "careerloop"
+        && value["version"] == env!("CARGO_PKG_VERSION")
+        && value["instance_id"] == instance_id
+}
+
 fn health_matches(port: u16, instance_id: &str) -> bool {
     let address: SocketAddr = match format!("127.0.0.1:{port}").parse() {
         Ok(address) => address,
@@ -110,9 +124,7 @@ fn health_matches(port: u16, instance_id: &str) -> bool {
     if stream.read_to_string(&mut response).is_err() {
         return false;
     }
-    response.starts_with("HTTP/1.1 200")
-        && response.contains("\"service\":\"careerloop\"")
-        && response.contains(&format!("\"instance_id\":\"{instance_id}\""))
+    health_response_matches(&response, instance_id)
 }
 
 fn wait_for_sidecar(port: u16, instance_id: &str) -> Result<(), String> {
@@ -390,7 +402,29 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{encode_multipart, DesktopFormField};
+    use super::{encode_multipart, health_response_matches, DesktopFormField};
+
+    #[test]
+    fn health_requires_matching_service_version_and_instance() {
+        let response = format!(
+            "HTTP/1.1 200 OK\r\n\r\n{}",
+            serde_json::json!({ "status": "ok", "service": "careerloop", "version": env!("CARGO_PKG_VERSION"), "instance_id": "test-instance" })
+        );
+        assert!(health_response_matches(&response, "test-instance"));
+        assert!(!health_response_matches(&response, "other-instance"));
+        assert!(!health_response_matches(
+            &response.replace(env!("CARGO_PKG_VERSION"), "99.0.0"),
+            "test-instance"
+        ));
+        assert!(!health_response_matches(
+            &response.replace("careerloop", "other-service"),
+            "test-instance"
+        ));
+        assert!(!health_response_matches(
+            "HTTP/1.1 200 OK\r\n\r\n<html>loading</html>",
+            "test-instance"
+        ));
+    }
 
     #[test]
     fn multipart_keeps_repeated_file_fields_and_binary_bytes() {

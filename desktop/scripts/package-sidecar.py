@@ -36,8 +36,8 @@ def target_triple() -> str:
 
 
 def main() -> None:
-    if platform.system() != "Darwin":
-        raise SystemExit("The current internal desktop package supports macOS only.")
+    if platform.system() != "Darwin" or platform.machine().lower() not in {"arm64", "aarch64"}:
+        raise SystemExit("The current internal desktop package supports macOS ARM64 only.")
     executable_name = "pyinstaller.exe" if platform.system() == "Windows" else "pyinstaller"
     venv_pyinstaller = BACKEND / ".venv" / ("Scripts" if platform.system() == "Windows" else "bin") / executable_name
     pyinstaller = str(venv_pyinstaller) if venv_pyinstaller.is_file() else shutil.which("pyinstaller")
@@ -68,9 +68,7 @@ def main() -> None:
             "--exclude-module", "pandas",
             "--exclude-module", "scipy",
             "--exclude-module", "spacy",
-            "--exclude-module", "presidio_analyzer",
-            "--exclude-module", "presidio_anonymizer",
-            # Screenshot OCR is optional and imported lazily.  Shipping its
+            # Image OCR is optional and imported lazily.  Shipping its
             # native inference stack adds roughly 70 MB. Keep it available in
             # source/web development and move it to a separately installable
             # desktop component later.

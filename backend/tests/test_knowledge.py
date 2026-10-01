@@ -1,7 +1,9 @@
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from app.db import init_db
@@ -169,7 +171,8 @@ class SemanticKnowledgeTest(unittest.TestCase):
             clear=False,
         ):
             reset_embedder()
-            with patch("fastembed.TextEmbedding", return_value=fake_model) as constructor:
+            constructor = MagicMock(return_value=fake_model)
+            with patch.dict(sys.modules, {"fastembed": SimpleNamespace(TextEmbedding=constructor)}):
                 vector = embed_text("微服务接口")
         self.assertEqual(len(vector), 512)
         constructor.assert_called_once()

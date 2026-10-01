@@ -27,8 +27,13 @@ async function mockCurrentProduct(page: Page) {
       return route.fulfill({ json: { user: { id: 1, email: "e2e@local.test", display_name: "测试用户", has_avatar: false } } });
     }
     if (path === "/system/database-status") {
-      return route.fulfill({ json: { status: "ready", schema_version: 22, required_schema_version: 22 } });
+      return route.fulfill({ json: { status: "ready", schema_version: 24, required_schema_version: 24 } });
     }
+    if (path === "/library") return route.fulfill({ json: {
+      profile: { name: "读者", privacy_mode: "redacted", knowledge_revision: 1 },
+      facts: [{ id: 1, category: "knowledge", statement: "每周整理一次阅读笔记", status: "pending" }],
+      sources: [{ id: 7, title: "读书笔记", source_kind: "paste", original_filename: "", mime_type: "text/plain", source_uri: "", privacy_mode: "redacted", enabled: true, parse_status: "ready", character_count: 120, file_available: false, created_at: "2026-09-22T08:00:00Z", updated_at: "2026-09-22T08:00:00Z" }]
+    } });
     if (path === "/conversations") return route.fulfill({ json: [conversation] });
     if (path === "/chat/messages") return route.fulfill({ json: [] });
     if (path === "/agent/runs/current") return route.fulfill({ json: { run: null } });
@@ -107,10 +112,14 @@ test("AI workspace keeps one reading axis and switches history rail by breakpoin
       fullPage: true,
       animations: "disabled"
     });
-    await expect(page).toHaveScreenshot(`chat-workspace-${viewport.width}.png`, {
-      animations: "disabled",
-      maxDiffPixelRatio: 0.01
-    });
+    // Pixel baselines are macOS-specific. Linux still checks geometry and
+    // interactions and emits the same screenshots for review.
+    if (process.platform === "darwin") {
+      await expect(page).toHaveScreenshot(`chat-workspace-${viewport.width}.png`, {
+        animations: "disabled",
+        maxDiffPixelRatio: 0.01
+      });
+    }
   }
 });
 
@@ -125,4 +134,20 @@ test("retired career routes resolve only to the current product surfaces", async
     await expect(page).toHaveURL(expectedRoute);
   }
   await expect(page.getByText("职位机会", { exact: true })).toHaveCount(0);
+});
+
+
+test("home and library use current sources and stay usable on narrow screens", async ({ page }) => {
+  for (const width of [375, 960, 1280, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/#/dashboard");
+    await expect(page.getByRole("heading", { name: /读者/ })).toBeVisible();
+    await expect(page.getByText("读书笔记", { exact: true })).toBeVisible();
+    await page.goto("/#/library");
+    await expect(page.getByRole("list", { name: "资料来源列表" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "预览 读书笔记" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "确认" }).first()).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await page.screenshot({ path: resolve("..", "..", "output", "playwright", `library-${width}.png`), fullPage: true });
+  }
 });
