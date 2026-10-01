@@ -76,7 +76,7 @@ OPENAI_API_KEY=
 - 前端：http://127.0.0.1:5173
 - 后端：http://127.0.0.1:8000
 
-首次打开时在登录页创建本地管理员账户。默认只监听本机；局域网访问、安全选项、附件、MinIO、向量检索和外部服务配置见 [`backend/.env.example`](backend/.env.example)。
+首次打开时在登录页创建本地账户，同一实例可使用多个相互隔离的账户。注册、登录、保持登录、退出撤销和改密规则见 [`docs/account-auth.md`](docs/account-auth.md)。默认只监听本机；局域网访问、安全选项、附件、MinIO、向量检索和外部服务配置见 [`backend/.env.example`](backend/.env.example)。
 
 停止服务：
 
