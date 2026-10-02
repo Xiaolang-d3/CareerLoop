@@ -2,7 +2,7 @@
 
 本文是灯灯（原 CareerLoop）**智能体层的维护文档**。代码是行为的事实来源；本文记录意图、边界和同步点。改智能体行为时必须在同一变更中更新本文。
 
-最近校准：2026-10-01（删除退役求职实现；资料库与持久化独立；拆分 API、聊天协调和 AG-UI 编码；数据库版本 24；真实后端闭环及桌面运行时验证）。
+最近校准：2026-10-02（灯灯品牌与公共产品演示；持久化运行 JSON 容错；删除退役求职实现；资料库与持久化独立；数据库版本 24）。
 
 ## 定位
 
@@ -187,6 +187,8 @@ runtime 在进入循环、完成每个工具轮、写入完成修复提示和引
 - 中断的 `read_only`、`derived_analysis`、`external_read` 工具可以重新执行。
 - 中断或结果不明的本地写工具返回 `tool_execution_uncertain`，禁止自动重放，避免重复副作用。
 - plan step 独立落入 `agent_run_steps`，状态只使用 `pending` / `running` / `done` / `failed` / `blocked`。
+
+读取运行、步骤与工具执行账本时，对损坏或过期的 JSON 做容错解码；无法校验的 checkpoint/result 返回空值并标记 invalid，`GET /agent/runs/current` 仍可返回安全摘要。不可校验的检查点不能恢复；无效工具结果不会作为成功结果重放，原始记录保留。
 
 取消请求同时写入 run 账本并取消当前进程内任务。runtime 在模型调用和工具调用期间每 250ms 检查持久化取消标记，可跨请求传播取消。`GET /agent/runs/current` 返回不含原始 checkpoint、工具参数和工具结果的安全状态摘要；`POST /agent/runs/{run_id}/cancel` 可按运行取消。等待用户的运行与后续恢复运行通过 `parent_run_id` / `resumed_by_run_id` 关联，保留完整审批链。
 
