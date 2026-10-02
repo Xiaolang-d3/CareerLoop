@@ -43,6 +43,7 @@ sidecar。Rust 先占用动态 loopback 端口，向 sidecar 传入端口与实�
 审计、快照和模型适配不迁入 Rust，也不改变其行为。实现与发布脚本位于
 `desktop/`；发布构建把 FastAPI 打成 PyInstaller onedir runtime，并由同架构原生
 launcher 定位后执行。浏览器开发与自托管仍保持原有的 FastAPI 静态文件模式。
+macOS 打包 CI 使用支持 SQLite 扩展加载的 Homebrew Python 3.11 创建隔离虚拟环境，并在测试与打包前验证 sqlite-vec 可加载，保证知识库向量索引与本地开发行为一致。
 首版 macOS ARM64 内部包为控制体积不携带可选图片 OCR 推理栈；文档和文本解析不受
 影响，图片 OCR 失败会返回明确的可恢复提示。
 
