@@ -1,4 +1,6 @@
-# CareerLoop
+# 灯灯
+
+灯灯（原 CareerLoop / BossCopilot）是从对话开始的个人 AI 协作助手。一起想清楚，一步步做好。
 
 [![CI](https://github.com/Xiaolang-d3/CareerLoop/actions/workflows/ci.yml/badge.svg)](https://github.com/Xiaolang-d3/CareerLoop/actions/workflows/ci.yml)
 
@@ -78,7 +80,7 @@ OPENAI_API_KEY=
 
 首次打开时在登录页创建本地账户，同一实例可使用多个相互隔离的账户。注册、登录、保持登录、退出撤销和改密规则见 [`docs/account-auth.md`](docs/account-auth.md)。默认只监听本机；局域网访问、安全选项、附件、MinIO、向量检索和外部服务配置见 [`backend/.env.example`](backend/.env.example)。
 
-登录页只显示居中的账户表单。登录框底部和设置首页的「了解 CareerLoop」可进入独立产品介绍页 `#/about`；该页面无需登录，提供返回登录或应用的入口。
+登录页以居中的账户表单为主，右上角「关于灯灯」和设置首页的「了解灯灯」可进入独立产品介绍页 `#/about`；该页面无需登录，提供返回登录或应用的入口。
 
 停止服务：
 
@@ -129,16 +131,16 @@ cd backend
 
 ## 可选：启用联网搜索
 
-CareerLoop 默认不依赖联网搜索即可运行。对话中的公司研究和公开网页搜索需要额外部署 AgentSearch；`scripts/dev.sh` 不会自动启动它。
+灯灯默认不依赖联网搜索即可运行。对话中的公司研究和公开网页搜索需要额外部署 AgentSearch；`scripts/dev.sh` 不会自动启动它。
 
-CareerLoop 会使用 `general`、`news` 和 `company` 搜索策略。对话输入框可在“自动来源”“技术来源”和“通用来源”之间选择；技术来源会优先检索官方文档、GitHub 与 Stack Overflow。启用前请确认所部署的 AgentSearch 版本支持：
+灯灯会使用 `general`、`news` 和 `company` 搜索策略。对话输入框可在“自动来源”“技术来源”和“通用来源”之间选择；技术来源会优先检索官方文档、GitHub 与 Stack Overflow。启用前请确认所部署的 AgentSearch 版本支持：
 
 ```bash
 curl "http://127.0.0.1:3939/health"
 curl "http://127.0.0.1:3939/search?q=OpenAI&count=2&mode=company"
 ```
 
-如果第二个请求返回 `Unknown search strategy mode`，该版本与 CareerLoop 不兼容，不能仅通过重新构建旧镜像解决；请先升级到明确支持 `company` 策略的版本。
+如果第二个请求返回 `Unknown search strategy mode`，该版本与灯灯不兼容，不能仅通过重新构建旧镜像解决；请先升级到明确支持 `company` 策略的版本。
 
 确认兼容后，在 `backend/.env` 中启用集成并重启后端：
 
