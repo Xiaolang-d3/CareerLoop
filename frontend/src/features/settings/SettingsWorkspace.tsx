@@ -118,7 +118,7 @@ export function SettingsOverview({
           <ChevronRight size={19} />
         </button>
       </div>
-      <a className="settings-product-link" href={productIntroHash}>了解 CareerLoop<ChevronRight size={15} aria-hidden="true" /></a>
+      <a className="settings-product-link" href={productIntroHash}>了解 灯灯<ChevronRight size={15} aria-hidden="true" /></a>
     </div>
   );
 }

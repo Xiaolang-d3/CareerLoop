@@ -11,9 +11,9 @@ test("new account imports, corrects and reviews knowledge through the real backe
   await expect(page.getByRole("heading", { name: /reader/ })).toBeVisible();
   await page.goto("/#/settings");
   const token = await page.evaluate(() => localStorage.getItem("careerloop-auth-token"));
-  await page.getByRole("link", { name: "了解 CareerLoop" }).click();
+  await page.getByRole("link", { name: "了解 灯灯" }).click();
   await expect(page).toHaveURL(/#\/about$/);
-  await expect(page.getByRole("heading", { name: /从真实资料出发/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /一起想清楚/ })).toBeVisible();
   await page.getByRole("link", { name: "返回应用", exact: true }).click();
   await expect(page).toHaveURL(/#\/settings$/);
   await expect(page.getByRole("button", { name: /账号与安全/ })).toBeVisible();

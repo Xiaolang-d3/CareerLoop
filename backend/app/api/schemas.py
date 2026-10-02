@@ -31,7 +31,7 @@ class ConversationUpdate(BaseModel):
     status: Literal["active", "archived"] | None = None
 
 class AgentSettingsIn(BaseModel):
-    display_name: str = Field(default="CareerLoop", min_length=1, max_length=40)
+    display_name: str = Field(default="灯灯", min_length=1, max_length=40)
     persona_role: str = Field(min_length=1, max_length=300)
     response_style: Literal["concise", "balanced", "detailed"] = "concise"
     custom_instructions: str = Field(default="", max_length=1000)

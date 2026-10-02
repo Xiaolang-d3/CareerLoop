@@ -134,7 +134,7 @@ fn wait_for_sidecar(port: u16, instance_id: &str) -> Result<(), String> {
         }
         thread::sleep(Duration::from_millis(200));
     }
-    Err("CareerLoop 本地服务未能在 60 秒内完成启动".to_string())
+    Err("灯灯本地服务未能在 60 秒内完成启动".to_string())
 }
 
 #[cfg(debug_assertions)]
@@ -379,7 +379,7 @@ fn main() {
                         (None, Some(error))
                     }
                 },
-                Err(error) => (None, Some(format!("CareerLoop 本地服务启动失败：{error}"))),
+                Err(error) => (None, Some(format!("灯灯本地服务启动失败：{error}"))),
             };
 
             app.manage(RuntimeConfig {

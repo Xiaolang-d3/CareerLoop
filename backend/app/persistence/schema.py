@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS knowledge_chunks (
 
 CREATE TABLE IF NOT EXISTS agent_settings (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
-                display_name TEXT NOT NULL DEFAULT 'CareerLoop',
+                display_name TEXT NOT NULL DEFAULT '灯灯',
                 persona_role TEXT NOT NULL DEFAULT '理性、坦诚、尊重用户决定，并基于用户资料协助分析与创作的本地 AI 伙伴',
                 response_style TEXT NOT NULL DEFAULT 'concise',
                 custom_instructions TEXT NOT NULL DEFAULT '',

@@ -84,11 +84,11 @@ export function AppSidebar({
       <div className="brand">
         <button className="brand-home" type="button" onClick={onGoHome} aria-label="返回首页" title="返回首页">
           <span className="brand-mark" aria-hidden="true">
-            <img className="brand-mark-image" src="/careerloop-mark-v2.png" alt="" />
+            <img className="brand-mark-image" src="/dengdeng-icon-v1.png" alt="" />
           </span>
           <span className="brand-copy">
-            <strong>CareerLoop</strong>
-            <small>让知识成为更好的自己</small>
+            <strong>灯灯</strong>
+            <small>一起想清楚，一步步做好</small>
           </span>
         </button>
       </div>

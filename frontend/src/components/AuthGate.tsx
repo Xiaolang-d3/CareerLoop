@@ -101,7 +101,7 @@ export function AuthGate({ apiBase, children, publicPage }: { apiBase: string; c
         if (cancelled) return;
         const raw = reason instanceof Error ? reason.message : "无法连接登录服务";
         setError(/failed to fetch|networkerror|load failed/i.test(raw)
-          ? "无法连接本地服务，请点重新连接。若反复失败，请完全退出后重开 CareerLoop。"
+          ? "无法连接本地服务，请点重新连接。若反复失败，请完全退出后重开 灯灯。"
           : raw);
       });
     return () => { cancelled = true; controller.abort(); };
@@ -230,8 +230,8 @@ export function AuthGate({ apiBase, children, publicPage }: { apiBase: string; c
       <div className="auth-shell">
         <form className="auth-card" onSubmit={submit} noValidate aria-busy={busy}>
           <div className="auth-brand">
-            <img className="auth-logo" src="/careerloop-mark-v2.png" alt="" draggable={false} />
-            <h1 className="auth-eyebrow">CAREERLOOP</h1>
+            <img className="auth-logo" src="/dengdeng-icon-v1.png" alt="" draggable={false} />
+            <h1 className="auth-eyebrow">灯灯</h1>
           </div>
           <h2 className="auth-form-title">{registering ? "创建本地账户" : "登录本地账户"}</h2>
           {notice ? <p className="auth-notice" role="status">{notice}</p> : null}
@@ -339,7 +339,6 @@ export function AuthGate({ apiBase, children, publicPage }: { apiBase: string; c
               <button type="button" onClick={() => switchMode(true)} disabled={busy}>没有账号？创建账号</button>
             ) : null}
           </p>
-          <a className="auth-product-link" href={productIntroHash}>了解 CareerLoop <span aria-hidden="true">↗</span></a>
         </form>
       </div>
     </AuthGateShell>
@@ -397,6 +396,9 @@ function AuthGateShell({ status = false, children }: { status?: boolean; childre
   return (
     <main ref={rootRef} className={status ? "auth-gate auth-gate-status" : "auth-gate"} onDoubleClick={suppressBackgroundDoubleClick}>
       <AuthAtmosphere />
+      <nav className="auth-public-nav" aria-label="公共导航">
+        <a href={productIntroHash}>关于 灯灯</a>
+      </nav>
       {children}
     </main>
   );

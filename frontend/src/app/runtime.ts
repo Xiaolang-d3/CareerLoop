@@ -23,7 +23,7 @@ export async function resolveApiBase(): Promise<DesktopRuntimeConfig> {
   // Bundled desktop must talk through Tauri; falling back to location.origin
   // (https://tauri.localhost) looks "started" but cannot reach the sidecar.
   if (window.location.protocol.startsWith("tauri") || /tauri\.localhost$/i.test(window.location.hostname)) {
-    return { startupError: "桌面运行时未注入，请重新安装或从仓库重建 CareerLoop.app" };
+    return { startupError: "桌面运行时未注入，请重新安装或从仓库重建 灯灯.app" };
   }
   return { apiBase: import.meta.env.DEV ? "/api" : window.location.origin };
 }

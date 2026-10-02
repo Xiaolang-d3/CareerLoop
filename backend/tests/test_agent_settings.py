@@ -41,6 +41,28 @@ class AgentSettingsTest(unittest.TestCase):
             "test-secret-not-for-network",
         )
 
+    def test_rebrand_preserves_custom_names_and_normalizes_legacy_defaults(self) -> None:
+        self.assertEqual(get_agent_settings(self.db_path)["display_name"], "灯灯")
+        for stored_name, expected in [
+            ("CareerLoop", "灯灯"),
+            ("BossCopilot", "灯灯"),
+            ("我的研究搭档", "我的研究搭档"),
+        ]:
+            with self.subTest(stored_name=stored_name):
+                with connect(self.db_path) as conn:
+                    conn.execute(
+                        "UPDATE agent_settings SET display_name = ? WHERE id = 1",
+                        (stored_name,),
+                    )
+                settings = get_agent_settings(self.db_path)
+                self.assertEqual(settings["display_name"], expected)
+                self.assertIn(f"你的显示名称是 {expected}", persona_prompt(settings))
+                with connect(self.db_path) as conn:
+                    self.assertEqual(
+                        conn.execute("SELECT display_name FROM agent_settings WHERE id = 1").fetchone()["display_name"],
+                        stored_name,
+                    )
+
     def test_persona_and_memory_settings_are_persisted(self) -> None:
         settings = get_agent_settings(self.db_path)
         settings.update({

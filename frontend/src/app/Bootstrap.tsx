@@ -36,12 +36,12 @@ export function Bootstrap() {
   // Public product information remains available even if the local service cannot start.
   if (!runtime || runtime.startupError || !runtime.apiBase) {
     if (showIntro) return intro();
-    if (!runtime) return <PageLoading label="正在启动 CareerLoop…" />;
+    if (!runtime) return <PageLoading label="正在启动 灯灯…" />;
     return (
       <main className="page-loading" role="alert">
         <div className="page-loading-copy">
           <TriangleAlert size={20} />
-          <span>{runtime.startupError || "本地服务地址不可用，请重新启动 CareerLoop。"}</span>
+          <span>{runtime.startupError || "本地服务地址不可用，请重新启动 灯灯。"}</span>
         </div>
       </main>
     );

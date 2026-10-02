@@ -10,6 +10,6 @@
 		<true/>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>CareerLoop 需要连接本机本地服务以加载资料库与对话。</string>
+	<string>灯灯需要连接本机本地服务以加载资料库与对话。</string>
 </dict>
 </plist>

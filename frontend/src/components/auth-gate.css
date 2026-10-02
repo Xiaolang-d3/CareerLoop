@@ -253,11 +253,11 @@ html:has(.auth-gate) { scrollbar-gutter: auto; }
 
 .auth-eyebrow {
   margin: 0;
-  color: var(--color-brand);
+  color: var(--color-text);
   font-family: var(--font-sans);
-  font-size: 16px;
-  font-weight: 800;
-  letter-spacing: .16em;
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: .04em;
   line-height: 1;
 }
 
@@ -483,18 +483,24 @@ html:has(.auth-gate) { scrollbar-gutter: auto; }
   cursor: pointer;
 }
 
-.auth-product-link {
+.auth-public-nav {
+  position: absolute;
+  z-index: 1;
+  top: max(20px, env(safe-area-inset-top, 0px));
+  right: max(28px, env(safe-area-inset-right, 0px));
+}
+.auth-public-nav a {
   display: inline-flex;
-  justify-self: center;
   align-items: center;
-  gap: 6px;
-  min-height: 36px;
+  min-height: 44px;
+  padding: 0 8px;
   border-radius: 6px;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 600;
   text-decoration: none;
 }
-.auth-product-link:hover { color: var(--color-brand-strong); text-decoration: underline; text-underline-offset: 3px; }
+.auth-public-nav a:hover { color: var(--color-brand-strong); text-decoration: underline; text-underline-offset: 4px; }
 
 @media (max-width: 860px) {
   .auth-gate {
@@ -506,8 +512,9 @@ html:has(.auth-gate) { scrollbar-gutter: auto; }
     min-height: 100dvh;
     height: 100%;
     overflow: auto;
-    padding: max(16px, env(safe-area-inset-top, 0px)) 16px calc(20px + env(safe-area-inset-bottom, 0px));
+    padding: calc(64px + env(safe-area-inset-top, 0px)) 16px calc(64px + env(safe-area-inset-bottom, 0px));
   }
+  .auth-public-nav { top: max(12px, env(safe-area-inset-top, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); }
   .auth-shell {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
