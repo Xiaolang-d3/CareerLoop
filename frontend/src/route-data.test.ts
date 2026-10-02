@@ -2,11 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import { createRouteDataCache, requiredDataForRoute } from "./route-data";
 
 describe("requiredDataForRoute", () => {
-  it("loads and shares the preparation data for its three sub-pages", () => {
-    expect(requiredDataForRoute({ section: "interview-prep", page: "projects" })).toEqual(["interviewPreparation"]);
-    expect(requiredDataForRoute({ section: "interview-prep", page: "knowledge" })).toEqual(["interviewPreparation"]);
-  });
-
   it("loads only the data needed when a route is opened", () => {
     expect(requiredDataForRoute({ section: "chat" })).toEqual([
       "conversations",
@@ -14,7 +9,7 @@ describe("requiredDataForRoute", () => {
       "attachmentConfig"
     ]);
     expect(requiredDataForRoute({ section: "settings", page: "overview" })).toEqual([
-      "candidateProfile",
+      "library",
       "agentSettings",
       "conversations",
       "capabilities",
@@ -35,21 +30,7 @@ describe("requiredDataForRoute", () => {
       "attachmentConfig"
     ]);
     expect(requiredDataForRoute({ section: "dashboard" })).toEqual([
-      "candidateProfile",
-      "conversations",
-      "capabilities",
-      "attachmentConfig"
-    ]);
-    expect(requiredDataForRoute({ section: "project-lab" })).toEqual([]);
-    expect(requiredDataForRoute({ section: "placeholder", page: "organize" })).toEqual([
-      "conversations",
-      "capabilities",
-      "attachmentConfig"
-    ]);
-    expect(requiredDataForRoute({ section: "workbench", page: "index" })).toEqual([
-      "jobs",
-      "candidateProfile",
-      "workflow",
+      "library",
       "conversations",
       "capabilities",
       "attachmentConfig"
@@ -77,9 +58,9 @@ describe("createRouteDataCache", () => {
     const loader = vi.fn(async () => undefined);
     const cache = createRouteDataCache<string>(30_000, () => time);
 
-    await cache.load("candidateProfile", loader);
-    cache.invalidate("candidateProfile");
-    await cache.load("candidateProfile", loader);
+    await cache.load("library", loader);
+    cache.invalidate("library");
+    await cache.load("library", loader);
 
     expect(loader).toHaveBeenCalledTimes(2);
   });

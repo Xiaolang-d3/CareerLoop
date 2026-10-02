@@ -1,0 +1,89 @@
+name: Desktop macOS Internal
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "desktop/**"
+      - ".github/workflows/desktop-macos.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos-arm64:
+    name: macOS ARM64 internal package
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python with SQLite extension support
+        run: |
+          if ! brew list --versions python@3.11 >/dev/null; then
+            brew install python@3.11
+          fi
+          "$(brew --prefix python@3.11)/bin/python3.11" -m venv backend/.venv
+          echo "$GITHUB_WORKSPACE/backend/.venv/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+      - name: Install Python dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements-dev.txt
+      - name: Verify SQLite vector extension
+        run: |
+          python - <<'PY'
+          import sqlite3
+          import sqlite_vec
+          with sqlite3.connect(":memory:") as connection:
+              connection.enable_load_extension(True)
+              sqlite_vec.load(connection)
+              connection.enable_load_extension(False)
+              print(connection.execute("SELECT vec_version()").fetchone()[0])
+          PY
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+      - name: Run backend tests
+        working-directory: backend
+        env:
+          CAREERLOOP_SECRET_BACKEND: memory
+        run: python -m pytest tests -q
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm run test
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+      - name: Build sidecar
+        working-directory: desktop
+        run: npm run package-sidecar
+      - name: Smoke-test sidecar identity and shutdown
+        run: python desktop/scripts/smoke-sidecar.py
+      - name: Check Rust shell
+        working-directory: desktop/src-tauri
+        run: |
+          cargo fmt --check
+          cargo test
+      - name: Build unsigned internal app
+        working-directory: desktop
+        env:
+          APPLE_SIGNING_IDENTITY: "-"
+        run: npm run build
+      - name: Upload internal package
+        uses: actions/upload-artifact@v4
+        with:
+          name: careerloop-macos-arm64-internal
+          path: |
+            desktop/src-tauri/target/release/bundle/macos/*.app
+            desktop/src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error

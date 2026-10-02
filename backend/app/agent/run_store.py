@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from ..db import connect, row_to_dict
+from pydantic import ValidationError
+
+from ..db import connect
 from ..domain import AgentRunResult, AgentRunSnapshot, ToolCall, ToolError, ToolResult
 from ..tooling import ToolSpec
 
@@ -19,6 +21,30 @@ SAFE_RETRY_RISKS = frozenset({"read_only", "derived_analysis", "external_read"})
 class ToolExecutionDecision:
     action: Literal["execute", "replay", "block"]
     result: ToolResult | None = None
+
+
+def _safe_row_to_dict(row: Any) -> dict[str, Any] | None:
+    """Decode a SQLite row without letting stale or truncated JSON fail the request."""
+    if row is None:
+        return None
+    decoded: dict[str, Any] = dict(row)
+    for key, value in list(decoded.items()):
+        if not key.endswith("_json"):
+            continue
+        name = key.removesuffix("_json")
+        del decoded[key]
+        if value is None:
+            decoded[name] = None
+            continue
+        if not isinstance(value, str) or not value.strip():
+            decoded[name] = None
+            continue
+        try:
+            decoded[name] = json.loads(value)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            decoded[name] = None
+            decoded[f"{name}_invalid"] = True
+    return decoded
 
 
 class AgentRunStore:
@@ -71,7 +97,7 @@ class AgentRunStore:
                     "SELECT * FROM agent_execution_runs WHERE run_id = ?",
                     (run_id,),
                 ).fetchone()
-        return self._decode_run(row_to_dict(row))
+        return self._decode_run(_safe_row_to_dict(row))
 
     def get_run(self, run_id: str) -> dict | None:
         with connect(self._db_path) as conn:
@@ -79,7 +105,7 @@ class AgentRunStore:
                 "SELECT * FROM agent_execution_runs WHERE run_id = ?",
                 (run_id,),
             ).fetchone()
-        return self._decode_run(row_to_dict(row)) if row is not None else None
+        return self._decode_run(_safe_row_to_dict(row)) if row is not None else None
 
     def latest_for_conversation(self, conversation_id: int) -> dict | None:
         with connect(self._db_path) as conn:
@@ -90,7 +116,7 @@ class AgentRunStore:
                 """,
                 (conversation_id,),
             ).fetchone()
-        return self._decode_run(row_to_dict(row)) if row is not None else None
+        return self._decode_run(_safe_row_to_dict(row)) if row is not None else None
 
     def list_steps(self, run_id: str) -> list[dict]:
         with connect(self._db_path) as conn:
@@ -101,7 +127,7 @@ class AgentRunStore:
                 """,
                 (run_id,),
             ).fetchall()
-        return [row_to_dict(row) for row in rows]
+        return [_safe_row_to_dict(row) for row in rows]
 
     def list_tool_executions(self, run_id: str) -> list[dict]:
         with connect(self._db_path) as conn:
@@ -112,7 +138,7 @@ class AgentRunStore:
                 """,
                 (run_id,),
             ).fetchall()
-        return [row_to_dict(row) for row in rows]
+        return [_safe_row_to_dict(row) for row in rows]
 
     def bind_messages(
         self,
@@ -222,11 +248,13 @@ class AgentRunStore:
 
     def load_checkpoint(self, run_id: str) -> AgentRunSnapshot | None:
         run = self.get_run(run_id)
-        return run.get("checkpoint") if run else None
+        checkpoint = run.get("checkpoint") if run else None
+        return checkpoint if isinstance(checkpoint, AgentRunSnapshot) else None
 
     def load_result(self, run_id: str) -> AgentRunResult | None:
         run = self.get_run(run_id)
-        return run.get("result") if run else None
+        result = run.get("result") if run else None
+        return result if isinstance(result, AgentRunResult) else None
 
     def request_cancel(self, run_id: str) -> bool:
         with connect(self._db_path) as conn:
@@ -396,25 +424,41 @@ class AgentRunStore:
             )
 
     @staticmethod
-    def _decode_run(run: dict) -> dict:
+    def _decode_model(model: type, raw: Any) -> Any | None:
+        if not isinstance(raw, dict) or not raw:
+            return None
+        try:
+            return model.model_validate(raw)
+        except (ValidationError, TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _decode_run(cls, run: dict | None) -> dict | None:
+        if run is None:
+            return None
         raw_checkpoint = run.get("checkpoint")
         raw_result = run.get("result")
-        run["checkpoint"] = (
-            AgentRunSnapshot.model_validate(raw_checkpoint)
-            if isinstance(raw_checkpoint, dict) and raw_checkpoint
-            else None
+        checkpoint = cls._decode_model(AgentRunSnapshot, raw_checkpoint)
+        result = cls._decode_model(AgentRunResult, raw_result)
+        run["checkpoint"] = checkpoint
+        run["result"] = result
+        run["checkpoint_invalid"] = bool(run.get("checkpoint_invalid")) or (
+            isinstance(raw_checkpoint, dict) and bool(raw_checkpoint) and checkpoint is None
         )
-        run["result"] = (
-            AgentRunResult.model_validate(raw_result)
-            if isinstance(raw_result, dict) and raw_result
-            else None
+        run["result_invalid"] = bool(run.get("result_invalid")) or (
+            isinstance(raw_result, dict) and bool(raw_result) and result is None
         )
         run["cancel_requested"] = bool(run.get("cancel_requested"))
         return run
 
     @staticmethod
     def _decode_tool_result(raw: str) -> ToolResult | None:
-        return ToolResult.model_validate_json(raw) if raw else None
+        if not raw:
+            return None
+        try:
+            return ToolResult.model_validate_json(raw)
+        except (ValidationError, TypeError, ValueError):
+            return None
 
     @staticmethod
     def _replayed_result(result: ToolResult) -> ToolResult:

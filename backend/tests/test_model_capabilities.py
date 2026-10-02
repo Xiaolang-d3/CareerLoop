@@ -93,7 +93,7 @@ class ModelCapabilitiesApiTest(unittest.TestCase):
 
     def test_probe_without_key_keeps_inference_and_explains(self) -> None:
         with patch(
-            "app.api.resources.get_model_connection",
+            "app.api.model.get_model_connection",
             return_value={"model_name": "custom-model", "model_base_url": "", "api_key": ""},
         ):
             response = self.client.post(
@@ -108,7 +108,7 @@ class ModelCapabilitiesApiTest(unittest.TestCase):
 
     def test_probe_uses_the_provider_when_a_key_is_present(self) -> None:
         with patch(
-            "app.api.resources.OpenAICompatibleProvider.probe_vision",
+            "app.api.model.OpenAICompatibleProvider.probe_vision",
             new=AsyncMock(
                 return_value={
                     "status": "supported",
@@ -130,7 +130,7 @@ class ModelCapabilitiesApiTest(unittest.TestCase):
 
     def test_probe_connection_errors_do_not_fake_vision_support(self) -> None:
         with patch(
-            "app.api.resources.OpenAICompatibleProvider.probe_vision",
+            "app.api.model.OpenAICompatibleProvider.probe_vision",
             new=AsyncMock(
                 side_effect=ModelProviderError("service_unavailable", "无法连接模型服务")
             ),

@@ -1,3 +1,9 @@
-from .resources import router as resources_router
+from fastapi import APIRouter
 
-__all__ = ["resources_router"]
+from . import authentication, attachments, chat, conversations, library, model, system
+
+router = APIRouter()
+for module in (authentication, attachments, chat, conversations, library, model, system):
+    router.include_router(module.router)
+
+__all__ = ["router"]

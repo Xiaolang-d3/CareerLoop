@@ -15,12 +15,12 @@ from ..config import get_settings
 from ..db import connect, json_dump, row_to_dict, rows_to_dicts
 from ..workspace import attachments_dir
 
-AttachmentKind = Literal["job_screenshot", "resume"]
+AttachmentKind = Literal["image", "document"]
 
-MAX_BYTES: dict[AttachmentKind, int] = {"job_screenshot": 10 * 1024 * 1024, "resume": 8 * 1024 * 1024}
+MAX_BYTES: dict[AttachmentKind, int] = {"image": 10 * 1024 * 1024, "document": 8 * 1024 * 1024}
 ALLOWED_SUFFIXES: dict[AttachmentKind, set[str]] = {
-    "job_screenshot": {".png", ".jpg", ".jpeg", ".webp"},
-    "resume": {".pdf", ".docx", ".txt", ".md"},
+    "image": {".png", ".jpg", ".jpeg", ".webp"},
+    "document": {".pdf", ".docx", ".txt", ".md"},
 }
 
 
@@ -40,7 +40,7 @@ def validate_attachment(kind: AttachmentKind, filename: str, content: bytes) -> 
         raise ValueError("附件文件为空")
     if len(content) > MAX_BYTES[kind]:
         raise ValueError(f"附件不能超过 {MAX_BYTES[kind] // 1024 // 1024}MB")
-    if kind == "job_screenshot":
+    if kind == "image":
         try:
             from PIL import Image
             with Image.open(BytesIO(content)) as image:
@@ -241,7 +241,7 @@ def parse_attachment(
         raise ValueError("附件不存在")
     attachment_store = store or get_attachment_store()
     try:
-        if attachment["kind"] == "job_screenshot":
+        if attachment["kind"] == "image":
             text = ""
             redacted_text = ""
             metadata = {
@@ -253,17 +253,15 @@ def parse_attachment(
         else:
             content = attachment_store.get(attachment["object_key"])
             from ..privacy import scan_and_redact
-            from ..profile.intelligence import extract_skills
-            from ..resume.parser import parse_resume_result
+            from ..documents.parser import parse_document_result
 
-            parsed = parse_resume_result(attachment["original_filename"], content, mode)
+            parsed = parse_document_result(attachment["original_filename"], content, mode)
             findings, redacted_text = scan_and_redact(parsed.text)
             text = parsed.text
             metadata = {
                 "parser": parsed.parser,
                 "character_count": len(text),
                 "privacy_findings": findings,
-                "suggested_skills": extract_skills(text),
                 "warnings": parsed.warnings,
             }
     except Exception as exc:
@@ -299,7 +297,7 @@ def prepare_attachment_vision_url(
     attachment = get_attachment(attachment_id, db_path=db_path)
     if attachment is None:
         raise ValueError("附件不存在")
-    if attachment["kind"] != "job_screenshot":
+    if attachment["kind"] != "image":
         raise ValueError("只有岗位截图支持模型直看图片")
     settings = get_settings()
     if not settings.attachment_vision_enabled:

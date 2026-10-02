@@ -4,36 +4,23 @@ export type RouteDataKey =
   | "attachmentConfig"
   | "agentOperations"
   | "agentSettings"
-  | "candidateProfile"
+  | "library"
   | "capabilities"
   | "conversations"
-  | "interviewPreparation"
-  | "jobs"
   | "modelMonitor"
-  | "modelCapabilities"
-  | "workflow";
+  | "modelCapabilities";
 
 export function requiredDataForRoute(route: AppRoute): RouteDataKey[] {
   switch (route.section) {
     case "chat":
       return ["conversations", "capabilities", "attachmentConfig"];
     case "dashboard":
-      return ["candidateProfile", "conversations", "capabilities", "attachmentConfig"];
-    case "workbench":
-      return ["jobs", "candidateProfile", "workflow", "conversations", "capabilities", "attachmentConfig"];
+      return ["library", "conversations", "capabilities", "attachmentConfig"];
     case "settings":
       if (route.page === "agent") return ["agentOperations", "conversations", "capabilities", "attachmentConfig"];
       if (route.page === "model") return ["agentSettings", "modelMonitor", "modelCapabilities", "conversations", "capabilities", "attachmentConfig"];
-      if (route.page === "overview") return ["candidateProfile", "agentSettings", "conversations", "capabilities", "attachmentConfig"];
-      return ["candidateProfile", "conversations", "capabilities", "attachmentConfig"];
-    case "interview-prep":
-      return ["interviewPreparation"];
-    case "project-lab":
-      return [];
-    case "opportunities":
-      return [];
-    case "placeholder":
-      return ["conversations", "capabilities", "attachmentConfig"];
+      if (route.page === "overview") return ["library", "agentSettings", "conversations", "capabilities", "attachmentConfig"];
+      return ["library", "conversations", "capabilities", "attachmentConfig"];
   }
 }
 

@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatRetryDraft } from "./components/ChatWorkspace";
+import type { ChatMessage, ChatRetryDraft } from "./features/chat/types";
 
 export type DurableAgentRunSummary = {
   run_id: string;

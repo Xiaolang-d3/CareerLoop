@@ -1,0 +1,12 @@
+.dashboard-page { display: grid; gap: 14px; max-width: 1120px; margin: 0 auto; }
+.dashboard-hero { display: flex; align-items: center; justify-content: space-between; gap: 28px; padding: 25px 27px; border: 1px solid #dce5e0; border-radius: 17px; background: linear-gradient(135deg,#eff9f4,#fff); box-shadow: var(--shadow); }
+.dashboard-hero h2 { margin: 5px 0 0; color: #24332c; font-size: 22px; letter-spacing: -.035em; }
+.dashboard-hero p { max-width: 680px; margin: 8px 0 0; color: #74817a; font-size: 12px; line-height: 1.7; }
+
+@media (max-width: 820px) {
+  .dashboard-hero { align-items: stretch; flex-direction: column; }
+}
+
+@media (max-width: 600px) {
+  .dashboard-hero { padding: 17px; }
+}

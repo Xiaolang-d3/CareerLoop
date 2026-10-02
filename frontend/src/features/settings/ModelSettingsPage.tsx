@@ -187,11 +187,12 @@ export function ModelSettingsPage({
 
   return (
     <section className="model-settings-page">
+      {savedSettings.secret_migration_warning ? <p className="model-settings-warning" role="alert">{savedSettings.secret_migration_warning}。旧密钥仍保留在本地数据库中，修复钥匙串后再次保存即可迁移。</p> : null}
       <div className="model-settings-top">
         <section className="settings-card model-settings-card persona-settings">
           <div className="settings-card-heading model-connection-heading">
             <span><Cpu size={18} /></span>
-            <div><h3>模型连接</h3><p>对话、岗位分析和材料生成共用这套连接；API 路径以 Base URL 为准。</p></div>
+            <div><h3>模型连接</h3><p>知识库问答、公开搜索和内容生成共用这套连接；API 路径以 Base URL 为准。</p></div>
             <em className={editing ? "editing" : "locked"}>{editing ? "编辑中" : "已锁定"}</em>
           </div>
           <label>
@@ -246,7 +247,7 @@ export function ModelSettingsPage({
           <label>
             <span>API Key</span>
             <input type="password" autoComplete="new-password" value={settings.api_key} readOnly={fieldsLocked} placeholder={effectiveProtocol === "ollama" ? "本地 Ollama 可留空" : settings.api_key_configured ? "已配置，留空则继续使用" : "请输入 API Key"} onChange={(event) => onSettingsChange({ ...settings, api_key: event.target.value })} onBlur={() => { if (editing && (effectiveProtocol === "ollama" || settings.api_key || settings.api_key_configured)) onDiscoverModels(true); }} />
-            <small>{effectiveProtocol === "ollama" ? "本地 Ollama 不要求密钥；使用需认证的远程服务时仍可填写。" : settings.api_key_configured ? "当前已有可用密钥，系统不会显示原文。" : "密钥仅保存在本机后端。"}</small>
+            <small>{effectiveProtocol === "ollama" ? "本地 Ollama 不要求密钥；使用需认证的远程服务时仍可填写。" : settings.api_key_configured ? "当前已有可用密钥，系统不会显示原文。" : "macOS 桌面版写入系统钥匙串；开发环境也可使用 OPENAI_API_KEY。"}</small>
           </label>
           <div className="model-settings-actions">
             {editing ? (

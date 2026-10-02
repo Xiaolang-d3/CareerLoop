@@ -59,7 +59,6 @@ class Settings(BaseModel):
     agent_search_token: str | None = None
     web_research_timeout_seconds: float = Field(default=25, gt=0, le=120)
     web_research_max_sources: int = Field(default=10, ge=3, le=20)
-    github_token: str | None = None
 
     @property
     def is_loopback_only(self) -> bool:
@@ -78,6 +77,10 @@ def _resolve_allowed_origins(bind_host: str) -> list[str]:
     origins.extend(_split_list(os.getenv("ALLOWED_ORIGINS")))
     if not _is_loopback(bind_host):
         origins.extend(_origins_for_hosts([bind_host]))
+    # Tauri's production WebView serves the bundled SPA from this origin while
+    # the API remains on loopback.  Never enable it for ordinary web hosting.
+    if os.getenv("CAREERLOOP_DESKTOP", "false").lower() == "true":
+        origins.extend(["http://tauri.localhost", "https://tauri.localhost", "tauri://localhost", "asset://localhost"])
     return list(dict.fromkeys(origins))
 
 
@@ -118,5 +121,4 @@ def get_settings() -> Settings:
         agent_search_token=os.getenv("AGENT_SEARCH_TOKEN") or None,
         web_research_timeout_seconds=os.getenv("WEB_RESEARCH_TIMEOUT_SECONDS", "25"),
         web_research_max_sources=os.getenv("WEB_RESEARCH_MAX_SOURCES", "10"),
-        github_token=os.getenv("GITHUB_TOKEN") or None,
     )

@@ -2,21 +2,66 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import os
 from pathlib import Path
 
-from app.agent.settings import get_agent_settings, persona_prompt, save_agent_settings
+from app.agent.settings import get_agent_settings, get_model_connection, persona_prompt, save_agent_settings
 from app.chat.conversations import create_conversation, ensure_active_task, reset_conversation_context
 from app.db import connect, init_db
+from app.secret_store import _MEMORY_SECRETS
 
 
 class AgentSettingsTest(unittest.TestCase):
     def setUp(self) -> None:
         self._temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self._temp_dir.name) / "test.db"
+        os.environ["CAREERLOOP_SECRET_BACKEND"] = "memory"
+        _MEMORY_SECRETS.clear()
         init_db(self.db_path)
 
     def tearDown(self) -> None:
+        os.environ.pop("CAREERLOOP_SECRET_BACKEND", None)
+        _MEMORY_SECRETS.clear()
         self._temp_dir.cleanup()
+
+    def test_model_api_key_uses_secret_store_instead_of_sqlite(self) -> None:
+        settings = get_agent_settings(self.db_path)
+        settings["api_key"] = "test-secret-not-for-network"
+
+        saved = save_agent_settings(settings, self.db_path)
+
+        with connect(self.db_path) as conn:
+            stored = conn.execute(
+                "SELECT model_api_key FROM agent_settings WHERE id = 1"
+            ).fetchone()["model_api_key"]
+        self.assertEqual(stored, "")
+        self.assertTrue(saved["api_key_configured"])
+        self.assertEqual(
+            get_model_connection(self.db_path)["api_key"],
+            "test-secret-not-for-network",
+        )
+
+    def test_rebrand_preserves_custom_names_and_normalizes_legacy_defaults(self) -> None:
+        self.assertEqual(get_agent_settings(self.db_path)["display_name"], "灯灯")
+        for stored_name, expected in [
+            ("CareerLoop", "灯灯"),
+            ("BossCopilot", "灯灯"),
+            ("我的研究搭档", "我的研究搭档"),
+        ]:
+            with self.subTest(stored_name=stored_name):
+                with connect(self.db_path) as conn:
+                    conn.execute(
+                        "UPDATE agent_settings SET display_name = ? WHERE id = 1",
+                        (stored_name,),
+                    )
+                settings = get_agent_settings(self.db_path)
+                self.assertEqual(settings["display_name"], expected)
+                self.assertIn(f"你的显示名称是 {expected}", persona_prompt(settings))
+                with connect(self.db_path) as conn:
+                    self.assertEqual(
+                        conn.execute("SELECT display_name FROM agent_settings WHERE id = 1").fetchone()["display_name"],
+                        stored_name,
+                    )
 
     def test_persona_and_memory_settings_are_persisted(self) -> None:
         settings = get_agent_settings(self.db_path)
@@ -25,13 +70,13 @@ class AgentSettingsTest(unittest.TestCase):
             "persona_role": "坦诚、重视证据的求职顾问",
             "response_style": "detailed",
             "custom_instructions": "优先指出风险",
-            "profile_memory_enabled": False,
+            "library_memory_enabled": False,
             "context_message_limit": 20,
         })
         saved = save_agent_settings(settings, self.db_path)
 
         self.assertEqual(saved["display_name"], "机会顾问")
-        self.assertFalse(saved["profile_memory_enabled"])
+        self.assertFalse(saved["library_memory_enabled"])
         self.assertEqual(saved["context_message_limit"], 20)
         prompt = persona_prompt(saved)
         self.assertIn("不得覆盖", prompt)

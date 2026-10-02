@@ -214,14 +214,14 @@ export function AccountSettingsPage({
 
   return (
     <section className="account-settings-page">
-      <header className="profile-page-heading">
+      <header className="library-page-heading">
         <div>
-          <p>这些信息跟随登录账号，和资料库内容分开。换设备登录后仍然有效。</p>
+          <p>昵称和头像保存在本机账户中，与资料库内容分开。</p>
         </div>
       </header>
 
       <form className="account-card" onSubmit={(event) => void saveProfile(event)}>
-        <header className="profile-foundation-heading">
+        <header className="library-foundation-heading">
           <span><UserRound size={18} /></span>
           <div>
             <h3>账号信息</h3>
@@ -332,11 +332,11 @@ export function AccountSettingsPage({
       </form>
 
       <form className="account-card" onSubmit={(event) => void savePassword(event)}>
-        <header className="profile-foundation-heading">
+        <header className="library-foundation-heading">
           <span><ShieldCheck size={18} /></span>
           <div>
             <h3>修改密码</h3>
-            <p>更新后会换发登录状态，当前标签页不用重新登录。</p>
+            <p>更新后其他登录会话失效，当前标签页继续使用。</p>
           </div>
         </header>
         <div className="account-password-fields">
@@ -347,6 +347,8 @@ export function AccountSettingsPage({
                 id="account-current-password"
                 type={visibleFields.current ? "text" : "password"}
                 autoComplete="current-password"
+                maxLength={500}
+                disabled={passwordBusy}
                 value={currentPassword}
                 aria-invalid={Boolean(currentPasswordError)}
                 onChange={(event) => {
@@ -370,6 +372,8 @@ export function AccountSettingsPage({
                 type={visibleFields.next ? "text" : "password"}
                 autoComplete="new-password"
                 minLength={8}
+                maxLength={500}
+                disabled={passwordBusy}
                 value={newPassword}
                 onChange={(event) => {
                   setNewPassword(event.target.value);
@@ -390,6 +394,8 @@ export function AccountSettingsPage({
                 type={visibleFields.confirm ? "text" : "password"}
                 autoComplete="new-password"
                 minLength={8}
+                maxLength={500}
+                disabled={passwordBusy}
                 value={confirmPassword}
                 aria-invalid={confirmMismatch}
                 onChange={(event) => {

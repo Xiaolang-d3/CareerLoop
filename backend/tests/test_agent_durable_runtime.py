@@ -114,30 +114,30 @@ class AgentDurableRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.get_run("resume-run")["status"], "completed")
 
     async def test_completed_tool_is_replayed_after_crash_without_handler_execution(self) -> None:
-        tool = CountingTool("research_company")
+        tool = CountingTool("search_public_web")
         tools = ToolRegistry()
         tools.register_handler(tool)
         plan = AgentPlan(
             goal="研究公司",
-            route="company_research",
+            route="web_search",
             steps=[AgentPlanStep(
                 id="step-1",
                 title="研究公司",
-                tool_name="research_company",
+                tool_name="search_public_web",
                 risk="external_read",
             )],
         )
         snapshot = AgentRunSnapshot(
             resume_mode="checkpoint",
-            route_kind="company_research",
+            route_kind="web_search",
             needs_plan=True,
-            allowed_tools=["research_company"],
-            required_tools=["research_company"],
+            allowed_tools=["search_public_web"],
+            required_tools=["search_public_web"],
             plan=plan,
             messages=[AgentMessage(role="user", content="研究示例科技")],
         )
-        arguments = {"company_name": "示例科技"}
-        fingerprint = _tool_call_fingerprint("research_company", arguments)
+        arguments = {"query": "示例科技"}
+        fingerprint = _tool_call_fingerprint("search_public_web", arguments)
         self.store.start_run(
             "tool-replay-run",
             conversation_id=self.conversation_id,
@@ -148,8 +148,8 @@ class AgentDurableRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.store.prepare_tool_call(
             "tool-replay-run",
             fingerprint,
-            ToolCall(id="before-crash", name="research_company", arguments=arguments),
-            tools.spec("research_company"),
+            ToolCall(id="before-crash", name="search_public_web", arguments=arguments),
+            tools.spec("search_public_web"),
         )
         self.store.record_tool_result(
             "tool-replay-run",
@@ -158,7 +158,7 @@ class AgentDurableRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
         self.store.interrupt_active_runs()
 
-        model = ToolThenTextModel("research_company", arguments)
+        model = ToolThenTextModel("search_public_web", arguments)
         runtime = self._runtime(model, tools)
 
         events = await self._collect(
@@ -172,32 +172,32 @@ class AgentDurableRuntimeTest(unittest.IsolatedAsyncioTestCase):
         done = next(
             event
             for event in events[-1].result.events
-            if event.tool_name == "research_company" and event.status == "done"
+            if event.tool_name == "search_public_web" and event.status == "done"
         )
         self.assertTrue(done.data["idempotent_replay"])
 
     async def test_interrupted_write_tool_is_blocked_instead_of_replayed(self) -> None:
-        tool = CountingTool("propose_candidate_knowledge")
+        tool = CountingTool("propose_library_knowledge")
         tools = ToolRegistry()
         tools.register_handler(tool)
-        arguments = {"category": "skill", "statement": "熟悉 Python"}
-        fingerprint = _tool_call_fingerprint("propose_candidate_knowledge", arguments)
+        arguments = {"statements": ["熟悉 Python"]}
+        fingerprint = _tool_call_fingerprint("propose_library_knowledge", arguments)
         plan = AgentPlan(
             goal="补充画像",
-            route="profile_enrichment",
+            route="library_update",
             steps=[AgentPlanStep(
                 id="step-write",
                 title="补充画像",
-                tool_name="propose_candidate_knowledge",
+                tool_name="propose_library_knowledge",
                 risk="local_pending_write",
             )],
         )
         snapshot = AgentRunSnapshot(
             resume_mode="checkpoint",
-            route_kind="profile_enrichment",
+            route_kind="library_update",
             needs_plan=True,
-            allowed_tools=["propose_candidate_knowledge"],
-            required_tools=["propose_candidate_knowledge"],
+            allowed_tools=["propose_library_knowledge"],
+            required_tools=["propose_library_knowledge"],
             plan=plan,
             messages=[AgentMessage(role="user", content="记住我熟悉 Python")],
         )
@@ -213,14 +213,14 @@ class AgentDurableRuntimeTest(unittest.IsolatedAsyncioTestCase):
             fingerprint,
             ToolCall(
                 id="write-before-crash",
-                name="propose_candidate_knowledge",
+                name="propose_library_knowledge",
                 arguments=arguments,
             ),
-            tools.spec("propose_candidate_knowledge"),
+            tools.spec("propose_library_knowledge"),
         )
         self.store.interrupt_active_runs()
 
-        model = ToolThenTextModel("propose_candidate_knowledge", arguments)
+        model = ToolThenTextModel("propose_library_knowledge", arguments)
         runtime = self._runtime(model, tools)
 
         events = await self._collect(

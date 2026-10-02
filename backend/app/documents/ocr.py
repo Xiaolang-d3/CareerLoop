@@ -1,0 +1,42 @@
+from __future__ import annotations
+
+from io import BytesIO
+from pathlib import Path
+
+from PIL import Image
+
+
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+def extract_image_text(filename: str, content: bytes) -> str:
+    suffix = Path(filename).suffix.lower()
+    if suffix not in SUPPORTED_IMAGE_SUFFIXES:
+        raise ValueError("仅支持 PNG、JPG 和 WEBP 图片")
+    if not content:
+        raise ValueError("图片文件为空")
+    if len(content) > MAX_IMAGE_BYTES:
+        raise ValueError("图片不能超过 10MB")
+
+    try:
+        with Image.open(BytesIO(content)) as image:
+            image.verify()
+    except Exception as exc:
+        raise ValueError("无法识别该图片文件") from exc
+
+    try:
+        # RapidOCR keeps desktop startup and the sidecar compact while still
+        # performing all recognition locally.  Docling remains the optional
+        # enhanced parser for source development environments.
+        from rapidocr import RapidOCR
+
+        result = RapidOCR()(content)
+        text = "\n".join(str(item).strip() for item in (result.txts or []) if str(item).strip())
+    except Exception as exc:
+        raise ValueError("本地图片文字识别失败，请上传更清晰的截图或改为粘贴文字") from exc
+
+    normalized = "\n".join(line.strip() for line in text.splitlines() if line.strip())
+    if len(normalized) < 10:
+        raise ValueError("图片中没有识别到足够文字，请换一张清晰截图或直接粘贴内容")
+    return normalized[:30_000]

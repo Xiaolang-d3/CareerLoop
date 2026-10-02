@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ChatMessage } from "./components/ChatWorkspace";
+import type { ChatMessage } from "./features/chat/types";
 import { interruptedRunRetryDraft, type DurableAgentRunSummary } from "./durable-agent-run";
 
 describe("interruptedRunRetryDraft", () => {
@@ -19,14 +19,14 @@ describe("interruptedRunRetryDraft", () => {
         attachments: [
           {
             id: "resume-1",
-            kind: "resume",
+            kind: "document",
             original_filename: "resume.pdf",
             parse_status: "parsed",
             vision_status: "not_requested"
           },
           {
             id: "image-1",
-            kind: "job_screenshot",
+            kind: "image",
             original_filename: "job.png",
             parse_status: "parsed",
             vision_status: "consented"

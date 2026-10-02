@@ -1,6 +1,5 @@
 import {
   ArrowRight,
-  CalendarDays,
   FilePlus2,
   FileText,
   History,
@@ -9,52 +8,25 @@ import {
   Sparkles,
   Wand2
 } from "lucide-react";
-import type { Conversation, JobProject } from "../../types";
-import {
-  homeActionQueue,
-  homeContinueItems,
-  homeInboxItems,
-  homeSkillTags,
-  latestJobAnalysisAt,
-  profileCompleteness,
-  type HomeContinueItem,
-  type HomePendingFact,
-  type HomeProjectInput,
-  type HomeQueueItem
-} from "./home-metrics";
+import type { Conversation } from "../../types";
+import { homeInboxItems, type HomePendingFact } from "./home-metrics";
 
 const EMPTY_CONVERSATIONS: Conversation[] = [];
 const EMPTY_PENDING_FACTS: HomePendingFact[] = [];
 
 export type HomePageProps = {
-  apiBase?: string;
-  accessToken?: string;
   displayName?: string;
   email?: string;
-  profileName?: string;
-  targetRole?: string;
-  targetCity?: string;
-  resumeText?: string;
-  resumeFilename?: string;
-  skills?: string;
-  profileLoaded?: boolean;
-  jobs: JobProject[];
-  jobsLoaded?: boolean;
+  libraryName?: string;
+  sourceTitle?: string;
+  libraryLoaded?: boolean;
   conversations?: Conversation[];
   pendingFacts?: HomePendingFact[];
-  projects?: HomeProjectInput[];
   sourceCount?: number;
+  enabledSourceCount?: number;
   confirmedFactCount?: number;
-  onOpenAnalysis: () => void;
-  onOpenResume: () => void;
-  onOpenInterview: () => void;
-  onOpenProject?: (experienceId: string) => void;
   onOpenProfile: () => void;
-  onOpenJob?: (jobId: number) => void;
   onOpenChat?: (conversationId?: number) => void;
-  onOpenOrganize?: () => void;
-  onOpenOpportunities?: () => void;
-  onFactsChanged?: () => void;
 };
 
 function formatHomeTime(value: string) {
@@ -82,103 +54,36 @@ function metricValue(ready: boolean, value: string) {
 export function HomePage({
   displayName,
   email,
-  profileName,
-  targetRole,
-  targetCity,
-  resumeText,
-  resumeFilename,
-  skills,
-  profileLoaded = false,
-  jobs,
-  jobsLoaded = false,
+  libraryName,
+  sourceTitle,
+  enabledSourceCount = 0,
+  libraryLoaded = false,
   conversations = EMPTY_CONVERSATIONS,
   pendingFacts = EMPTY_PENDING_FACTS,
   sourceCount,
   confirmedFactCount,
-  onOpenAnalysis,
-  onOpenResume,
-  onOpenInterview,
   onOpenProfile,
-  onOpenJob,
   onOpenChat,
-  onOpenOrganize
 }: HomePageProps) {
-  const greetingName = profileName?.trim() || displayName?.trim() || email?.split("@")[0] || "";
-  const hasResume = Boolean((resumeText || "").trim());
-  const localSkillTags = homeSkillTags(skills || "");
-  const completeness = profileLoaded
-    ? profileCompleteness({ name: profileName, targetRole, targetCity, skills, resumeText })
-    : null;
-  const lastAnalysis = jobsLoaded ? latestJobAnalysisAt(jobs) : null;
-  const reviewableInbox = homeInboxItems(pendingFacts, { resumeText, knownSkills: localSkillTags });
-  const queue = homeActionQueue({
-    profileLoaded,
-    hasResume,
-    completeness,
-    lastAnalysis,
-    jobsReady: jobsLoaded,
-    pendingFactCount: reviewableInbox.length,
-    jobs,
-    conversations
-  });
-  const primary = queue.find((item) => item.kind === "chat") ?? queue[0];
-  const continueItems = homeContinueItems({
-    jobs: jobsLoaded ? jobs : [],
-    conversations,
-    excludeJobId: primary?.jobId,
-    excludeConversationId: primary?.conversationId
-  });
-  const direction = targetRole?.trim()
-    ? [targetRole.trim(), targetCity?.trim()].filter(Boolean).join(" · ")
-    : "";
+  const greetingName = libraryName?.trim() || displayName?.trim() || email?.split("@")[0] || "";
+  const hasSources = enabledSourceCount > 0;
+  const reviewableInbox = homeInboxItems(pendingFacts);
   const recentChats = [...conversations]
     .sort((a, b) => (b.last_message_at || b.updated_at).localeCompare(a.last_message_at || a.updated_at))
     .slice(0, 4);
   const activeTasks = conversations.filter((item) => item.task_status === "active").slice(0, 3);
+  const recentWorkChats = [...conversations].filter((item) => item.task_status !== "active").sort((a, b) => (b.last_message_at || b.updated_at).localeCompare(a.last_message_at || a.updated_at)).slice(0, 4);
   const recentAdded = reviewableInbox.slice(0, 4);
-  const knowledgeCount = confirmedFactCount ?? (profileLoaded ? (hasResume ? Math.max(localSkillTags.length, 1) : 0) : null);
-  const fileCount = sourceCount ?? (profileLoaded ? (hasResume ? 1 : 0) : null);
-  const topicCount = profileLoaded ? localSkillTags.length : null;
+  const knowledgeCount = confirmedFactCount ?? 0;
+  const fileCount = sourceCount ?? (libraryLoaded ? 0 : null);
+  const topicCount = pendingFacts.length;
   const chatCount = conversations.length;
 
-  function openQueueItem(item: HomeQueueItem) {
-    if (item.kind === "review" || item.kind === "profile") {
-      onOpenProfile();
-      return;
-    }
-    if (item.kind === "resume") {
-      onOpenResume();
-      return;
-    }
-    if (item.kind === "interview") {
-      onOpenInterview();
-      return;
-    }
-    if (item.kind === "chat") {
-      onOpenChat?.(item.conversationId);
-      return;
-    }
-    if (item.jobId) {
-      onOpenJob?.(item.jobId);
-      return;
-    }
-    onOpenAnalysis();
-  }
-
-  function openContinueItem(item: HomeContinueItem) {
-    if (item.kind === "chat") {
-      onOpenChat?.(item.conversationId);
-      return;
-    }
-    if (item.jobId) onOpenJob?.(item.jobId);
-    else onOpenAnalysis();
-  }
-
-  const evidenceNote = !profileLoaded
+  const evidenceNote = !libraryLoaded
     ? "资料尚未读取"
     : reviewableInbox.length
       ? `${reviewableInbox.length} 条待确认`
-      : hasResume
+      : hasSources
         ? "已确认资料可用于分析和创作"
         : "知识库还是空的";
 
@@ -200,20 +105,12 @@ export function HomePage({
       onClick: () => onOpenChat?.()
     },
     {
-      key: "organize",
-      label: "整理知识",
-      detail: "梳理主题与结构",
-      tone: "green",
-      icon: <CalendarDays size={18} />,
-      onClick: () => { if (onOpenOrganize) onOpenOrganize(); else onOpenProfile(); }
-    },
-    {
       key: "create",
-      label: "生成内容",
-      detail: "进入内容创作工作台",
+      label: "开始创作",
+      detail: "在 AI 工作区起草与修改",
       tone: "yellow",
       icon: <Wand2 size={18} />,
-      onClick: onOpenResume
+      onClick: () => onOpenChat?.()
     }
   ] as const;
 
@@ -221,7 +118,7 @@ export function HomePage({
     {
       key: "knowledge",
       label: "知识条目",
-      value: metricValue(profileLoaded, knowledgeCount == null ? "—" : String(knowledgeCount)),
+      value: metricValue(libraryLoaded, knowledgeCount == null ? "—" : String(knowledgeCount)),
       note: evidenceNote,
       icon: <NotebookPen size={14} />,
       onClick: onOpenProfile
@@ -229,16 +126,16 @@ export function HomePage({
     {
       key: "files",
       label: "文件",
-      value: metricValue(profileLoaded, fileCount == null ? "—" : String(fileCount)),
-      note: !profileLoaded ? "资料尚未读取" : hasResume ? (resumeFilename || "已保存文档") : "还没有文件",
+      value: metricValue(libraryLoaded, fileCount == null ? "—" : String(fileCount)),
+      note: !libraryLoaded ? "资料尚未读取" : hasSources ? (sourceTitle || "已保存文档") : "还没有文件",
       icon: <FileText size={14} />,
-      onClick: onOpenResume
+      onClick: onOpenProfile
     },
     {
       key: "topics",
-      label: "主题",
-      value: metricValue(profileLoaded, topicCount == null ? "—" : String(topicCount)),
-      note: !profileLoaded ? "资料尚未读取" : topicCount ? "来自已保存技能标签" : "主题会在确认资料后出现",
+      label: "待确认",
+      value: metricValue(libraryLoaded, topicCount == null ? "—" : String(topicCount)),
+      note: !libraryLoaded ? "资料尚未读取" : topicCount ? "确认后用于问答与创作" : "暂无待确认内容",
       icon: <Sparkles size={14} />,
       onClick: onOpenProfile
     },
@@ -246,7 +143,7 @@ export function HomePage({
       key: "chats",
       label: "对话记录",
       value: String(chatCount),
-      note: chatCount ? "可从右侧继续对话" : "还没有对话",
+      note: chatCount ? "继续之前的对话" : "还没有对话",
       icon: <MessageCircle size={14} />,
       onClick: () => onOpenChat?.()
     }
@@ -254,24 +151,17 @@ export function HomePage({
 
   return (
     <section className="dashboard-page home-page home-shell">
-      <div className="dashboard-hero home-hero-grid" aria-labelledby="home-greeting-title">
+      <div className="dashboard-hero" aria-labelledby="home-greeting-title">
         <div>
           <span className="home-hero-kicker">继续工作</span>
           <h2 id="home-greeting-title">{greetingName ? `${greetingPrefix()}，${greetingName} 👋` : `${greetingPrefix()} 👋`}</h2>
-          <p>{primary?.detail || (!profileLoaded ? "资料读取后，这里会给出下一步。" : "从资料、对话或文档中选择一件事继续。")}</p>
-          {direction ? <p className="home-hero-hint">当前资料方向：{direction}</p> : null}
-          {primary ? (
-            <div className="home-hero-actions">
-              <button type="button" className="home-primary-cta" onClick={() => openQueueItem(primary)}>
-                {primary.label}
-                <ArrowRight size={16} aria-hidden="true" />
-              </button>
-            </div>
-          ) : null}
+          <p>集中保存资料，基于知识提问，再把想法写成内容。</p>
+          <div className="home-hero-actions">
+            <button type="button" className="home-primary-cta" onClick={() => onOpenChat?.(recentChats[0]?.id)}>
+              {recentChats.length ? "继续上次对话" : "开始新对话"}<ArrowRight size={16} aria-hidden="true" />
+            </button>
+          </div>
         </div>
-        <aside className="home-quote-card" aria-label="今日寄语">
-          <p>知识不是被存储，而是被激活、连接和创造价值。</p>
-        </aside>
       </div>
 
       <div className="home-quick-actions" aria-label="快捷操作">
@@ -304,10 +194,10 @@ export function HomePage({
           </div>
         </section>
 
-        <section className={`home-panel home-recent-added${recentAdded.length ? "" : " is-empty"}`} aria-label="最近添加">
+        <section className={`home-panel home-recent-added${recentAdded.length ? "" : " is-empty"}`} aria-label="待确认内容">
           <div className="home-section-heading">
             <span aria-hidden="true"><FilePlus2 size={15} /></span>
-            <h3>最近添加</h3>
+            <h3>待确认内容</h3>
           </div>
           {recentAdded.length ? (
             <ul>
@@ -322,7 +212,7 @@ export function HomePage({
             </ul>
           ) : (
             <div className="home-recent-empty">
-              <p>{profileLoaded ? "还没有新的待确认内容。" : "资料读取后，这里会显示最近添加的条目。"}</p>
+              <p>{libraryLoaded ? "还没有新的待确认内容。" : "资料读取后，这里会显示待确认内容的条目。"}</p>
               <button type="button" onClick={onOpenProfile}>去知识库添加<ArrowRight size={14} /></button>
             </div>
           )}
@@ -330,14 +220,30 @@ export function HomePage({
       </div>
 
       <div className="home-bottom-grid">
-        <section className={`home-panel home-continue${recentChats.length || continueItems.length ? "" : " is-empty"}`} aria-label="最近对话">
+        <section className={`home-panel home-continue${activeTasks.length || recentWorkChats.length ? "" : " is-empty"}`} aria-label="继续工作">
           <div className="home-section-heading">
-            <span aria-hidden="true"><MessageCircle size={15} /></span>
-            <h3>最近对话</h3>
+            <span aria-hidden="true"><History size={15} /></span>
+            <h3>继续工作</h3>
           </div>
-          {recentChats.length ? (
+          {activeTasks.length ? (
             <ul>
-              {recentChats.map((chat) => (
+              {activeTasks.map((task) => (
+                <li key={task.id}>
+                  <button type="button" onClick={() => onOpenChat?.(task.id)}>
+                    <span className="home-continue-icon" aria-hidden="true"><MessageCircle size={15} /></span>
+                    <span>
+                      <strong>{task.title || "进行中的对话任务"}</strong>
+                      <small>未结束 · {task.summary || "可打开对话继续。"}</small>
+                    </span>
+                    <time dateTime={task.last_message_at || task.updated_at}>{formatHomeTime(task.last_message_at || task.updated_at)}</time>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {recentWorkChats.length ? (
+            <ul>
+              {recentWorkChats.map((chat) => (
                 <li key={chat.id}>
                   <button type="button" onClick={() => onOpenChat?.(chat.id)}>
                     <span className="home-continue-icon" aria-hidden="true"><MessageCircle size={15} /></span>
@@ -350,64 +256,12 @@ export function HomePage({
                 </li>
               ))}
             </ul>
-          ) : continueItems.length ? (
-            <ul>
-              {continueItems.map((item) => (
-                <li key={item.id}>
-                  <button type="button" onClick={() => openContinueItem(item)}>
-                    <span className="home-continue-icon" aria-hidden="true">
-                      {item.kind === "chat" ? <MessageCircle size={15} /> : <History size={15} />}
-                    </span>
-                    <span>
-                      <strong>{item.title}</strong>
-                      <small>{item.detail}</small>
-                    </span>
-                    <time dateTime={item.stamp}>{formatHomeTime(item.stamp)}</time>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
+          ) : !activeTasks.length ? (
             <div className="home-recent-empty">
               <p>还没有进行中的内容，可以从一次对话开始。</p>
               <button type="button" onClick={() => onOpenChat?.()}>开始新对话<ArrowRight size={14} /></button>
             </div>
-          )}
-        </section>
-
-        <section className={`home-panel home-tasks${activeTasks.length ? "" : " is-empty"}`} aria-label="正在进行的任务">
-          <div className="home-section-heading">
-            <span aria-hidden="true"><History size={15} /></span>
-            <h3>正在进行的任务</h3>
-          </div>
-          {activeTasks.length ? (
-            <ul>
-              {activeTasks.map((task) => (
-                <li key={task.id}>
-                  <button type="button" onClick={() => onOpenChat?.(task.id)}>
-                    <strong>{task.title || "进行中的对话任务"}</strong>
-                    <small>{task.summary || "Agent 任务仍在进行，可从右侧继续。"}</small>
-                    <span className="home-task-meter" aria-hidden="true"><i style={{ width: "62%" }} /></span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="home-recent-empty">
-              <p>当前没有进行中的 Agent 任务。</p>
-            </div>
-          )}
-        </section>
-
-        <section className="home-panel home-inspiration" aria-label="今日灵感">
-          <div className="home-section-heading">
-            <span aria-hidden="true"><Sparkles size={15} /></span>
-            <h3>今日灵感</h3>
-          </div>
-          <p>把一次对话里的洞察沉淀成笔记，比收藏十篇文章更有价值。</p>
-          <button type="button" className="home-inspiration-cta" onClick={() => { if (onOpenOrganize) onOpenOrganize(); else onOpenProfile(); }}>
-            保存到灵感笔记
-          </button>
+          ) : null}
         </section>
       </div>
     </section>

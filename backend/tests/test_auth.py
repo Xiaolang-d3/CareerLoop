@@ -18,63 +18,36 @@ def isolated_auth_database(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
-def test_authentication_issues_and_validates_signed_token(monkeypatch) -> None:
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
-    captcha = auth.create_captcha()
-    auth.create_initial_user("owner@example.com", "a-long-test-password", captcha["captcha_id"], "AAAAA")
-    captcha = auth.create_captcha()
+def test_authentication_issues_and_validates_signed_token() -> None:
+    auth.create_initial_user("owner@example.com", "a-long-test-password")
 
-    token = auth.authenticate("OWNER@example.com", "a-long-test-password", captcha["captcha_id"], "AAAAA")
+    token = auth.authenticate("OWNER@example.com", "a-long-test-password")
 
     assert auth.current_user(f"Bearer {token}") == {"id": 1, "email": "owner@example.com"}
 
 
-def test_authentication_rejects_wrong_password(monkeypatch) -> None:
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
-    captcha = auth.create_captcha()
-    auth.create_initial_user("owner@example.com", "a-long-test-password", captcha["captcha_id"], "AAAAA")
-    captcha = auth.create_captcha()
+def test_authentication_rejects_wrong_password() -> None:
+    auth.create_initial_user("owner@example.com", "a-long-test-password")
     try:
-        auth.authenticate("owner@example.com", "wrong-password", captcha["captcha_id"], "AAAAA")
+        auth.authenticate("owner@example.com", "wrong-password")
     except Exception as exc:
         assert getattr(exc, "status_code", None) == 401
     else:
         raise AssertionError("wrong password must be rejected")
 
 
-def test_captcha_is_case_insensitive_and_one_time(monkeypatch) -> None:
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
-    captcha = auth.create_captcha()
-
-    assert auth.verify_captcha(captcha["captcha_id"], "aaaaa") is True
-    assert auth.verify_captcha(captcha["captcha_id"], "AAAAA") is False
-
-
-def test_captcha_payload_includes_its_svg(monkeypatch) -> None:
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
-
-    captcha = auth.create_captcha()
-
-    assert captcha["svg"].startswith("<svg")
-    assert captcha["svg"].count(">A</text>") == 5
-    assert captcha["accessible_text"] == "A A A A A"
-
-
-def test_auth_protects_business_routes(monkeypatch) -> None:
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
+def test_auth_protects_business_routes() -> None:
     client = TestClient(app)
 
-    assert client.get("/jobs").status_code == 401
-    captcha = client.get("/auth/captcha").json()
+    assert client.get("/library").status_code == 401
     bootstrap = client.post(
         "/auth/bootstrap",
-        json={"email": "owner@example.com", "password": "a-long-test-password", "captcha_id": captcha["captcha_id"], "captcha_code": "AAAAA"},
+        json={"email": "owner@example.com", "password": "a-long-test-password"},
     )
     assert bootstrap.status_code == 200
-    captcha = client.get("/auth/captcha").json()
     login = client.post(
         "/auth/login",
-        json={"email": "owner@example.com", "password": "a-long-test-password", "captcha_id": captcha["captcha_id"], "captcha_code": "AAAAA"},
+        json={"email": "owner@example.com", "password": "a-long-test-password"},
     )
 
     assert login.status_code == 200
@@ -84,75 +57,42 @@ def test_auth_protects_business_routes(monkeypatch) -> None:
     ).json() == {"user": {"id": 1, "email": "owner@example.com", "display_name": "", "has_avatar": False}}
 
 
-def test_register_creates_a_second_user(monkeypatch) -> None:
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
+def test_register_creates_a_second_user() -> None:
     client = TestClient(app)
-    first = client.get("/auth/captcha").json()
     assert client.post(
         "/auth/register",
-        json={
-            "email": "owner@example.com",
-            "password": "a-long-test-password",
-            "captcha_id": first["captcha_id"],
-            "captcha_code": "AAAAA",
-        },
+        json={"email": "owner@example.com", "password": "a-long-test-password"},
     ).status_code == 200
-    second = client.get("/auth/captcha").json()
     created = client.post(
         "/auth/register",
-        json={
-            "email": "second@example.com",
-            "password": "another-long-password",
-            "captcha_id": second["captcha_id"],
-            "captcha_code": "AAAAA",
-        },
+        json={"email": "second@example.com", "password": "another-long-password"},
     )
     assert created.status_code == 200
     assert created.json()["user"] == {"id": 2, "email": "second@example.com", "display_name": "", "has_avatar": False}
 
 
-def test_register_rejects_duplicate_email(monkeypatch) -> None:
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
+def test_register_rejects_duplicate_email() -> None:
     client = TestClient(app)
-    first = client.get("/auth/captcha").json()
     client.post(
         "/auth/register",
-        json={
-            "email": "owner@example.com",
-            "password": "a-long-test-password",
-            "captcha_id": first["captcha_id"],
-            "captcha_code": "AAAAA",
-        },
+        json={"email": "owner@example.com", "password": "a-long-test-password"},
     ).raise_for_status()
-    second = client.get("/auth/captcha").json()
     conflict = client.post(
         "/auth/register",
-        json={
-            "email": "OWNER@example.com",
-            "password": "another-long-password",
-            "captcha_id": second["captcha_id"],
-            "captcha_code": "AAAAA",
-        },
+        json={"email": "OWNER@example.com", "password": "another-long-password"},
     )
     assert conflict.status_code == 409
     assert "已注册" in conflict.json()["detail"]
 
 
-def test_auth_config_stays_open_after_first_user(monkeypatch) -> None:
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
+def test_auth_config_stays_open_after_first_user() -> None:
     client = TestClient(app)
     empty = client.get("/auth/config").json()
     assert empty["setup_required"] is True
     assert empty["registration_open"] is True
-    captcha = client.get("/auth/captcha").json()
     client.post(
         "/auth/register",
-        json={
-            "email": "owner@example.com",
-            "password": "a-long-test-password",
-            "captcha_id": captcha["captcha_id"],
-            "captcha_code": "AAAAA",
-        },
+        json={"email": "owner@example.com", "password": "a-long-test-password"},
     ).raise_for_status()
     filled = client.get("/auth/config").json()
     assert filled["setup_required"] is False
@@ -160,22 +100,15 @@ def test_auth_config_stays_open_after_first_user(monkeypatch) -> None:
 
 
 def _register(client: TestClient, email: str = "owner@example.com", password: str = "a-long-test-password") -> str:
-    captcha = client.get("/auth/captcha").json()
     created = client.post(
         "/auth/register",
-        json={
-            "email": email,
-            "password": password,
-            "captcha_id": captcha["captcha_id"],
-            "captcha_code": "AAAAA",
-        },
+        json={"email": email, "password": password},
     )
     created.raise_for_status()
     return created.json()["access_token"]
 
 
-def test_account_nickname_follows_the_signed_in_user(monkeypatch) -> None:
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
+def test_account_nickname_follows_the_signed_in_user() -> None:
     client = TestClient(app)
     token = _register(client)
     headers = {"Authorization": f"Bearer {token}"}
@@ -194,8 +127,7 @@ def test_account_nickname_follows_the_signed_in_user(monkeypatch) -> None:
     assert too_long.status_code == 422
 
 
-def test_account_password_change_issues_a_new_token(monkeypatch) -> None:
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
+def test_account_password_change_issues_a_new_token() -> None:
     client = TestClient(app)
     old_token = _register(client)
     old_headers = {"Authorization": f"Bearer {old_token}"}
@@ -205,7 +137,8 @@ def test_account_password_change_issues_a_new_token(monkeypatch) -> None:
         json={"current_password": "wrong-password", "new_password": "brand-new-password"},
         headers=old_headers,
     )
-    assert rejected.status_code == 401
+    assert rejected.status_code == 422
+    assert client.get("/auth/me", headers=old_headers).status_code == 200
 
     same = client.post(
         "/auth/me/password",
@@ -225,25 +158,18 @@ def test_account_password_change_issues_a_new_token(monkeypatch) -> None:
     assert client.get("/auth/me", headers=old_headers).status_code == 401
     assert client.get("/auth/me", headers={"Authorization": f"Bearer {new_token}"}).json()["user"]["email"] == "owner@example.com"
 
-    captcha = client.get("/auth/captcha").json()
     login = client.post(
         "/auth/login",
-        json={
-            "email": "owner@example.com",
-            "password": "brand-new-password",
-            "captcha_id": captcha["captcha_id"],
-            "captcha_code": "AAAAA",
-        },
+        json={"email": "owner@example.com", "password": "brand-new-password"},
     )
     assert login.status_code == 200
 
 
-def test_account_avatar_is_private_to_the_signed_in_user(monkeypatch) -> None:
+def test_account_avatar_is_private_to_the_signed_in_user() -> None:
     from io import BytesIO
 
     from PIL import Image
 
-    monkeypatch.setattr(auth.secrets, "choice", lambda _: "A")
     client = TestClient(app)
     token = _register(client)
     headers = {"Authorization": f"Bearer {token}"}
@@ -272,3 +198,264 @@ def test_account_avatar_is_private_to_the_signed_in_user(monkeypatch) -> None:
     assert removed.status_code == 200
     assert removed.json()["user"]["has_avatar"] is False
     assert client.get("/auth/me/avatar", headers=headers).status_code == 404
+
+@pytest.mark.parametrize("email", ["invalid", "a@localhost", "a b@example.com", "a@@example.com", "a@example.com\nother", "x" * 321 + "@example.com"])
+def test_register_checks_email_on_server_and_service(email: str) -> None:
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as rejected:
+        auth.register_user(email, "a-long-test-password")
+    assert rejected.value.status_code == 422
+    client = TestClient(app)
+    assert client.post("/auth/register", json={"email": email, "password": "a-long-test-password"}).status_code == 422
+    assert auth.public_auth_config()["setup_required"] is True
+
+
+@pytest.mark.parametrize("email, normalized", [
+    ("  用户@Example.com  ", "用户@example.com"),
+    ("😀" * 314 + "@x.com", "😀" * 314 + "@x.com"),
+])
+def test_normalized_and_unicode_email_can_sign_in(email: str, normalized: str) -> None:
+    token = auth.register_user(email, "a-long-test-password")
+    assert auth.current_user(f"bearer {token}")["email"] == normalized
+    assert auth.current_user(f"Bearer {auth.authenticate(normalized.upper(), 'a-long-test-password')}")["id"] == 1
+
+
+def test_bootstrap_only_creates_the_first_account() -> None:
+    client = TestClient(app)
+    first = client.post("/auth/bootstrap", json={"email": "first@example.com", "password": "a-long-test-password"})
+    assert first.status_code == 200
+    later = client.post("/auth/bootstrap", json={"email": "second@example.com", "password": "a-long-test-password"})
+    assert later.status_code == 409
+    assert client.post("/auth/register", json={"email": "second@example.com", "password": "a-long-test-password"}).status_code == 200
+
+
+def test_logout_revokes_only_the_current_session_and_never_stores_tokens() -> None:
+    client = TestClient(app)
+    first = _register(client)
+    second = auth.authenticate("owner@example.com", "a-long-test-password")
+    assert first != second
+    first_headers = {"Authorization": f"Bearer {first}"}
+    second_headers = {"Authorization": f"Bearer {second}"}
+    result = client.post("/auth/logout", headers=first_headers)
+    assert result.status_code == 204
+    assert result.content == b""
+    assert result.headers["cache-control"] == "no-store"
+    assert client.get("/auth/me", headers=first_headers).status_code == 401
+    assert client.get("/auth/me", headers=second_headers).status_code == 200
+    assert client.post("/auth/logout", headers=first_headers).status_code == 401
+    with auth._connect_auth() as conn:
+        sessions = conn.execute("SELECT token_hash, revoked_at FROM auth_sessions").fetchall()
+    assert len(sessions) == 2
+    assert all(row["token_hash"] not in {first, second} and len(row["token_hash"]) == 64 for row in sessions)
+
+
+def _signed_payload(payload: dict) -> str:
+    import json
+
+    with auth._connect_auth() as conn:
+        user = conn.execute("SELECT password_hash FROM users WHERE id = 1").fetchone()
+    encoded = auth._encode(json.dumps(payload).encode())
+    return f"{encoded}.{auth._sign(encoded, user['password_hash'])}"
+
+
+def test_existing_token_is_adopted_and_can_be_revoked() -> None:
+    import time
+    from fastapi import HTTPException
+
+    auth.register_user("owner@example.com", "a-long-test-password")
+    token = _signed_payload({"id": 1, "email": "owner@example.com", "exp": int(time.time()) + 300})
+    assert auth.current_user(f"Bearer {token}")["id"] == 1
+    auth.revoke_session(f"Bearer {token}")
+    with pytest.raises(HTTPException) as rejected:
+        auth.current_user(f"Bearer {token}")
+    assert rejected.value.status_code == 401
+
+
+@pytest.mark.parametrize("overrides", [
+    {"exp": None}, {"exp": []}, {"exp": {}}, {"exp": "99999999999"}, {"exp": True},
+    {"id": True}, {"id": -1}, {"email": None}, {"sid": ""}, {"sid": []}, {"sid": "unregistered-session"},
+])
+def test_malformed_signed_claims_return_401(overrides: dict) -> None:
+    import time
+
+    auth.register_user("owner@example.com", "a-long-test-password")
+    token = _signed_payload({"id": 1, "email": "owner@example.com", "exp": int(time.time()) + 300, **overrides})
+    response = TestClient(app).get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+
+
+@pytest.mark.parametrize("token", ["garbage", "a.b.c", "☃.☃", "e30.☃", "x" * 8193])
+def test_malformed_bearer_tokens_never_crash(token: str) -> None:
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as rejected:
+        auth.current_user(f"Bearer {token}")
+    assert rejected.value.status_code == 401
+
+
+def test_expired_session_is_rejected_and_cleaned_on_next_login(monkeypatch) -> None:
+    from fastapi import HTTPException
+
+    clock = [1000]
+    monkeypatch.setattr(auth.time, "time", lambda: clock[0])
+    token = auth.register_user("owner@example.com", "a-long-test-password")
+    clock[0] += get_settings().auth_token_ttl_seconds
+    with pytest.raises(HTTPException) as expired:
+        auth.current_user(f"Bearer {token}")
+    assert expired.value.status_code == 401
+    auth.authenticate("owner@example.com", "a-long-test-password")
+    with auth._connect_auth() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM auth_sessions").fetchone()[0] == 1
+
+
+def test_lockout_exposes_retry_after_and_expires(monkeypatch) -> None:
+    monkeypatch.setenv("LOGIN_MAX_ATTEMPTS", "2")
+    clock = [1000]
+    monkeypatch.setattr(auth.time, "time", lambda: clock[0])
+    client = TestClient(app)
+    _register(client)
+    for _ in range(2):
+        assert client.post("/auth/login", json={"email": "owner@example.com", "password": "wrong"}).status_code == 401
+    blocked = client.post("/auth/login", json={"email": "owner@example.com", "password": "a-long-test-password"})
+    assert blocked.status_code == 429
+    assert int(blocked.headers["retry-after"]) == get_settings().login_lockout_seconds
+    clock[0] += get_settings().login_lockout_seconds
+    assert client.post("/auth/login", json={"email": "owner@example.com", "password": "a-long-test-password"}).status_code == 200
+
+
+def test_password_change_is_throttled_without_invalidating_session(monkeypatch) -> None:
+    monkeypatch.setenv("LOGIN_MAX_ATTEMPTS", "2")
+    client = TestClient(app)
+    token = _register(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = {"current_password": "wrong", "new_password": "a-new-test-password"}
+    for _ in range(2):
+        assert client.post("/auth/me/password", json=payload, headers=headers).status_code == 422
+    assert client.post("/auth/me/password", json=payload, headers=headers).status_code == 429
+    assert client.get("/auth/me", headers=headers).status_code == 200
+
+
+def test_legacy_short_password_is_allowed_at_login() -> None:
+    auth.init_auth_db()
+    with auth._connect_auth() as conn:
+        conn.execute("INSERT INTO users (email, password_hash) VALUES (?, ?)", ("old-local-name", auth._hash_password("old")))
+    result = TestClient(app).post("/auth/login", json={"email": "old-local-name", "password": "old"})
+    assert result.status_code == 200
+
+
+
+def test_password_change_detects_concurrent_update(monkeypatch) -> None:
+    from fastapi import HTTPException
+
+    token = auth.register_user("owner@example.com", "a-long-test-password")
+    original = auth._hash_password
+    competing_hash = original("competing-password")
+
+    def replace_password(password, salt=None):
+        with auth._connect_auth() as conn:
+            conn.execute("UPDATE users SET password_hash = ? WHERE id = 1", (competing_hash,))
+        return original(password, salt)
+
+    monkeypatch.setattr(auth, "_hash_password", replace_password)
+    monkeypatch.setattr(auth, "_verify_password", lambda password, stored: True)
+    with pytest.raises(HTTPException) as conflict:
+        auth.change_password(1, "a-long-test-password", "a-new-test-password")
+    assert conflict.value.status_code == 409
+    with pytest.raises(HTTPException):
+        auth.current_user(f"Bearer {token}")
+    with auth._connect_auth() as conn:
+        assert conn.execute("SELECT password_hash FROM users WHERE id = 1").fetchone()[0] == competing_hash
+
+
+def test_avatar_rejects_other_account_paths_and_oversized_dimensions() -> None:
+    import struct
+    import zlib
+    from io import BytesIO
+    from PIL import Image
+
+    client = TestClient(app)
+    token = _register(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    outside = db.DB_PATH.parent / "private.jpg"
+    outside.write_bytes(b"private bytes")
+    with auth._connect_auth() as conn:
+        conn.execute("UPDATE users SET avatar_relpath = 'private.jpg' WHERE id = 1")
+    assert client.get("/auth/me/avatar", headers=headers).status_code == 404
+    assert client.get("/auth/me", headers=headers).json()["user"]["has_avatar"] is False
+    assert client.delete("/auth/me/avatar", headers=headers).status_code == 200
+    assert outside.read_bytes() == b"private bytes"
+    buffer = BytesIO()
+    Image.new("RGB", (1, 1)).save(buffer, format="PNG")
+    content = bytearray(buffer.getvalue())
+    content[16:24] = struct.pack(">II", 4001, 4000)
+    content[29:33] = struct.pack(">I", zlib.crc32(content[12:29]))
+    rejected = client.post("/auth/me/avatar", files={"file": ("huge.png", bytes(content), "image/png")}, headers=headers)
+    assert rejected.status_code == 422
+    assert "像素" in rejected.json()["detail"]
+
+
+def test_avatar_delete_failure_preserves_database_state(monkeypatch) -> None:
+    from pathlib import Path
+
+    auth.register_user("owner@example.com", "a-long-test-password")
+    root = db.DB_PATH.parent / "avatars"
+    root.mkdir()
+    avatar = root / "1.jpg"
+    avatar.write_bytes(b"avatar")
+    with auth._connect_auth() as conn:
+        conn.execute("UPDATE users SET avatar_relpath = 'avatars/1.jpg' WHERE id = 1")
+    original = Path.unlink
+
+    def fail_avatar(path, *args, **kwargs):
+        if path == avatar:
+            raise PermissionError("synthetic permission failure")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_avatar)
+    with pytest.raises(PermissionError):
+        auth.delete_avatar(1)
+    assert auth.get_account(1)["has_avatar"] is True
+
+
+@pytest.mark.parametrize("password", ["short", "x" * 501])
+def test_registration_password_bounds_are_enforced_in_service(password: str) -> None:
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as rejected:
+        auth.register_user("new@example.com", password)
+    assert rejected.value.status_code == 422
+    assert auth.public_auth_config()["setup_required"] is True
+
+
+def test_bootstrap_is_atomic_across_concurrent_requests() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from fastapi import HTTPException
+
+    auth.init_auth_db()
+
+    def initialize(email):
+        try:
+            auth.create_initial_user(email, "a-long-test-password")
+            return 200
+        except HTTPException as exc:
+            return exc.status_code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(initialize, ["first@example.com", "second@example.com"]))
+    assert sorted(results) == [200, 409]
+    with auth._connect_auth() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
+
+
+def test_unknown_email_still_runs_the_password_verifier(monkeypatch) -> None:
+    from fastapi import HTTPException
+    from unittest.mock import Mock
+
+    verify = Mock(return_value=False)
+    monkeypatch.setattr(auth, "_verify_password", verify)
+    with pytest.raises(HTTPException) as rejected:
+        auth.authenticate("unknown@example.com", "wrong-password")
+    assert rejected.value.status_code == 401
+    verify.assert_called_once_with("wrong-password", auth._DUMMY_PASSWORD_HASH)

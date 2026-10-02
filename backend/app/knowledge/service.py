@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import sqlite3
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -165,9 +167,11 @@ def delete_document(
     source_type: str,
     source_id: str | int,
     db_path: str | Path | None = None,
+    *,
+    connection: sqlite3.Connection | None = None,
 ) -> int:
     """Delete a source document and its vector rows from the local knowledge store."""
-    with connect(db_path) as conn:
+    with (nullcontext(connection) if connection is not None else connect(db_path)) as conn:
         rows = conn.execute(
             "SELECT id FROM knowledge_chunks WHERE source_type = ? AND source_id = ?",
             (source_type, str(source_id)),

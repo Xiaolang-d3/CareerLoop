@@ -18,6 +18,59 @@ describe("fetchWithTimeout", () => {
     await vi.advanceTimersByTimeAsync(10);
     await assertion;
   });
+
+  it("does not send a request that was already cancelled", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(fetchWithTimeout("/library", { signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("forwards cancellation during an active request without calling it a timeout", async () => {
+    vi.stubGlobal("fetch", vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    })));
+    const controller = new AbortController();
+    const request = fetchWithTimeout("/library", { signal: controller.signal });
+    controller.abort();
+    await expect(request).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("sends multipart files and repeated fields through the desktop bridge", async () => {
+    const invoke = vi.fn(async (_command: string, args: { request: { formFields: Array<Record<string, string>> } }) => {
+      const fields = args.request.formFields;
+      expect(fields.map((field) => field.name)).toEqual(["mode", "files", "files"]);
+      expect(fields[0].value).toBe("fast");
+      expect(fields[1]).toMatchObject({ filename: "笔记.txt", contentType: "text/plain", dataBase64: "aGVsbG8=" });
+      expect(fields[2]).toMatchObject({ filename: "图片.png", contentType: "image/png", dataBase64: "AAEC" });
+      return { status: 200, body: '{"results":[]}', contentType: "application/json" };
+    });
+    Object.assign(window, { __TAURI__: { core: { invoke } } });
+    try {
+      const form = new FormData();
+      form.append("mode", "fast");
+      form.append("files", new File(["hello"], "笔记.txt", { type: "text/plain" }));
+      form.append("files", new File([new Uint8Array([0, 1, 2])], "图片.png", { type: "image/png" }));
+      const response = await fetchWithTimeout("http://127.0.0.1:8000/library/sources/import", { method: "POST", body: form });
+      expect(await response.json()).toEqual({ results: [] });
+      expect(invoke).toHaveBeenCalledOnce();
+    } finally {
+      delete (window as Window & { __TAURI__?: unknown }).__TAURI__;
+    }
+  });
+
+  it("returns binary avatar data from the desktop bridge intact", async () => {
+    const invoke = vi.fn(async () => ({ status: 200, body: "", bodyBase64: "AAEC/w==", contentType: "image/jpeg" }));
+    Object.assign(window, { __TAURI__: { core: { invoke } } });
+    try {
+      const response = await fetchWithTimeout("http://127.0.0.1:8000/auth/me/avatar");
+      expect(Array.from(new Uint8Array(await response.arrayBuffer()))).toEqual([0, 1, 2, 255]);
+    } finally {
+      delete (window as Window & { __TAURI__?: unknown }).__TAURI__;
+    }
+  });
 });
 
 describe("fetchJson", () => {
@@ -49,7 +102,7 @@ describe("fetchJson", () => {
 
     const fetchJson = createApiClient("https://app.example.com");
     await expect(fetchJson("/agent/models/discover", { method: "POST" })).rejects.toThrow(
-      "/agent/models/discover 请求失败（500）：Internal Server Error"
+      "/agent/models/discover 请求失败（500） @ https://app.example.com：Internal Server Error"
     );
   });
 
@@ -61,7 +114,7 @@ describe("fetchJson", () => {
 
     const fetchJson = createApiClient("https://app.example.com");
     await expect(fetchJson("/agent/models/discover", { method: "POST" })).rejects.toThrow(
-      /^\/agent\/models\/discover 请求失败（502）$/
+      /^\/agent\/models\/discover 请求失败（502） @ https:\/\/app\.example\.com$/
     );
   });
 
@@ -75,5 +128,29 @@ describe("fetchJson", () => {
     await expect(fetchJson("/quick-match", { method: "POST" })).rejects.toThrow(
       "/quick-match 请求失败（422）"
     );
+  });
+});
+
+describe("account API transport", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete (window as Window & { __TAURI__?: unknown }).__TAURI__;
+  });
+
+  it("retains retry metadata as a typed error", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response('{"detail":"请稍后重试"}', { status: 429, headers: { "Retry-After": "30" } })));
+    await expect(createApiClient("https://app.example.com")("/auth/login")).rejects.toMatchObject({ status: 429, retryAfterSeconds: 30, message: "请稍后重试" });
+  });
+
+  it("handles a desktop logout with an empty 204 response", async () => {
+    const invoke = vi.fn(async () => ({ status: 204, body: "", contentType: null }));
+    Object.assign(window, { __TAURI__: { core: { invoke } } });
+    await expect(createApiClient("http://127.0.0.1:8000", "test-token")("/auth/logout", { method: "POST" })).resolves.toBeUndefined();
+  });
+
+  it("retains Retry-After across the desktop proxy", async () => {
+    const invoke = vi.fn(async () => ({ status: 429, body: '{"detail":"请稍后重试"}', contentType: "application/json", retryAfter: "12" }));
+    Object.assign(window, { __TAURI__: { core: { invoke } } });
+    await expect(createApiClient("http://127.0.0.1:8000")("/auth/login")).rejects.toMatchObject({ status: 429, retryAfterSeconds: 12 });
   });
 });

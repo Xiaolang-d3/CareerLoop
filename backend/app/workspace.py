@@ -1,7 +1,7 @@
 """Per-user workspace routing.
 
 Business data stays in a single-tenant SQLite schema. Isolation comes from
-pointing ``connect()``, the profile document, and attachments at
+pointing ``connect()`` and current document/attachment storage at
 ``<data>/workspaces/<user_id>/`` for the authenticated request.
 """
 
@@ -70,7 +70,8 @@ def use_workspace(user_id: int, root: Path | None = None) -> Iterator[Path]:
 def init_auth_db() -> None:
     path = auth_db_path()
     with db_module.connect(path) as conn:
-        conn.executescript(db_module._LOCAL_USER_AUTH_SCHEMA)
+        from .persistence.schema import AUTH_SCHEMA
+        conn.executescript(AUTH_SCHEMA)
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
         if "display_name" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN display_name TEXT NOT NULL DEFAULT ''")
@@ -222,7 +223,7 @@ def ensure_workspace(user_id: int) -> Path:
     """Create or adopt the on-disk workspace for ``user_id`` and apply migrations."""
     root = workspace_root_for(user_id)
     db_file = root / "careerloop.db"
-    if not db_file.exists() and not existing_workspace_roots() and _legacy_payload_exists():
+    if not db_file.exists() and _legacy_payload_exists() and list_user_ids()[:1] == [user_id]:
         adopt_legacy_into(root)
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     db_module.init_db(root / "careerloop.db")

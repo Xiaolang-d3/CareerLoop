@@ -1,8 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppTopBar } from "./AppTopBar";
-import { HomePage } from "../features/home/HomePage";
-import { pageMeta, topbarSectionForPage } from "../constants";
+import { topbarSectionForPage } from "../constants";
 
 function renderTopBar(overrides: Partial<Parameters<typeof AppTopBar>[0]> = {}) {
   const props = {
@@ -54,16 +53,6 @@ describe("AppTopBar", () => {
     expect(screen.getByRole("heading", { level: 1, name: "新对话" })).toBeInTheDocument();
   });
 
-  it("uses the workspace metadata title on the workbench landing page", () => {
-    renderTopBar({
-      section: topbarSectionForPage("workbench", pageMeta.workbench.title),
-      title: pageMeta.workbench.title
-    });
-
-    expect(screen.getByRole("heading", { level: 1, name: "内容创作" })).toBeInTheDocument();
-    expect(document.querySelector(".app-topbar-context > span")).toBeNull();
-  });
-
   it("uses the account nickname initial when available", () => {
     renderTopBar({ accountName: "小林" });
 
@@ -100,67 +89,4 @@ describe("AppTopBar", () => {
     expect(props.onPrefetchPage).toHaveBeenCalledWith("account");
   });
 
-  it("keeps the same global top bar when switching home and workbench", () => {
-    const identity = {
-      userEmail: "owner@example.com",
-      onOpenProfile: vi.fn(),
-      onOpenAccount: vi.fn(),
-      onLogout: vi.fn(),
-      onPrefetchPage: vi.fn()
-    };
-    const home = (
-      <HomePage
-        displayName="小林"
-        email="owner@example.com"
-        profileName="张三"
-        targetRole="后端工程师"
-        jobs={[]}
-        jobsLoaded
-        profileLoaded
-        onOpenAnalysis={vi.fn()}
-        onOpenResume={vi.fn()}
-        onOpenInterview={vi.fn()}
-        onOpenProfile={vi.fn()}
-      />
-    );
-    const workbench = (
-      <section className="resume-module-shell">
-        <header className="topbar ui-section-header">
-          <nav aria-label="求职模块">
-            <button type="button">匹配分析</button>
-          </nav>
-        </header>
-      </section>
-    );
-
-    const { rerender } = render(
-      <section className="content">
-        <AppTopBar {...identity} />
-        {home}
-      </section>
-    );
-
-    const homeBar = document.querySelector("header.app-topbar");
-    const homeTrigger = screen.getByRole("button", { name: "账号菜单" });
-    expect(homeBar).toBeTruthy();
-    expect(screen.queryByRole("heading", { level: 1, name: "首页" })).not.toBeInTheDocument();
-    expect(homeTrigger.closest(".app-topbar")).toBe(homeBar);
-    expect(screen.getByRole("heading", { level: 2 }).closest(".app-topbar")).toBeNull();
-    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(/张三/);
-
-    rerender(
-      <section className="content">
-        <AppTopBar {...identity} />
-        {workbench}
-      </section>
-    );
-
-    const workbenchBar = document.querySelector("header.app-topbar");
-    expect(workbenchBar).toBeTruthy();
-    expect(screen.queryByRole("heading", { level: 1, name: "匹配分析" })).not.toBeInTheDocument();
-    expect(document.querySelectorAll("h1")).toHaveLength(0);
-    expect(screen.getByRole("button", { name: "账号菜单" }).closest(".app-topbar")).toBe(workbenchBar);
-    expect(screen.getByRole("navigation", { name: "求职模块" }).closest(".app-topbar")).toBeNull();
-    expect(document.querySelectorAll("header.app-topbar")).toHaveLength(1);
-  });
 });

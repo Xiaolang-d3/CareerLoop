@@ -1,0 +1,4 @@
+.library-metadata-form input:focus {
+  border-color: var(--color-brand);
+  box-shadow: var(--focus-ring);
+}

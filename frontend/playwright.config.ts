@@ -13,10 +13,14 @@ export default defineConfig({
     ...(process.env.CI ? {} : { channel: "chrome" }),
     trace: "retain-on-failure"
   },
-  webServer: process.env.PLAYWRIGHT_EXTERNAL_SERVER ? undefined : {
+  webServer: process.env.PLAYWRIGHT_EXTERNAL_SERVER ? undefined : [{
     command: "npm run preview -- --host 127.0.0.1 --port 4173",
     url: "http://127.0.0.1:4173",
     reuseExistingServer: !process.env.CI,
     timeout: 30_000
-  }
+  }, {
+    command: `${process.env.E2E_PYTHON || "../backend/.venv/bin/python"} ../backend/tests/e2e_server.py`,
+    url: "http://127.0.0.1:4184/health",
+    timeout: 30_000
+  }]
 });

@@ -12,7 +12,6 @@ from .behavior_checks import (
     unverified_experience_claims,
 )
 from .orchestration import (
-    JOB_SCREENSHOT_MARKER,
     TOOL_POLICIES,
     WEB_SEARCH_MARKER,
     route_task,
@@ -102,12 +101,9 @@ def _run_route(vars_: dict[str, Any]) -> dict[str, Any]:
     content = str(vars_.get("query") or "")
     if vars_.get("web_search"):
         content = f"{content}\n{WEB_SEARCH_MARKER}"
-    if vars_.get("job_screenshot"):
-        content = f"{content}\n{JOB_SCREENSHOT_MARKER}"
     route = route_task(
         content,
         AVAILABLE_TOOLS,
-        profile_interview_active=bool(vars_.get("profile_interview_active")),
     )
     return {
         "kind": route.kind,

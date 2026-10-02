@@ -6,7 +6,8 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const workingDirectory = (globalThis as typeof globalThis & { process: { cwd(): string } }).process.cwd();
-const careerloopStyles = readFileSync(resolve(workingDirectory, "src/styles/careerloop.css"), "utf8");
+const careerloopStyles = ["src/styles/careerloop.css", "src/features/chat/styles-theme.css"]
+  .map((path) => readFileSync(resolve(workingDirectory, path), "utf8")).join("\n");
 const settingsStyles = readFileSync(
   resolve(workingDirectory, "src/features/settings/settings-workspace.css"),
   "utf8"

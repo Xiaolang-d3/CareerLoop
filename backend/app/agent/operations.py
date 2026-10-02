@@ -21,11 +21,10 @@ SYSTEM_EVENT_TOOLS = {
     "agent_run_state",
 }
 TOOL_LABELS = {
-    "analyze_resume_against_jd": "简历与 JD 分析",
-    "search_resume_evidence": "简历证据检索",
-    "generate_tailored_resume_content": "定制简历内容",
-    "generate_interview_advice": "面试建议",
-    "research_company": "公司研究",
+    "get_library_context": "读取资料库",
+    "search_library": "检索资料",
+    "propose_library_knowledge": "提交待确认知识",
+    "ask_user": "请求补充信息",
     "search_public_web": "公开网络搜索",
 }
 
