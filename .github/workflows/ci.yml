@@ -153,7 +153,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: responsive-screenshots-${{ runner.os }}
-          path: ../output/playwright/*.png
+          path: ${{ runner.workspace }}/output/playwright/*.png
           if-no-files-found: ignore
 
   ci-gate:
