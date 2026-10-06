@@ -1,6 +1,12 @@
 """Current library storage; no career business tables."""
 
 LIBRARY_CORE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS library_folders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS library_metadata (
  id INTEGER PRIMARY KEY CHECK(id = 1), name TEXT NOT NULL DEFAULT '用户',
  privacy_mode TEXT NOT NULL DEFAULT 'redacted' CHECK(privacy_mode IN ('redacted', 'original')),

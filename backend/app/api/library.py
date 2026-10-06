@@ -15,6 +15,8 @@ from ..library.sources import (
     update_source,
 )
 from ..library.service import get_library
+from ..library.organization import FolderIn, OrganizationIn, create_folder, list_folders, organize_source
+from ..library.conversations import LibraryConversationIn, prepare_conversation
 from ..documents import service as document_service
 from .schemas import (
     LibraryKnowledgeIn,
@@ -28,6 +30,16 @@ from .schemas import (
 
 
 router = APIRouter()
+
+
+@router.post("/library/conversations")
+def library_conversation_post(payload: LibraryConversationIn) -> dict[str, Any]:
+    try:
+        return prepare_conversation(payload.source_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="文件暂时无法加入对话，请稍后重试") from exc
 
 
 @router.post("/library/document/parse")
@@ -68,8 +80,33 @@ def library_put(payload: LibraryMetadataIn) -> dict[str, Any]:
 
 
 @router.get("/library/sources")
-def library_sources_get() -> list[dict[str, Any]]:
-    return list_sources()
+def library_sources_get(q: str = "") -> list[dict[str, Any]]:
+    sources = list_sources()
+    if not q.strip():
+        return sources
+    query = q.strip().casefold()
+    return [source for source in sources if query in f"{source['title']} {source['original_filename']} {get_source(source['id'])['content']}".casefold()]
+
+
+@router.get("/library/folders")
+def library_folders_get() -> list[dict[str, Any]]:
+    return list_folders()
+
+
+@router.post("/library/folders")
+def library_folders_post(payload: FolderIn) -> dict[str, Any]:
+    try:
+        return create_folder(payload.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.patch("/library/sources/{source_id}/organization")
+def library_source_organize(source_id: int, payload: OrganizationIn) -> dict[str, Any]:
+    try:
+        return organize_source(source_id, payload.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=404 if "不存在" in str(exc) else 422, detail=str(exc)) from exc
 
 
 @router.post("/library/sources")

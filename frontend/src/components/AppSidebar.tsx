@@ -1,5 +1,5 @@
 import {
-  BookOpen,
+  Folder,
   ChevronsLeft,
   ChevronsRight,
   Home,
@@ -52,7 +52,7 @@ export function AppSidebar({
 
   const primaryItems: SidebarItem[] = [
     { key: "dashboard", label: "首页", icon: <Home size={18} />, active: isActive("dashboard"), prefetch: "dashboard", onClick: () => onSelectNav("dashboard") },
-    { key: "library", label: "我的知识库", icon: <BookOpen size={18} />, active: isActive("library"), prefetch: "library", onClick: () => onSelectNav("library") },
+    { key: "library", label: "文件库", icon: <Folder size={18} />, active: isActive("library"), prefetch: "library", onClick: () => onSelectNav("library") },
     { key: "chat", label: "AI 工作区", icon: <MessageCircle size={18} />, active: isActive("chat"), prefetch: "chat", onClick: () => onSelectNav("chat") }
   ];
 
@@ -94,9 +94,7 @@ export function AppSidebar({
       </div>
 
       <nav className="nav nav-desktop" aria-label="主导航">
-        <p className="nav-label">工作台</p>
         {primaryItems.map((item) => renderItem(item))}
-        <p className="nav-label nav-label-secondary">更多</p>
         {secondaryItems.map((item) => renderItem(item))}
       </nav>
 

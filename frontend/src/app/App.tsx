@@ -10,14 +10,14 @@ import { AppSidebar, type ProductNavKey } from "../components/AppSidebar";
 import { AppIdentityMenu } from "../components/AppIdentityMenu";
 import { AppTopBar } from "../components/AppTopBar";
 import { ConversationDialog } from "../components/ConversationDialog";
-import type { AttachmentConfig } from "../features/chat/types";
+import type { AttachmentConfig, ChatAttachment } from "../features/chat/types";
 import { defaultAgentSettings, pageMeta, topbarSectionForPage } from "../constants";
 import { createPagePrefetcher } from "../page-prefetch";
 import { createRouteDataCache, requiredDataForRoute, type RouteDataKey } from "../route-data";
 import { useAsyncPolling } from "../hooks/useAsyncPolling";
 import { appRouteHash, initialAppRoute, parseAppHash, routeForSection, type AppRoute } from "../routing";
 import { isProductIntroHash } from "./public-routing";
-import type { AgentCapabilities, AgentOperationsSnapshot, AgentSettings, LibraryEditor, LibrarySourceDetail, ModelCapabilityReport, ModelServiceCheck, ModelServiceMonitor, ViewKey } from "../types";
+import type { AgentCapabilities, AgentOperationsSnapshot, AgentSettings, Conversation, LibraryEditor, LibrarySourceDetail, ModelCapabilityReport, ModelServiceCheck, ModelServiceMonitor, ViewKey } from "../types";
 import { CheckCircle2, TriangleAlert, X } from "lucide-react";
 import "../styles/foundations.css";
 import "../AppStyles";
@@ -122,7 +122,8 @@ export function App({
   const [errorMessage, setErrorMessage] = useState("");
   const [noticeMessage, setNoticeMessage] = useState("");
   const { conversations, setConversations, currentConversationId, setCurrentConversationId, conversationBusy, setConversationBusy, conversationDialog, setConversationDialog, refreshConversations, createNewConversation, archiveConversation, renameConversation, removeConversation } = useConversations({ fetchJson, setActiveView, setErrorMessage, setNoticeMessage });
-  const { libraryEditor, librarySources, confirmedKnowledgeCount, sourceCount, pendingKnowledge, libraryLoaded, libraryBusy, sourceImportBusy, enhancedDocumentParse, setLibraryEditor, setEnhancedDocumentParse, refreshLibrary, saveLibraryMetadata, importLibraryFiles, createPastedSource, updateLibrarySource, downloadLibrarySource, deleteLibrarySource } = useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, setNoticeMessage });
+  const { libraryEditor, librarySources, libraryFolders, organizeLibrarySource, createLibraryFolder, loadLibraryOriginal, searchLibrarySources, confirmedKnowledgeCount, sourceCount, pendingKnowledge, libraryLoaded, libraryBusy, sourceImportBusy, enhancedDocumentParse, setLibraryEditor, setEnhancedDocumentParse, refreshLibrary, saveLibraryMetadata, importLibraryFiles, createPastedSource, updateLibrarySource, downloadLibrarySource, deleteLibrarySource } = useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, setNoticeMessage });
+  const [libraryAttachments, setLibraryAttachments] = useState<{ conversationId: number; attachments: ChatAttachment[] } | null>(null);
   const { chatMessages, setChatMessages, chatBusy, setChatBusy, modelUnavailable, setModelUnavailable, retryChatDraft, setRetryChatDraft, chatAgentRef, taskCancelBusy, setTaskCancelBusy, chatAttachmentBusy, setChatAttachmentBusy, refreshChat, uploadChatAttachment, removeChatAttachment, sendChatMessage, stopChatGeneration, rewindChatToUserMessage, editChatMessage, regenerateChatMessage, cancelCurrentTask } = useChatRun({ apiBase, accessToken, fetchJson, currentConversationId, currentConversationIdRef, setErrorMessage, setNoticeMessage, refreshConversations, onLibraryChanged: refreshLibrary });
   const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
   const [attachmentConfig, setAttachmentConfig] = useState<AttachmentConfig | null>(null);
@@ -273,9 +274,9 @@ export function App({
     });
   }
 
-  const hasLibrarySources = librarySources.some((source) => source.enabled);
+  const hasLibrarySources = librarySources.some((source) => source.enabled && !source.trashed_at && source.parse_status === "ready");
   const libraryReady = libraryLoaded
-    ? Boolean(libraryEditor.name.trim() && hasLibrarySources)
+    ? hasLibrarySources
     : null;
   const hiddenMessageCount = Math.max(0, chatMessages.length - visibleMessageCount);
   const visibleChatMessages = chatMessages.slice(-visibleMessageCount);
@@ -620,7 +621,7 @@ export function App({
     ? {
       overview: pageMeta.settings,
       account: { title: "账号与安全", description: "管理跟随登录账号的昵称、头像和密码" },
-      library: { title: "我的知识库", description: "管理来源材料、已确认知识和待确认内容" },
+      library: { title: "文件库", description: "整理文件、阅读原件，选取资料用于对话" },
       model: { title: "模型设置", description: "配置推理模型、服务地址和 API Key，并检查连接质量" },
       agent: { title: "Agent 执行记录", description: "查看 Agent 已完成的任务、工具使用和异常原因" }
     }[appRoute.page]
@@ -658,6 +659,15 @@ export function App({
     else if (key === "settings") navigateRoute({ section: "settings", page: "overview" });
   }
 
+  async function useLibraryForChat(sourceIds: number[]) {
+    const result = await fetchJson<{ conversation: Conversation; attachments: ChatAttachment[] }>("/library/conversations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source_ids: sourceIds }) });
+    await refreshConversations();
+    setLibraryAttachments({ conversationId: result.conversation.id, attachments: result.attachments });
+    setCurrentConversationId(result.conversation.id);
+    navigateRoute({ section: "chat", conversationId: result.conversation.id });
+    setNoticeMessage(`${result.attachments.length} 个文件已加入新对话，输入问题后发送`);
+  }
+
   return (
     <main className={`app-shell has-chat-dock shell-light${activeView === "chat" ? " chat-focused" : ""}`}>
       <AppSidebar
@@ -671,7 +681,7 @@ export function App({
         identity={identityMenu}
       />
 
-      <section className={`content${activeView === "chat" ? " chat-content is-chat-focus" : ""}${topbarTitle ? "" : " is-titleless"}`}>
+      <section className={`content${activeView === "chat" ? " chat-content is-chat-focus" : ""}${appRoute.section === "settings" && appRoute.page === "library" ? " library-content" : ""}${topbarTitle ? "" : " is-titleless"}`}>
         <AppTopBar
           section={topbarSection}
           title={topbarTitle}
@@ -702,13 +712,13 @@ export function App({
               displayName={user.display_name}
               email={userEmail}
               libraryName={libraryEditor.name}
-              sourceTitle={librarySources[0]?.title}
+              sourceTitle={librarySources.find(source => !source.trashed_at)?.title}
               libraryLoaded={libraryLoaded}
               conversations={conversations}
               pendingFacts={pendingKnowledge}
               confirmedFactCount={confirmedKnowledgeCount}
               sourceCount={sourceCount}
-              enabledSourceCount={librarySources.filter((source) => source.enabled).length}
+              enabledSourceCount={librarySources.filter((source) => source.enabled && !source.trashed_at && source.parse_status === "ready").length}
               onOpenProfile={() => navigateRoute({ section: "settings", page: "library" })}
 
               onOpenChat={(conversationId) => {
@@ -729,7 +739,7 @@ export function App({
                 <SettingsOverview
                   library={libraryEditor}
                   libraryReady={libraryReady}
-                  sourceTitle={librarySources[0]?.title}
+                  sourceTitle={librarySources.find(source => !source.trashed_at)?.title}
                   accountEmail={user.email}
                   accountName={user.display_name}
                   modelName={savedAgentSettings.model_name}
@@ -754,6 +764,12 @@ export function App({
                 <LibraryPage
                   editor={libraryEditor}
                   sources={librarySources}
+                  folders={libraryFolders}
+                  onOrganizeSource={organizeLibrarySource}
+                  onCreateFolder={createLibraryFolder}
+                  onLoadOriginal={loadLibraryOriginal}
+                  onSearchSources={searchLibrarySources}
+                  onUseForChat={useLibraryForChat}
                   busy={libraryBusy}
                   sourceBusy={sourceImportBusy}
                   enhancedParse={enhancedDocumentParse}
@@ -830,6 +846,8 @@ export function App({
             modelUnavailable={modelUnavailable}
             onOpenModelSettings={() => navigateRoute({ section: "settings", page: "model" })}
             currentConversationId={currentConversationId}
+            libraryAttachments={libraryAttachments}
+            onLibraryAttachmentsConsumed={() => setLibraryAttachments(null)}
             conversations={conversations}
             conversationBusy={conversationBusy}
             waitingForUser={waitingForUser}
@@ -839,7 +857,7 @@ export function App({
             chatEndRef={chatEndRef}
             chatInputRef={chatInputRef}
             sessionContext={{
-              sourceLabel: hasLibrarySources ? (librarySources.find((source) => source.enabled)?.title || "已保存资料") : null,
+              sourceLabel: hasLibrarySources ? (librarySources.find((source) => source.enabled && !source.trashed_at && source.parse_status === "ready")?.title || "已保存资料") : null,
               analysisLabel: null,
             }}
             onLoadMore={() => setVisibleMessageCount((count) => count + 12)}

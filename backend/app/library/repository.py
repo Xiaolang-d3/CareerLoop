@@ -11,8 +11,6 @@ def get_metadata(db_path: str | Path | None = None) -> dict[str, Any] | None:
 
 
 def save_metadata(*, name: str = "用户", privacy_mode: str = "redacted", locale: str = "zh-CN", db_path=None):
-    if not name.strip():
-        raise ValueError("称呼不能为空")
     if privacy_mode not in {"redacted", "original"}:
         raise ValueError("隐私模式不合法")
     with connect(db_path) as conn:

@@ -2,7 +2,7 @@ import { createRef } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatWorkspace } from "./ChatWorkspace";
-import type { AgentRunResult, ChatMessage, ChatRetryDraft } from "../features/chat/types";
+import type { AgentRunResult, ChatMessage, ChatRetryDraft, ChatAttachment } from "../features/chat/types";
 
 const mermaidMocks = vi.hoisted(() => ({
   initialize: vi.fn(),
@@ -63,8 +63,12 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
   retryDraft?: ChatRetryDraft | null;
   modelChecking?: boolean;
   modelUnavailable?: string;
+  libraryAttachments?: { conversationId: number; attachments: ChatAttachment[] };
+  onLibraryAttachmentsConsumed?: () => void;
 } = {}) {
   const props = {
+    libraryAttachments: extras.libraryAttachments,
+    onLibraryAttachmentsConsumed: extras.onLibraryAttachmentsConsumed,
     density: extras.density,
     modelChecking: extras.modelChecking,
     modelUnavailable: extras.modelUnavailable,
@@ -103,8 +107,8 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
     onRegenerate: vi.fn(),
     onOpenLibrary: vi.fn()
   };
-  render(<ChatWorkspace {...props} />);
-  return props;
+  const view = render(<ChatWorkspace {...props} />);
+  return { ...props, view };
 }
 
 describe("ChatWorkspace", () => {
@@ -117,6 +121,21 @@ describe("ChatWorkspace", () => {
   });
 
   afterEach(cleanup);
+
+  it("consumes library attachments once without clearing the composer or requeueing on conversation switches", async () => {
+    const consumed = vi.fn();
+    const p = renderChat([], {
+      libraryAttachments: { conversationId: 1, attachments: [{ id: "library-7", kind: "document", original_filename: "资料.txt", parse_status: "parsed" }] },
+      onLibraryAttachmentsConsumed: consumed,
+    });
+    expect(await screen.findByRole("button", { name: "移除 资料.txt" })).toBeInTheDocument();
+    expect(consumed).toHaveBeenCalledOnce();
+    p.view.rerender(<ChatWorkspace {...p} libraryAttachments={null} />);
+    expect(screen.getByRole("button", { name: "移除 资料.txt" })).toBeInTheDocument();
+    p.view.rerender(<ChatWorkspace {...p} libraryAttachments={null} currentConversationId={2} />);
+    p.view.rerender(<ChatWorkspace {...p} libraryAttachments={null} currentConversationId={1} />);
+    expect(screen.queryByRole("button", { name: "移除 资料.txt" })).not.toBeInTheDocument();
+  });
 
   it("offers model settings when service is unavailable", () => {
     const props = renderChat([], { modelUnavailable: "模型连接失败" });

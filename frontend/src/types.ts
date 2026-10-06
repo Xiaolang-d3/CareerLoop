@@ -25,7 +25,11 @@ export type LibraryBundle = {
     evidence?: Array<{ excerpt?: string; source_title?: string }>;
   }>;
   sources: LibrarySource[];
+  folders?: LibraryFolder[];
 };
+
+export type LibraryFolder = { id: number; name: string; created_at?: string };
+export type LibraryOrganization = { folder_id?: number | null; favorite?: boolean; trashed?: boolean; opened?: boolean };
 
 export type LibrarySource = {
   id: number;
@@ -41,6 +45,11 @@ export type LibrarySource = {
   file_available: boolean;
   created_at: string;
   updated_at: string;
+  folder_id?: number | null;
+  favorite?: boolean;
+  trashed_at?: string | null;
+  last_opened_at?: string | null;
+  size_bytes?: number;
 };
 
 export type LibrarySourceDetail = LibrarySource & {

@@ -107,6 +107,8 @@ export type ChatWorkspaceProps = {
   hiddenMessageCount: number;
   chatBusy: boolean;
   currentConversationId: number | null;
+  libraryAttachments?: { conversationId: number; attachments: ChatAttachment[] } | null;
+  onLibraryAttachmentsConsumed?: () => void;
   conversations: Conversation[];
   conversationBusy: boolean;
   waitingForUser: boolean;

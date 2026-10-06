@@ -77,7 +77,8 @@ def test_v23_upgrade_does_not_reimport_deleted_legacy_source(tmp_path):
     delete_source(list_sources(path)[0]["id"], path)
     # v23 already owns its independent library; v24 only generalizes fields.
     with connect(path) as conn:
-        conn.execute("UPDATE schema_migrations SET version = 23 WHERE version = 24")
+        conn.execute("DELETE FROM schema_migrations WHERE version > 23")
+        conn.execute("INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (23, 'independent_library')")
         conn.execute("ALTER TABLE agent_settings RENAME COLUMN library_memory_enabled TO profile_memory_enabled")
     init_db(path)
     assert list_sources(path) == []

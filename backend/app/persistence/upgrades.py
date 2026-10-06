@@ -46,9 +46,10 @@ def initialize_workspace(db_path: str | Path | None = None) -> None:
         if version > DB_SCHEMA_VERSION:
             raise ValueError("数据库来自更新版本，请升级应用后打开")
         if tables:
-            if not 1 <= version <= 23:
+            if not 1 <= version <= 24:
                 raise ValueError("未知数据库格式，未修改原文件")
-            _backup(path)
+            if version < 24:
+                _backup(path)
             if version < 22:
                 from ..compatibility.schema_v22 import init_db as upgrade_to_v22
                 upgrade_to_v22(path)

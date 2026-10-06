@@ -7,6 +7,7 @@ from typing import Any
 from .repository import get_metadata
 from .knowledge import list_knowledge
 from .sources import enabled_source_details, list_sources
+from .organization import list_folders
 from ..agent.settings import get_agent_settings
 from ..privacy import scan_and_redact
 
@@ -18,6 +19,7 @@ def get_library(db_path: str | Path | None = None) -> dict[str, Any]:
         "facts": [fact for fact in list_knowledge(db_path=db_path) if fact["status"] in {"pending", "confirmed"}
                   and fact["category"] not in {"career_goal", "career_strategy", "job_preference"}],
         "sources": list_sources(db_path),
+        "folders": list_folders(db_path),
     }
 
 

@@ -512,6 +512,13 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     setWebSearchMode("auto");
   }, [props.currentConversationId]);
 
+  useEffect(() => {
+    const imported = props.libraryAttachments;
+    if (!imported || imported.conversationId !== props.currentConversationId) return;
+    setPendingAttachments(current => [...current, ...imported.attachments.filter(item => !current.some(existing => existing.id === item.id))]);
+    props.onLibraryAttachmentsConsumed?.();
+  }, [props.currentConversationId, props.libraryAttachments, props.onLibraryAttachmentsConsumed]);
+
   useEffect(() => () => {
     Object.values(previewUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
   }, []);
