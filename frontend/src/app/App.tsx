@@ -127,6 +127,7 @@ export function App({
   const { libraryEditor, librarySources, libraryFolders, organizeLibrarySource, createLibraryFolder, loadLibraryOriginal, searchLibrarySources, confirmedKnowledgeCount, sourceCount, pendingKnowledge, libraryLoaded, libraryBusy, sourceImportBusy, enhancedDocumentParse, setLibraryEditor, setEnhancedDocumentParse, refreshLibrary, saveLibraryMetadata, importLibraryFiles, createPastedSource, updateLibrarySource, downloadLibrarySource, deleteLibrarySource } = useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, setNoticeMessage });
   const [libraryAttachments, setLibraryAttachments] = useState<{ conversationId: number; attachments: ChatAttachment[] } | null>(null);
   const [homeComposerDraft, setHomeComposerDraft] = useState<ChatComposerDraft | null>(null);
+  const composerDrafts = useMemo(() => new Map<number, string>(), [userEmail]);
   const [homeTheme, setHomeTheme] = useState<"light" | "dark">("light");
   const homeAnalysisBusyRef = useRef(false);
   const homeAnalysisControllerRef = useRef<AbortController | null>(null);
@@ -876,6 +877,7 @@ export function App({
             libraryAttachments={libraryAttachments}
             onLibraryAttachmentsConsumed={() => setLibraryAttachments(null)}
             composerDraft={homeComposerDraft}
+            composerDrafts={composerDrafts}
             onComposerDraftConsumed={() => setHomeComposerDraft(null)}
             conversations={conversations}
             conversationBusy={conversationBusy}

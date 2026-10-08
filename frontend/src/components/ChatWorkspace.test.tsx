@@ -116,6 +116,61 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
 }
 
 describe("ChatWorkspace", () => {
+  it("restores each conversation's text draft and keeps new conversations empty", () => {
+    const { view, ...props } = renderChat();
+    const input = screen.getByRole("textbox", { name: "输入消息" });
+    fireEvent.change(input, { target: { value: "项目一的未发送草稿" } });
+    view.rerender(<ChatWorkspace {...props} currentConversationId={2} />);
+    expect(input).toHaveValue("");
+    fireEvent.change(input, { target: { value: "项目二的未发送草稿" } });
+    view.rerender(<ChatWorkspace {...props} currentConversationId={1} />);
+    expect(input).toHaveValue("项目一的未发送草稿");
+    view.rerender(<ChatWorkspace {...props} currentConversationId={2} />);
+    expect(input).toHaveValue("项目二的未发送草稿");
+    expect(props.onSend).not.toHaveBeenCalled();
+  });
+
+  it("keeps a session draft across workspace unmounts without browser storage", () => {
+    const { view, ...props } = renderChat();
+    const drafts = new Map<number, string>();
+    view.rerender(<ChatWorkspace {...props} composerDrafts={drafts} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "输入消息" }), { target: { value: "离开工作区再回来" } });
+    view.unmount();
+    render(<ChatWorkspace {...props} composerDrafts={drafts} />);
+    expect(screen.getByRole("textbox", { name: "输入消息" })).toHaveValue("离开工作区再回来");
+  });
+
+  it("grows and shrinks the editor, scrolls tall content, and preserves long code input", () => {
+    renderChat();
+    const input = screen.getByRole("textbox", { name: "输入消息" });
+    const text = "const value = 123;\n".repeat(100);
+    Object.defineProperty(input, "scrollHeight", { configurable: true, value: 400 });
+    fireEvent.change(input, { target: { value: text } });
+    expect(input).toHaveValue(text);
+    expect(input).toHaveAttribute("maxlength", "200000");
+    expect(Number.parseFloat((input as HTMLTextAreaElement).style.height)).toBeLessThanOrEqual(240);
+    expect(Number.parseFloat((input as HTMLTextAreaElement).style.height)).toBeGreaterThan(200);
+    expect((input as HTMLTextAreaElement).style.overflowY).toBe("auto");
+    Object.defineProperty(input, "scrollHeight", { configurable: true, value: 70 });
+    fireEvent.change(input, { target: { value: "缩短的输入" } });
+    expect(input).toHaveStyle({ height: "70px", overflowY: "hidden" });
+    expect(screen.getByText("Enter 发送 · Shift + Enter 换行")).toBeInTheDocument();
+  });
+
+  it("waits for attachment processing and does not submit an IME confirmation or Shift+Enter", () => {
+    const { view, ...props } = renderChat();
+    const input = screen.getByRole("textbox", { name: "输入消息" });
+    fireEvent.change(input, { target: { value: "中文输入确认" } });
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    expect(props.onSend).not.toHaveBeenCalled();
+    view.rerender(<ChatWorkspace {...props} attachmentBusy />);
+    expect(screen.getByRole("button", { name: /^发送$/ })).toBeDisabled();
+    fireEvent.submit(input.closest("form")!);
+    expect(props.onSend).not.toHaveBeenCalled();
+    expect(input).toHaveValue("中文输入确认");
+  });
+
   beforeEach(() => {
     mermaidMocks.initialize.mockClear();
     mermaidMocks.render.mockReset();
@@ -149,6 +204,9 @@ describe("ChatWorkspace", () => {
     p.view.rerender(<ChatWorkspace {...p} composerDraft={draft} onComposerDraftConsumed={consumed} />);
     expect(input).toHaveValue("未发送的原问题");
     expect(screen.queryByLabelText("资讯分析草稿")).not.toBeInTheDocument();
+    p.view.rerender(<ChatWorkspace {...p} currentConversationId={2} />);
+    expect(input).toHaveValue("");
+    fireEvent.change(input, { target: { value: "未发送的原问题" } });
     p.view.rerender(<ChatWorkspace {...p} currentConversationId={2} composerDraft={draft} onComposerDraftConsumed={consumed} />);
     expect(input).toHaveValue("未发送的原问题");
     expect(consumed).not.toHaveBeenCalled();

@@ -2,15 +2,16 @@ import { textFromAppendMessage, WebSource, webSourcesFromAgent, ResearchPanelAct
 
 import type { AgentRunResult, ChatMessage, ChatAttachment, WebSearchMode, ChatClarificationOption, ChatClarification, ChatWorkspaceProps } from "../features/chat/types";
 
-import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from "react";
 
 import { ConversationHistoryPanel } from "./ConversationHistoryPanel";
 
 import "./ChatWorkspace.css";
+import "./ChatComposer.css";
 
 import { AssistantRuntimeProvider, ComposerPrimitive, ThreadPrimitive, type ThreadMessageLike, useExternalStoreRuntime } from "@assistant-ui/react";
 
-import { useAui } from "@assistant-ui/store";
+import { useAui, useAuiState } from "@assistant-ui/store";
 
 import { ArrowUpRight, FileText, History, ImagePlus, LoaderCircle, PanelRight, Pencil, Plus, RefreshCw, Search, Send, Square, TriangleAlert, X } from "lucide-react";
 
@@ -59,6 +60,42 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const researchToggleRef = useRef<HTMLButtonElement>(null);
   const aui = useAui();
+  const composerText = useAuiState((state) => state.composer.text);
+  const localDrafts = useRef(new Map<number, string>());
+  const drafts = props.composerDrafts ?? localDrafts.current;
+  useLayoutEffect(() => {
+    const id = props.currentConversationId;
+    aui.composer().setText(id ? drafts.get(id) ?? "" : "");
+    return () => {
+      if (!id) return;
+      const text = aui.composer().getState().text;
+      if (text) drafts.set(id, text);
+      else drafts.delete(id);
+    };
+  }, [aui, drafts, props.currentConversationId]);
+
+  useLayoutEffect(() => {
+    const input = props.chatInputRef.current;
+    if (!input) return;
+    const resize = () => {
+      const style = window.getComputedStyle(input);
+      const min = Number.parseFloat(style.minHeight) || 52;
+      const max = Number.parseFloat(style.maxHeight) || Math.min(240, window.innerHeight * .3);
+      input.style.height = "0px";
+      const height = Math.max(min, input.scrollHeight);
+      input.style.height = `${Math.min(max, height)}px`;
+      input.style.overflowY = height > max ? "auto" : "hidden";
+    };
+    resize();
+    let width = input.getBoundingClientRect().width;
+    const observer = new ResizeObserver(() => {
+      const next = input.getBoundingClientRect().width;
+      if (next !== width) { width = next; resize(); }
+    });
+    observer.observe(input);
+    window.addEventListener("resize", resize);
+    return () => { observer.disconnect(); window.removeEventListener("resize", resize); };
+  }, [composerText, props.chatInputRef]);
   const appliedDraftId = useRef<string | null>(null);
   const placeholderThinking = thinkingHeaderCopy(props.latestAgent, true);
   const clarification = clarificationFromAgent(props.latestAgent);
@@ -389,14 +426,16 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
               accept=".png,.jpg,.jpeg,.webp,.pdf,.docx,.txt,.md,image/png,image/jpeg,image/webp,application/pdf"
               onChange={handleAttachmentChange}
             />
-            <ComposerPrimitive.Root className="composer-input">
+            <ComposerPrimitive.Root className="composer-input composer-input--enhanced" onSubmit={(event) => { if (props.attachmentBusy) event.preventDefault(); }}>
               <ComposerPrimitive.Input
                 ref={props.chatInputRef}
                 rows={1}
-                maxLength={1000}
+                maxLength={200_000}
                 aria-label="输入消息"
+                aria-describedby="composer-input-hint"
                 placeholder={clarification ? "回答上面的问题，或直接说下一件…" : "描述任务，或添加一份资料…"}
                 submitMode="enter"
+                unstable_insertNewlineOnTouchEnter
                 onPaste={handleComposerPaste}
               />
               <div className="composer-bottom-row">
@@ -437,12 +476,13 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                     <Square size={14} fill="currentColor" /><span>停止</span>
                   </ComposerPrimitive.Cancel>
                 ) : (
-                  <ComposerPrimitive.Send className="send-button" aria-label="发送">
+                  <ComposerPrimitive.Send className="send-button" aria-label="发送" disabled={props.attachmentBusy} title={props.attachmentBusy ? "资料处理完成后即可发送" : "发送消息"}>
                     <Send size={16} /><span>发送</span>
                   </ComposerPrimitive.Send>
                 )}
               </div>
             </ComposerPrimitive.Root>
+            <div className="composer-input-hint" id="composer-input-hint"><span className="composer-keyboard-hint">Enter 发送 · Shift + Enter 换行</span><span className="composer-touch-hint">支持多行输入，点击按钮发送</span>{composerText.length >= 180_000 && <span role="status">{composerText.length.toLocaleString()} / 200,000 字</span>}</div>
             {props.uploadingPreview ? (
               <div className="composer-attachments" aria-label="正在处理的附件">
                 <article className="composer-image-attachment uploading">

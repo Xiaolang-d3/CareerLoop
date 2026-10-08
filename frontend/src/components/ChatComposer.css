@@ -1,0 +1,37 @@
+/* Keep the editor and controls in separate rows in every conversation state. */
+.chat-workspace .chat-composer .composer-input.composer-input--enhanced {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 108px !important;
+  padding: 12px !important;
+}
+.chat-workspace .chat-composer .composer-input.composer-input--enhanced textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 52px !important;
+  max-height: min(240px, 30dvh);
+  padding: 6px 4px !important;
+  resize: none;
+  line-height: 1.6;
+  scrollbar-gutter: stable;
+}
+.chat-workspace .composer-input.composer-input--enhanced .composer-bottom-row {
+  width: 100%;
+  margin-top: 4px;
+  flex: none;
+}
+.chat-workspace .composer-input.composer-input--enhanced .composer-shortcuts { flex-wrap: wrap; min-width: 0; }
+.chat-workspace .composer-input.composer-input--enhanced .send-button { position: static; flex: none; transform: none; }
+.chat-workspace .composer-input.composer-input--enhanced .send-button:hover { transform: none; }
+.chat-workspace .composer-input.composer-input--enhanced .send-button:disabled { opacity: .45; box-shadow: none; cursor: not-allowed; }
+.composer-input-hint { display: flex; justify-content: space-between; gap: 8px; padding: 6px 4px 0; color: #817b92; font-size: 11px; line-height: 16px; }
+.composer-touch-hint { display: none; }
+@media (pointer: coarse) {
+  .composer-keyboard-hint { display: none; }
+  .composer-touch-hint { display: inline; }
+}
+@media (max-width: 600px) {
+  .chat-workspace .chat-composer .composer-input.composer-input--enhanced { padding: 8px !important; }
+  .chat-workspace .chat-composer .composer-input.composer-input--enhanced textarea { font-size: 16px !important; }
+}

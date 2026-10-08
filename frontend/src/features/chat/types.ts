@@ -116,6 +116,7 @@ export type ChatWorkspaceProps = {
   libraryAttachments?: { conversationId: number; attachments: ChatAttachment[] } | null;
   onLibraryAttachmentsConsumed?: () => void;
   composerDraft?: ChatComposerDraft | null;
+  composerDrafts?: Map<number, string>;
   onComposerDraftConsumed?: () => void;
   conversations: Conversation[];
   conversationBusy: boolean;
