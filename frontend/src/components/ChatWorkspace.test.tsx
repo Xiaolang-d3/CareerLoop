@@ -116,6 +116,24 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
 }
 
 describe("ChatWorkspace", () => {
+  it("copies complete long code and expands its preview", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const code = Array.from({ length: 30 }, (_, i) => `print(${i})`).join("\n");
+    renderChat([assistantMessage(["```python", code, "```"].join("\n"))]);
+    expect(screen.getByText("python")).toBeInTheDocument();
+    const expand = screen.getByRole("button", { name: /展开完整代码/ });
+    expect(expand).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(expand);
+    expect(screen.getByRole("button", { name: "收起代码" })).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(screen.getByRole("button", { name: "复制" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(`${code}\n`));
+    expect(screen.getByRole("button", { name: "已复制" })).toBeInTheDocument();
+    writeText.mockRejectedValueOnce(new Error("clipboard denied"));
+    fireEvent.click(screen.getByRole("button", { name: "已复制" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "复制失败，请重试" })).toBeInTheDocument());
+  });
+
   it("restores each conversation's text draft and keeps new conversations empty", () => {
     const { view, ...props } = renderChat();
     const input = screen.getByRole("textbox", { name: "输入消息" });
@@ -760,7 +778,7 @@ describe("ChatWorkspace", () => {
       }
     ], { chatBusy: true });
 
-    expect(screen.getByText("正在整理要点")).toBeInTheDocument();
+    expect(screen.getAllByText("正在整理要点").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "正在整理要点" })).not.toBeInTheDocument();
     expect(screen.queryByText(/已识别为/)).not.toBeInTheDocument();
     expect(document.querySelector(".thinking-process-scroll")).not.toBeInTheDocument();
@@ -884,7 +902,7 @@ describe("ChatWorkspace", () => {
   it("shows a specific thinking placeholder while waiting for the first assistant token", () => {
     renderChat([message], { chatBusy: true });
 
-    expect(screen.getByText("正在整理要点")).toBeInTheDocument();
+    expect(screen.getAllByText("正在整理要点").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "正在整理要点" })).not.toBeInTheDocument();
     expect(screen.queryByText("正在思考")).not.toBeInTheDocument();
   });

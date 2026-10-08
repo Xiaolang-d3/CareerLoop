@@ -618,12 +618,6 @@ export function App({
     });
   }, [currentConversationId]);
 
-  useEffect(() => {
-    if (chatMessages.length > 0 || chatBusy) {
-      chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-    }
-  }, [chatMessages, chatBusy]);
-
   const routePageMeta = appRoute.section === "settings"
     ? {
       overview: pageMeta.settings,

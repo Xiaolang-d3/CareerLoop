@@ -218,17 +218,34 @@ function MarkdownPreRenderer({
   ...props
 }: ComponentPropsWithoutRef<"pre"> & ExtraProps) {
   const renderedChildren = Children.toArray(children);
-  const child = renderedChildren.length === 1 && isValidElement<{ className?: string }>(renderedChildren[0])
+  const child = renderedChildren.length === 1 && isValidElement<{ className?: string; children?: ReactNode }>(renderedChildren[0])
     ? renderedChildren[0]
     : null;
   const containsMermaid = child?.props.className?.split(/\s+/).includes("language-mermaid");
-  return containsMermaid ? children : <pre {...props}>{children}</pre>;
+  const source = childrenToText(child?.props.children ?? children);
+  const language = child?.props.className?.match(/language-([\w+-]+)/)?.[1] ?? "代码";
+  const [expanded, setExpanded] = useState(false);
+  const [copyState, setCopyState] = useState("复制");
+  useEffect(() => { setCopyState("复制"); }, [source]);
+  const { streaming } = useContext(MarkdownRenderContext);
+  const long = source.trimEnd().split("\n").length > 24;
+  async function copyCode() {
+    try { await navigator.clipboard.writeText(source); setCopyState("已复制"); }
+    catch { setCopyState("复制失败，请重试"); }
+  }
+  return containsMermaid ? children : <div className="chat-code-block">
+    <div className="chat-code-toolbar"><span>{language}</span><button type="button" onClick={() => void copyCode()}>{copyState}</button></div>
+    <pre {...props} className={long && !expanded && !streaming ? "is-collapsed" : undefined}>{children}</pre>
+    {long && !streaming ? <button className="chat-code-expand" type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "收起代码" : `展开完整代码（${source.trimEnd().split("\n").length} 行）`}</button> : null}
+    <span className="sr-only" role="status">{copyState === "复制" ? "" : copyState}</span>
+  </div>;
 }
 
 const MARKDOWN_COMPONENTS: Components = {
   a: MarkdownLinkRenderer,
   code: MarkdownCodeRenderer,
   pre: MarkdownPreRenderer,
+  table: ({ node: _node, ...props }) => <div className="chat-table-scroll" role="region" aria-label="表格，支持横向滚动" tabIndex={0}><table {...props} /></div>,
 };
 
 function MarkdownContent({

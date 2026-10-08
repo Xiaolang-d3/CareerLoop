@@ -1,3 +1,5 @@
+import { useConversationScroll } from "../features/chat/useConversationScroll";
+import { RunStatus } from "../features/chat/RunStatus";
 import { textFromAppendMessage, WebSource, webSourcesFromAgent, ResearchPanelActionsContext, EditMessageComposer, thinkingHeaderCopy, ComposerClarification, StarterPromptList, ChatContextChips, ResearchPanel, ChatTurn } from "../features/chat/MessagePresentation";
 
 import type { AgentRunResult, ChatMessage, ChatAttachment, WebSearchMode, ChatClarificationOption, ChatClarification, ChatWorkspaceProps } from "../features/chat/types";
@@ -98,6 +100,9 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   }, [composerText, props.chatInputRef]);
   const appliedDraftId = useRef<string | null>(null);
   const placeholderThinking = thinkingHeaderCopy(props.latestAgent, true);
+  const generatingReply = props.messages.some((message) => message.id < 0 && message.role === "assistant" && message.content.trim())
+    && !props.latestAgent?.events.some((event) => event.status === "running" && event.tool_name !== "agent_thinking");
+  const scrolling = useConversationScroll(props.currentConversationId, props.messages);
   const clarification = clarificationFromAgent(props.latestAgent);
   const [isDraggingAttachment, setIsDraggingAttachment] = useState(false);
   const [expandedPreview, setExpandedPreview] = useState<{ filename: string; url: string } | null>(null);
@@ -305,7 +310,8 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             </button>
           </div>
         </header>
-        <ThreadPrimitive.Viewport className="chat-thread" role="log" aria-live="polite" aria-relevant="additions">
+        <ThreadPrimitive.Viewport ref={scrolling.viewportRef} onScroll={scrolling.onScroll} autoScroll={false} scrollToBottomOnInitialize={false} scrollToBottomOnThreadSwitch={false} scrollToBottomOnRunStart={false} className="chat-thread" role="log" aria-live="polite" aria-relevant="additions">
+          <div ref={scrolling.contentRef} className="chat-thread-content">
           {props.messages.length === 0 && props.density === "dock" ? (
             <div className="chat-welcome"><span className="assistant-welcome-mark" aria-hidden="true">✦</span><h2>有什么可以帮你？</h2><p>提问、整理资料，或一起完成一段创作。</p></div>
           ) : null}
@@ -323,26 +329,13 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             </ThreadPrimitive.Messages>
           )}
 
-          {props.chatBusy && !props.messages.some((message) => message.id < 0 && message.role === "assistant") ? (
-            <article className="message assistant is-loading">
-              <div className="message-content thinking-state">
-                <div className="thinking-indicator">
-                  <LoaderCircle size={14} />
-                  <span className="thinking-indicator-copy">
-                    <strong><span className="thinking-process-title">{placeholderThinking.title}</span></strong>
-                    {placeholderThinking.currentTask ? (
-                      <small className="thinking-process-current" title={placeholderThinking.currentTask}>{placeholderThinking.currentTask}</small>
-                    ) : null}
-                  </span>
-                  <span className="thinking-dots"><i /><i /><i /></span>
-                </div>
-              </div>
-            </article>
-          ) : null}
           <div ref={props.chatEndRef} />
+          </div>
         </ThreadPrimitive.Viewport>
 
         <div className="chat-composer">
+          {scrolling.away ? <button type="button" className="chat-jump-latest" onClick={scrolling.jumpToLatest}>{scrolling.unread ? "有新内容 · 回到最新 ↓" : "回到最新 ↓"}</button> : null}
+          {props.chatBusy ? <RunStatus key={props.currentConversationId} title={generatingReply ? "正在生成回复" : placeholderThinking.title} task={placeholderThinking.currentTask} /> : null}
           {props.messages.length === 0 && props.density !== "dock" ? (
             <div className="chat-welcome">
               <h2>你想完成什么？</h2>
