@@ -29,6 +29,11 @@ async function mockCurrentProduct(page: Page) {
     if (path === "/system/database-status") {
       return route.fulfill({ json: { status: "ready", schema_version: 25, required_schema_version: 25 } });
     }
+    if (path === "/home/feed") return route.fulfill({ json: {
+      news: [], repositories: { day: [], week: [] }, updates: [], practices: [], sources: [],
+      preferences: { topics: ["AI", "Agent", "MCP"], repositories: [] }, item_states: {}, bookmarks: [],
+      refreshing: false, last_synced_at: null
+    } });
     if (path === "/library") return route.fulfill({ json: {
       profile: { name: "读者", privacy_mode: "redacted", knowledge_revision: 1 },
       facts: [{ id: 1, category: "knowledge", statement: "每周整理一次阅读笔记", status: "pending" }],
@@ -141,8 +146,10 @@ test("home and library use current sources and stay usable on narrow screens", a
   for (const width of [375, 960, 1280, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto("/#/dashboard");
-    await expect(page.getByRole("heading", { name: /读者/ })).toBeVisible();
-    await expect(page.getByText("读书笔记", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /测试用户/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "AI / Agent 动态", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "GitHub 热榜", exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     await page.goto("/#/library");
     await expect(page.getByRole("table", { name: "文件列表" })).toBeVisible();
     await expect(page.getByRole("button", { name: "操作 读书笔记" })).toBeVisible();

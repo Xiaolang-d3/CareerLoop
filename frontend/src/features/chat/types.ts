@@ -98,6 +98,12 @@ export type ChatSessionContext = {
   analysisLabel?: string | null;
 };
 
+export type ChatComposerDraft = {
+  id: string;
+  conversationId: number;
+  content: string;
+};
+
 export type ChatWorkspaceProps = {
   conversationTitle?: string;
   modelChecking?: boolean;
@@ -109,6 +115,8 @@ export type ChatWorkspaceProps = {
   currentConversationId: number | null;
   libraryAttachments?: { conversationId: number; attachments: ChatAttachment[] } | null;
   onLibraryAttachmentsConsumed?: () => void;
+  composerDraft?: ChatComposerDraft | null;
+  onComposerDraftConsumed?: () => void;
   conversations: Conversation[];
   conversationBusy: boolean;
   waitingForUser: boolean;

@@ -2,7 +2,7 @@ import { createRef } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatWorkspace } from "./ChatWorkspace";
-import type { AgentRunResult, ChatMessage, ChatRetryDraft, ChatAttachment } from "../features/chat/types";
+import type { AgentRunResult, ChatMessage, ChatRetryDraft, ChatAttachment, ChatComposerDraft } from "../features/chat/types";
 
 const mermaidMocks = vi.hoisted(() => ({
   initialize: vi.fn(),
@@ -65,10 +65,14 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
   modelUnavailable?: string;
   libraryAttachments?: { conversationId: number; attachments: ChatAttachment[] };
   onLibraryAttachmentsConsumed?: () => void;
+  composerDraft?: ChatComposerDraft;
+  onComposerDraftConsumed?: () => void;
 } = {}) {
   const props = {
     libraryAttachments: extras.libraryAttachments,
     onLibraryAttachmentsConsumed: extras.onLibraryAttachmentsConsumed,
+    composerDraft: extras.composerDraft,
+    onComposerDraftConsumed: extras.onComposerDraftConsumed,
     density: extras.density,
     modelChecking: extras.modelChecking,
     modelUnavailable: extras.modelUnavailable,
@@ -121,6 +125,38 @@ describe("ChatWorkspace", () => {
   });
 
   afterEach(cleanup);
+
+  it("imports a matching home analysis draft once without sending it", async () => {
+    const consumed = vi.fn();
+    const draft = { id: "home-1", conversationId: 1, content: "请分析这条资讯，来源：https://example.com/news" };
+    const p = renderChat([], { composerDraft: draft, onComposerDraftConsumed: consumed });
+    const input = screen.getByRole("textbox", { name: "输入消息" });
+    await waitFor(() => expect(input).toHaveValue(draft.content));
+    expect(consumed).toHaveBeenCalledOnce();
+    expect(p.onSend).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "我编辑后的问题" } });
+    p.view.rerender(<ChatWorkspace {...p} composerDraft={draft} />);
+    expect(input).toHaveValue("我编辑后的问题");
+    expect(consumed).toHaveBeenCalledOnce();
+  });
+
+  it("preserves existing text until the user chooses to import a draft", async () => {
+    const p = renderChat([]);
+    const input = screen.getByRole("textbox", { name: "输入消息" });
+    fireEvent.change(input, { target: { value: "未发送的原问题" } });
+    const consumed = vi.fn();
+    const draft = { id: "home-2", conversationId: 2, content: "资讯分析草稿" };
+    p.view.rerender(<ChatWorkspace {...p} composerDraft={draft} onComposerDraftConsumed={consumed} />);
+    expect(input).toHaveValue("未发送的原问题");
+    expect(screen.queryByLabelText("资讯分析草稿")).not.toBeInTheDocument();
+    p.view.rerender(<ChatWorkspace {...p} currentConversationId={2} composerDraft={draft} onComposerDraftConsumed={consumed} />);
+    expect(input).toHaveValue("未发送的原问题");
+    expect(consumed).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "替换为资讯草稿" }));
+    await waitFor(() => expect(input).toHaveValue("资讯分析草稿"));
+    expect(consumed).toHaveBeenCalledOnce();
+    expect(p.onSend).not.toHaveBeenCalled();
+  });
 
   it("consumes library attachments once without clearing the composer or requeueing on conversation switches", async () => {
     const consumed = vi.fn();

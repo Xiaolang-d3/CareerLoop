@@ -59,6 +59,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const researchToggleRef = useRef<HTMLButtonElement>(null);
   const aui = useAui();
+  const appliedDraftId = useRef<string | null>(null);
   const placeholderThinking = thinkingHeaderCopy(props.latestAgent, true);
   const clarification = clarificationFromAgent(props.latestAgent);
   const [isDraggingAttachment, setIsDraggingAttachment] = useState(false);
@@ -106,6 +107,27 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
       input?.setSelectionRange(cursor, cursor);
     });
   }
+
+  const incomingDraft = props.composerDraft?.conversationId === props.currentConversationId
+    ? props.composerDraft
+    : null;
+
+  function importIncomingDraft() {
+    if (!incomingDraft || props.chatBusy) return;
+    fillComposer(incomingDraft.content);
+    appliedDraftId.current = incomingDraft.id;
+    props.onComposerDraftConsumed?.();
+  }
+
+  useEffect(() => {
+    if (!incomingDraft || props.chatBusy || appliedDraftId.current === incomingDraft.id) return;
+    // Existing composer text remains editable; importing over it is an explicit action.
+    if (aui.composer().getState().text.trim()) return;
+    aui.composer().setText(incomingDraft.content);
+    appliedDraftId.current = incomingDraft.id;
+    props.onComposerDraftConsumed?.();
+    window.requestAnimationFrame(() => props.chatInputRef.current?.focus());
+  }, [aui, incomingDraft, props.chatBusy, props.chatInputRef, props.onComposerDraftConsumed]);
 
   useEffect(() => {
     setExpandedPreview(null);
@@ -341,6 +363,15 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                 }
                 void props.onSend(draft.content, draft.attachmentIds, draft.visionAttachmentIds, draft.webSearch, draft.webSearchMode);
               }}><RefreshCw size={12} />{props.retryDraft.reason === "interrupted" ? "继续执行" : "重试"}</button>
+            </section>
+          ) : null}
+
+          {incomingDraft && appliedDraftId.current !== incomingDraft.id ? (
+            <section className="chat-retry-prompt" aria-label="资讯分析草稿">
+              <FileText size={14} />
+              <span>资讯分析草稿已准备，当前输入已保留。</span>
+              <button type="button" disabled={props.chatBusy} onClick={importIncomingDraft}>替换为资讯草稿</button>
+              <button type="button" onClick={props.onComposerDraftConsumed}>保留当前输入</button>
             </section>
           ) : null}
 

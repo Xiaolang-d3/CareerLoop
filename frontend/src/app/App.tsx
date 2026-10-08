@@ -10,7 +10,9 @@ import { AppSidebar, type ProductNavKey } from "../components/AppSidebar";
 import { AppIdentityMenu } from "../components/AppIdentityMenu";
 import { AppTopBar } from "../components/AppTopBar";
 import { ConversationDialog } from "../components/ConversationDialog";
-import type { AttachmentConfig, ChatAttachment } from "../features/chat/types";
+import type { AttachmentConfig, ChatAttachment, ChatComposerDraft } from "../features/chat/types";
+import type { HomeReadableItem } from "../features/home/types";
+import { createHomeAnalysisConversation, homeAnalysisDraft } from "../features/home/analysis-draft";
 import { defaultAgentSettings, pageMeta, topbarSectionForPage } from "../constants";
 import { createPagePrefetcher } from "../page-prefetch";
 import { createRouteDataCache, requiredDataForRoute, type RouteDataKey } from "../route-data";
@@ -124,6 +126,16 @@ export function App({
   const { conversations, setConversations, currentConversationId, setCurrentConversationId, conversationBusy, setConversationBusy, conversationDialog, setConversationDialog, refreshConversations, createNewConversation, archiveConversation, renameConversation, removeConversation } = useConversations({ fetchJson, setActiveView, setErrorMessage, setNoticeMessage });
   const { libraryEditor, librarySources, libraryFolders, organizeLibrarySource, createLibraryFolder, loadLibraryOriginal, searchLibrarySources, confirmedKnowledgeCount, sourceCount, pendingKnowledge, libraryLoaded, libraryBusy, sourceImportBusy, enhancedDocumentParse, setLibraryEditor, setEnhancedDocumentParse, refreshLibrary, saveLibraryMetadata, importLibraryFiles, createPastedSource, updateLibrarySource, downloadLibrarySource, deleteLibrarySource } = useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, setNoticeMessage });
   const [libraryAttachments, setLibraryAttachments] = useState<{ conversationId: number; attachments: ChatAttachment[] } | null>(null);
+  const [homeComposerDraft, setHomeComposerDraft] = useState<ChatComposerDraft | null>(null);
+  const [homeTheme, setHomeTheme] = useState<"light" | "dark">("light");
+  const homeAnalysisBusyRef = useRef(false);
+  const homeAnalysisControllerRef = useRef<AbortController | null>(null);
+  useEffect(() => () => {
+    homeAnalysisControllerRef.current?.abort();
+    homeAnalysisControllerRef.current = null;
+    homeAnalysisBusyRef.current = false;
+    setConversationBusy(false);
+  }, [fetchJson, userEmail, setConversationBusy]);
   const { chatMessages, setChatMessages, chatBusy, setChatBusy, modelUnavailable, setModelUnavailable, retryChatDraft, setRetryChatDraft, chatAgentRef, taskCancelBusy, setTaskCancelBusy, chatAttachmentBusy, setChatAttachmentBusy, refreshChat, uploadChatAttachment, removeChatAttachment, sendChatMessage, stopChatGeneration, rewindChatToUserMessage, editChatMessage, regenerateChatMessage, cancelCurrentTask } = useChatRun({ apiBase, accessToken, fetchJson, currentConversationId, currentConversationIdRef, setErrorMessage, setNoticeMessage, refreshConversations, onLibraryChanged: refreshLibrary });
   const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
   const [attachmentConfig, setAttachmentConfig] = useState<AttachmentConfig | null>(null);
@@ -662,8 +674,38 @@ export function App({
     setNoticeMessage(`${result.attachments.length} 个文件已加入新对话，输入问题后发送`);
   }
 
+  async function analyzeHomeItem(item: HomeReadableItem) {
+    if (homeAnalysisBusyRef.current || conversationBusy || chatBusy) {
+      throw new Error("请等待当前对话操作完成后再创建资讯分析");
+    }
+    homeAnalysisBusyRef.current = true;
+    const controller = new AbortController();
+    homeAnalysisControllerRef.current = controller;
+    setConversationBusy(true);
+    try {
+      const created = await createHomeAnalysisConversation(fetchJson, item, controller.signal);
+      if (controller.signal.aborted || homeAnalysisControllerRef.current !== controller) return;
+      setConversations(current => [created, ...current.filter(conversation => conversation.id !== created.id)]);
+      setChatMessages([]);
+      setHomeComposerDraft({
+        id: `home-${created.id}`,
+        conversationId: created.id,
+        content: homeAnalysisDraft(item)
+      });
+      setCurrentConversationId(created.id);
+      navigateRoute({ section: "chat", conversationId: created.id });
+      setNoticeMessage("资讯分析草稿已准备，编辑后发送");
+    } finally {
+      if (homeAnalysisControllerRef.current === controller) {
+        homeAnalysisControllerRef.current = null;
+        homeAnalysisBusyRef.current = false;
+        setConversationBusy(false);
+      }
+    }
+  }
+
   return (
-    <main className={`app-shell has-chat-dock shell-light${activeView === "chat" ? " chat-focused" : ""}`}>
+    <main className={`app-shell has-chat-dock shell-light${activeView === "chat" ? " chat-focused" : ""}${activeView === "dashboard" ? " developer-home-shell" : ""}`} data-home-theme={activeView === "dashboard" ? homeTheme : undefined}>
       <AppSidebar
         collapsed={sidebarCollapsed}
         activeView={activeView}
@@ -675,13 +717,13 @@ export function App({
         identity={identityMenu}
       />
 
-      <section className={`content${activeView === "chat" ? " chat-content is-chat-focus" : ""}${appRoute.section === "settings" && appRoute.page === "library" ? " library-content" : ""}${topbarTitle ? "" : " is-titleless"}`}>
-        <AppTopBar
+      <section className={`content${activeView === "chat" ? " chat-content is-chat-focus" : ""}${activeView === "dashboard" ? " home-content" : ""}${appRoute.section === "settings" && appRoute.page === "library" ? " library-content" : ""}${topbarTitle ? "" : " is-titleless"}`}>
+        {activeView !== "dashboard" ? <AppTopBar
           section={topbarSection}
           title={topbarTitle}
         >
           {identityMenu}
-        </AppTopBar>
+        </AppTopBar> : null}
 
         {errorMessage ? (
           <div className="feedback-banner error-banner global-error-toast"><TriangleAlert size={16} /><span>{errorMessage}</span><button onClick={() => setErrorMessage("")} aria-label="关闭错误提示"><X size={15} /></button></div>
@@ -702,7 +744,15 @@ export function App({
 
         {activeView === "dashboard" ? (
           <Suspense fallback={<PageLoading label="正在加载首页…" />}>
-            <HomePage />
+            <HomePage
+              key={userEmail}
+              fetchJson={fetchJson}
+              accountName={user.display_name?.trim() || userEmail.split("@")[0]}
+              accountKey={userEmail}
+              onAnalyze={analyzeHomeItem}
+              onLibraryChanged={refreshLibrary}
+              onThemeChange={setHomeTheme}
+            />
           </Suspense>
         ) : null}
 
@@ -825,6 +875,8 @@ export function App({
             currentConversationId={currentConversationId}
             libraryAttachments={libraryAttachments}
             onLibraryAttachmentsConsumed={() => setLibraryAttachments(null)}
+            composerDraft={homeComposerDraft}
+            onComposerDraftConsumed={() => setHomeComposerDraft(null)}
             conversations={conversations}
             conversationBusy={conversationBusy}
             waitingForUser={waitingForUser}
