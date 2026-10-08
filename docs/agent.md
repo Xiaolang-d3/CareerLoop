@@ -111,6 +111,8 @@ backend/app/
 
 前端：`frontend/src/components/ChatWorkspace.tsx` 消费流式事件，并在同一个对话输入框提供联网开关、来源模式和回答内来源详情；`frontend/src/features/settings/AgentOperationsDashboard.tsx` 展示运营快照。
 
+输入框按内容自动增高，超过视口约 30% 或 240px 后内部滚动；桌面 Enter 发送、Shift+Enter 换行，触摸设备 Enter 换行、点击发送。单条输入上限与聊天 API 一致为 200000 字，附件处理中阻止按钮与表单发送。文字草稿按账号、对话保存在当前 App 内存，切换对话或离开工作区再返回可恢复；刷新、退出或关闭应用不持久保存。附件及联网选项仍按原规则在切换对话时重置，草稿恢复只恢复文字，不自动发送或重新上传资料。
+
 外部感知：`agent-search/` 是独立仓库，对话里的 `search_public_web` 会调用它。它不是 CareerLoop runtime 的一部分，`scripts/dev.sh` 不负责启动它。`search_public_web` 按 `category` 走 `general` / `news` / `company` 策略；用户选择“技术来源”时，工具会在 `general` 查询中优先加入官方文档、GitHub 与 Stack Overflow；“自动来源”只在识别到技术关键词时采用该策略。使用 company 搜索策略时，配套 AgentSearch 必须支持 `/search?...&mode=company`。AgentSearch 可配置 Brave / 博查作为主检索，未配置时仍走 SearXNG；中文查询会再融合国内搜索源。部署、环境变量和健康检查步骤见根目录 `README.md`。
 
 运行边界：AgentSearch 默认地址是 `http://127.0.0.1:3939`，由 `WEB_RESEARCH_ENABLED`、`AGENT_SEARCH_BASE_URL` 和可选的 `AGENT_SEARCH_TOKEN` 控制。单个上游引擎失败可以让 `/health` 显示 `degraded`，不能仅据此判定全部搜索不可用，应以实际 `/search` 结果为准。连接失败、超时或所有查询均失败时，工具必须返回“联网服务暂不可用”的可重试结论，不能把它解释为公司名称不完整、公司不存在或招聘平台没有岗位。
