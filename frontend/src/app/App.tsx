@@ -712,18 +712,20 @@ export function App({
               displayName={user.display_name}
               email={userEmail}
               libraryName={libraryEditor.name}
-              sourceTitle={librarySources.find(source => !source.trashed_at)?.title}
               libraryLoaded={libraryLoaded}
               conversations={conversations}
-              pendingFacts={pendingKnowledge}
+              pendingFactCount={pendingKnowledge.length}
               confirmedFactCount={confirmedKnowledgeCount}
               sourceCount={sourceCount}
-              enabledSourceCount={librarySources.filter((source) => source.enabled && !source.trashed_at && source.parse_status === "ready").length}
-              onOpenProfile={() => navigateRoute({ section: "settings", page: "library" })}
+              conversationBusy={conversationBusy}
 
               onOpenChat={(conversationId) => {
-                if (conversationId) setCurrentConversationId(conversationId);
-                navigateRoute({ section: "chat", conversationId });
+                if (conversationId) {
+                  setCurrentConversationId(conversationId);
+                  navigateRoute({ section: "chat", conversationId });
+                } else {
+                  void createNewConversation();
+                }
               }}
             />
           </Suspense>

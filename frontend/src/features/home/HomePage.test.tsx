@@ -6,21 +6,18 @@ import type { Conversation } from "../../types";
 import { HomePage } from "./HomePage";
 import { homeInboxItems } from "./home-metrics";
 
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
+afterEach(cleanup);
 
 function sampleConversation(overrides: Partial<Conversation> = {}): Conversation {
   return {
     id: 3,
-    title: "对照字节后端",
+    title: "整理阅读笔记",
     status: "active",
     summary: "",
     message_count: 4,
     task_status: "active",
-    updated_at: "2026-08-14T09:00:00Z",
-    last_message_at: "2026-08-14T09:10:00Z",
+    updated_at: "2026-10-07T09:00:00Z",
+    last_message_at: "2026-10-07T09:10:00Z",
     ...overrides
   };
 }
@@ -28,13 +25,11 @@ function sampleConversation(overrides: Partial<Conversation> = {}): Conversation
 function renderHome(overrides: Partial<ComponentProps<typeof HomePage>> = {}) {
   const props = {
     displayName: "小林",
-    email: "owner@example.com",
     libraryName: "张三",
     libraryLoaded: true,
-    sourceCount: 1,
-    enabledSourceCount: 1,
-    sourceTitle: "读书笔记",
-    onOpenProfile: vi.fn(),
+    sourceCount: 6,
+    confirmedFactCount: 2,
+    pendingFactCount: 1,
     onOpenChat: vi.fn(),
     ...overrides
   };
@@ -43,108 +38,106 @@ function renderHome(overrides: Partial<ComponentProps<typeof HomePage>> = {}) {
 }
 
 describe("home-metrics", () => {
-  it("keeps generic proposals and their source evidence without skill inference", () => {
-    expect(homeInboxItems([{ id: 1, category: "knowledge", statement: "每天记录问题", evidence: [{ excerpt: "原始阅读笔记", source_title: "笔记" }] }]))
-      .toEqual([expect.objectContaining({ id: 1, title: "每天记录问题", source: "原始阅读笔记", sourceLabel: "笔记" })]);
+  it("keeps generic proposals and source evidence for the library review", () => {
+    expect(
+      homeInboxItems([
+        {
+          id: 1,
+          category: "knowledge",
+          statement: "每天记录问题",
+          evidence: [{ excerpt: "原始阅读笔记", source_title: "笔记" }]
+        }
+      ])
+    ).toEqual([expect.objectContaining({ id: 1, title: "每天记录问题", source: "原始阅读笔记", sourceLabel: "笔记" })]);
   });
 });
 
 describe("HomePage", () => {
-  it("shows a greeting, quick actions, and honest knowledge overview", () => {
+  it("has one primary entry and a read-only overview instead of repeated shortcuts", () => {
     renderHome();
-
-    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(/张三/);
-    expect(screen.queryByText("当前资料方向：后端工程师 · 上海")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("快捷操作")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /添加内容/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /向我提问/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /开始创作/ })).toBeInTheDocument();
-    expect(screen.getByLabelText("我的知识概览")).toBeInTheDocument();
-    expect(screen.getByLabelText("待确认内容")).toBeInTheDocument();
-    expect(screen.getByLabelText("继续工作")).toBeInTheDocument();
-    expect(screen.queryByLabelText("今日寄语")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("今日灵感")).not.toBeInTheDocument();
-    expect(screen.queryByText("岗位推进")).not.toBeInTheDocument();
-    expect(screen.queryByText("机会中心")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("张三");
+    const overview = screen.getByLabelText("资料概览");
+    expect(overview).toHaveTextContent("文件6已确认知识2待确认1");
+    expect(within(overview).queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(screen.queryByLabelText("快捷操作")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("待确认内容")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /添加内容|向我提问|开始创作|去知识库添加/ })).not.toBeInTheDocument();
   });
 
-  it("keeps detailed skill information in the library instead of crowding the home page", () => {
-    renderHome({});
-    expect(screen.queryByLabelText("技能标签")).not.toBeInTheDocument();
-    expect(screen.queryByText("LangChain")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("我的知识概览")).toBeInTheDocument();
+  it("keeps unloaded counts distinct from a genuinely empty library", () => {
+    const { rerender } = render(<HomePage libraryLoaded={false} />);
+    expect(screen.getAllByText("—")).toHaveLength(3);
+    expect(screen.getByRole("status")).toHaveTextContent("资料尚未读取");
+    rerender(<HomePage libraryLoaded />);
+    expect(screen.getAllByText("0")).toHaveLength(3);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
-  it("uses a calm empty state when profile and jobs are not ready yet", () => {
+  it("falls back to the account name and has no duplicate action in the empty state", () => {
+    const props = renderHome({ libraryName: "" });
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("小林");
+    expect(screen.getByText("还没有对话，开始后会显示在这里。")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "开始新对话" }));
+    expect(props.onOpenChat).toHaveBeenCalledExactlyOnceWith();
+  });
+
+  it("sorts all conversations by recency and limits continuation entries to three", () => {
+    const conversations = [
+      sampleConversation({ id: 1, title: "最早", last_message_at: "2026-10-01T08:00:00Z" }),
+      sampleConversation({ id: 2, title: "次新", last_message_at: "2026-10-06T08:00:00Z", task_status: "completed" }),
+      sampleConversation({ id: 3, title: "最新", last_message_at: "2026-10-07T08:00:00Z" }),
+      sampleConversation({ id: 4, title: "第三", last_message_at: "", updated_at: "2026-10-05T08:00:00Z" })
+    ];
+    const props = renderHome({ conversations });
+    const recent = screen.getByRole("region", { name: "最近对话" });
+    expect(
+      within(recent)
+        .getAllByRole("button")
+        .map((button) => button.textContent?.slice(0, 2))
+    ).toEqual(["最新", "次新", "第三"]);
+    expect(screen.queryByText("最早")).not.toBeInTheDocument();
+    fireEvent.click(within(recent).getByRole("button", { name: /次新/ }));
+    expect(props.onOpenChat).toHaveBeenCalledWith(2);
+    expect(conversations[0].id).toBe(1);
+  });
+
+  it("disables new conversation creation while a request is pending", () => {
+    const props = renderHome({ conversationBusy: true });
+    const button = screen.getByRole("button", { name: "正在创建…" });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(props.onOpenChat).not.toHaveBeenCalled();
+  });
+
+  it("interprets backend timestamps as UTC and orders mixed timestamp formats correctly", () => {
     renderHome({
-      libraryName: "",
-      libraryLoaded: false
-    });
-    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(/小林/);
-    expect(screen.getByText("集中保存资料，基于知识提问，再把想法写成内容。")).toBeInTheDocument();
-    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2);
-    expect(screen.getAllByText("资料尚未读取").length).toBeGreaterThanOrEqual(1);
-  });
-
-  it("keeps the global top bar above the home greeting", () => {
-    const props = {
-      displayName: "小林",
-      email: "owner@example.com",
-      libraryName: "张三",
-      libraryLoaded: true,
-    sourceCount: 1,
-    enabledSourceCount: 1,
-    sourceTitle: "读书笔记",
-      onOpenProfile: vi.fn()
-    };
-    render(
-      <section className="content">
-        <AppTopBar userEmail={props.email} onOpenProfile={props.onOpenProfile} onLogout={vi.fn()} />
-        <HomePage {...props} />
-      </section>
-    );
-    const bar = document.querySelector("header.app-topbar");
-    expect(bar).toBeTruthy();
-    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(/张三/);
-    expect(screen.getByRole("heading", { level: 2 }).closest(".app-topbar")).toBeNull();
-  });
-
-  it("does not show a weekly report", () => {
-    renderHome();
-    expect(screen.queryByText("本周求职进展")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("求职周报")).not.toBeInTheDocument();
-  });
-
-  it("wires quick actions to the library and AI workspace", () => {
-    const props = renderHome();
-    fireEvent.click(screen.getByRole("button", { name: /添加内容/ }));
-    fireEvent.click(screen.getByRole("button", { name: /向我提问/ }));
-    fireEvent.click(screen.getByRole("button", { name: /开始创作/ }));
-    expect(props.onOpenProfile).toHaveBeenCalled();
-    expect(props.onOpenChat).toHaveBeenCalled();
-    expect(props.onOpenChat).toHaveBeenCalledTimes(2);
-    expect(screen.queryByRole("button", { name: /机会中心/ })).not.toBeInTheDocument();
-  });
-
-  it("sends knowledge overview cards to the library", () => {
-    const props = renderHome();
-    const snapshot = screen.getByLabelText("内容概览");
-    fireEvent.click(within(snapshot).getByRole("button", { name: /知识条目/ }));
-    fireEvent.click(within(snapshot).getByRole("button", { name: /文件/ }));
-    expect(props.onOpenProfile).toHaveBeenCalled();
-  });
-
-  it("lists recent chats and active tasks together as work to continue", () => {
-    const props = renderHome({
       conversations: [
-        sampleConversation(),
-        sampleConversation({ id: 9, title: "整理本周笔记", task_status: "active", summary: "进行中" })
+        sampleConversation({ id: 1, title: "稍早", last_message_at: "2026-10-08T02:00:00Z" }),
+        sampleConversation({ id: 2, title: "稍晚", last_message_at: "2026-10-08 03:00:00" })
       ]
     });
-    const continueWork = screen.getByLabelText("继续工作");
-    expect(continueWork).toHaveTextContent("对照字节后端");
-    expect(continueWork).toHaveTextContent("整理本周笔记");
-    fireEvent.click(within(continueWork).getByRole("button", { name: /整理本周笔记/ }));
-    expect(props.onOpenChat).toHaveBeenCalledWith(9);
+    const recent = screen.getByRole("region", { name: "最近对话" });
+    const buttons = within(recent).getAllByRole("button");
+    expect(buttons[0]).toHaveTextContent("稍晚");
+    expect(buttons[0]).toHaveTextContent(
+      new Date("2026-10-08T03:00:00Z").toLocaleString("zh-CN", {
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit"
+      })
+    );
+  });
+
+  it("keeps account controls in the existing global top bar", () => {
+    render(
+      <section className="content">
+        <AppTopBar userEmail="reader@local.test" onOpenProfile={vi.fn()} onLogout={vi.fn()} />
+        <HomePage displayName="小林" />
+      </section>
+    );
+    expect(document.querySelector("header.app-topbar")).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 2 }).closest(".app-topbar")).toBeNull();
   });
 });
