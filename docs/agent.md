@@ -115,6 +115,8 @@ backend/app/
 
 对话滚动由 `useConversationScroll` 统一管理，靠近底部时跟随输出，向上阅读时保留位置并提示新内容；加载更早消息补偿高度，切换对话定位末尾。`RunStatus` 根据现有活动摘要与流式正文显示阶段，超过 10 秒显示当前页面等待时长（不是服务端运行计时或预计完成时间），保留底部停止按钮。Markdown 代码块完整复制、超过 24 行可折叠，流式期间不折叠；Mermaid 图形继续使用专用渲染，宽表格在独立容器中滚动。
 
+引用详情打开时暂停自动跟随，关闭恢复打开前的滚动位置及触发引用焦点；来源列表标题可查看完整提示，选中来源摘要优先展示。消息复制只复制用户文本或助手结果正文，失败显示可重试反馈。编辑输入上限与新消息相同；编辑重发/重新生成继续沿用既有删除消息尾部再发送的协议，会替换本轮及后续消息，编辑界面说明资料与联网选项不会自动沿用。对话记录仅在已加载列表内搜索标题/摘要，不额外请求服务端或读取消息全文。
+
 外部感知：`agent-search/` 是独立仓库，对话里的 `search_public_web` 会调用它。它不是 CareerLoop runtime 的一部分，`scripts/dev.sh` 不负责启动它。`search_public_web` 按 `category` 走 `general` / `news` / `company` 策略；用户选择“技术来源”时，工具会在 `general` 查询中优先加入官方文档、GitHub 与 Stack Overflow；“自动来源”只在识别到技术关键词时采用该策略。使用 company 搜索策略时，配套 AgentSearch 必须支持 `/search?...&mode=company`。AgentSearch 可配置 Brave / 博查作为主检索，未配置时仍走 SearXNG；中文查询会再融合国内搜索源。部署、环境变量和健康检查步骤见根目录 `README.md`。
 
 运行边界：AgentSearch 默认地址是 `http://127.0.0.1:3939`，由 `WEB_RESEARCH_ENABLED`、`AGENT_SEARCH_BASE_URL` 和可选的 `AGENT_SEARCH_TOKEN` 控制。单个上游引擎失败可以让 `/health` 显示 `degraded`，不能仅据此判定全部搜索不可用，应以实际 `/search` 结果为准。连接失败、超时或所有查询均失败时，工具必须返回“联网服务暂不可用”的可重试结论，不能把它解释为公司名称不完整、公司不存在或招聘平台没有岗位。
