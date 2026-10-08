@@ -290,7 +290,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
               aria-label="新建对话"
               title="新建对话"
             >
-              <Plus size={16} />
+              <Plus size={16} /><span>新建</span>
             </button>
             <button
               className={`chat-session-tool chat-history-toggle${conversationListOpen ? " is-open" : ""}`}
@@ -301,7 +301,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
               aria-controls="conversation-history-drawer"
               title="对话记录"
             >
-              <History size={16} />
+              <History size={16} /><span>记录</span>
             </button>
           </div>
         </header>
@@ -426,6 +426,38 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
               accept=".png,.jpg,.jpeg,.webp,.pdf,.docx,.txt,.md,image/png,image/jpeg,image/webp,application/pdf"
               onChange={handleAttachmentChange}
             />
+            {props.uploadingPreview ? (
+              <div className="composer-attachments" aria-label="正在处理的附件">
+                <article className="composer-image-attachment uploading">
+                  <img className="composer-attachment-preview" src={props.uploadingPreview.url} alt={`${props.uploadingPreview.filename} 预览`} />
+                </article>
+              </div>
+            ) : null}
+            {props.pendingAttachments.length ? (
+              <div className="composer-attachments" aria-label="待发送附件">
+                {props.pendingAttachments.map((attachment) => (
+                  <article key={attachment.id} className={attachment.kind === "image" ? "composer-image-attachment" : "composer-file-attachment"}>
+                    {attachment.kind === "image" && props.previewUrls[attachment.id]
+                      ? <button
+                        type="button"
+                        className="composer-attachment-preview-button"
+                        onClick={() => setExpandedPreview({ filename: attachment.original_filename, url: props.previewUrls[attachment.id] })}
+                        aria-label={`查看 ${attachment.original_filename}`}
+                      ><img className="composer-attachment-preview" src={props.previewUrls[attachment.id]} alt={`${attachment.original_filename} 预览`} /></button>
+                      : <span className="composer-attachment-icon">
+                        {attachment.kind === "document" ? <FileText size={15} /> : <ImagePlus size={15} />}
+                      </span>}
+                    {attachment.kind === "document" ? <span>
+                      <strong>{attachment.original_filename}</strong>
+                      <small>随本轮消息发送</small>
+                    </span> : null}
+                    <button className="composer-attachment-remove" type="button" onClick={() => void props.onRemovePendingAttachment(attachment.id)} aria-label={`移除 ${attachment.original_filename}`}>
+                      <X size={14} />
+                    </button>
+                  </article>
+                ))}
+              </div>
+            ) : null}
             <ComposerPrimitive.Root className="composer-input composer-input--enhanced" onSubmit={(event) => { if (props.attachmentBusy) event.preventDefault(); }}>
               <ComposerPrimitive.Input
                 ref={props.chatInputRef}
@@ -483,38 +515,6 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
               </div>
             </ComposerPrimitive.Root>
             <div className="composer-input-hint" id="composer-input-hint"><span className="composer-keyboard-hint">Enter 发送 · Shift + Enter 换行</span><span className="composer-touch-hint">支持多行输入，点击按钮发送</span>{composerText.length >= 180_000 && <span role="status">{composerText.length.toLocaleString()} / 200,000 字</span>}</div>
-            {props.uploadingPreview ? (
-              <div className="composer-attachments" aria-label="正在处理的附件">
-                <article className="composer-image-attachment uploading">
-                  <img className="composer-attachment-preview" src={props.uploadingPreview.url} alt={`${props.uploadingPreview.filename} 预览`} />
-                </article>
-              </div>
-            ) : null}
-            {props.pendingAttachments.length ? (
-              <div className="composer-attachments" aria-label="待发送附件">
-                {props.pendingAttachments.map((attachment) => (
-                  <article key={attachment.id} className={attachment.kind === "image" ? "composer-image-attachment" : "composer-file-attachment"}>
-                    {attachment.kind === "image" && props.previewUrls[attachment.id]
-                      ? <button
-                        type="button"
-                        className="composer-attachment-preview-button"
-                        onClick={() => setExpandedPreview({ filename: attachment.original_filename, url: props.previewUrls[attachment.id] })}
-                        aria-label={`查看 ${attachment.original_filename}`}
-                      ><img className="composer-attachment-preview" src={props.previewUrls[attachment.id]} alt={`${attachment.original_filename} 预览`} /></button>
-                      : <span className="composer-attachment-icon">
-                        {attachment.kind === "document" ? <FileText size={15} /> : <ImagePlus size={15} />}
-                      </span>}
-                    {attachment.kind === "document" ? <span>
-                      <strong>{attachment.original_filename}</strong>
-                      <small>随本轮消息发送</small>
-                    </span> : null}
-                    <button className="composer-attachment-remove" type="button" onClick={() => void props.onRemovePendingAttachment(attachment.id)} aria-label={`移除 ${attachment.original_filename}`}>
-                      <X size={14} />
-                    </button>
-                  </article>
-                ))}
-              </div>
-            ) : null}
             {isDraggingAttachment ? <div className="composer-drop-hint" aria-live="polite">松开即可添加图片或文档</div> : null}
           </div>
           {showStarters ? (
