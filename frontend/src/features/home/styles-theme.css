@@ -1,65 +1,21 @@
-.dashboard-hero h2 {
+.home-time {
   color: var(--color-text);
   font-family: var(--font-sans);
-  font-size: 28px;
-  font-weight: 650;
-  line-height: 1.4;
+  font-size: clamp(72px, 10vw, 128px);
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -0.045em;
+  font-variant-numeric: tabular-nums;
 }
-.dashboard-hero p,
-.home-empty,
-.home-overview dt,
-.home-overview p,
-.home-recent time {
-  color: var(--color-text-muted);
-  font-size: 13px;
-  line-height: 1.6;
-}
-.home-primary-cta {
-  color: #fff;
-  background: var(--color-brand);
-  font-size: 14px;
-  font-weight: 650;
-}
-.home-primary-cta:hover {
-  background: var(--color-brand-strong);
-}
-.home-primary-cta:disabled {
-  opacity: 0.6;
-  cursor: wait;
-}
-.home-primary-cta:focus-visible,
-.home-recent button:focus-visible {
-  outline: 2px solid var(--color-brand);
-  outline-offset: 3px;
-}
-.home-overview {
-  padding: 18px 0;
-  border-top: 1px solid var(--color-border);
-  border-bottom: 1px solid var(--color-border);
-}
-.home-overview dd {
-  color: var(--color-text);
-  font-size: 15px;
-  font-weight: 650;
-}
-.home-recent h3 {
-  color: var(--color-text);
-  font-size: 15px;
-  font-weight: 650;
-}
-.home-recent strong {
-  font-size: 14px;
-  font-weight: 550;
-}
-.home-recent button > svg {
-  color: var(--color-text-muted);
-}
-.home-recent button:hover,
-.home-recent button:focus-visible {
-  background: var(--color-surface-subtle);
+.home-welcome {
+  color: var(--color-text-secondary);
+  font-family: var(--font-sans);
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1.5;
 }
 @media (max-width: 600px) {
-  .dashboard-hero h2 {
-    font-size: 24px;
+  .home-welcome {
+    font-size: 18px;
   }
 }

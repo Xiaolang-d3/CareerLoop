@@ -577,12 +577,6 @@ export function App({
     ))).catch((error: unknown) => {
       setErrorMessage(error instanceof Error ? error.message : "读取页面数据失败");
     });
-    if (appRoute.section === "dashboard") {
-      const timer = window.setTimeout(() => {
-        void routeDataCacheRef.current.load("library", loaders.library);
-      }, 0);
-      return () => window.clearTimeout(timer);
-    }
   }, [appRoute, databaseReady]);
 
   useAsyncPolling({
@@ -708,26 +702,7 @@ export function App({
 
         {activeView === "dashboard" ? (
           <Suspense fallback={<PageLoading label="正在加载首页…" />}>
-            <HomePage
-              displayName={user.display_name}
-              email={userEmail}
-              libraryName={libraryEditor.name}
-              libraryLoaded={libraryLoaded}
-              conversations={conversations}
-              pendingFactCount={pendingKnowledge.length}
-              confirmedFactCount={confirmedKnowledgeCount}
-              sourceCount={sourceCount}
-              conversationBusy={conversationBusy}
-
-              onOpenChat={(conversationId) => {
-                if (conversationId) {
-                  setCurrentConversationId(conversationId);
-                  navigateRoute({ section: "chat", conversationId });
-                } else {
-                  void createNewConversation();
-                }
-              }}
-            />
+            <HomePage />
           </Suspense>
         ) : null}
 
