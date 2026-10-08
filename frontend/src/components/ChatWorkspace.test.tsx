@@ -1,5 +1,5 @@
 import { createRef } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatWorkspace } from "./ChatWorkspace";
 import type { AgentRunResult, ChatMessage, ChatRetryDraft, ChatAttachment, ChatComposerDraft } from "../features/chat/types";
@@ -116,6 +116,43 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
 }
 
 describe("ChatWorkspace", () => {
+  it("reports message copy success and clipboard failure", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    renderChat();
+    fireEvent.click(screen.getByRole("button", { name: "复制消息" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "复制消息" })).toHaveTextContent("已复制"));
+    expect(writeText).toHaveBeenCalledWith(message.content);
+    writeText.mockRejectedValueOnce(new Error("denied"));
+    fireEvent.click(screen.getByRole("button", { name: "复制消息" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "复制消息" })).toHaveTextContent("复制失败，请重试"));
+  });
+
+  it("explains editing impact and preserves a long replacement without sending on cancel", async () => {
+    const props = renderChat([message, assistantMessage("原回答")]);
+    fireEvent.click(screen.getByRole("button", { name: "编辑消息" }));
+    const editor = await screen.findByRole("textbox", { name: "编辑消息" });
+    expect(editor).toHaveAttribute("maxlength", "200000");
+    expect(screen.getByText("将替换本条消息及后续消息，并重新生成回复")).toBeInTheDocument();
+    fireEvent.change(editor, { target: { value: "长消息".repeat(500) } });
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(props.onEdit).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "编辑消息" })).not.toBeInTheDocument());
+    expect(within(screen.getByRole("log")).getByText(message.content)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "编辑消息" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "编辑消息" }), { target: { value: "长消息".repeat(500) } });
+    fireEvent.click(screen.getByRole("button", { name: "保存并重新生成" }));
+    await waitFor(() => expect(props.onEdit).toHaveBeenCalledWith(message.id, "长消息".repeat(500)));
+  });
+
+  it("describes regeneration scope and regenerates from the matching user message", async () => {
+    const props = renderChat([message, assistantMessage("原回答")]);
+    const regenerate = screen.getByRole("button", { name: "重新生成回答" });
+    expect(regenerate).toHaveAccessibleDescription("重新生成将替换本轮及后续消息");
+    fireEvent.click(regenerate);
+    await waitFor(() => expect(props.onRegenerate).toHaveBeenCalledWith(message.id));
+  });
+
   it("copies complete long code and expands its preview", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
@@ -1025,7 +1062,7 @@ describe("ChatWorkspace", () => {
     expect(screen.queryByText(thoughtBody)).not.toBeInTheDocument();
   });
 
-  it("renders in-text source links as numbered citation previews", () => {
+  it("renders in-text source links as numbered citation previews", async () => {
     renderChat([
       message,
       {
@@ -1067,8 +1104,18 @@ describe("ChatWorkspace", () => {
     expect(citation).toHaveTextContent("腾讯科技（深圳）有限公司");
     expect(citation).toHaveTextContent("www.tianyancha.com");
 
+    const viewport = screen.getByRole("log");
+    Object.defineProperty(viewport, "scrollHeight", { configurable: true, value: 1500 });
+    Object.defineProperty(viewport, "clientHeight", { configurable: true, value: 300 });
+    viewport.scrollTop = 217;
+    fireEvent.scroll(viewport);
     fireEvent.click(citation);
     expect(screen.getByRole("complementary", { name: "研究详情" })).toHaveTextContent("腾讯科技（深圳）有限公司");
+    expect(screen.getByRole("link", { name: "打开原网页" })).toHaveAttribute("target", "_blank");
+    viewport.scrollTop = 0;
+    fireEvent.click(within(screen.getByRole("complementary", { name: "研究详情" })).getByRole("button", { name: "关闭研究详情" }));
+    await waitFor(() => expect(citation).toHaveFocus());
+    await waitFor(() => expect(viewport.scrollTop).toBe(217));
   });
 
   it("opens source evidence details inside a researched answer", () => {

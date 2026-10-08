@@ -102,12 +102,13 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   const placeholderThinking = thinkingHeaderCopy(props.latestAgent, true);
   const generatingReply = props.messages.some((message) => message.id < 0 && message.role === "assistant" && message.content.trim())
     && !props.latestAgent?.events.some((event) => event.status === "running" && event.tool_name !== "agent_thinking");
-  const scrolling = useConversationScroll(props.currentConversationId, props.messages);
   const clarification = clarificationFromAgent(props.latestAgent);
   const [isDraggingAttachment, setIsDraggingAttachment] = useState(false);
   const [expandedPreview, setExpandedPreview] = useState<{ filename: string; url: string } | null>(null);
   const [conversationListOpen, setConversationListOpen] = useState(false);
   const [researchPanelOpen, setResearchPanelOpen] = useState(false);
+  const scrolling = useConversationScroll(props.currentConversationId, props.messages, researchPanelOpen);
+  const researchReturn = useRef<{ top: number; element: HTMLElement | null } | null>(null);
   const [researchSelection, setResearchSelection] = useState<{
     agent?: AgentRunResult;
     sources: WebSource[];
@@ -127,6 +128,10 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   };
 
   function openResearchDetails(agent = defaultResearchAgent, sources = defaultResearchSources, selectedSource = 0) {
+    if (!researchPanelOpen) researchReturn.current = {
+      top: scrolling.viewportRef.current?.scrollTop ?? 0,
+      element: document.activeElement instanceof HTMLElement ? document.activeElement : null
+    };
     setConversationListOpen(false);
     setResearchSelection({ agent, sources, selectedSource });
     setResearchPanelOpen(true);
@@ -134,7 +139,12 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
 
   function closeResearchDetails(restoreFocus = true) {
     setResearchPanelOpen(false);
-    if (restoreFocus) window.requestAnimationFrame(() => researchToggleRef.current?.focus());
+    const saved = researchReturn.current;
+    window.requestAnimationFrame(() => {
+      if (researchReturn.current !== saved) return;
+      if (saved) scrolling.restorePosition(saved.top);
+      if (restoreFocus) (saved?.element?.isConnected ? saved.element : researchToggleRef.current)?.focus({ preventScroll: true });
+    });
   }
 
   function fillComposer(draft: string, enableWebSearch = false) {
@@ -176,6 +186,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
     setConversationListOpen(false);
     setResearchPanelOpen(false);
     setResearchSelection(null);
+    researchReturn.current = null;
   }, [props.currentConversationId]);
 
   useEffect(() => {
