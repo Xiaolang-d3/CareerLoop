@@ -35,3 +35,23 @@
   .chat-workspace .chat-composer .composer-input.composer-input--enhanced { padding: 8px !important; }
   .chat-workspace .chat-composer .composer-input.composer-input--enhanced textarea { font-size: 16px !important; }
 }
+
+/* A quieter input frame keeps the conversation content prominent. */
+.assistant-page .chat-workspace .chat-composer .composer-input.composer-input--enhanced {
+  border-color: var(--color-border) !important;
+  border-radius: 16px !important;
+  background: var(--color-surface) !important;
+  box-shadow: 0 4px 16px rgba(48, 38, 110, .05) !important;
+}
+.assistant-page .chat-workspace .chat-composer .composer-input.composer-input--enhanced:focus-within {
+  border-color: var(--color-brand) !important;
+  box-shadow: var(--focus-ring) !important;
+}
+.assistant-page .chat-workspace .composer-input-hint {
+  color: var(--color-text-muted);
+  padding-top: 8px;
+}
+@media (max-width: 600px) {
+  .assistant-page .chat-workspace .composer-input.composer-input--enhanced .composer-bottom-row { align-items: flex-end; }
+  .assistant-page .chat-workspace .composer-input.composer-input--enhanced .composer-shortcuts { flex: 1 1 0; }
+}
