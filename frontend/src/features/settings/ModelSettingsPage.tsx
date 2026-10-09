@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import { Activity, Cpu, Gauge, Image, Layers3, LoaderCircle, RefreshCw, Save, ScanSearch, Wrench } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { Activity, ChevronDown, Cpu, Gauge, Image, LoaderCircle, RefreshCw, Save, ScanSearch, Wrench } from "lucide-react";
 import { ActionButton } from "../../components/ui/ActionButton";
 import type { AgentSettings, ModelCapabilityFlag, ModelCapabilityReport, ModelServiceMonitor } from "../../types";
 import "./model-settings.css";
@@ -66,31 +66,6 @@ function formatLatency(value: number | null) {
 function formatTokens(value: number | null | undefined) {
   if (value == null) return "—";
   return new Intl.NumberFormat("zh-CN").format(value);
-}
-
-function modelListItems(
-  defaultName: string,
-  available: string[],
-  providerLabel: string,
-  monitor: ModelServiceMonitor | null
-) {
-  const names = [defaultName, ...available].map((name) => name.trim()).filter(Boolean);
-  return Array.from(new Set(names)).map((name) => ({
-    name,
-    providerLabel,
-    isDefault: name === defaultName.trim(),
-    availability: name !== defaultName.trim()
-      ? "仅目录可见"
-      : monitor?.model_name !== name
-        ? "未验证"
-        : monitor.status === "healthy"
-          ? "已验证"
-          : monitor.status === "degraded"
-            ? "服务波动"
-            : monitor.status === "unavailable"
-              ? "调用失败"
-              : "未验证"
-  }));
 }
 
 function resolvedProtocol(modelName: string, configured: AgentSettings["model_protocol"], baseUrl: string) {
@@ -174,116 +149,97 @@ export function ModelSettingsPage({
   onCancelEdit,
   onSave
 }: Props) {
+  const [manualModel, setManualModel] = useState(false);
   const effectiveProtocol = resolvedProtocol(settings.model_name, settings.model_protocol, settings.model_base_url);
   const effectiveProtocolLabel = protocolLabel(effectiveProtocol);
-  const providerLabel = capabilities?.protocol_label || effectiveProtocolLabel;
-  const fieldsLocked = !editing;
   const catalog = Array.from(new Set(availableModels.map((name) => name.trim()).filter(Boolean)));
-  const models = modelListItems(settings.model_name, catalog, providerLabel, monitor);
   const remainingQuota = monitor?.usage?.remaining_quota ?? null;
   const quotaAvailable = Boolean(monitor?.usage?.quota_available && remainingQuota != null);
   const usedTokens = monitor?.usage?.total_tokens ?? monitor?.summary.total_tokens ?? 0;
   const windowHours = monitor?.usage?.window_hours ?? monitor?.window_hours ?? 24;
+  function changeSettings(next: AgentSettings) {
+    if (!editing) onBeginEdit();
+    onSettingsChange(next);
+  }
+  function discoverOnBlur() {
+    if (editing && !busy && (effectiveProtocol === "ollama" || settings.api_key || settings.api_key_configured)) onDiscoverModels();
+  }
 
   return (
     <section className="model-settings-page">
       {savedSettings.secret_migration_warning ? <p className="model-settings-warning" role="alert">{savedSettings.secret_migration_warning}。旧密钥仍保留在本地数据库中，修复钥匙串后再次保存即可迁移。</p> : null}
-      <div className="model-settings-top">
-        <section className="settings-card model-settings-card persona-settings">
-          <div className="settings-card-heading model-connection-heading">
-            <span><Cpu size={18} /></span>
-            <div><h3>模型连接</h3><p>知识库问答、公开搜索和内容生成共用这套连接；API 路径以 Base URL 为准。</p></div>
-            <em className={editing ? "editing" : "locked"}>{editing ? "编辑中" : "已锁定"}</em>
+      <section className="settings-card model-settings-card model-connection-card">
+        <div className="settings-card-heading model-connection-heading">
+          <span><Cpu size={18} /></span>
+          <div><h3>连接你的模型</h3><p>填写服务地址和密钥，再选择要使用的模型。</p></div>
+        </div>
+        <label>
+          <span id="model-base-url-label">Base URL</span>
+          <input aria-labelledby="model-base-url-label" aria-describedby="model-base-url-help" type="url" autoComplete="off" spellCheck={false} value={settings.model_base_url} disabled={busy} placeholder={protocolBaseUrl(effectiveProtocol)} onChange={(event) => changeSettings({ ...settings, model_base_url: event.target.value })} onBlur={discoverOnBlur} />
+          <small id="model-base-url-help">填写服务商提供的 API 地址，包含其要求的 /v1 等路径。</small>
+        </label>
+        <label>
+          <span id="model-api-key-label">API Key</span>
+          <input aria-labelledby="model-api-key-label" aria-describedby="model-api-key-help" type="password" autoComplete="new-password" value={settings.api_key} disabled={busy} placeholder={effectiveProtocol === "ollama" ? "本地 Ollama 可留空" : settings.api_key_configured ? "已配置，留空则继续使用" : "请输入 API Key"} onChange={(event) => changeSettings({ ...settings, api_key: event.target.value })} onBlur={discoverOnBlur} />
+          <small id="model-api-key-help">{effectiveProtocol === "ollama" ? "本地 Ollama 可不填写密钥。" : settings.api_key_configured ? "已保存密钥；留空继续使用，不显示原文。" : "填写服务商提供的密钥。"}</small>
+        </label>
+        <div className="model-name-setting">
+          <div className="model-field-heading">
+            <label htmlFor="model-name-input">模型名称</label>
+            <button type="button" className="model-discovery-button" disabled={busy || discoveryBusy} onClick={() => onDiscoverModels(true)}>
+              <RefreshCw className={discoveryBusy ? "spinning" : ""} size={13} />
+              {discoveryBusy ? "读取中…" : "刷新列表"}
+            </button>
           </div>
-          <label>
-            <span>接口协议</span>
-            <select
-              value={settings.model_protocol}
-              disabled={fieldsLocked}
-              onChange={(event) => onSettingsChange({
-                ...settings,
-                model_protocol: event.target.value as AgentSettings["model_protocol"]
-              })}
-            >
-              <option value="auto">自动匹配（当前：{effectiveProtocolLabel}）</option>
-              <option value="openai">OpenAI 兼容 Chat Completions</option>
-              <option value="responses">OpenAI Responses API</option>
-              <option value="anthropic">Anthropic Messages API</option>
-              <option value="gemini">Google Gemini generateContent</option>
-              <option value="ollama">Ollama Chat API</option>
+          {catalog.length > 0 && !manualModel ? (
+            <select id="model-name-input" value={settings.model_name} disabled={busy} onChange={(event) => changeSettings({ ...settings, model_name: event.target.value })}>
+              {!settings.model_name && <option value="">选择模型</option>}
+              {Array.from(new Set([settings.model_name, ...catalog].filter(Boolean))).map((model) => <option key={model} value={model}>{model}</option>)}
             </select>
-            <small>当前生效：{effectiveProtocolLabel}。自动模式优先使用模型家族的原生协议；仅在确认路由或响应格式不匹配时受控回退，也可手动指定协议。</small>
-          </label>
-          <div className="model-name-setting">
-            <div className="model-field-heading">
-              <label htmlFor="model-name-input">模型名称</label>
-              <button type="button" className="model-discovery-button" disabled={discoveryBusy} onClick={() => onDiscoverModels(true)}>
-                <RefreshCw className={discoveryBusy ? "spinning" : ""} size={13} />
-                {discoveryBusy ? "自动识别中…" : catalog.length ? "重新识别" : "识别模型"}
-              </button>
-            </div>
-            {catalog.length ? (
-              <select id="model-name-input" value={settings.model_name} disabled={fieldsLocked} onChange={(event) => onSettingsChange({ ...settings, model_name: event.target.value })}>
-                {Array.from(new Set([settings.model_name, ...catalog].filter(Boolean))).map((model) => <option key={model} value={model}>{model}</option>)}
-              </select>
-            ) : (
-              <input id="model-name-input" value={settings.model_name} readOnly={fieldsLocked} placeholder="输入模型名称" onChange={(event) => onSettingsChange({ ...settings, model_name: event.target.value })} />
-            )}
-            <small className={discoveryError ? "model-discovery-error" : ""}>
-              {discoveryBusy
-                ? "正在从当前协议的模型目录读取数据…"
-                : discoveryError
-                  ? `${discoveryError}。也可以解锁后手动填写模型名称。`
-                  : catalog.length
-                    ? `模型目录返回了 ${catalog.length} 个名称；“目录可见”不代表当前账户可调用。`
-                    : "保存的连接会自动读取模型列表；当前服务不支持时可手动输入。"}
-            </small>
-          </div>
-          <label>
-            <span>Base URL</span>
-            <input value={settings.model_base_url} readOnly={fieldsLocked} placeholder={protocolBaseUrl(effectiveProtocol)} onChange={(event) => onSettingsChange({ ...settings, model_base_url: event.target.value })} onBlur={() => { if (editing && (effectiveProtocol === "ollama" || settings.api_key || settings.api_key_configured)) onDiscoverModels(true); }} />
-            <small>{protocolBaseUrlHelp(effectiveProtocol)}</small>
-          </label>
-          <label>
-            <span>API Key</span>
-            <input type="password" autoComplete="new-password" value={settings.api_key} readOnly={fieldsLocked} placeholder={effectiveProtocol === "ollama" ? "本地 Ollama 可留空" : settings.api_key_configured ? "已配置，留空则继续使用" : "请输入 API Key"} onChange={(event) => onSettingsChange({ ...settings, api_key: event.target.value })} onBlur={() => { if (editing && (effectiveProtocol === "ollama" || settings.api_key || settings.api_key_configured)) onDiscoverModels(true); }} />
-            <small>{effectiveProtocol === "ollama" ? "本地 Ollama 不要求密钥；使用需认证的远程服务时仍可填写。" : settings.api_key_configured ? "当前已有可用密钥，系统不会显示原文。" : "macOS 桌面版写入系统钥匙串；开发环境也可使用 OPENAI_API_KEY。"}</small>
-          </label>
-          <div className="model-settings-actions">
-            {editing ? (
-              <>
-                {savedSettings.api_key_configured ? <ActionButton variant="secondary" disabled={busy} onClick={onCancelEdit}>取消</ActionButton> : null}
-                <ActionButton variant="primary" disabled={busy || !settings.model_name.trim()} onClick={onSave}>
-                  {busy ? <LoaderCircle className="spinning" size={16} /> : <Save size={16} />}{busy ? "应用中…" : "确认并应用"}
-                </ActionButton>
-              </>
-            ) : <ActionButton variant="secondary" onClick={onBeginEdit}>编辑或切换模型</ActionButton>}
-          </div>
-        </section>
-
+          ) : (
+            <input id="model-name-input" value={settings.model_name} disabled={busy} placeholder="输入模型名称" onChange={(event) => changeSettings({ ...settings, model_name: event.target.value })} />
+          )}
+          {catalog.length > 0 && <button className="model-manual-button" type="button" disabled={busy} onClick={() => setManualModel(!manualModel)}>{manualModel ? "从列表选择" : "手动填写"}</button>}
+          <small className={discoveryError ? "model-discovery-error" : ""}>
+            {discoveryBusy
+              ? "正在读取模型列表…"
+              : discoveryError
+                ? "未能读取模型列表，可手动填写模型名称。"
+                : catalog.length
+                  ? `${catalog.length} 个模型可选择，是否可用以连接检测为准。`
+                  : "可直接填写模型名称，或读取服务商的模型列表。"}
+          </small>
+        </div>
+        <div className="model-settings-actions">
+          <p role="status">{editing ? "有未保存的修改" : `当前模型：${savedSettings.model_name || "尚未配置"}`}</p>
+          {editing && <ActionButton variant="secondary" disabled={busy} onClick={onCancelEdit}>取消</ActionButton>}
+          <ActionButton variant="primary" disabled={busy || !editing || !settings.model_name.trim()} onClick={onSave}>
+            {busy ? <LoaderCircle className="spinning" size={16} /> : <Save size={16} />}{busy ? "保存中…" : "保存并应用"}
+          </ActionButton>
+        </div>
+        <p className="model-save-note">保存后从下一次对话生效。</p>
+      </section>
+      <details className="model-advanced-settings">
+        <summary><strong>高级设置</strong><span>接口协议与连接诊断</span><ChevronDown size={16} /></summary>
         <div className="model-settings-panels">
-          <section className="settings-card model-list-card">
-            <div className="settings-card-heading">
-              <span><Layers3 size={18} /></span>
-              <div><h3>模型列表</h3><p>当前默认模型，以及服务目录里识别到的可用模型。</p></div>
-            </div>
-            {models.length ? (
-              <div className="model-list-table" role="table" aria-label="模型列表">
-                <div className="model-list-head" role="row">
-                  <span>名称</span><span>服务商</span><span>可用性</span>
-                </div>
-                {models.map((item) => (
-                  <div className={`model-list-row${item.isDefault ? " default" : ""}`} role="row" key={item.name}>
-                    <strong>{item.name}</strong>
-                    <span>{item.providerLabel}</span>
-                    <em>{item.isDefault ? `默认 · ${item.availability}` : item.availability}</em>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="model-monitor-empty"><Layers3 size={20} /><span>尚未配置模型。解锁后填写名称，或从当前服务识别目录。</span></div>
-            )}
+          <section className="settings-card model-settings-card model-protocol-card">
+            <label>
+              <span id="model-protocol-label">接口协议</span>
+              <select aria-labelledby="model-protocol-label" value={settings.model_protocol} disabled={busy} onChange={(event) => changeSettings({ ...settings, model_protocol: event.target.value as AgentSettings["model_protocol"] })}>
+                <option value="auto">自动匹配（当前：{effectiveProtocolLabel}）</option>
+                <option value="openai">OpenAI 兼容 Chat Completions</option>
+                <option value="responses">OpenAI Responses API</option>
+                <option value="anthropic">Anthropic Messages API</option>
+                <option value="gemini">Google Gemini generateContent</option>
+                <option value="ollama">Ollama Chat API</option>
+              </select>
+              <small>默认自动匹配，服务商有明确要求时再更改。</small>
+              <small>{protocolBaseUrlHelp(effectiveProtocol)}</small>
+            </label>
+            {discoveryError && <p className="model-capability-error" role="alert">模型列表读取失败：{discoveryError}</p>}
           </section>
+
+          <p className="model-diagnostics-note">以下诊断来自已保存的连接。{editing ? "保存修改后可重新检测。" : ""}</p>
 
           <section className="settings-card model-quota-card">
             <div className="settings-card-heading">
@@ -319,7 +275,7 @@ export function ModelSettingsPage({
             <div className="settings-card-heading model-monitor-heading">
               <span><ScanSearch size={18} /></span>
               <div><h3>模型能力检测</h3><p>先按模型 ID 判断，再可用一次轻量探测确认是否支持多模态。</p></div>
-              <ActionButton variant="secondary" className="model-check-button" disabled={capabilitiesBusy} onClick={onProbeCapabilities}>
+              <ActionButton variant="secondary" className="model-check-button" disabled={busy || editing || capabilitiesBusy} onClick={onProbeCapabilities}>
                 <RefreshCw className={capabilitiesBusy ? "spinning" : ""} size={15} />
                 {capabilitiesBusy ? "检测中…" : "检测"}
               </ActionButton>
@@ -333,37 +289,36 @@ export function ModelSettingsPage({
             ) : null}
             {capabilities?.probed ? <p className="model-capability-note">多模态结果来自一次真实图片探测，不是评分。</p> : null}
           </section>
-        </div>
-      </div>
-
-      <section className="settings-card model-monitor-card">
-        <div className="settings-card-heading model-monitor-heading">
-          <span><Activity size={18} /></span>
-          <div><h3>连接状态与调用质量</h3><p>仅统计调用结果，每 15 秒刷新；不保存你的提示词和回复内容。</p></div>
-          <ActionButton variant="secondary" className="model-check-button" disabled={monitorBusy} onClick={onCheckService}>
-            <RefreshCw className={monitorBusy ? "spinning" : ""} size={15} />{monitorBusy ? "检测中…" : "立即检测"}
-          </ActionButton>
-        </div>
-        <div className={`model-monitor-status ${monitor?.status || "unknown"}`}>
-          <i /><div><strong>{monitor ? statusLabels[monitor.status] : "正在读取状态"}</strong><small>{monitor?.status_message || "正在获取最近的模型调用记录…"}</small></div>
-          <span>{monitor?.last_event_at ? `更新于 ${formatTime(monitor.last_event_at)}` : "暂无调用"}</span>
-        </div>
-        <div className="model-monitor-metrics">
-          <article><span>成功率 · 24h</span><strong>{monitor?.summary.success_rate == null ? "—" : `${monitor.summary.success_rate}%`}</strong><small>{monitor ? `${monitor.summary.successful_requests} / ${monitor.summary.total_requests} 次成功` : "等待数据"}</small></article>
-          <article><span>P95 响应耗时</span><strong>{formatLatency(monitor?.summary.p95_latency_ms ?? null)}</strong><small>平均 {formatLatency(monitor?.summary.average_latency_ms ?? null)}</small></article>
-          <article><span>超时次数</span><strong>{monitor?.summary.timeout_count ?? "—"}</strong><small>{monitor?.summary.consecutive_failures ? `当前连续失败 ${monitor.summary.consecutive_failures} 次` : "当前无连续失败"}</small></article>
-          <article><span>当前服务</span><strong className="model-monitor-name">{monitor?.model_name || settings.model_name || "—"}</strong><small>{protocolLabel(monitor?.protocol || effectiveProtocol)} · {monitor?.base_url || "官方默认地址"}</small></article>
-        </div>
-        {monitor?.error_breakdown.length ? <div className="model-monitor-errors"><span>近 24 小时异常</span><div>{monitor.error_breakdown.map((item) => <em key={item.code}>{item.label} {item.count}</em>)}</div></div> : null}
-        <div className="model-monitor-events">
-          <div className="model-monitor-section-title"><strong>最近调用</strong><span>仅记录类型、状态、耗时和错误分类</span></div>
-          {monitor?.recent_events.length ? (
-            <div className="model-monitor-event-list">
-              {monitor.recent_events.slice(0, 6).map((event) => <div className={event.status} key={event.id}><i /><strong>{requestKindLabels[event.request_kind] || event.request_kind}</strong><span>{event.status === "success" ? formatLatency(event.latency_ms) : event.error_message || "调用失败"}</span><time>{formatTime(event.created_at)}</time></div>)}
+          <section className="settings-card model-monitor-card">
+            <div className="settings-card-heading model-monitor-heading">
+              <span><Activity size={18} /></span>
+              <div><h3>连接状态与调用质量</h3><p>仅统计调用结果，每 15 秒刷新；不保存你的提示词和回复内容。</p></div>
+              <ActionButton variant="secondary" className="model-check-button" disabled={busy || editing || monitorBusy} onClick={onCheckService}>
+                <RefreshCw className={monitorBusy ? "spinning" : ""} size={15} />{monitorBusy ? "检测中…" : "立即检测"}
+              </ActionButton>
             </div>
-          ) : <div className="model-monitor-empty"><Activity size={20} /><span>还没有调用记录，点击“立即检测”生成第一条状态数据。</span></div>}
+            <div className={`model-monitor-status ${monitor?.status || "unknown"}`}>
+              <i /><div><strong>{monitor ? statusLabels[monitor.status] : "正在读取状态"}</strong><small>{monitor?.status_message || "正在获取最近的模型调用记录…"}</small></div>
+              <span>{monitor?.last_event_at ? `更新于 ${formatTime(monitor.last_event_at)}` : "暂无调用"}</span>
+            </div>
+            <div className="model-monitor-metrics">
+              <article><span>成功率 · 24h</span><strong>{monitor?.summary.success_rate == null ? "—" : `${monitor.summary.success_rate}%`}</strong><small>{monitor ? `${monitor.summary.successful_requests} / ${monitor.summary.total_requests} 次成功` : "等待数据"}</small></article>
+              <article><span>P95 响应耗时</span><strong>{formatLatency(monitor?.summary.p95_latency_ms ?? null)}</strong><small>平均 {formatLatency(monitor?.summary.average_latency_ms ?? null)}</small></article>
+              <article><span>超时次数</span><strong>{monitor?.summary.timeout_count ?? "—"}</strong><small>{monitor?.summary.consecutive_failures ? `当前连续失败 ${monitor.summary.consecutive_failures} 次` : "当前无连续失败"}</small></article>
+              <article><span>当前服务</span><strong className="model-monitor-name">{monitor?.model_name || savedSettings.model_name || "—"}</strong><small>{protocolLabel(monitor?.protocol || resolvedProtocol(savedSettings.model_name, savedSettings.model_protocol, savedSettings.model_base_url))} · {monitor?.base_url || "官方默认地址"}</small></article>
+            </div>
+            {monitor?.error_breakdown.length ? <div className="model-monitor-errors"><span>近 24 小时异常</span><div>{monitor.error_breakdown.map((item) => <em key={item.code}>{item.label} {item.count}</em>)}</div></div> : null}
+            <div className="model-monitor-events">
+              <div className="model-monitor-section-title"><strong>最近调用</strong><span>仅记录类型、状态、耗时和错误分类</span></div>
+              {monitor?.recent_events.length ? (
+                <div className="model-monitor-event-list">
+                  {monitor.recent_events.slice(0, 6).map((event) => <div className={event.status} key={event.id}><i /><strong>{requestKindLabels[event.request_kind] || event.request_kind}</strong><span>{event.status === "success" ? formatLatency(event.latency_ms) : event.error_message || "调用失败"}</span><time>{formatTime(event.created_at)}</time></div>)}
+                </div>
+              ) : <div className="model-monitor-empty"><Activity size={20} /><span>还没有调用记录，点击“立即检测”生成第一条状态数据。</span></div>}
+            </div>
+          </section>
         </div>
-      </section>
+      </details>
     </section>
   );
 }

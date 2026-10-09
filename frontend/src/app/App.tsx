@@ -1,3 +1,4 @@
+import { useModelDiscovery } from "../features/settings/useModelDiscovery";
 import { useTheme } from "../features/appearance/ThemeProvider";
 import { AppearanceSettingsPage } from "../features/settings/AppearanceSettingsPage";
 import { PageLoading } from "../components/PageLoading";
@@ -148,6 +149,7 @@ export function App({
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const [agentSettings, setAgentSettings] = useState<AgentSettings>(defaultAgentSettings);
   const [savedAgentSettings, setSavedAgentSettings] = useState<AgentSettings>(defaultAgentSettings);
+  const [modelSettingsLoaded, setModelSettingsLoaded] = useState(false);
   const [agentSettingsBusy, setAgentSettingsBusy] = useState(false);
   const [modelSettingsEditing, setModelSettingsEditing] = useState(false);
   const modelSettingsEditingRef = useRef(false);
@@ -156,14 +158,15 @@ export function App({
   const [agentOperations, setAgentOperations] = useState<AgentOperationsSnapshot | null>(null);
   const [agentOperationsDays, setAgentOperationsDays] = useState<7 | 30 | 90>(7);
   const [agentOperationsBusy, setAgentOperationsBusy] = useState(false);
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
-  const [modelDiscoveryBusy, setModelDiscoveryBusy] = useState(false);
-  const [modelDiscoveryError, setModelDiscoveryError] = useState("");
+  const { availableModels, discoveryBusy: modelDiscoveryBusy, discoveryError: modelDiscoveryError, discoverModels, invalidateDiscovery } = useModelDiscovery({
+    fetchJson,
+    onModelSuggested: (modelName) => setAgentSettings((current) => current.model_name.trim() ? current : { ...current, model_name: modelName }),
+    onNotice: setNoticeMessage
+  });
   const [modelCapabilities, setModelCapabilities] = useState<ModelCapabilityReport | null>(null);
   const [modelCapabilitiesBusy, setModelCapabilitiesBusy] = useState(false);
   const [databaseReady, setDatabaseReady] = useState(false);
   const databaseInitializationRef = useRef<Promise<void> | null>(null);
-  const modelDiscoveryKeyRef = useRef("");
   const routeDataCacheRef = useRef(createRouteDataCache<RouteDataKey>(30_000));
   const currentConversation = conversations.find((item) => item.id === currentConversationId) ?? null;
 
@@ -327,6 +330,7 @@ export function App({
     const next = await fetchJson<AgentSettings>("/agent/settings");
     const clean = { ...next, api_key: "" };
     setSavedAgentSettings(clean);
+    setModelSettingsLoaded(true);
     if (modelSettingsEditingRef.current) {
       return;
     }
@@ -352,16 +356,14 @@ export function App({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            model_name: agentSettings.model_name,
-            model_base_url: agentSettings.model_base_url,
-            model_protocol: agentSettings.model_protocol,
-            api_key: agentSettings.api_key,
+            model_name: savedAgentSettings.model_name,
+            model_base_url: savedAgentSettings.model_base_url,
+            model_protocol: savedAgentSettings.model_protocol,
+            api_key: "",
             probe: true
           })
         })
-        : await fetchJson<ModelCapabilityReport>(
-          `/agent/models/capabilities?model_name=${encodeURIComponent(agentSettings.model_name)}`
-        );
+        : await fetchJson<ModelCapabilityReport>("/agent/models/capabilities");
       setModelCapabilities(next);
       if (probe && next.probe_error) {
         setErrorMessage(next.probe_error);
@@ -413,68 +415,30 @@ export function App({
     }
   }
 
-  async function discoverModels(
-    settings: AgentSettings,
-    options: { silent?: boolean; force?: boolean } = {}
-  ) {
-    const discoveryKey = `${settings.model_base_url.trim()}|${settings.model_protocol}|${settings.model_name.trim()}|${settings.api_key ? "draft" : "saved"}`;
-    if (!options.force && modelDiscoveryKeyRef.current === discoveryKey) return;
-    modelDiscoveryKeyRef.current = discoveryKey;
-    setModelDiscoveryBusy(true);
-    setModelDiscoveryError("");
-    if (!options.silent) setErrorMessage("");
-    try {
-      const result = await fetchJson<{ models: string[]; count: number }>(
-        "/agent/models/discover",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model_base_url: settings.model_base_url,
-            model_name: settings.model_name,
-            model_protocol: settings.model_protocol,
-            api_key: settings.api_key
-          })
-        }
-      );
-      setAvailableModels(result.models);
-      if (!settings.model_name.trim() && result.models[0]) {
-        setAgentSettings((current) => ({ ...current, model_name: result.models[0] }));
-      }
-      if (!options.silent) {
-        setNoticeMessage(`已识别 ${result.count} 个模型`);
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "识别可用模型失败";
-      setAvailableModels([]);
-      setModelDiscoveryError(message);
-      if (!options.silent) setErrorMessage(message);
-    } finally {
-      setModelDiscoveryBusy(false);
-    }
+  function changeModelSettings(next: AgentSettings) {
+    if (!modelSettingsLoaded || agentSettingsBusy) return;
+    const connectionChanged = next.model_base_url !== agentSettings.model_base_url
+      || next.api_key !== agentSettings.api_key
+      || next.model_protocol !== agentSettings.model_protocol;
+    if (connectionChanged) invalidateDiscovery();
+    else if (next.model_name !== agentSettings.model_name) invalidateDiscovery({ keepModels: true });
+    updateModelSettingsEditing(true);
+    setAgentSettings(next);
   }
 
   function beginModelSettingsEdit() {
-    if (!window.confirm("确认编辑模型连接或切换模型吗？\n\n设置将在再次确认保存后生效，编辑期间不会影响当前连接。")) return;
     updateModelSettingsEditing(true);
   }
 
   function cancelModelSettingsEdit() {
     setAgentSettings({ ...savedAgentSettings, api_key: "" });
     updateModelSettingsEditing(false);
-    setModelDiscoveryError("");
+    invalidateDiscovery();
+    void discoverModels(savedAgentSettings, { silent: true });
   }
 
   async function saveAgentPreferences() {
-    const protocolName = {
-      auto: "自动匹配",
-      openai: "OpenAI 兼容 Chat Completions",
-      responses: "OpenAI Responses API",
-      anthropic: "Anthropic Messages API",
-      gemini: "Google Gemini generateContent",
-      ollama: "Ollama Chat API"
-    }[agentSettings.model_protocol];
-    if (!window.confirm(`确认应用模型连接吗？\n\n模型：${agentSettings.model_name}\n协议：${protocolName}\n服务：${agentSettings.model_base_url || "官方默认地址"}\n\n新的连接将从下一次模型调用开始生效。`)) return;
+    if (!modelSettingsLoaded || agentSettingsBusy || !agentSettings.model_name.trim()) return;
     setAgentSettingsBusy(true);
     setErrorMessage("");
     try {
@@ -487,7 +451,7 @@ export function App({
       setAgentSettings(clean);
       setSavedAgentSettings(clean);
       updateModelSettingsEditing(false);
-      modelDiscoveryKeyRef.current = "";
+      invalidateDiscovery();
       let connectionCheck: ModelServiceCheck | null = null;
       let connectionCheckFailure = "";
       try {
@@ -500,7 +464,7 @@ export function App({
           ? checkError.message
           : "无法完成模型连接检测";
       }
-      await Promise.all([refreshCapabilities(), refreshModelCapabilities()]);
+      await Promise.allSettled([refreshCapabilities(), refreshModelCapabilities()]);
       void discoverModels(clean, { silent: true, force: true });
       if (connectionCheck?.available) {
         setModelUnavailable(null);
@@ -627,7 +591,7 @@ export function App({
       appearance: { title: "外观", description: "统一设置所有模块的主题" },
       account: { title: "账号与安全", description: "管理跟随登录账号的昵称、头像和密码" },
       library: { title: "文件库", description: "整理文件、阅读原件，选取资料用于对话" },
-      model: { title: "模型设置", description: "配置推理模型、服务地址和 API Key，并检查连接质量" },
+      model: { title: "模型设置", description: "填写服务地址、API Key，选择使用的模型" },
       agent: { title: "Agent 执行记录", description: "查看 Agent 已完成的任务、工具使用和异常原因" }
     }[appRoute.page]
     : pageMeta[appRoute.section];
@@ -822,26 +786,28 @@ export function App({
                 />
               ) : null}
               {appRoute.page === "model" ? (
-                <ModelSettingsPage
-                  settings={agentSettings}
-                  savedSettings={savedAgentSettings}
-                  editing={modelSettingsEditing}
-                  busy={agentSettingsBusy}
-                  monitor={modelMonitor}
-                  monitorBusy={modelMonitorBusy}
-                  availableModels={availableModels}
-                  discoveryBusy={modelDiscoveryBusy}
-                  discoveryError={modelDiscoveryError}
-                  capabilities={modelCapabilities}
-                  capabilitiesBusy={modelCapabilitiesBusy}
-                  onSettingsChange={setAgentSettings}
-                  onDiscoverModels={(force) => void discoverModels(agentSettings, { force, silent: !force })}
-                  onCheckService={() => void checkModelService()}
-                  onProbeCapabilities={() => void refreshModelCapabilities(true)}
-                  onBeginEdit={beginModelSettingsEdit}
-                  onCancelEdit={cancelModelSettingsEdit}
-                  onSave={() => void saveAgentPreferences()}
-                />
+                modelSettingsLoaded ? (
+                  <ModelSettingsPage
+                    settings={agentSettings}
+                    savedSettings={savedAgentSettings}
+                    editing={modelSettingsEditing}
+                    busy={agentSettingsBusy}
+                    monitor={modelMonitor}
+                    monitorBusy={modelMonitorBusy}
+                    availableModels={availableModels}
+                    discoveryBusy={modelDiscoveryBusy}
+                    discoveryError={modelDiscoveryError}
+                    capabilities={modelCapabilities}
+                    capabilitiesBusy={modelCapabilitiesBusy}
+                    onSettingsChange={changeModelSettings}
+                    onDiscoverModels={(force) => void discoverModels(agentSettings, { force, silent: !force })}
+                    onCheckService={() => void checkModelService()}
+                    onProbeCapabilities={() => void refreshModelCapabilities(true)}
+                    onBeginEdit={beginModelSettingsEdit}
+                    onCancelEdit={cancelModelSettingsEdit}
+                    onSave={() => void saveAgentPreferences()}
+                  />
+                ) : <PageLoading label="正在读取模型配置…" />
               ) : null}
               {appRoute.page === "agent" ? (
                 <Suspense fallback={<PageLoading label="正在加载 Agent 运行记录…" />}>
