@@ -18,6 +18,7 @@ from ..agent.snapshots import clear_run_snapshot, load_run_snapshot
 from ..agent.run_store import AgentRunStore
 from ..agent.model_binding import internal_model_selection, is_bound_selection, is_legacy_selection
 from ..observability.model_context import public_model_selection
+from ..secret_store import SecretStoreUnavailable
 from .service import (
     agent_history as _agent_history,
     attachment_context as _attachment_context,
@@ -149,6 +150,8 @@ def require_configured_runtime(profile_id: str | None = None, *, selection: dict
         if profile_id is not None:
             return get_agent_runtime(profile_id)
         return get_agent_runtime()
+    except SecretStoreUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         detail = str(exc)
         if "必须先配置模型服务 API Key" in detail or "API Key" in detail:
@@ -259,7 +262,7 @@ async def stream_chat_response(
                 if is_bound_selection(model_selection):
                     model_selection["selection_reason"] = (
                         "explicit_profile" if "model_profile_id" in payload.model_fields_set and profile_id is not None
-                        else "conversation_profile" if profile_id is not None else "default_profile"
+                        else "conversation_profile" if profile_id is not None else model_selection.get("selection_reason", "default_profile")
                     )
         if abandon_snapshot:
             clear_run_snapshot(conversation_id)

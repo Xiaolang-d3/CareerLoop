@@ -7,7 +7,8 @@ function publicCatalog(catalog: ModelCatalog): ModelCatalog {
   return {
     connections: catalog.connections.map(({ id, name, model_base_url, model_protocol, api_key_configured, enabled, revision }) => ({ id, name, model_base_url, model_protocol, api_key_configured, enabled, revision })),
     profiles: catalog.profiles.map(({ id, connection_id, model_name, enabled, revision, parameters, capabilities, context_limit }) => ({ id, connection_id, model_name, enabled, revision, parameters, capabilities, context_limit })),
-    default_profile_id: catalog.default_profile_id
+    default_profile_id: catalog.default_profile_id,
+    effective_execution_profile_id: catalog.effective_execution_profile_id
   };
 }
 const emptyCatalog: ModelCatalog = { connections: [], profiles: [], default_profile_id: null };

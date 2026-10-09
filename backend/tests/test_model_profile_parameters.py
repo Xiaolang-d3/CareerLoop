@@ -33,7 +33,13 @@ def test_profile_parameters_reach_real_request_payload(protocol, nested, output_
         sent.append(json.loads(request.content))
         return httpx.Response(200, json=RESPONSES[protocol])
 
-    monkeypatch.setattr(f"app.models.{'openai_compatible' if protocol == 'openai' else 'openai_responses' if protocol == 'responses' else 'anthropic_messages' if protocol == 'anthropic' else 'gemini_generate_content' if protocol == 'gemini' else 'ollama_chat'}.get_agent_settings", lambda: {})
+    module = {
+        "openai": "openai_compatible", "responses": "openai_responses",
+        "anthropic": "anthropic_messages", "gemini": "gemini_generate_content", "ollama": "ollama_chat",
+    }[protocol]
+    monkeypatch.setattr(f"app.models.{module}.get_agent_settings", lambda: {})
+    monitor_module = "openai_compatible" if protocol == "responses" else module
+    monkeypatch.setattr(f"app.models.{monitor_module}.record_model_service_event", lambda **kwargs: None)
 
     async def run():
         provider = build_model_provider(api_key="synthetic-key", model="test", protocol=protocol, base_url="https://model.example.test/v1")

@@ -143,7 +143,9 @@ def get_model_catalog(db_path: str | Path | None = None) -> dict[str, Any]:
         connections = [_decode_connection(row) for row in conn.execute("SELECT * FROM model_connections ORDER BY created_at, id")]
         profiles = [_decode_profile(row) for row in conn.execute("SELECT * FROM model_profiles ORDER BY created_at, id")]
         row = conn.execute("SELECT default_model_profile_id, config_revision FROM agent_settings WHERE id = 1").fetchone()
-    return {"connections": [_public_connection(item, db_path) for item in connections], "profiles": profiles, "default_profile_id": row["default_model_profile_id"], "config_revision": row["config_revision"]}
+        policy = conn.execute("SELECT payload_json FROM model_routing_policy WHERE id=1").fetchone()
+        execution_profile = json.loads(policy[0]).get("roles", {}).get("execute") or row["default_model_profile_id"]
+    return {"connections": [_public_connection(item, db_path) for item in connections], "profiles": profiles, "default_profile_id": row["default_model_profile_id"], "effective_execution_profile_id": execution_profile, "config_revision": row["config_revision"]}
 
 
 def get_profile_connection(profile_id: str | None = None, db_path: str | Path | None = None, selection: dict[str, Any] | None = None) -> dict[str, Any]:

@@ -29,6 +29,7 @@ from ..models import ModelProviderError, ModelProviderRegistry
 from ..tools import ToolContext, ToolRegistry
 from ..observability.model_context import model_call_scope
 from .model_binding import internal_model_selection, is_bound_selection, is_legacy_selection, selection_identity
+from .model_router import ModelRouter
 from .completion import validate_completion
 from .orchestration import (
     INTERRUPT_TOOLS,
@@ -135,6 +136,7 @@ class AgentRuntime:
         max_tool_retries: int = 1,
         run_store: AgentRunStore | None = None,
         model_selection: dict[str, Any] | None = None,
+        model_router: ModelRouter | None = None,
     ) -> None:
         self._models = models
         self._tools = tools
@@ -145,6 +147,7 @@ class AgentRuntime:
         self._max_tool_retries = max(0, max_tool_retries)
         self._run_store = run_store
         self._model_selection = internal_model_selection(model_selection)
+        self._model_router = model_router
         self._selection_context: ContextVar[dict[str, Any]] = ContextVar(f"selection-{id(self)}", default={})
         self._run_context: ContextVar[str] = ContextVar(f"run-{id(self)}", default="")
         self._tool_executor = ToolExecutor(tools, tool_timeout_seconds)
@@ -167,6 +170,20 @@ class AgentRuntime:
             raise ModelProviderError(
                 "model_selection_unavailable", "运行绑定的模型版本与当前执行器不一致，请使用原配置版本恢复",
             )
+        stored_stages = selection.get("stage_selections")
+        if is_bound_selection(selection) and stored_stages is None and self._model_selection.get("stage_selections"):
+            raise ModelProviderError("model_selection_unavailable", "运行的阶段模型绑定缺失，无法恢复")
+        if stored_stages is not None:
+            expected_stages = self._model_selection.get("stage_selections", {})
+            if (set(stored_stages) != set(expected_stages)
+                or selection.get("policy_version") != self._model_selection.get("policy_version")
+                or selection.get("strict_capabilities", False) != self._model_selection.get("strict_capabilities", False)):
+                raise ModelProviderError("model_selection_unavailable", "运行的阶段路由与原配置不一致，无法恢复")
+            for stage, stored in stored_stages.items():
+                expected = expected_stages[stage]
+                if (selection_identity(stored) != selection_identity(expected)
+                    or (stored.get("credential_fingerprint") and stored["credential_fingerprint"] != expected.get("credential_fingerprint"))):
+                    raise ModelProviderError("model_selection_unavailable", "运行的阶段模型版本不一致，无法恢复")
 
     async def run(
         self,
@@ -208,6 +225,12 @@ class AgentRuntime:
                 **{key: value for key, value in selection.items()
                    if key in {"selection_reason", "policy_version", "capability_status", "stage_selections"}},
             }
+            if self._model_selection.get("stage_selections"):
+                selection["stage_selections"] = {
+                    stage: {**value, **{key: item for key, item in selection.get("stage_selections", {}).get(stage, {}).items()
+                                       if key in {"selection_reason", "capability_status"}}}
+                    for stage, value in self._model_selection["stage_selections"].items()
+                }
         selection_token = self._selection_context.set(selection)
         run_token = self._run_context.set(str(run_id or ""))
         try:
@@ -275,6 +298,9 @@ class AgentRuntime:
                     classified,
                     tool_specs=tool_specs,
                 )
+            except ModelProviderError as exc:
+                if exc.code in {"model_capability_unavailable", "model_context_limit", "model_not_configured"}:
+                    raise
             except Exception:
                 pass
         plan = None
@@ -1580,11 +1606,24 @@ class AgentRuntime:
             await asyncio.gather(task, return_exceptions=True)
 
     async def _generate_for_stage(self, provider, stage: str, request: ModelRequest) -> ModelResponse:
-        with model_call_scope(self._current_model_selection(), self._run_context.get(), stage=stage):
+        provider, selection = self._select_stage_model(provider, stage, request)
+        with model_call_scope(selection, self._run_context.get(), stage=stage):
             return await provider.generate(request)
 
+    def _select_stage_model(self, provider, stage: str, request: ModelRequest, *, streaming: bool = False):
+        if self._model_router is None:
+            return provider, self._current_model_selection()
+        provider, selection = self._model_router.select(stage, request, streaming=streaming)
+        current = self._current_model_selection()
+        current["stage_selections"][stage] = selection
+        if stage == "execute":
+            current["capability_status"] = selection["capability_status"]
+        self._selection_context.set(current)
+        return provider, selection
+
     async def _generate_response(self, provider, request: ModelRequest, event_callback: StreamCallback | None) -> ModelResponse:
-        with model_call_scope(self._current_model_selection(), self._run_context.get(), stage="execute"):
+        provider, selection = self._select_stage_model(provider, "execute", request, streaming=event_callback is not None)
+        with model_call_scope(selection, self._run_context.get(), stage="execute"):
             return await self._generate_response_unscoped(provider, request, event_callback)
 
     async def _generate_response_unscoped(

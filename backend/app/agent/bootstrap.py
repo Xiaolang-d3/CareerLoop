@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .model_binding import internal_model_selection
+from .model_router import ModelRouter, bind_model_stages, get_routing_policy
 from ..observability.model_context import public_model_selection
 from ..config import get_settings
 from ..models import ModelProviderRegistry, build_model_provider
@@ -31,6 +32,10 @@ def _runtime_cache_key(connection: dict[str, Any]) -> tuple[Any, ...]:
         connection.get("connection_id"), connection.get("connection_revision"),
         connection["model_name"], connection["model_base_url"], connection.get("model_protocol", "auto"),
         connection.get("credential_fingerprint"),
+        connection.get("policy_version"), connection.get("strict_capabilities", False),
+        tuple((stage, value.get("profile_id"), value.get("profile_revision"),
+               value.get("connection_id"), value.get("connection_revision"), value.get("credential_fingerprint"), value.get("selection_reason"))
+              for stage, value in sorted(connection.get("stage_connections", {}).items())),
     )
 
 
@@ -121,6 +126,24 @@ def _build_components(model_connection: dict[str, Any]) -> tuple[AgentRuntime, d
     model_alias = str(model_connection.get("profile_id") or model.name)
     models.register(model_alias, model)
 
+    stage_connections = model_connection.get("stage_connections", {})
+    stage_providers = {}
+    for stage, connection in stage_connections.items():
+        if not _model_is_configured(connection):
+            continue
+        if (connection.get("profile_id"), connection.get("profile_revision"), connection.get("connection_revision"), connection.get("credential_fingerprint")) == (
+            model_connection.get("profile_id"), model_connection.get("profile_revision"), model_connection.get("connection_revision"), model_connection.get("credential_fingerprint"),
+        ):
+            stage_providers[stage] = model
+        else:
+            provider = build_model_provider(
+                api_key=connection["api_key"], model=connection["model_name"],
+                base_url=connection["model_base_url"] or None,
+                timeout_seconds=settings.model_timeout_seconds, protocol=connection.get("model_protocol", "auto"),
+            )
+            stage_providers[stage] = configure_model_provider(provider, connection.get("parameters", {}))
+    model_router = ModelRouter(stage_connections, stage_providers, strict_capabilities=model_connection.get("strict_capabilities", False)) if stage_connections else None
+
     tools = _build_tool_registry(settings)
 
     runtime = AgentRuntime(
@@ -128,6 +151,7 @@ def _build_components(model_connection: dict[str, Any]) -> tuple[AgentRuntime, d
         tools=tools,
         model_provider=model_alias,
         model_selection=internal_model_selection(model_connection),
+        model_router=model_router,
         platform_name="manual",
         max_tool_rounds=settings.model_max_tool_rounds,
         tool_timeout_seconds=settings.tool_execution_timeout_seconds,
@@ -157,13 +181,27 @@ def _cached_components(model_connection: dict[str, Any]) -> tuple[AgentRuntime, 
 
 def get_agent_runtime(profile_id: str | None = None, *, selection: dict[str, Any] | None = None) -> AgentRuntime:
     # Resolve exactly once, before caching; restoring never consults a mutable default.
-    connection = get_profile_connection(profile_id, selection=selection)
+    from .settings import _settings_lock
+
+    with _settings_lock(None):
+        connection = get_profile_connection(profile_id, selection=selection)
+        connection = bind_model_stages(
+            connection, explicit_profile=profile_id is not None, selection=selection,
+            resolve=get_profile_connection, policy=get_routing_policy() if selection is None else None,
+        )
     runtime, _ = _cached_components(connection)
     return runtime
 
 
 def get_agent_capabilities() -> dict[str, Any]:
-    model_connection = get_profile_connection()
+    from .settings import _settings_lock
+
+    with _settings_lock(None):
+        model_connection = get_profile_connection()
+        model_connection = bind_model_stages(
+            model_connection, explicit_profile=False, selection=None,
+            resolve=get_profile_connection, policy=get_routing_policy(),
+        )
     if not _model_is_configured(model_connection):
         return _build_unconfigured_capabilities(model_connection)
     _, capabilities = _cached_components(model_connection)

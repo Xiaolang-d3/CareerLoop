@@ -19,6 +19,12 @@ import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown"
 import remarkGfm from "remark-gfm";
 import { ArrowUpRight, Check, CheckCircle2, ChevronDown, CircleHelp, Copy, FileText, ImagePlus, LoaderCircle, PanelRight, Pencil, RefreshCw, Search, TriangleAlert, X } from "lucide-react";
 
+const modelStageLabels: Record<string, string> = { classify: "意图识别", plan: "任务规划", execute: "执行回答" };
+const modelSelectionReasons: Record<string, string> = {
+  explicit_profile: "手动选模", conversation_profile: "会话选模", stage_role: "阶段分工",
+  default_profile: "账号默认", restored_stage: "原任务配置"
+};
+
 function resultOnlyContent(content: string, hasThoughtSummary: boolean): string {
   if (!hasThoughtSummary) return content;
   const answerMarker = content.indexOf("可以。");
@@ -921,7 +927,20 @@ export function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: b
               <MarkdownContent sources={webSources} streaming={isActiveAssistant} onOpenSource={openResearch}>{resultContent}</MarkdownContent>
               <AgentResultNote run={source.payload?.agent} />
             </section>
-            {modelSelection?.model_name ? <div className="message-model-selection"><span>生成模型：{modelSelection.model_name}</span><details><summary>模型详情</summary><p>模型版本 {modelSelection.profile_revision} · 连接版本 {modelSelection.connection_revision}</p>{modelSelection.stage_selections ? Object.entries(modelSelection.stage_selections).map(([stage, selection]) => <p key={stage}>{stage}：{selection.model_name || "未记录"}</p>) : null}</details></div> : null}
+            {modelSelection?.model_name ? (
+              <div className="message-model-selection">
+                <span>生成模型：{modelSelection.model_name}</span>
+                <details>
+                  <summary>模型详情</summary>
+                  <p>模型版本 {modelSelection.profile_revision} · 连接版本 {modelSelection.connection_revision}
+                    {modelSelection.policy_version ? ` · 路由版本 ${modelSelection.policy_version}` : ""}</p>
+                  {modelSelection.stage_selections ? Object.entries(modelSelection.stage_selections).map(([stage, selection]) => (
+                    <p key={stage}>{modelStageLabels[stage] || stage}：{selection.model_name || "未记录"} · {modelSelectionReasons[selection.selection_reason || ""] || "原任务配置"}
+                      {selection.capability_status === "unverified" ? " · 所需能力未验证" : selection.capability_status ? "" : " · 本轮未调用"}</p>
+                  )) : null}
+                </details>
+              </div>
+            ) : null}
             <ActionBarPrimitive.Root className="message-actions" hideWhenRunning>
               <MessageCopyButton content={resultContent} label="复制回答" />
               <ActionBarPrimitive.Reload aria-label={failed ? "重试回答" : "重新生成回答"} title="从本轮开始重新生成，后续消息将被替换" aria-describedby={`regenerate-impact-${source.id}`}>

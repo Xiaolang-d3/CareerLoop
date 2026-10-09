@@ -18,10 +18,31 @@ from ..observability.model_context import model_call_scope
 from ..models import ModelProviderError, OpenAICompatibleProvider, build_model_provider
 from ..model_protocol import protocol_requires_api_key
 from .schemas import AgentSettingsIn, ModelCapabilitiesIn, ModelDiscoveryIn
-from .model_contracts import ConnectionCreateIn, ConnectionUpdateIn, DefaultProfileIn, ProfileCreateIn, ProfileUpdateIn
+from .model_contracts import ConnectionCreateIn, ConnectionUpdateIn, DefaultProfileIn, ProfileCreateIn, ProfileUpdateIn, RoutingPolicyIn
 
 
 router = APIRouter()
+
+
+@router.get("/agent/model-routing")
+def model_routing_get() -> dict[str, Any]:
+    from ..agent.model_router import get_routing_policy
+
+    return get_routing_policy()
+
+
+@router.put("/agent/model-routing")
+def model_routing_put(payload: RoutingPolicyIn) -> dict[str, Any]:
+    from ..agent.model_router import save_routing_policy
+
+    try:
+        policy = save_routing_policy(payload.model_dump())
+    except AgentSettingsConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    reload_agent_components()
+    return policy
 
 
 def _diagnostic_timeout() -> float:
@@ -31,7 +52,12 @@ def _diagnostic_timeout() -> float:
 
 @router.get("/agent/capabilities")
 def agent_capabilities() -> dict[str, Any]:
-    return get_agent_capabilities()
+    try:
+        return get_agent_capabilities()
+    except SecretStoreUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/agent/settings")

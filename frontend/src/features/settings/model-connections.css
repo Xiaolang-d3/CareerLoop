@@ -26,3 +26,11 @@
 .model-connection-editor details > select { margin-top: 7px; }
 .model-archive-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 9px; color: var(--color-warning); font-size: 12px; }
 @media (max-width: 520px) { .model-connections-heading { flex-wrap: wrap; } .model-profile-list > div { flex-wrap: wrap; } .model-add-profile > div:first-of-type { flex-wrap: wrap; } }
+.model-routing-fields { display: grid; gap: 14px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.model-routing-fields > label:not(.model-routing-strict) { display: grid; grid-template-columns: minmax(110px, 1fr) minmax(0, 1.5fr); gap: 12px; align-items: center; }
+.model-routing-fields label > span { display: grid; gap: 4px; font-size: 13px; }
+.model-routing-fields small { color: var(--color-text-muted); font-size: 11px; }
+.model-routing-fields select { min-width: 0; width: 100%; }
+.model-routing-strict { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.model-routing-strict input { width: auto; }
+@media (max-width: 520px) { .model-routing-fields > label:not(.model-routing-strict) { grid-template-columns: 1fr; } }

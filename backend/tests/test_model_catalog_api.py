@@ -95,3 +95,22 @@ def test_ag_ui_model_profile_type_is_validated_before_run(client):
         "tools": [], "context": [], "state": {}, "forwardedProps": {"modelProfileId": 42},
     })
     assert response.status_code == 422
+
+
+def test_routing_policy_api_checks_versions_and_effective_execution_model(client):
+    _catalog, connection, profile = create(client, "routed", "synthetic-route-key")
+    initial = client.get("/agent/model-routing").json()
+    payload = {"roles": {"execute": profile["id"]}, "strict_capabilities": False, "expected_version": initial["version"]}
+    response = client.put("/agent/model-routing", json=payload)
+    assert response.status_code == 200 and response.json()["version"] == initial["version"] + 1
+    assert "synthetic-route-key" not in response.text and "secret_ref" not in response.text
+    catalog = client.get("/agent/model-connections").json()
+    assert catalog["effective_execution_profile_id"] == profile["id"]
+    assert catalog["default_profile_id"] != profile["id"]
+    assert client.put("/agent/model-routing", json=payload).status_code == 409
+    payload["expected_version"] = response.json()["version"]
+    assert client.put("/agent/model-routing", json={**payload, "roles": {"unknown": profile["id"]}}).status_code == 422
+    assert client.put("/agent/model-routing", json={**payload, "roles": {"plan": "foreign-profile"}}).status_code == 400
+    assert client.delete(f"/agent/model-connections/{connection['id']}").status_code == 200
+    unavailable = client.get("/agent/capabilities")
+    assert unavailable.status_code == 400 and "停用" in unavailable.json()["detail"]

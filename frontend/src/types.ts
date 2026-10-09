@@ -111,6 +111,7 @@ export type ModelCatalog = {
   connections: ModelConnection[];
   profiles: ModelProfile[];
   default_profile_id: string | null;
+  effective_execution_profile_id?: string | null;
 };
 
 export type AgentSettings = {

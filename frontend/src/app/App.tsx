@@ -91,6 +91,7 @@ const AccountSettingsPage = lazy(() => loadAccountSettingsPage().then((module) =
 })));
 
 const ModelConnectionManager = lazy(() => import("../features/settings/ModelConnectionManager").then((module) => ({ default: module.ModelConnectionManager })));
+const ModelRoutingPanel = lazy(() => import("../features/settings/ModelRoutingPanel").then((module) => ({ default: module.ModelRoutingPanel })));
 
 const ModelSettingsPage = lazy(() => import("../features/settings/ModelSettingsPage").then((module) => ({
   default: module.ModelSettingsPage
@@ -225,7 +226,7 @@ export function App({
   const currentConversation = conversations.find((item) => item.id === currentConversationId) ?? null;
   const activeModelProfiles = modelCatalog.catalog.profiles.filter(profile => profile.enabled && modelCatalog.catalog.connections.some(connection => connection.id === profile.connection_id && connection.enabled));
   const selectedModelProfile = modelCatalog.catalog.profiles.find(profile => profile.id === currentConversation?.model_profile_id);
-  const defaultModelProfile = modelCatalog.catalog.profiles.find(profile => profile.id === modelCatalog.catalog.default_profile_id);
+  const defaultModelProfile = modelCatalog.catalog.profiles.find(profile => profile.id === (modelCatalog.catalog.effective_execution_profile_id || modelCatalog.catalog.default_profile_id));
   const currentModelName = selectedModelProfile?.model_name || defaultModelProfile?.model_name || capabilities?.active_model_name || (modelSettingsReady ? savedAgentSettings.model_name : "尚未配置");
   const modelProfileUnavailable = Boolean(currentConversation?.model_profile_id && selectedModelProfile && !activeModelProfiles.some(profile => profile.id === currentConversation.model_profile_id));
   const defaultModelHasDraft = Boolean(agentSettings.api_key.trim()) || agentSettings.model_name !== savedAgentSettings.model_name
@@ -1057,6 +1058,9 @@ export function App({
               {appRoute.page === "model" ? (
                 modelSettingsReady ? (
                   <ModelSettingsPage
+                    routingManager={<ModelRoutingPanel key={userEmail} fetchJson={fetchJson} catalog={modelCatalog.catalog}
+                      disabled={agentSettingsBusy || modelCatalog.busy || Boolean(modelSaveUnknown)}
+                      onApplied={async () => { await modelCatalog.reload(); await refreshDefaultModelSelection(); }} />}
                     connectionManager={<ModelConnectionManager
                       fetchJson={fetchJson} catalog={modelCatalog.catalog} loading={modelCatalog.loading}
                       busy={modelCatalog.busy || agentSettingsBusy} error={modelCatalog.error}

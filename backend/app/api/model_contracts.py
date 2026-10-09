@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from .schemas import ConversationUpdate
+from ..agent.model_router import RoutingPolicy
 
 
 Protocol = Literal["auto", "openai", "responses", "anthropic", "gemini", "ollama"]
@@ -54,3 +55,7 @@ class DefaultProfileIn(BaseModel):
 
 class ConversationModelUpdate(ConversationUpdate):
     model_profile_id: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class RoutingPolicyIn(RoutingPolicy):
+    expected_version: int = Field(ge=1)

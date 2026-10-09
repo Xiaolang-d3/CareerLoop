@@ -9,7 +9,10 @@ export type ModelSelection = {
   model_name: string;
   model_base_url?: string;
   model_protocol?: string;
-  stage_selections?: Record<string, { model_name?: string; profile_id?: string; profile_revision?: number; connection_revision?: number }>;
+  policy_version?: number;
+  selection_reason?: string;
+  capability_status?: string;
+  stage_selections?: Record<string, { model_name?: string; profile_id?: string; profile_revision?: number; connection_revision?: number; selection_reason?: string; capability_status?: string }>;
 };
 
 export type AgentRunResult = {

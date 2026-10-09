@@ -51,6 +51,7 @@ function assistantMessage(content: string, id = 12): ChatMessage {
   };
 }
 
+
 function fencedMermaid(source: string): string {
   return ["```mermaid", source, "```"].join("\n");
 }
@@ -118,6 +119,24 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
 }
 
 describe("ChatWorkspace", () => {
+  it("shows the fixed routing version and stage reasons in historical model details", () => {
+    renderChat([message, { ...assistantMessage("最终回答"), payload: { model_selection: {
+      profile_id: "execute", connection_id: "c", profile_revision: 1, connection_revision: 2,
+      model_name: "执行模型", policy_version: 3,
+      stage_selections: {
+      classify: { model_name: "识别模型", selection_reason: "stage_role", capability_status: "satisfied" },
+      plan: { model_name: "规划模型", selection_reason: "default_profile" },
+        execute: { model_name: "执行模型", selection_reason: "explicit_profile", capability_status: "unverified" }
+      }
+    } } }]);
+    expect(screen.getByText("生成模型：执行模型")).toBeVisible();
+    fireEvent.click(screen.getByText("模型详情"));
+    expect(screen.getByText(/路由版本 3/)).toBeInTheDocument();
+    expect(screen.getByText("意图识别：识别模型 · 阶段分工")).toBeInTheDocument();
+  expect(screen.getByText("任务规划：规划模型 · 账号默认 · 本轮未调用")).toBeInTheDocument();
+    expect(screen.getByText("执行回答：执行模型 · 手动选模 · 所需能力未验证")).toBeInTheDocument();
+  });
+
   it("puts the model picker in the composer toolbar and reminds the user to configure a model", () => {
     const props = renderChat([message], { modelConfigured: false });
     const toolbar = screen.getByLabelText("添加资料");

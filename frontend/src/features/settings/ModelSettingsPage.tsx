@@ -6,6 +6,7 @@ import "./model-settings.css";
 
 type Props = {
   connectionManager?: ReactNode;
+  routingManager?: ReactNode;
   settings: AgentSettings;
   savedSettings: AgentSettings;
   editing: boolean;
@@ -135,6 +136,7 @@ function CapabilityRow({
 
 export function ModelSettingsPage({
   connectionManager,
+  routingManager,
   settings,
   savedSettings,
   editing,
@@ -246,6 +248,7 @@ export function ModelSettingsPage({
       {connectionManager}
       <details className="model-advanced-settings">
         <summary><strong>高级设置</strong><span>接口协议与连接诊断</span><ChevronDown size={16} /></summary>
+        {routingManager}
         <div className="model-settings-panels">
           <section className="settings-card model-settings-card model-protocol-card">
             <label>
