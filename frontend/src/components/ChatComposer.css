@@ -1,0 +1,100 @@
+/* Keep the editor and controls in separate rows in every conversation state. */
+.chat-workspace .chat-composer .composer-input.composer-input--enhanced {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 108px !important;
+  padding: 12px !important;
+}
+.chat-workspace .chat-composer .composer-input.composer-input--enhanced textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 52px !important;
+  max-height: min(240px, 30dvh);
+  padding: 6px 4px !important;
+  resize: none;
+  line-height: 1.6;
+  scrollbar-gutter: stable;
+}
+.chat-workspace .composer-input.composer-input--enhanced .composer-bottom-row {
+  width: 100%;
+  margin-top: 4px;
+  flex: none;
+}
+.chat-workspace .composer-input.composer-input--enhanced .composer-shortcuts { flex-wrap: wrap; min-width: 0; }
+.chat-workspace .composer-input.composer-input--enhanced .send-button { position: static; flex: none; transform: none; }
+.chat-workspace .composer-input.composer-input--enhanced .send-button:hover { transform: none; }
+.chat-workspace .composer-input.composer-input--enhanced .send-button:disabled { opacity: .45; box-shadow: none; cursor: not-allowed; }
+.composer-input-hint { display: flex; justify-content: space-between; gap: 8px; padding: 6px 4px 0; color: #817b92; font-size: 11px; line-height: 16px; }
+.composer-touch-hint { display: none; }
+@media (pointer: coarse) {
+  .composer-keyboard-hint { display: none; }
+  .composer-touch-hint { display: inline; }
+}
+@media (max-width: 600px) {
+  .chat-workspace .chat-composer .composer-input.composer-input--enhanced { padding: 8px !important; }
+  .chat-workspace .chat-composer .composer-input.composer-input--enhanced textarea { font-size: 16px !important; }
+}
+
+/* A quieter input frame keeps the conversation content prominent. */
+.assistant-page .chat-workspace .chat-composer .composer-input.composer-input--enhanced {
+  border-color: var(--color-border) !important;
+  border-radius: 16px !important;
+  background: var(--color-surface) !important;
+  box-shadow: 0 4px 16px rgba(48, 38, 110, .05) !important;
+}
+.assistant-page .chat-workspace .chat-composer .composer-input.composer-input--enhanced:focus-within {
+  border-color: var(--color-brand) !important;
+  box-shadow: var(--focus-ring) !important;
+}
+.assistant-page .chat-workspace .composer-input-hint {
+  color: var(--color-text-muted);
+  padding-top: 8px;
+}
+@media (max-width: 600px) {
+  .assistant-page .chat-workspace .composer-input.composer-input--enhanced .composer-bottom-row { align-items: flex-end; }
+  .assistant-page .chat-workspace .composer-input.composer-input--enhanced .composer-shortcuts { flex: 1 1 0; }
+}
+
+.chat-workspace .composer-attachments {
+  gap: 10px;
+  max-height: 132px;
+  margin: 0 0 10px;
+  padding: 6px 4px;
+  overflow-y: auto;
+}
+.chat-workspace .composer-file-attachment {
+  grid-template-columns: 30px minmax(0, 1fr) 28px;
+  max-width: min(280px, 100%);
+  min-width: 0;
+  min-height: 48px;
+  border-color: var(--color-border);
+  background: var(--color-surface);
+}
+.chat-workspace .composer-attachments strong { color: var(--color-text); font-size: 12px; }
+.chat-workspace .composer-attachments small { color: var(--color-text-muted); font-size: 11px; }
+.chat-workspace .composer-attachment-icon {
+  color: var(--color-brand-strong);
+  background: var(--color-brand-soft);
+}
+.chat-workspace .composer-attachment-remove { width: 28px; height: 28px; }
+.chat-workspace .composer-attachment-remove:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+.chat-workspace .chat-retry-prompt {
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+}
+.chat-workspace .chat-retry-prompt > span { min-width: 0; overflow-wrap: anywhere; }
+.chat-workspace .chat-retry-prompt details { flex-basis: 100%; min-width: 0; }
+.chat-workspace .chat-retry-prompt details p {
+  max-height: 160px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+  .chat-workspace .chat-retry-prompt > span { flex-basis: calc(100% - 28px); }
+  .chat-workspace .chat-retry-prompt button { min-height: 36px; }
+}

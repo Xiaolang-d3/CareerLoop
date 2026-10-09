@@ -6,7 +6,9 @@ import json
 import re
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Literal
+from contextvars import ContextVar
+from copy import deepcopy
+from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from ..domain import (
@@ -25,6 +27,8 @@ from ..domain import (
 )
 from ..models import ModelProviderError, ModelProviderRegistry
 from ..tools import ToolContext, ToolRegistry
+from ..observability.model_context import model_call_scope
+from .model_binding import internal_model_selection, is_bound_selection, is_legacy_selection, selection_identity
 from .completion import validate_completion
 from .orchestration import (
     INTERRUPT_TOOLS,
@@ -130,6 +134,7 @@ class AgentRuntime:
         max_model_retries: int = 1,
         max_tool_retries: int = 1,
         run_store: AgentRunStore | None = None,
+        model_selection: dict[str, Any] | None = None,
     ) -> None:
         self._models = models
         self._tools = tools
@@ -139,9 +144,82 @@ class AgentRuntime:
         self._max_model_retries = max(0, max_model_retries)
         self._max_tool_retries = max(0, max_tool_retries)
         self._run_store = run_store
+        self._model_selection = internal_model_selection(model_selection)
+        self._selection_context: ContextVar[dict[str, Any]] = ContextVar(f"selection-{id(self)}", default={})
+        self._run_context: ContextVar[str] = ContextVar(f"run-{id(self)}", default="")
         self._tool_executor = ToolExecutor(tools, tool_timeout_seconds)
 
+    @property
+    def model_selection(self) -> dict[str, Any]:
+        return deepcopy(self._model_selection)
+
+    def _current_model_selection(self) -> dict[str, Any]:
+        return deepcopy(self._selection_context.get() or self._model_selection)
+
+    def _validate_model_binding(self, selection: dict[str, Any]) -> None:
+        if not is_bound_selection(selection) and not is_legacy_selection(selection):
+            raise ModelProviderError("model_selection_unavailable", "运行的模型绑定信息不完整，无法恢复")
+        if is_bound_selection(selection) and selection_identity(selection) != selection_identity(self._model_selection):
+            raise ModelProviderError(
+                "model_selection_unavailable", "运行绑定的模型版本与当前执行器不一致，请使用原配置版本恢复",
+            )
+
     async def run(
+        self,
+        user_content: str,
+        platform_name: str | None = None,
+        history: list[AgentMessage] | None = None,
+        conversation_id: int | None = None,
+        task_id: int | None = None,
+        event_callback: StreamCallback | None = None,
+        image_urls: list[str] | None = None,
+        routing_content: str | None = None,
+        web_search_mode: str = "auto",
+        resume: AgentRunSnapshot | None = None,
+        run_id: str | None = None,
+        model_selection: dict[str, Any] | None = None,
+    ) -> AgentRunResult:
+        if resume is None or resume.resume_mode != "checkpoint":
+            resume = resolve_resume_snapshot(
+                user_content,
+                resume,
+                routing_text=routing_content or user_content,
+            )
+        if resume is not None and (
+            resume.route_kind not in {"conversation", "library_search", "library_update", "content_creation", "web_search"}
+            or not set(resume.allowed_tools + resume.required_tools).issubset(set(self._tools.names()))
+            or (resume.plan is not None and any(step.tool_name not in self._tools.names() for step in resume.plan.steps))
+        ):
+            # Do not revive retired career tools from a persisted checkpoint.
+            resume = None
+        selection = internal_model_selection(model_selection or self._model_selection)
+        if resume is not None:
+            # A legacy checkpoint has no evidence about its previous model.
+            selection = internal_model_selection(resume.model_selection)
+        self._validate_model_binding(selection)
+        if is_bound_selection(selection):
+            # Versioned storage is authoritative for model/root/protocol metadata.
+            selection = {
+                **self._model_selection,
+                **{key: value for key, value in selection.items()
+                   if key in {"selection_reason", "policy_version", "capability_status", "stage_selections"}},
+            }
+        selection_token = self._selection_context.set(selection)
+        run_token = self._run_context.set(str(run_id or ""))
+        try:
+            result = await self._run(
+                user_content, platform_name=platform_name, history=history,
+                conversation_id=conversation_id, task_id=task_id, event_callback=event_callback,
+                image_urls=image_urls, routing_content=routing_content, web_search_mode=web_search_mode,
+                resume=resume, run_id=run_id,
+            )
+            result.model_selection = self._current_model_selection()
+            return result
+        finally:
+            self._run_context.reset(run_token)
+            self._selection_context.reset(selection_token)
+
+    async def _run(
         self,
         user_content: str,
         platform_name: str | None = None,
@@ -157,19 +235,6 @@ class AgentRuntime:
     ) -> AgentRunResult:
         provider = self._models.get(self._model_provider)
         selected_platform = platform_name or self._platform_name
-        if resume is None or resume.resume_mode != "checkpoint":
-            resume = resolve_resume_snapshot(
-                user_content,
-                resume,
-                routing_text=routing_content or user_content,
-            )
-        if resume is not None and (
-            resume.route_kind not in {"conversation", "library_search", "library_update", "content_creation", "web_search"}
-            or not set(resume.allowed_tools + resume.required_tools).issubset(set(self._tools.names()))
-            or (resume.plan is not None and any(step.tool_name not in self._tools.names() for step in resume.plan.steps))
-        ):
-            # Do not revive retired career tools from a persisted checkpoint.
-            resume = None
         if resume is not None:
             return await self._resume_run(
                 provider=provider,
@@ -193,7 +258,8 @@ class AgentRuntime:
         )
         if should_classify_kind(route, routing_text):
             try:
-                classified = await provider.generate(
+                classified = await self._generate_for_stage(
+                    provider, "classify",
                     ModelRequest(
                         messages=[AgentMessage(role="user", content=classifier_prompt(routing_text))],
                     )
@@ -223,7 +289,8 @@ class AgentRuntime:
 
         if route.needs_plan:
             try:
-                planning_response = await provider.generate(
+                planning_response = await self._generate_for_stage(
+                    provider, "plan",
                     ModelRequest(
                         messages=[
                             AgentMessage(
@@ -248,6 +315,7 @@ class AgentRuntime:
                 return AgentRunResult(
                     content=f"任务规划失败：{exc}。本次执行已终止，请处理后重新提问。",
                     provider=self._model_provider,
+                    model_selection=self._current_model_selection(),
                     platform=selected_platform,
                     rounds=0,
                     status="failed",
@@ -268,6 +336,7 @@ class AgentRuntime:
                 return AgentRunResult(
                     content="模型未能生成执行计划。本次执行已终止，请重新提问。",
                     provider=self._model_provider,
+                    model_selection=self._current_model_selection(),
                     platform=selected_platform,
                     rounds=0,
                     status="failed",
@@ -508,6 +577,7 @@ class AgentRuntime:
         return AgentRunResult(
             content=content,
             provider=self._model_provider,
+            model_selection=self._current_model_selection(),
             platform=selected_platform,
             rounds=round_number,
             status="waiting_user",
@@ -517,8 +587,8 @@ class AgentRuntime:
             snapshot=snapshot,
         )
 
-    @staticmethod
     def _build_snapshot(
+        self,
         *,
         route: TaskRoute,
         plan: AgentPlan | None,
@@ -533,6 +603,7 @@ class AgentRuntime:
         clarification: AgentClarification | None = None,
     ) -> AgentRunSnapshot:
         return AgentRunSnapshot(
+            model_selection=self._current_model_selection(),
             resume_mode=resume_mode,
             route_kind=route.kind,
             needs_plan=route.needs_plan,
@@ -673,6 +744,7 @@ class AgentRuntime:
                 return AgentRunResult(
                     content=f"模型服务不可用：{exc}。本次执行已终止，请处理后重新提问。",
                     provider=self._model_provider,
+                    model_selection=self._current_model_selection(),
                     platform=selected_platform,
                     rounds=round_number,
                     status="failed",
@@ -694,6 +766,7 @@ class AgentRuntime:
                 return AgentRunResult(
                     content="模型服务发生未知异常。本次执行已终止，请检查服务日志后重新提问。",
                     provider=self._model_provider,
+                    model_selection=self._current_model_selection(),
                     platform=selected_platform,
                     rounds=round_number,
                     status="failed",
@@ -727,6 +800,7 @@ class AgentRuntime:
                         return AgentRunResult(
                             content="模型未执行完成任务所需的必要步骤。本次执行已终止，请重试。",
                             provider=self._model_provider,
+                            model_selection=self._current_model_selection(),
                             platform=selected_platform,
                             rounds=round_number,
                             status="failed",
@@ -813,6 +887,7 @@ class AgentRuntime:
                                 + "\n\n> 此回答未通过来源引用校验，请勿将其视为已核验结论。"
                             ),
                             provider=self._model_provider,
+                            model_selection=self._current_model_selection(),
                             platform=selected_platform,
                             rounds=round_number,
                             status="failed",
@@ -840,6 +915,7 @@ class AgentRuntime:
                 return AgentRunResult(
                     content=response.content,
                     provider=self._model_provider,
+                    model_selection=self._current_model_selection(),
                     platform=selected_platform,
                     rounds=round_number,
                     status="failed" if unresolved_error else "done",
@@ -851,6 +927,7 @@ class AgentRuntime:
                 return AgentRunResult(
                     content="模型没有返回可执行工具或最终回答。本次执行已终止，请重新提问。",
                     provider=self._model_provider,
+                    model_selection=self._current_model_selection(),
                     platform=selected_platform,
                     rounds=round_number,
                     status="failed",
@@ -894,6 +971,7 @@ class AgentRuntime:
                     return AgentRunResult(
                         content=f"{message}。本次执行已终止，请调整要求后重新提问。",
                         provider=self._model_provider,
+                        model_selection=self._current_model_selection(),
                         platform=selected_platform,
                         rounds=round_number,
                         status="failed",
@@ -1031,6 +1109,7 @@ class AgentRuntime:
                     return AgentRunResult(
                         content=f"{result.message}。本次执行已终止，请处理后重新提问。",
                         provider=self._model_provider,
+                        model_selection=self._current_model_selection(),
                         platform=selected_platform,
                         rounds=round_number,
                         status="failed",
@@ -1070,6 +1149,7 @@ class AgentRuntime:
         return AgentRunResult(
             content=f"Agent 已达到最大工具调用轮数（{self._max_tool_rounds}），本次执行已终止，请缩小任务范围后重新提问。",
             provider=self._model_provider,
+            model_selection=self._current_model_selection(),
             platform=selected_platform,
             rounds=self._max_tool_rounds,
             status="failed",
@@ -1122,6 +1202,7 @@ class AgentRuntime:
         return AgentRunResult(
             content="已停止生成。",
             provider=self._model_provider,
+            model_selection=self._current_model_selection(),
             platform=selected_platform,
             rounds=round_number,
             status="cancelled",
@@ -1268,6 +1349,7 @@ class AgentRuntime:
             return fingerprint, True, AgentRunResult(
                 content="Agent 重复调用同一个已完成工具，本次执行已终止，请重试。",
                 provider=self._model_provider,
+                model_selection=self._current_model_selection(),
                 platform=selected_platform,
                 rounds=round_number,
                 status="failed",
@@ -1311,7 +1393,8 @@ class AgentRuntime:
         await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
         try:
             tool_specs = {spec.name: spec for spec in self._tools.specs()}
-            response = await provider.generate(
+            response = await self._generate_for_stage(
+                provider, "plan",
                 ModelRequest(
                     messages=[
                         AgentMessage(
@@ -1374,13 +1457,19 @@ class AgentRuntime:
         web_search_mode: str = "auto",
         resume: AgentRunSnapshot | None = None,
         run_id: str | None = None,
+        model_selection: dict[str, Any] | None = None,
     ) -> AsyncIterator[AgentStreamEvent]:
         execution_id = run_id or f"agent-{uuid.uuid4().hex}"
         effective_content = user_content
         effective_resume = resume
+        effective_selection = internal_model_selection(model_selection or self._model_selection)
+        if resume is not None:
+            effective_selection = internal_model_selection(resume.model_selection)
         cached_result: AgentRunResult | None = None
         if self._run_store is not None:
             existing = self._run_store.get_run(execution_id)
+            if existing is not None and existing.get("model_selection_invalid"):
+                raise ModelProviderError("model_selection_unavailable", "运行的模型绑定信息损坏，无法恢复")
             if (
                 existing is not None
                 and existing["status"] in REPLAYABLE_RUN_STATUSES
@@ -1388,20 +1477,23 @@ class AgentRuntime:
             ):
                 cached_result = existing["result"]
             else:
+                if existing is not None:
+                    effective_selection = internal_model_selection(existing.get("model_selection"))
                 if (
                     existing is not None
                     and existing["status"] == "interrupted"
-                    and existing.get("checkpoint") is not None
                 ):
                     effective_content = str(existing.get("user_content") or user_content)
-                    effective_resume = existing["checkpoint"].model_copy(
-                        update={"resume_mode": "checkpoint"}
-                    )
+                    if existing.get("checkpoint") is not None:
+                        effective_resume = existing["checkpoint"].model_copy(
+                            update={"resume_mode": "checkpoint"}
+                        )
                 self._run_store.start_run(
                     execution_id,
                     conversation_id=conversation_id,
                     task_id=task_id,
                     user_content=effective_content,
+                    model_selection=effective_selection,
                 )
         queue: asyncio.Queue[AgentStreamEvent | None] = asyncio.Queue()
 
@@ -1430,6 +1522,7 @@ class AgentRuntime:
                         web_search_mode=web_search_mode,
                         resume=effective_resume,
                         run_id=execution_id,
+                        model_selection=effective_selection,
                     )
                     if self._run_store is not None:
                         self._run_store.finish(execution_id, result)
@@ -1440,6 +1533,7 @@ class AgentRuntime:
                 cancelled = AgentRunResult(
                     content="已停止生成。",
                     provider=self._model_provider,
+                    model_selection=deepcopy(effective_selection),
                     platform=platform_name or self._platform_name,
                     rounds=0,
                     status="cancelled",
@@ -1452,6 +1546,7 @@ class AgentRuntime:
                 failed = AgentRunResult(
                     content="Agent 流式执行发生未知异常。",
                     provider=self._model_provider,
+                    model_selection=deepcopy(effective_selection),
                     platform=platform_name or self._platform_name,
                     rounds=0,
                     status="failed",
@@ -1480,7 +1575,15 @@ class AgentRuntime:
                 task.cancel()
             await asyncio.gather(task, return_exceptions=True)
 
-    async def _generate_response(
+    async def _generate_for_stage(self, provider, stage: str, request: ModelRequest) -> ModelResponse:
+        with model_call_scope(self._current_model_selection(), self._run_context.get(), stage=stage):
+            return await provider.generate(request)
+
+    async def _generate_response(self, provider, request: ModelRequest, event_callback: StreamCallback | None) -> ModelResponse:
+        with model_call_scope(self._current_model_selection(), self._run_context.get(), stage="execute"):
+            return await self._generate_response_unscoped(provider, request, event_callback)
+
+    async def _generate_response_unscoped(
         self,
         provider,
         request: ModelRequest,

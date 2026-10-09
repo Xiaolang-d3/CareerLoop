@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Archive, History, MessageCircle, MoreHorizontal, Pencil, Plus, Trash2, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Archive, History, MessageCircle, MoreHorizontal, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import type { Conversation } from "../types";
 
 export type ConversationTimeGroup = {
@@ -88,7 +88,29 @@ export function ConversationHistoryPanel({
   onRemove
 }: Props) {
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
-  const groups = useMemo(() => groupConversationsByTime(conversations), [conversations]);
+  const [query, setQuery] = useState("");
+  const panelRef = useRef<HTMLElement>(null);
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    return conversations.filter((conversation) => !needle || `${conversation.title} ${conversation.summary}`.toLocaleLowerCase().includes(needle));
+  }, [conversations, query]);
+  const groups = useMemo(() => groupConversationsByTime(filtered), [filtered]);
+  useEffect(() => setOpenMenuId(null), [query]);
+  useEffect(() => {
+    if (openMenuId === null) return;
+    panelRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    const dismiss = (event: PointerEvent) => {
+      if (!(event.target instanceof Element) || !event.target.closest(".conversation-history-actions")) setOpenMenuId(null);
+    };
+    document.addEventListener("pointerdown", dismiss);
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, [openMenuId]);
+
+  function closeMenu() {
+    const id = openMenuId;
+    setOpenMenuId(null);
+    panelRef.current?.querySelector<HTMLButtonElement>(`[data-menu-trigger="${id}"]`)?.focus({ preventScroll: true });
+  }
 
   useEffect(() => setOpenMenuId(null), [currentConversationId, open]);
 
@@ -98,6 +120,7 @@ export function ConversationHistoryPanel({
 
   return (
     <aside
+      ref={panelRef}
       id="conversation-history-drawer"
       className={`conversation-history-panel ${open ? "drawer-open" : ""}`}
       hidden={!open}
@@ -110,24 +133,39 @@ export function ConversationHistoryPanel({
       <button className="conversation-history-new" type="button" onClick={() => { onCreate(); closeDrawer(); }} disabled={busy}>
         <Plus size={15} /><span>{busy ? "正在创建…" : "新建对话"}</span>
       </button>
+      <label className="conversation-history-search">
+        <Search size={14} aria-hidden="true" />
+        <input type="search" aria-label="搜索对话标题或摘要" placeholder="搜索对话…" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
+          if (event.key === "Escape" && query) { event.stopPropagation(); setQuery(""); }
+        }} />
+      </label>
       <div className="conversation-history-list">
+        {!groups.length ? <p className="conversation-history-empty" role="status">{query.trim() ? "没有匹配的对话，试试其他关键词" : "还没有对话，点击上方开始"}</p> : null}
         {groups.map((group) => (
           <section className="conversation-history-group" key={group.label} aria-label={group.label}>
             <h3>{group.label}</h3>
             {group.items.map((conversation, index) => (
               <div className={`conversation-history-item ${conversation.id === currentConversationId ? "active" : ""} ${conversation.status}`} key={conversation.id}>
-                <button className="conversation-history-select" type="button" onClick={() => { onSelect(conversation.id); closeDrawer(); setOpenMenuId(null); }}>
+                <button className="conversation-history-select" title={conversation.title} aria-current={conversation.id === currentConversationId ? "page" : undefined} type="button" onClick={() => { onSelect(conversation.id); closeDrawer(); setOpenMenuId(null); }}>
                   <MessageCircle size={14} />
                   <span><strong>{conversation.title}</strong><small>{conversationSubtitle(conversation)}</small></span>
                 </button>
                 <div className="conversation-history-actions">
-                  <button type="button" onClick={() => setOpenMenuId((current) => current === conversation.id ? null : conversation.id)} title="更多操作" aria-label={`${conversation.title} 的更多操作`} aria-expanded={openMenuId === conversation.id}>
+                  <button type="button" onClick={() => setOpenMenuId((current) => current === conversation.id ? null : conversation.id)} data-menu-trigger={conversation.id} aria-haspopup="menu" title="更多操作" aria-label={`${conversation.title} 的更多操作`} aria-expanded={openMenuId === conversation.id}>
                     <MoreHorizontal size={16} />
                   </button>
-                  {openMenuId === conversation.id ? <div className={`conversation-history-menu ${group.items.length <= 3 || index < Math.ceil(group.items.length / 2) ? "opens-down" : "opens-up"}`} role="menu">
-                    <button role="menuitem" onClick={() => { onRename(conversation); setOpenMenuId(null); }}><Pencil size={13} />重命名</button>
-                    <button role="menuitem" onClick={() => { onArchive(conversation); setOpenMenuId(null); }}><Archive size={13} />{conversation.status === "active" ? "归档" : "恢复"}</button>
-                    <button className="danger" role="menuitem" onClick={() => { onRemove(conversation); setOpenMenuId(null); }}><Trash2 size={13} />删除</button>
+                  {openMenuId === conversation.id ? <div className={`conversation-history-menu ${group.items.length <= 3 || index < Math.ceil(group.items.length / 2) ? "opens-down" : "opens-up"}`} role="menu" aria-label={`${conversation.title} 的操作`} onKeyDown={(event) => {
+                    if (event.key === "Escape") { event.stopPropagation(); closeMenu(); return; }
+                    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+                    event.preventDefault();
+                    const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+                    const current = items.indexOf(document.activeElement as HTMLButtonElement);
+                    const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (current + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+                    items[next]?.focus();
+                  }}>
+                    <button role="menuitem" onClick={() => { onRename(conversation); closeMenu(); }}><Pencil size={13} />重命名</button>
+                    <button role="menuitem" onClick={() => { onArchive(conversation); closeMenu(); }}><Archive size={13} />{conversation.status === "active" ? "归档" : "恢复"}</button>
+                    <button className="danger" role="menuitem" onClick={() => { onRemove(conversation); closeMenu(); }}><Trash2 size={13} />删除</button>
                   </div> : null}
                 </div>
               </div>

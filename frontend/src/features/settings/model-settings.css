@@ -3,36 +3,29 @@
   grid-template-columns: minmax(0, 1fr);
   gap: 15px;
   width: 100%;
-  max-width: 1120px;
+  max-width: 760px;
   margin: 0 auto;
 }
+.model-settings-page .settings-card { color: var(--color-text); background: var(--color-surface); border-color: var(--color-border); box-shadow: var(--shadow-sm); }
+.model-settings-page .settings-card-heading p { color: var(--color-text-muted); }
 
 .model-settings-warning {
   margin: 0;
   padding: 11px 13px;
-  border: 1px solid #e7b7a2;
+  border: 1px solid var(--color-warning);
   border-radius: 10px;
-  color: #7d352a;
-  background: #fff5ef;
+  color: var(--color-warning);
+  background: var(--color-warning-soft);
   font-size: 12px;
   line-height: 1.55;
 }
 
-.model-settings-top {
-  display: grid;
-  grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr);
-  gap: 15px;
-  align-items: start;
-  min-width: 0;
-}
-
-.model-settings-top > *,
 .model-settings-panels,
 .model-monitor-card {
   min-width: 0;
 }
 
-.model-settings-panels { display: grid; gap: 15px; }
+.model-settings-panels { display: grid; gap: 15px; padding-top: 16px; }
 
 .model-settings-card,
 .model-monitor-card {
@@ -40,7 +33,7 @@
   padding: 22px;
   border: 1px solid var(--color-border, #e4e2ef);
   border-radius: 14px;
-  background: rgba(255, 255, 255, .84);
+  background: var(--color-surface, #fff);
   box-shadow: var(--shadow-sm);
 }
 
@@ -55,25 +48,6 @@
 }
 
 .model-name-setting > small.model-discovery-error { color: var(--color-danger, #b34d65); }
-
-.model-connection-heading > em {
-  margin-left: auto;
-  padding: 5px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-style: normal;
-  font-weight: 750;
-}
-
-.model-connection-heading > em.locked {
-  color: var(--color-text-secondary, #50516a);
-  background: var(--color-surface-subtle, #f0eff8);
-}
-
-.model-connection-heading > em.editing {
-  color: var(--color-warning, #a56a19);
-  background: var(--color-warning-soft, #fff3da);
-}
 
 .model-field-heading {
   display: flex;
@@ -113,7 +87,7 @@
   border-radius: 9px;
   outline: 0;
   color: var(--color-text, #20213a);
-  background: #fff;
+  background: var(--color-surface);
   font-size: 13px;
 }
 
@@ -123,7 +97,7 @@
   box-shadow: var(--focus-ring);
 }
 
-.model-settings-card :is(input[readonly], select:disabled) {
+.model-settings-card :is(input:disabled, select:disabled) {
   color: var(--color-text-secondary, #50516a);
   border-color: var(--color-border, #e4e2ef);
   background: var(--color-surface-subtle, #f0eff8);
@@ -133,6 +107,8 @@
 
 .model-settings-actions {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 4px;
@@ -183,7 +159,7 @@
   padding: 12px;
   border: 1px solid var(--color-border, #e4e2ef);
   border-radius: 10px;
-  background: #fcfbff;
+  background: var(--color-surface-subtle);
 }
 
 .model-monitor-metrics article > span { color: var(--color-text-muted, #84859a); font-size: 11px; font-weight: 750; }
@@ -253,26 +229,6 @@
   text-align: center;
 }
 
-.model-list-table { display: grid; border-top: 1px solid var(--color-border, #e4e2ef); }
-.model-list-head,
-.model-list-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(90px, .8fr) 52px;
-  gap: 10px;
-  align-items: center;
-  min-height: 40px;
-  padding: 6px 2px;
-  border-bottom: 1px solid var(--color-border, #e4e2ef);
-}
-.model-list-head { color: var(--color-text-muted, #84859a); font-size: 11px; font-weight: 750; }
-.model-list-row strong { overflow: hidden; color: var(--color-text, #20213a); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.model-list-row span { color: var(--color-text-secondary, #50516a); font-size: 12px; }
-.model-list-row em { color: var(--color-text-muted, #84859a); font-size: 12px; font-style: normal; }
-.model-list-row.default em {
-  color: var(--color-brand-strong, #4e42ba);
-  font-weight: 750;
-}
-
 .model-quota-empty,
 .model-quota-remaining {
   display: grid;
@@ -323,26 +279,6 @@
 .model-capability-error { margin: 0; color: var(--color-danger, #b34d65); font-size: 12px; }
 .model-capability-note { margin: 0; color: var(--color-text-muted, #84859a); font-size: 12px; line-height: 1.5; }
 
-@media (min-width: 1400px) {
-  .model-settings-page {
-    max-width: 1360px;
-    grid-template-columns: minmax(0, .72fr) minmax(0, .78fr) minmax(0, 1.1fr);
-    align-items: start;
-  }
-
-  .model-settings-top { display: contents; }
-
-  .model-monitor-card {
-    grid-column: 3;
-    grid-row: 1;
-  }
-}
-
-@media (max-width: 1100px) {
-  .model-settings-top { grid-template-columns: 1fr; }
-  .model-settings-page { max-width: 760px; }
-}
-
 @media (max-width: 720px) {
   .model-settings-card,
   .model-monitor-card { padding: 17px; }
@@ -354,4 +290,23 @@
   .model-monitor-section-title { align-items: flex-start; flex-direction: column; gap: 3px; }
   .model-monitor-event-list > div { grid-template-columns: auto 68px minmax(0, 1fr); padding-block: 7px; }
   .model-monitor-event-list time { grid-column: 3; }
+}
+
+.model-manual-button { justify-self: start; min-height: 28px; padding: 2px 0; border: 0; color: var(--color-brand); background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
+.model-manual-button:hover { text-decoration: underline; text-underline-offset: 3px; }
+.model-manual-button:disabled { cursor: wait; opacity: .55; }
+.model-discovery-button:focus-visible,
+.model-manual-button:focus-visible,
+.model-advanced-settings > summary:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 3px; border-radius: 4px; }
+.model-settings-actions > p { flex: 1; margin: 0; color: var(--color-text-muted); font-size: 12px; overflow-wrap: anywhere; }
+.model-save-note { margin: -7px 0 0; color: var(--color-text-muted); text-align: right; font-size: 12px; }
+.model-advanced-settings > summary { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 4px; color: var(--color-text-secondary); font-size: 13px; cursor: pointer; list-style: none; }
+.model-advanced-settings > summary::-webkit-details-marker { display: none; }
+.model-advanced-settings > summary > span { color: var(--color-text-muted); font-size: 12px; }
+.model-advanced-settings > summary > svg { margin-left: auto; transition: transform .15s ease; }
+.model-advanced-settings[open] > summary > svg { transform: rotate(180deg); }
+.model-diagnostics-note { margin: 0; color: var(--color-text-muted); font-size: 12px; }
+@media (max-width: 420px) {
+  .model-settings-actions > p { flex-basis: 100%; }
+  .model-advanced-settings > summary > span { display: none; }
 }

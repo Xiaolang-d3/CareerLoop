@@ -97,7 +97,7 @@ def test_document_parser_does_not_infer_career_fields():
 
 def test_disabled_memory_is_not_read(library_db):
     create_text_source(title="笔记", content="不会向模型公开的笔记内容", db_path=library_db)
-    save_agent_settings({**DEFAULT_AGENT_SETTINGS, "library_memory_enabled": False}, db_path=library_db)
+    save_agent_settings({"library_memory_enabled": False}, db_path=library_db)
     assert model_context(library_db)["disabled"]
     result = asyncio.run(SearchLibraryTool(library_db).execute({"query": "笔记"}, ToolContext(platform_name="manual")))
     assert result.data == {"excerpts": [], "facts": [], "disabled": True}

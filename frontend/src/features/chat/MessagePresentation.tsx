@@ -10,7 +10,7 @@ const STARTER_PROMPTS: Array<{
     { draft: "根据我的要求起草一份内容。用途、读者和要点是：", title: "起草一份内容" }
   ];
 import type { AgentRunResult, ChatClarification, ChatMessage, ChatSessionContext } from "./types";
-import { Children, createContext, isValidElement, useContext, useEffect, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
+import { Children, createContext, isValidElement, useContext, useEffect, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import { ChatWorkspaceMermaid } from "../../components/ChatWorkspaceMermaid";
 import { ChatWorkspaceMindmap } from "../../components/ChatWorkspaceMindmap";
 import { isMermaidMindmap } from "../../components/mindmap-source";
@@ -171,6 +171,7 @@ function CitationLink({
       aria-label={citationNo ? `来源 ${citationNo}：${title}` : `来源：${title}`}
       onClick={citationNo && onOpenSource ? (event) => {
         event.preventDefault();
+        event.currentTarget.focus({ preventScroll: true });
         onOpenSource(index);
       } : undefined}
     >
@@ -218,17 +219,34 @@ function MarkdownPreRenderer({
   ...props
 }: ComponentPropsWithoutRef<"pre"> & ExtraProps) {
   const renderedChildren = Children.toArray(children);
-  const child = renderedChildren.length === 1 && isValidElement<{ className?: string }>(renderedChildren[0])
+  const child = renderedChildren.length === 1 && isValidElement<{ className?: string; children?: ReactNode }>(renderedChildren[0])
     ? renderedChildren[0]
     : null;
   const containsMermaid = child?.props.className?.split(/\s+/).includes("language-mermaid");
-  return containsMermaid ? children : <pre {...props}>{children}</pre>;
+  const source = childrenToText(child?.props.children ?? children);
+  const language = child?.props.className?.match(/language-([\w+-]+)/)?.[1] ?? "代码";
+  const [expanded, setExpanded] = useState(false);
+  const [copyState, setCopyState] = useState("复制");
+  useEffect(() => { setCopyState("复制"); }, [source]);
+  const { streaming } = useContext(MarkdownRenderContext);
+  const long = source.trimEnd().split("\n").length > 24;
+  async function copyCode() {
+    try { await navigator.clipboard.writeText(source); setCopyState("已复制"); }
+    catch { setCopyState("复制失败，请重试"); }
+  }
+  return containsMermaid ? children : <div className="chat-code-block">
+    <div className="chat-code-toolbar"><span>{language}</span><button type="button" onClick={() => void copyCode()}>{copyState}</button></div>
+    <pre {...props} className={long && !expanded && !streaming ? "is-collapsed" : undefined}>{children}</pre>
+    {long && !streaming ? <button className="chat-code-expand" type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "收起代码" : `展开完整代码（${source.trimEnd().split("\n").length} 行）`}</button> : null}
+    <span className="sr-only" role="status">{copyState === "复制" ? "" : copyState}</span>
+  </div>;
 }
 
 const MARKDOWN_COMPONENTS: Components = {
   a: MarkdownLinkRenderer,
   code: MarkdownCodeRenderer,
   pre: MarkdownPreRenderer,
+  table: ({ node: _node, ...props }) => <div className="chat-table-scroll" role="region" aria-label="表格，支持横向滚动" tabIndex={0}><table {...props} /></div>,
 };
 
 function MarkdownContent({
@@ -261,9 +279,10 @@ export function EditMessageComposer() {
   return (
     <MessagePrimitive.Root className="message user message-editing">
       <div className="message-content">
-        <div className="message-meta"><strong>编辑消息</strong><span>保存后将从这里重新生成</span></div>
+        <div className="message-meta"><strong>编辑消息</strong><span>将替换本条消息及后续消息，并重新生成回复</span></div>
         <ComposerPrimitive.Root className="message-edit-composer">
-          <ComposerPrimitive.Input rows={2} maxLength={1000} aria-label="编辑消息" autoFocus />
+          <ComposerPrimitive.Input rows={3} maxLength={200_000} aria-label="编辑消息" aria-describedby="message-edit-impact" autoFocus />
+          <p className="message-edit-impact" id="message-edit-impact">本轮资料与联网选项不会自动沿用；需要时请取消编辑，另发新消息。</p>
           <div className="message-edit-actions">
             <ComposerPrimitive.Cancel><X size={12} />取消</ComposerPrimitive.Cancel>
             <ComposerPrimitive.Send><Check size={12} />保存并重新生成</ComposerPrimitive.Send>
@@ -703,6 +722,8 @@ export function ResearchPanel({
   onClose: () => void;
 }) {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const sourceSectionRef = useRef<HTMLElement>(null);
+  const panelScrollRef = useRef<HTMLDivElement>(null);
   const [expandedStep, setExpandedStep] = useState<number | null>(null);
   const process = thoughtProcessContent(agent);
   const planSteps = planStepsFromAgent(agent);
@@ -718,13 +739,18 @@ export function ResearchPanel({
   const activeSource = sources[Math.min(selectedSource, Math.max(0, sources.length - 1))];
 
   useEffect(() => {
-    if (!open || typeof window === "undefined" || window.innerWidth > 820) return;
-    closeButtonRef.current?.focus();
+    if (!open) return;
+    closeButtonRef.current?.focus({ preventScroll: true });
   }, [open]);
 
   useEffect(() => {
     setExpandedStep(null);
   }, [agent]);
+
+  useLayoutEffect(() => {
+    if (!open || !sources.length || !sourceSectionRef.current || !panelScrollRef.current) return;
+    panelScrollRef.current.scrollTop = sourceSectionRef.current.offsetTop - panelScrollRef.current.offsetTop;
+  }, [open, selectedSource, sources.length]);
 
   if (!open) return null;
   return (
@@ -743,7 +769,7 @@ export function ResearchPanel({
         </div>
       </header>
 
-      <div className="research-panel-scroll">
+      <div className="research-panel-scroll" ref={panelScrollRef}>
         <section className="research-section" aria-labelledby="research-process-title">
           <div className="research-section-heading">
             <span>过程</span>
@@ -780,7 +806,7 @@ export function ResearchPanel({
           )}
         </section>
 
-        <section className="research-section research-sources" aria-labelledby="research-sources-title">
+        <section className="research-section research-sources" aria-labelledby="research-sources-title" ref={sourceSectionRef}>
           <div className="research-section-heading">
             <span>引用</span>
             <small>{sources.length ? `${sources.length} 个来源` : "暂无来源"}</small>
@@ -788,6 +814,17 @@ export function ResearchPanel({
           <h2 id="research-sources-title">用于回答的公开资料</h2>
           {sources.length ? (
             <>
+              {activeSource ? (
+                <article className="research-source-detail" aria-label={`来源详情：${activeSource.title}`}>
+                  <div>
+                    <span>来源 {Math.min(selectedSource, sources.length - 1) + 1}</span>
+                    <a href={activeSource.url} target="_blank" rel="noreferrer">打开原网页<ArrowUpRight size={13} /></a>
+                  </div>
+                  <strong title={activeSource.title}>{activeSource.title}</strong>
+                  {activeSource.published_at ? <small>{activeSource.published_at}</small> : null}
+                  <p>{sourceDisplaySummary(activeSource)}</p>
+                </article>
+              ) : null}
               <div className="research-source-list" aria-label="来源列表">
                 {sources.map((source, index) => {
                   const confidence = sourceConfidence(source);
@@ -802,7 +839,7 @@ export function ResearchPanel({
                       <span className="research-source-number">{index + 1}</span>
                       <SourceFavicon domain={sourceDomain(source)} title={source.title} />
                       <span className="research-source-copy">
-                        <strong>{source.title}</strong>
+                        <strong title={source.title}>{source.title}</strong>
                         <small>{sourceDomain(source)}</small>
                       </span>
                       <em className={`is-${confidence}`}>{confidence === "high" ? "高可信" : "待核验"}</em>
@@ -810,17 +847,7 @@ export function ResearchPanel({
                   );
                 })}
               </div>
-              {activeSource ? (
-                <article className="research-source-detail" aria-label={`来源详情：${activeSource.title}`}>
-                  <div>
-                    <span>来源 {Math.min(selectedSource, sources.length - 1) + 1}</span>
-                    <a href={activeSource.url} target="_blank" rel="noreferrer">打开原网页<ArrowUpRight size={13} /></a>
-                  </div>
-                  <strong>{activeSource.title}</strong>
-                  {activeSource.published_at ? <small>{activeSource.published_at}</small> : null}
-                  <p>{sourceDisplaySummary(activeSource)}</p>
-                </article>
-              ) : null}
+
             </>
           ) : (
             <div className="research-empty-state">
@@ -854,11 +881,25 @@ function UserMessageContent({ content }: { content: string }) {
   );
 }
 
+function MessageCopyButton({ content, label }: { content: string; label: string }) {
+  const [feedback, setFeedback] = useState("");
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => { setFeedback(""); }, [content]);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  async function copy() {
+    try { await navigator.clipboard.writeText(content); setFeedback("已复制"); }
+    catch { setFeedback("复制失败，请重试"); }
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setFeedback(""), 3000);
+  }
+  return <><button type="button" aria-label={label} onClick={() => void copy()} disabled={!content}>{feedback === "已复制" ? <Check size={12} /> : <Copy size={12} />}{feedback || "复制"}</button><span className="message-copy-feedback" role="status">{feedback}</span></>;
+}
+
 export function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: boolean }) {
   const researchPanel = useContext(ResearchPanelActionsContext);
   const source = state.metadata.custom.source as ChatMessage | undefined;
   if (!source) return null;
-  const isCopied = "isCopied" in state && Boolean(state.isCopied);
+  const modelSelection = source.payload?.agent?.model_selection ?? source.payload?.model_selection;
   const thoughtEvent = source.payload?.agent?.events.find(
     (event) => event.tool_name === "agent_thinking"
   );
@@ -880,15 +921,14 @@ export function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: b
               <MarkdownContent sources={webSources} streaming={isActiveAssistant} onOpenSource={openResearch}>{resultContent}</MarkdownContent>
               <AgentResultNote run={source.payload?.agent} />
             </section>
+            {modelSelection?.model_name ? <div className="message-model-selection"><span>生成模型：{modelSelection.model_name}</span><details><summary>模型详情</summary><p>模型版本 {modelSelection.profile_revision} · 连接版本 {modelSelection.connection_revision}</p>{modelSelection.stage_selections ? Object.entries(modelSelection.stage_selections).map(([stage, selection]) => <p key={stage}>{stage}：{selection.model_name || "未记录"}</p>) : null}</details></div> : null}
             <ActionBarPrimitive.Root className="message-actions" hideWhenRunning>
-              <ActionBarPrimitive.Copy aria-label="复制回答">
-                {isCopied ? <Check size={12} /> : <Copy size={12} />}
-                {isCopied ? "已复制" : "复制"}
-              </ActionBarPrimitive.Copy>
-              <ActionBarPrimitive.Reload aria-label={failed ? "重试回答" : "重新生成回答"}>
+              <MessageCopyButton content={resultContent} label="复制回答" />
+              <ActionBarPrimitive.Reload aria-label={failed ? "重试回答" : "重新生成回答"} title="从本轮开始重新生成，后续消息将被替换" aria-describedby={`regenerate-impact-${source.id}`}>
                 <RefreshCw size={12} />{failed ? "重试" : "重新生成"}
               </ActionBarPrimitive.Reload>
             </ActionBarPrimitive.Root>
+            {!chatBusy ? <small className="message-action-hint" id={`regenerate-impact-${source.id}`}>重新生成将替换本轮及后续消息</small> : null}
             <WebSourcesPanel sources={webSources} onOpen={() => openResearch()} />
           </>
         ) : (
@@ -906,11 +946,8 @@ export function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: b
               </div>
             ) : null}
             <ActionBarPrimitive.Root className="message-actions user-message-actions" hideWhenRunning>
-              <ActionBarPrimitive.Copy aria-label="复制消息">
-                {isCopied ? <Check size={12} /> : <Copy size={12} />}
-                {isCopied ? "已复制" : "复制"}
-              </ActionBarPrimitive.Copy>
-              <ActionBarPrimitive.Edit aria-label="编辑消息"><Pencil size={12} />编辑</ActionBarPrimitive.Edit>
+              <MessageCopyButton content={source.content} label="复制消息" />
+              <ActionBarPrimitive.Edit aria-label="编辑消息" title="编辑后重发会替换本条及后续消息"><Pencil size={12} />编辑</ActionBarPrimitive.Edit>
             </ActionBarPrimitive.Root>
           </>
         )}

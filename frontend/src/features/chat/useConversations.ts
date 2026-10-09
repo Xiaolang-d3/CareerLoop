@@ -1,10 +1,14 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { createApiClient } from "../../api/client";
 import type { ConversationDialogState } from "../../components/ConversationDialog";
 import type { Conversation, ViewKey } from "../../types";
 
 type Options = { fetchJson: ReturnType<typeof createApiClient>; setActiveView: (view: ViewKey) => void; setErrorMessage: (message: string) => void; setNoticeMessage: (message: string) => void };
 export function useConversations({ fetchJson, setActiveView, setErrorMessage, setNoticeMessage }: Options) {
+  const readGeneration = useRef(0);
+  const clientRef = useRef(fetchJson);
+  clientRef.current = fetchJson;
+  function invalidateConversationReads() { readGeneration.current += 1; }
   const [conversations, setConversations] = useState<Conversation[]>([]);
 
   const [currentConversationId, setCurrentConversationId] = useState<number | null>(null);
@@ -14,8 +18,9 @@ export function useConversations({ fetchJson, setActiveView, setErrorMessage, se
   const [conversationDialog, setConversationDialog] = useState<ConversationDialogState | null>(null);
 
   async function refreshConversations() {
+    const generation = ++readGeneration.current;
     const next = await fetchJson<Conversation[]>("/conversations");
-    setConversations(next);
+    if (clientRef.current === fetchJson && readGeneration.current === generation) setConversations(next);
     return next;
   }
 
@@ -93,5 +98,5 @@ export function useConversations({ fetchJson, setActiveView, setErrorMessage, se
       setConversationBusy(false);
     }
   }
-  return { conversations, setConversations, currentConversationId, setCurrentConversationId, conversationBusy, setConversationBusy, conversationDialog, setConversationDialog, refreshConversations, createNewConversation, archiveConversation, renameConversation, removeConversation };
+  return { invalidateConversationReads, conversations, setConversations, currentConversationId, setCurrentConversationId, conversationBusy, setConversationBusy, conversationDialog, setConversationDialog, refreshConversations, createNewConversation, archiveConversation, renameConversation, removeConversation };
 }

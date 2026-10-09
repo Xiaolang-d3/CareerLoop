@@ -6,9 +6,9 @@ import { interruptedRunRetryDraft, type DurableAgentRunSummary } from "../../dur
 import type { AgentRunResult, ChatAttachment, ChatMessage, ChatRetryDraft, WebSearchMode } from "../../features/chat/types";
 import type { RefObject } from "react";
 
-type Options = { apiBase: string; accessToken: string; fetchJson: ReturnType<typeof createApiClient>; currentConversationId: number | null; currentConversationIdRef: RefObject<number | null>; setErrorMessage: (message: string) => void; setNoticeMessage: (message: string) => void; refreshConversations: () => Promise<unknown>; onLibraryChanged: () => Promise<void> };
+type Options = { apiBase: string; accessToken: string; fetchJson: ReturnType<typeof createApiClient>; currentConversationId: number | null; currentConversationIdRef: RefObject<number | null>; modelProfileId?: string | null; setErrorMessage: (message: string) => void; setNoticeMessage: (message: string) => void; refreshConversations: () => Promise<unknown>; onLibraryChanged: () => Promise<void> };
 
-export function useChatRun({ apiBase, accessToken, fetchJson, currentConversationId, currentConversationIdRef, setErrorMessage, setNoticeMessage, refreshConversations, onLibraryChanged }: Options) {
+export function useChatRun({ apiBase, accessToken, fetchJson, currentConversationId, currentConversationIdRef, modelProfileId, setErrorMessage, setNoticeMessage, refreshConversations, onLibraryChanged }: Options) {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   const [chatBusy, setChatBusy] = useState(false);
@@ -85,9 +85,11 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
     conversationIdOverride?: number,
     runIdOverride?: string,
     rewindMessageId?: number,
+    modelProfileIdOverride?: string | null,
   ) {
     const content = contentOverride.trim();
     const targetConversationId = conversationIdOverride ?? currentConversationId;
+    const selectedModelProfileId = modelProfileIdOverride === undefined ? modelProfileId ?? null : modelProfileIdOverride;
     if (!content || chatBusy || !targetConversationId) return;
     setModelUnavailable(null);
     // Editing/retrying must not remove previous messages until the model works.
@@ -197,6 +199,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
         setModelUnavailable(agentError.message || "模型服务暂不可用，请到模型设置检查配置后重试。");
         setRetryChatDraft({
           content: userMessage.content,
+          modelProfileId: selectedModelProfileId,
           attachmentIds,
           visionAttachmentIds,
           webSearch,
@@ -318,7 +321,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
           runId: executionRunId,
           tools: [],
           context: [],
-          forwardedProps: { conversationId, client: "careerloop-web", attachmentIds, visionAttachmentIds, webSearch, webSearchMode }
+          forwardedProps: { conversationId, modelProfileId: selectedModelProfileId, client: "careerloop-web", attachmentIds, visionAttachmentIds, webSearch, webSearchMode }
         },
         subscriber
       );
@@ -337,6 +340,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
       setModelUnavailable(message);
       setRetryChatDraft({
         content,
+        modelProfileId: selectedModelProfileId,
         attachmentIds,
         visionAttachmentIds,
         webSearch,

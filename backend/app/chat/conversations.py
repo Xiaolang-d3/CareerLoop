@@ -78,6 +78,8 @@ def update_conversation(
     *,
     title: str | None = None,
     status: str | None = None,
+    model_profile_id: str | None = None,
+    model_profile_selected: bool = False,
     db_path: str | Path | None = None,
 ) -> dict | None:
     fields: list[str] = []
@@ -88,6 +90,16 @@ def update_conversation(
     if status is not None:
         fields.append("status = ?")
         values.append(status)
+    if model_profile_selected:
+        if model_profile_id is not None:
+            from ..agent.model_catalog import get_model_catalog
+
+            catalog = get_model_catalog(db_path)
+            enabled_connections = {item["id"] for item in catalog["connections"] if item["enabled"]}
+            if not any(item["id"] == model_profile_id and item["enabled"] and item["connection_id"] in enabled_connections for item in catalog["profiles"]):
+                raise ValueError("模型档案不存在或已停用")
+        fields.append("model_profile_id = ?")
+        values.append(model_profile_id)
     if not fields:
         return get_conversation(conversation_id, db_path)
     fields.append("updated_at = CURRENT_TIMESTAMP")

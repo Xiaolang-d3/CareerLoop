@@ -1,5 +1,6 @@
 export type Conversation = {
   id: number;
+  model_profile_id?: string | null;
   title: string;
   status: "active" | "archived";
   summary: string;
@@ -25,7 +26,11 @@ export type LibraryBundle = {
     evidence?: Array<{ excerpt?: string; source_title?: string }>;
   }>;
   sources: LibrarySource[];
+  folders?: LibraryFolder[];
 };
+
+export type LibraryFolder = { id: number; name: string; created_at?: string };
+export type LibraryOrganization = { folder_id?: number | null; favorite?: boolean; trashed?: boolean; opened?: boolean };
 
 export type LibrarySource = {
   id: number;
@@ -41,6 +46,11 @@ export type LibrarySource = {
   file_available: boolean;
   created_at: string;
   updated_at: string;
+  folder_id?: number | null;
+  favorite?: boolean;
+  trashed_at?: string | null;
+  last_opened_at?: string | null;
+  size_bytes?: number;
 };
 
 export type LibrarySourceDetail = LibrarySource & {
@@ -78,6 +88,31 @@ export type ModelProtocol = "auto" | "openai" | "responses" | "anthropic" | "gem
 
 export type ResolvedModelProtocol = Exclude<ModelProtocol, "auto">;
 
+export type ModelConnection = {
+  id: string;
+  name: string;
+  model_base_url: string;
+  model_protocol: ModelProtocol;
+  api_key_configured: boolean;
+  enabled: boolean;
+  revision: number;
+};
+export type ModelProfile = {
+  id: string;
+  connection_id: string;
+  model_name: string;
+  enabled: boolean;
+  revision: number;
+  parameters?: Record<string, unknown> | null;
+  capabilities?: Record<string, unknown> | null;
+  context_limit?: number | null;
+};
+export type ModelCatalog = {
+  connections: ModelConnection[];
+  profiles: ModelProfile[];
+  default_profile_id: string | null;
+};
+
 export type AgentSettings = {
   display_name: string;
   persona_role: string;
@@ -94,6 +129,11 @@ export type AgentSettings = {
   resolved_model_protocol?: ResolvedModelProtocol;
   api_key: string;
   api_key_configured: boolean;
+  connection_id?: string;
+  config_revision?: number;
+  secret_storage_writable?: boolean;
+  api_key_source?: string;
+  last_save_request_id?: string | null;
   secret_storage?: "keyring" | "environment" | "memory";
   secret_migration_warning?: string;
 };
@@ -121,6 +161,8 @@ export type ModelCapabilityFlag = {
 };
 
 export type ModelCapabilityReport = {
+  connection_id?: string;
+  config_revision?: number;
   model_name: string;
   provider: string;
   provider_label: string;
@@ -135,6 +177,8 @@ export type ModelCapabilityReport = {
 };
 
 export type ModelServiceMonitor = {
+  connection_id?: string;
+  config_revision?: number;
   status: "healthy" | "degraded" | "unavailable" | "unknown";
   status_message: string;
   model_name: string;

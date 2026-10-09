@@ -1,5 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
+import { ThemeProvider } from "./features/appearance/ThemeProvider";
 import { Bootstrap } from "./app/Bootstrap";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 
@@ -8,7 +9,7 @@ const root = createRoot(document.getElementById("root")!);
 root.render(
   <React.StrictMode>
     <AppErrorBoundary>
-      <Bootstrap />
+      <ThemeProvider><Bootstrap /></ThemeProvider>
     </AppErrorBoundary>
   </React.StrictMode>
 );

@@ -1,8 +1,8 @@
 import { createRef } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatWorkspace } from "./ChatWorkspace";
-import type { AgentRunResult, ChatMessage, ChatRetryDraft } from "../features/chat/types";
+import type { AgentRunResult, ChatMessage, ChatRetryDraft, ChatAttachment, ChatComposerDraft } from "../features/chat/types";
 
 const mermaidMocks = vi.hoisted(() => ({
   initialize: vi.fn(),
@@ -63,8 +63,16 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
   retryDraft?: ChatRetryDraft | null;
   modelChecking?: boolean;
   modelUnavailable?: string;
+  libraryAttachments?: { conversationId: number; attachments: ChatAttachment[] };
+  onLibraryAttachmentsConsumed?: () => void;
+  composerDraft?: ChatComposerDraft;
+  onComposerDraftConsumed?: () => void;
 } = {}) {
   const props = {
+    libraryAttachments: extras.libraryAttachments,
+    onLibraryAttachmentsConsumed: extras.onLibraryAttachmentsConsumed,
+    composerDraft: extras.composerDraft,
+    onComposerDraftConsumed: extras.onComposerDraftConsumed,
     density: extras.density,
     modelChecking: extras.modelChecking,
     modelUnavailable: extras.modelUnavailable,
@@ -103,11 +111,121 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
     onRegenerate: vi.fn(),
     onOpenLibrary: vi.fn()
   };
-  render(<ChatWorkspace {...props} />);
-  return props;
+  const view = render(<ChatWorkspace {...props} />);
+  return { ...props, view };
 }
 
 describe("ChatWorkspace", () => {
+  it("reports message copy success and clipboard failure", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    renderChat();
+    fireEvent.click(screen.getByRole("button", { name: "复制消息" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "复制消息" })).toHaveTextContent("已复制"));
+    expect(writeText).toHaveBeenCalledWith(message.content);
+    writeText.mockRejectedValueOnce(new Error("denied"));
+    fireEvent.click(screen.getByRole("button", { name: "复制消息" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "复制消息" })).toHaveTextContent("复制失败，请重试"));
+  });
+
+  it("explains editing impact and preserves a long replacement without sending on cancel", async () => {
+    const props = renderChat([message, assistantMessage("原回答")]);
+    fireEvent.click(screen.getByRole("button", { name: "编辑消息" }));
+    const editor = await screen.findByRole("textbox", { name: "编辑消息" });
+    expect(editor).toHaveAttribute("maxlength", "200000");
+    expect(screen.getByText("将替换本条消息及后续消息，并重新生成回复")).toBeInTheDocument();
+    fireEvent.change(editor, { target: { value: "长消息".repeat(500) } });
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(props.onEdit).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "编辑消息" })).not.toBeInTheDocument());
+    expect(within(screen.getByRole("log")).getByText(message.content)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "编辑消息" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "编辑消息" }), { target: { value: "长消息".repeat(500) } });
+    fireEvent.click(screen.getByRole("button", { name: "保存并重新生成" }));
+    await waitFor(() => expect(props.onEdit).toHaveBeenCalledWith(message.id, "长消息".repeat(500)));
+  });
+
+  it("describes regeneration scope and regenerates from the matching user message", async () => {
+    const props = renderChat([message, assistantMessage("原回答")]);
+    const regenerate = screen.getByRole("button", { name: "重新生成回答" });
+    expect(regenerate).toHaveAccessibleDescription("重新生成将替换本轮及后续消息");
+    fireEvent.click(regenerate);
+    await waitFor(() => expect(props.onRegenerate).toHaveBeenCalledWith(message.id));
+  });
+
+  it("copies complete long code and expands its preview", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const code = Array.from({ length: 30 }, (_, i) => `print(${i})`).join("\n");
+    renderChat([assistantMessage(["```python", code, "```"].join("\n"))]);
+    expect(screen.getByText("python")).toBeInTheDocument();
+    const expand = screen.getByRole("button", { name: /展开完整代码/ });
+    expect(expand).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(expand);
+    expect(screen.getByRole("button", { name: "收起代码" })).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(screen.getByRole("button", { name: "复制" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(`${code}\n`));
+    const copied = await screen.findByRole("button", { name: "已复制" });
+    writeText.mockRejectedValueOnce(new Error("clipboard denied"));
+    fireEvent.click(copied);
+    await waitFor(() => expect(screen.getByRole("button", { name: "复制失败，请重试" })).toBeInTheDocument());
+  });
+
+  it("restores each conversation's text draft and keeps new conversations empty", () => {
+    const { view, ...props } = renderChat();
+    const input = screen.getByRole("textbox", { name: "输入消息" });
+    fireEvent.change(input, { target: { value: "项目一的未发送草稿" } });
+    view.rerender(<ChatWorkspace {...props} currentConversationId={2} />);
+    expect(input).toHaveValue("");
+    fireEvent.change(input, { target: { value: "项目二的未发送草稿" } });
+    view.rerender(<ChatWorkspace {...props} currentConversationId={1} />);
+    expect(input).toHaveValue("项目一的未发送草稿");
+    view.rerender(<ChatWorkspace {...props} currentConversationId={2} />);
+    expect(input).toHaveValue("项目二的未发送草稿");
+    expect(props.onSend).not.toHaveBeenCalled();
+  });
+
+  it("keeps a session draft across workspace unmounts without browser storage", () => {
+    const { view, ...props } = renderChat();
+    const drafts = new Map<number, string>();
+    view.rerender(<ChatWorkspace {...props} composerDrafts={drafts} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "输入消息" }), { target: { value: "离开工作区再回来" } });
+    view.unmount();
+    render(<ChatWorkspace {...props} composerDrafts={drafts} />);
+    expect(screen.getByRole("textbox", { name: "输入消息" })).toHaveValue("离开工作区再回来");
+  });
+
+  it("grows and shrinks the editor, scrolls tall content, and preserves long code input", () => {
+    renderChat();
+    const input = screen.getByRole("textbox", { name: "输入消息" });
+    const text = "const value = 123;\n".repeat(100);
+    Object.defineProperty(input, "scrollHeight", { configurable: true, value: 400 });
+    fireEvent.change(input, { target: { value: text } });
+    expect(input).toHaveValue(text);
+    expect(input).toHaveAttribute("maxlength", "200000");
+    expect(Number.parseFloat((input as HTMLTextAreaElement).style.height)).toBeLessThanOrEqual(240);
+    expect(Number.parseFloat((input as HTMLTextAreaElement).style.height)).toBeGreaterThan(200);
+    expect((input as HTMLTextAreaElement).style.overflowY).toBe("auto");
+    Object.defineProperty(input, "scrollHeight", { configurable: true, value: 70 });
+    fireEvent.change(input, { target: { value: "缩短的输入" } });
+    expect(input).toHaveStyle({ height: "70px", overflowY: "hidden" });
+    expect(screen.getByText("Enter 发送 · Shift + Enter 换行")).toBeInTheDocument();
+  });
+
+  it("waits for attachment processing and does not submit an IME confirmation or Shift+Enter", () => {
+    const { view, ...props } = renderChat();
+    const input = screen.getByRole("textbox", { name: "输入消息" });
+    fireEvent.change(input, { target: { value: "中文输入确认" } });
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    expect(props.onSend).not.toHaveBeenCalled();
+    view.rerender(<ChatWorkspace {...props} attachmentBusy />);
+    expect(screen.getByRole("button", { name: /^发送$/ })).toBeDisabled();
+    fireEvent.submit(input.closest("form")!);
+    expect(props.onSend).not.toHaveBeenCalled();
+    expect(input).toHaveValue("中文输入确认");
+  });
+
   beforeEach(() => {
     mermaidMocks.initialize.mockClear();
     mermaidMocks.render.mockReset();
@@ -117,6 +235,56 @@ describe("ChatWorkspace", () => {
   });
 
   afterEach(cleanup);
+
+  it("imports a matching home analysis draft once without sending it", async () => {
+    const consumed = vi.fn();
+    const draft = { id: "home-1", conversationId: 1, content: "请分析这条资讯，来源：https://example.com/news" };
+    const p = renderChat([], { composerDraft: draft, onComposerDraftConsumed: consumed });
+    const input = screen.getByRole("textbox", { name: "输入消息" });
+    await waitFor(() => expect(input).toHaveValue(draft.content));
+    expect(consumed).toHaveBeenCalledOnce();
+    expect(p.onSend).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "我编辑后的问题" } });
+    p.view.rerender(<ChatWorkspace {...p} composerDraft={draft} />);
+    expect(input).toHaveValue("我编辑后的问题");
+    expect(consumed).toHaveBeenCalledOnce();
+  });
+
+  it("preserves existing text until the user chooses to import a draft", async () => {
+    const p = renderChat([]);
+    const input = screen.getByRole("textbox", { name: "输入消息" });
+    fireEvent.change(input, { target: { value: "未发送的原问题" } });
+    const consumed = vi.fn();
+    const draft = { id: "home-2", conversationId: 2, content: "资讯分析草稿" };
+    p.view.rerender(<ChatWorkspace {...p} composerDraft={draft} onComposerDraftConsumed={consumed} />);
+    expect(input).toHaveValue("未发送的原问题");
+    expect(screen.queryByLabelText("资讯分析草稿")).not.toBeInTheDocument();
+    p.view.rerender(<ChatWorkspace {...p} currentConversationId={2} />);
+    expect(input).toHaveValue("");
+    fireEvent.change(input, { target: { value: "未发送的原问题" } });
+    p.view.rerender(<ChatWorkspace {...p} currentConversationId={2} composerDraft={draft} onComposerDraftConsumed={consumed} />);
+    expect(input).toHaveValue("未发送的原问题");
+    expect(consumed).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "替换为资讯草稿" }));
+    await waitFor(() => expect(input).toHaveValue("资讯分析草稿"));
+    expect(consumed).toHaveBeenCalledOnce();
+    expect(p.onSend).not.toHaveBeenCalled();
+  });
+
+  it("consumes library attachments once without clearing the composer or requeueing on conversation switches", async () => {
+    const consumed = vi.fn();
+    const p = renderChat([], {
+      libraryAttachments: { conversationId: 1, attachments: [{ id: "library-7", kind: "document", original_filename: "资料.txt", parse_status: "parsed" }] },
+      onLibraryAttachmentsConsumed: consumed,
+    });
+    expect(await screen.findByRole("button", { name: "移除 资料.txt" })).toBeInTheDocument();
+    expect(consumed).toHaveBeenCalledOnce();
+    p.view.rerender(<ChatWorkspace {...p} libraryAttachments={null} />);
+    expect(screen.getByRole("button", { name: "移除 资料.txt" })).toBeInTheDocument();
+    p.view.rerender(<ChatWorkspace {...p} libraryAttachments={null} currentConversationId={2} />);
+    p.view.rerender(<ChatWorkspace {...p} libraryAttachments={null} currentConversationId={1} />);
+    expect(screen.queryByRole("button", { name: "移除 资料.txt" })).not.toBeInTheDocument();
+  });
 
   it("offers model settings when service is unavailable", () => {
     const props = renderChat([], { modelUnavailable: "模型连接失败" });
@@ -647,7 +815,7 @@ describe("ChatWorkspace", () => {
       }
     ], { chatBusy: true });
 
-    expect(screen.getByText("正在整理要点")).toBeInTheDocument();
+    expect(screen.getAllByText("正在整理要点").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "正在整理要点" })).not.toBeInTheDocument();
     expect(screen.queryByText(/已识别为/)).not.toBeInTheDocument();
     expect(document.querySelector(".thinking-process-scroll")).not.toBeInTheDocument();
@@ -771,7 +939,7 @@ describe("ChatWorkspace", () => {
   it("shows a specific thinking placeholder while waiting for the first assistant token", () => {
     renderChat([message], { chatBusy: true });
 
-    expect(screen.getByText("正在整理要点")).toBeInTheDocument();
+    expect(screen.getAllByText("正在整理要点").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "正在整理要点" })).not.toBeInTheDocument();
     expect(screen.queryByText("正在思考")).not.toBeInTheDocument();
   });
@@ -894,7 +1062,7 @@ describe("ChatWorkspace", () => {
     expect(screen.queryByText(thoughtBody)).not.toBeInTheDocument();
   });
 
-  it("renders in-text source links as numbered citation previews", () => {
+  it("renders in-text source links as numbered citation previews", async () => {
     renderChat([
       message,
       {
@@ -936,8 +1104,18 @@ describe("ChatWorkspace", () => {
     expect(citation).toHaveTextContent("腾讯科技（深圳）有限公司");
     expect(citation).toHaveTextContent("www.tianyancha.com");
 
+    const viewport = screen.getByRole("log");
+    Object.defineProperty(viewport, "scrollHeight", { configurable: true, value: 1500 });
+    Object.defineProperty(viewport, "clientHeight", { configurable: true, value: 300 });
+    viewport.scrollTop = 217;
+    fireEvent.scroll(viewport);
     fireEvent.click(citation);
     expect(screen.getByRole("complementary", { name: "研究详情" })).toHaveTextContent("腾讯科技（深圳）有限公司");
+    expect(screen.getByRole("link", { name: "打开原网页" })).toHaveAttribute("target", "_blank");
+    viewport.scrollTop = 0;
+    fireEvent.click(within(screen.getByRole("complementary", { name: "研究详情" })).getByRole("button", { name: "关闭研究详情" }));
+    await waitFor(() => expect(citation).toHaveFocus());
+    await waitFor(() => expect(viewport.scrollTop).toBe(217));
   });
 
   it("opens source evidence details inside a researched answer", () => {

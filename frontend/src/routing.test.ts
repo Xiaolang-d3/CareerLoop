@@ -60,3 +60,10 @@ describe("model settings route", () => {
     expect(appRouteHash({ section: "settings", page: "model" })).toBe("#/settings/model");
   });
 });
+
+describe("global appearance", () => {
+  it("opens and serializes its own settings route", () => {
+    expect(parseAppHash("#/settings/appearance")).toEqual({ section: "settings", page: "appearance" });
+    expect(appRouteHash({ section: "settings", page: "appearance" })).toBe("#/settings/appearance");
+  });
+});

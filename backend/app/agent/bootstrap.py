@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from .settings import get_model_connection
+from .model_binding import internal_model_selection
+from ..observability.model_context import public_model_selection
 from ..config import get_settings
 from ..models import ModelProviderRegistry, build_model_provider
 from ..model_protocol import protocol_requires_api_key
@@ -18,14 +19,17 @@ _components: dict[tuple[Any, ...], tuple[AgentRuntime, dict[str, Any]]] = {}
 SETUP_MESSAGE = "必须先在设置中配置模型服务 API Key 后才能使用对话 Agent"
 
 
-def _runtime_cache_key() -> tuple[Any, ...]:
-    connection = get_model_connection()
+def get_profile_connection(profile_id: str | None = None, *, selection: dict[str, Any] | None = None) -> dict[str, Any]:
+    from .model_catalog import get_profile_connection as resolve_profile
+
+    return resolve_profile(profile_id, selection=selection)
+
+
+def _runtime_cache_key(connection: dict[str, Any]) -> tuple[Any, ...]:
     return (
-        current_user_id(),
-        connection["model_name"],
-        connection["model_base_url"],
-        connection.get("model_protocol", "auto"),
-        connection["api_key"],
+        current_user_id(), connection.get("profile_id"), connection.get("profile_revision"),
+        connection.get("connection_id"), connection.get("connection_revision"),
+        connection["model_name"], connection["model_base_url"], connection.get("model_protocol", "auto"),
     )
 
 
@@ -60,6 +64,7 @@ def _capabilities_payload(
         "configured": configured,
         "active_model_provider": active_model_provider,
         "active_model_name": model_connection["model_name"],
+        "model_selection": public_model_selection(model_connection),
         "active_platform": "manual",
         "model_providers": model_providers,
         "platforms": ["manual"],
@@ -81,9 +86,8 @@ def _capabilities_payload(
     return payload
 
 
-def _build_unconfigured_capabilities() -> dict[str, Any]:
+def _build_unconfigured_capabilities(model_connection: dict[str, Any]) -> dict[str, Any]:
     settings = get_settings()
-    model_connection = get_model_connection()
     tools = _build_tool_registry(settings)
     return _capabilities_payload(
         settings=settings,
@@ -96,9 +100,10 @@ def _build_unconfigured_capabilities() -> dict[str, Any]:
     )
 
 
-def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
+def _build_components(model_connection: dict[str, Any]) -> tuple[AgentRuntime, dict[str, Any]]:
+    from ..models.configured import configure_model_provider
+
     settings = get_settings()
-    model_connection = get_model_connection()
 
     if not _model_is_configured(model_connection):
         raise ValueError("必须先配置模型服务 API Key")
@@ -111,14 +116,17 @@ def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
         timeout_seconds=settings.model_timeout_seconds,
         protocol=model_connection.get("model_protocol", "auto"),
     )
-    models.register(model.name, model)
+    model = configure_model_provider(model, model_connection.get("parameters", {}))
+    model_alias = str(model_connection.get("profile_id") or model.name)
+    models.register(model_alias, model)
 
     tools = _build_tool_registry(settings)
 
     runtime = AgentRuntime(
         models=models,
         tools=tools,
-        model_provider=model.name,
+        model_provider=model_alias,
+        model_selection=internal_model_selection(model_connection),
         platform_name="manual",
         max_tool_rounds=settings.model_max_tool_rounds,
         tool_timeout_seconds=settings.tool_execution_timeout_seconds,
@@ -131,31 +139,33 @@ def _build_components() -> tuple[AgentRuntime, dict[str, Any]]:
         model_connection=model_connection,
         tools=tools,
         model_providers=models.names(),
-        active_model_provider=model.name,
+        active_model_provider=model_alias,
         configured=True,
     )
     return runtime, capabilities
 
 
-def _cached_components() -> tuple[AgentRuntime, dict[str, Any]]:
-    key = _runtime_cache_key()
+def _cached_components(model_connection: dict[str, Any]) -> tuple[AgentRuntime, dict[str, Any]]:
+    key = _runtime_cache_key(model_connection)
     cached = _components.get(key)
     if cached is None:
-        cached = _build_components()
+        cached = _build_components(model_connection)
         _components[key] = cached
     return cached
 
 
-def get_agent_runtime() -> AgentRuntime:
-    runtime, _ = _cached_components()
+def get_agent_runtime(profile_id: str | None = None, *, selection: dict[str, Any] | None = None) -> AgentRuntime:
+    # Resolve exactly once, before caching; restoring never consults a mutable default.
+    connection = get_profile_connection(profile_id, selection=selection)
+    runtime, _ = _cached_components(connection)
     return runtime
 
 
 def get_agent_capabilities() -> dict[str, Any]:
-    model_connection = get_model_connection()
+    model_connection = get_profile_connection()
     if not _model_is_configured(model_connection):
-        return _build_unconfigured_capabilities()
-    _, capabilities = _cached_components()
+        return _build_unconfigured_capabilities(model_connection)
+    _, capabilities = _cached_components(model_connection)
     return capabilities
 
 

@@ -1,6 +1,6 @@
 import type { ViewKey } from "./types";
 
-export type SettingsPage = "overview" | "account" | "library" | "model" | "agent";
+export type SettingsPage = "overview" | "account" | "library" | "model" | "agent" | "appearance";
 
 export type AppRoute =
   | { section: "dashboard" }
@@ -24,6 +24,7 @@ export function parseAppHash(hash: string): AppRoute | null {
     return { section: "settings", page: "overview" };
   }
   if (path === "settings/model" || path === "settings/models") return { section: "settings", page: "model" };
+  if (path === "settings/appearance") return { section: "settings", page: "appearance" };
   if (path === "settings/agent") return { section: "settings", page: "agent" };
   if (path === "settings/account") return { section: "settings", page: "account" };
   return null;

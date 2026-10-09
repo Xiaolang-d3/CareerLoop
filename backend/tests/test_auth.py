@@ -83,6 +83,34 @@ def test_register_rejects_duplicate_email() -> None:
     )
     assert conflict.status_code == 409
     assert "已注册" in conflict.json()["detail"]
+    assert client.post("/auth/login", json={"email": "owner@example.com", "password": "a-long-test-password"}).status_code == 200
+    assert client.post("/auth/login", json={"email": "owner@example.com", "password": "another-long-password"}).status_code == 401
+
+
+def test_login_distinguishes_unregistered_email_without_creating_an_account() -> None:
+    client = TestClient(app)
+    unknown = client.post("/auth/login", json={"email": " New@Example.com ", "password": "a-long-test-password"})
+    assert unknown.status_code == 404
+    assert unknown.json()["detail"] == "该邮箱尚未注册"
+    with auth._connect_auth() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM auth_sessions").fetchone()[0] == 0
+    created = client.post("/auth/register", json={"email": " New@Example.com ", "password": "a-long-test-password"})
+    assert created.status_code == 200
+    headers = {"Authorization": f"Bearer {created.json()['access_token']}"}
+    assert client.get("/auth/me", headers=headers).json()["user"]["email"] == "new@example.com"
+    wrong = client.post("/auth/login", json={"email": "new@example.com", "password": "wrong"})
+    assert wrong.status_code == 401
+    assert wrong.json()["detail"] == "密码不正确"
+
+
+def test_unregistered_login_attempts_are_still_throttled() -> None:
+    client = TestClient(app)
+    for _ in range(get_settings().login_max_attempts):
+        assert client.post("/auth/login", json={"email": "unknown@example.com", "password": "wrong"}).status_code == 404
+    blocked = client.post("/auth/login", json={"email": "unknown@example.com", "password": "wrong"})
+    assert blocked.status_code == 429
+    assert int(blocked.headers["retry-after"]) == get_settings().login_lockout_seconds
 
 
 def test_auth_config_stays_open_after_first_user() -> None:
@@ -419,14 +447,59 @@ def test_avatar_delete_failure_preserves_database_state(monkeypatch) -> None:
     assert auth.get_account(1)["has_avatar"] is True
 
 
-@pytest.mark.parametrize("password", ["short", "x" * 501])
-def test_registration_password_bounds_are_enforced_in_service(password: str) -> None:
+@pytest.mark.parametrize("password", ["short", "x" * 7, "x" * 129, "😀" * 7, "e\u0301" * 7, "passwordpassword", "password", "12345678", "new@example.com"])
+def test_registration_password_policy_is_enforced_in_service(password: str) -> None:
     from fastapi import HTTPException
 
     with pytest.raises(HTTPException) as rejected:
         auth.register_user("new@example.com", password)
     assert rejected.value.status_code == 422
     assert auth.public_auth_config()["setup_required"] is True
+
+
+@pytest.mark.parametrize("password", ["x" * 7, "x" * 129, "passwordpassword", "PASSWORD", "12345678", "owner@example.com"])
+def test_register_and_password_change_enforce_the_same_policy(password: str) -> None:
+    client = TestClient(app)
+    assert client.post("/auth/register", json={"email": "owner@example.com", "password": password}).status_code == 422
+    token = _register(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    response = client.post("/auth/me/password", headers=headers, json={"current_password": "a-long-test-password", "new_password": password})
+    assert response.status_code == 422
+    assert client.get("/auth/me", headers=headers).status_code == 200
+
+
+@pytest.mark.parametrize("password", ["mV!8kP2z", "rkt9876543!", "x" * 128, "😀" * 8, "a phrase with spaces", "密码passwordpassword并非完整弱密码"])
+def test_password_policy_allows_valid_length_unicode_and_phrase_passwords(password: str) -> None:
+    token = auth.register_user("owner@example.com", password)
+    assert auth.current_user(f"Bearer {token}")["id"] == 1
+    assert auth.current_user(f"Bearer {auth.authenticate('owner@example.com', password)}")["id"] == 1
+
+
+def test_password_change_accepts_an_eleven_character_password() -> None:
+    client = TestClient(app)
+    token = _register(client)
+    password = "rkt9876543!"
+    response = client.post("/auth/me/password", headers={"Authorization": f"Bearer {token}"}, json={"current_password": "a-long-test-password", "new_password": password})
+    assert response.status_code == 200
+    assert client.post("/auth/login", json={"email": "owner@example.com", "password": password}).status_code == 200
+
+
+def test_new_password_hashes_normalize_unicode_without_trimming_spaces() -> None:
+    password = "e\u0301" * 15
+    auth.register_user("owner@example.com", password)
+    assert auth.current_user(f"Bearer {auth.authenticate('owner@example.com', 'é' * 15)}")["id"] == 1
+    stored = auth._hash_password("  a phrase with spaces  ")
+    assert auth._verify_password("  a phrase with spaces  ", stored)
+    assert not auth._verify_password("a phrase with spaces", stored)
+
+
+def test_unversioned_password_hashes_keep_their_original_byte_semantics() -> None:
+    import hashlib
+    salt = b"0123456789abcdef"
+    password = "e\u0301" * 8
+    stored = f"{auth._encode(salt)}${auth._encode(hashlib.scrypt(password.encode(), salt=salt, n=2**14, r=8, p=1))}"
+    assert auth._verify_password(password, stored)
+    assert not auth._verify_password("é" * 8, stored)
 
 
 def test_bootstrap_is_atomic_across_concurrent_requests() -> None:
@@ -457,5 +530,6 @@ def test_unknown_email_still_runs_the_password_verifier(monkeypatch) -> None:
     monkeypatch.setattr(auth, "_verify_password", verify)
     with pytest.raises(HTTPException) as rejected:
         auth.authenticate("unknown@example.com", "wrong-password")
-    assert rejected.value.status_code == 401
+    assert rejected.value.status_code == 404
+    assert rejected.value.detail == "该邮箱尚未注册"
     verify.assert_called_once_with("wrong-password", auth._DUMMY_PASSWORD_HASH)

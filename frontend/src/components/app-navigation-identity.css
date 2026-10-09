@@ -1,0 +1,46 @@
+/* The same account entry belongs to global navigation in every module. */
+.app-shell.has-chat-dock .sidebar.context-navigation .sidebar-identity-slot {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-top: auto;
+  padding: 16px 4px 8px;
+  overflow: visible;
+}
+.app-shell.has-chat-dock .sidebar.context-navigation .sidebar-toggle-footer { margin-top: 0; }
+.app-shell.has-chat-dock .sidebar.context-navigation .sidebar-identity-slot .sidebar-identity {
+  width: 56px;
+  min-height: 44px;
+}
+.app-shell.has-chat-dock .sidebar.context-navigation .sidebar-identity-slot .app-identity-menu {
+  top: auto;
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: auto;
+  max-height: calc(100dvh - 160px);
+}
+
+@media (min-width: 821px) {
+  .app-shell.has-chat-dock .sidebar.context-navigation.collapsed .sidebar-identity-slot {
+    justify-content: center;
+    padding-inline: 0;
+  }
+  .app-shell.has-chat-dock .sidebar.context-navigation.collapsed .sidebar-identity-slot .sidebar-identity { width: 44px; }
+  .app-shell.has-chat-dock .sidebar.context-navigation.collapsed .sidebar-identity-slot .app-identity-chevron { display: none; }
+}
+
+@media (max-width: 820px) {
+  .app-shell.has-chat-dock .sidebar.context-navigation { z-index: 60; }
+  .app-shell.has-chat-dock .sidebar.context-navigation .sidebar-identity-slot {
+    margin-top: 0;
+    padding: 0;
+  }
+  .app-shell.has-chat-dock .sidebar.context-navigation .sidebar-identity-slot .sidebar-identity { width: 44px; }
+  .app-shell.has-chat-dock .sidebar.context-navigation .sidebar-identity-slot .app-identity-menu {
+    top: calc(100% + 8px);
+    bottom: auto;
+    left: auto;
+    right: 0;
+    max-height: calc(100dvh - 80px);
+  }
+}

@@ -1,16 +1,20 @@
+import { useConversationScroll } from "../features/chat/useConversationScroll";
+import { RunStatus } from "../features/chat/RunStatus";
 import { textFromAppendMessage, WebSource, webSourcesFromAgent, ResearchPanelActionsContext, EditMessageComposer, thinkingHeaderCopy, ComposerClarification, StarterPromptList, ChatContextChips, ResearchPanel, ChatTurn } from "../features/chat/MessagePresentation";
 
 import type { AgentRunResult, ChatMessage, ChatAttachment, WebSearchMode, ChatClarificationOption, ChatClarification, ChatWorkspaceProps } from "../features/chat/types";
 
-import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from "react";
 
 import { ConversationHistoryPanel } from "./ConversationHistoryPanel";
 
 import "./ChatWorkspace.css";
+import "./ChatComposer.css";
+import "./ChatModelSelection.css";
 
 import { AssistantRuntimeProvider, ComposerPrimitive, ThreadPrimitive, type ThreadMessageLike, useExternalStoreRuntime } from "@assistant-ui/react";
 
-import { useAui } from "@assistant-ui/store";
+import { useAui, useAuiState } from "@assistant-ui/store";
 
 import { ArrowUpRight, FileText, History, ImagePlus, LoaderCircle, PanelRight, Pencil, Plus, RefreshCw, Search, Send, Square, TriangleAlert, X } from "lucide-react";
 
@@ -59,12 +63,53 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const researchToggleRef = useRef<HTMLButtonElement>(null);
   const aui = useAui();
+  const composerText = useAuiState((state) => state.composer.text);
+  const localDrafts = useRef(new Map<number, string>());
+  const drafts = props.composerDrafts ?? localDrafts.current;
+  useLayoutEffect(() => {
+    const id = props.currentConversationId;
+    aui.composer().setText(id ? drafts.get(id) ?? "" : "");
+    return () => {
+      if (!id) return;
+      const text = aui.composer().getState().text;
+      if (text) drafts.set(id, text);
+      else drafts.delete(id);
+    };
+  }, [aui, drafts, props.currentConversationId]);
+
+  useLayoutEffect(() => {
+    const input = props.chatInputRef.current;
+    if (!input) return;
+    const resize = () => {
+      const style = window.getComputedStyle(input);
+      const min = Number.parseFloat(style.minHeight) || 52;
+      const max = Number.parseFloat(style.maxHeight) || Math.min(240, window.innerHeight * .3);
+      input.style.height = "0px";
+      const height = Math.max(min, input.scrollHeight);
+      input.style.height = `${Math.min(max, height)}px`;
+      input.style.overflowY = height > max ? "auto" : "hidden";
+    };
+    resize();
+    let width = input.getBoundingClientRect().width;
+    const observer = new ResizeObserver(() => {
+      const next = input.getBoundingClientRect().width;
+      if (next !== width) { width = next; resize(); }
+    });
+    observer.observe(input);
+    window.addEventListener("resize", resize);
+    return () => { observer.disconnect(); window.removeEventListener("resize", resize); };
+  }, [composerText, props.chatInputRef]);
+  const appliedDraftId = useRef<string | null>(null);
   const placeholderThinking = thinkingHeaderCopy(props.latestAgent, true);
+  const generatingReply = props.messages.some((message) => message.id < 0 && message.role === "assistant" && message.content.trim())
+    && !props.latestAgent?.events.some((event) => event.status === "running" && event.tool_name !== "agent_thinking");
   const clarification = clarificationFromAgent(props.latestAgent);
   const [isDraggingAttachment, setIsDraggingAttachment] = useState(false);
   const [expandedPreview, setExpandedPreview] = useState<{ filename: string; url: string } | null>(null);
   const [conversationListOpen, setConversationListOpen] = useState(false);
   const [researchPanelOpen, setResearchPanelOpen] = useState(false);
+  const scrolling = useConversationScroll(props.currentConversationId, props.messages, researchPanelOpen);
+  const researchReturn = useRef<{ top: number; element: HTMLElement | null } | null>(null);
   const [researchSelection, setResearchSelection] = useState<{
     agent?: AgentRunResult;
     sources: WebSource[];
@@ -84,6 +129,10 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   };
 
   function openResearchDetails(agent = defaultResearchAgent, sources = defaultResearchSources, selectedSource = 0) {
+    if (!researchPanelOpen) researchReturn.current = {
+      top: scrolling.viewportRef.current?.scrollTop ?? 0,
+      element: document.activeElement instanceof HTMLElement ? document.activeElement : null
+    };
     setConversationListOpen(false);
     setResearchSelection({ agent, sources, selectedSource });
     setResearchPanelOpen(true);
@@ -91,7 +140,12 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
 
   function closeResearchDetails(restoreFocus = true) {
     setResearchPanelOpen(false);
-    if (restoreFocus) window.requestAnimationFrame(() => researchToggleRef.current?.focus());
+    const saved = researchReturn.current;
+    window.requestAnimationFrame(() => {
+      if (researchReturn.current !== saved) return;
+      if (saved) scrolling.restorePosition(saved.top);
+      if (restoreFocus) (saved?.element?.isConnected ? saved.element : researchToggleRef.current)?.focus({ preventScroll: true });
+    });
   }
 
   function fillComposer(draft: string, enableWebSearch = false) {
@@ -107,11 +161,33 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
     });
   }
 
+  const incomingDraft = props.composerDraft?.conversationId === props.currentConversationId
+    ? props.composerDraft
+    : null;
+
+  function importIncomingDraft() {
+    if (!incomingDraft || props.chatBusy) return;
+    fillComposer(incomingDraft.content);
+    appliedDraftId.current = incomingDraft.id;
+    props.onComposerDraftConsumed?.();
+  }
+
+  useEffect(() => {
+    if (!incomingDraft || props.chatBusy || appliedDraftId.current === incomingDraft.id) return;
+    // Existing composer text remains editable; importing over it is an explicit action.
+    if (aui.composer().getState().text.trim()) return;
+    aui.composer().setText(incomingDraft.content);
+    appliedDraftId.current = incomingDraft.id;
+    props.onComposerDraftConsumed?.();
+    window.requestAnimationFrame(() => props.chatInputRef.current?.focus());
+  }, [aui, incomingDraft, props.chatBusy, props.chatInputRef, props.onComposerDraftConsumed]);
+
   useEffect(() => {
     setExpandedPreview(null);
     setConversationListOpen(false);
     setResearchPanelOpen(false);
     setResearchSelection(null);
+    researchReturn.current = null;
   }, [props.currentConversationId]);
 
   useEffect(() => {
@@ -231,7 +307,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
               aria-label="新建对话"
               title="新建对话"
             >
-              <Plus size={16} />
+              <Plus size={16} /><span>新建</span>
             </button>
             <button
               className={`chat-session-tool chat-history-toggle${conversationListOpen ? " is-open" : ""}`}
@@ -242,11 +318,12 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
               aria-controls="conversation-history-drawer"
               title="对话记录"
             >
-              <History size={16} />
+              <History size={16} /><span>记录</span>
             </button>
           </div>
         </header>
-        <ThreadPrimitive.Viewport className="chat-thread" role="log" aria-live="polite" aria-relevant="additions">
+        <ThreadPrimitive.Viewport ref={scrolling.viewportRef} onScroll={scrolling.onScroll} autoScroll={false} scrollToBottomOnInitialize={false} scrollToBottomOnThreadSwitch={false} scrollToBottomOnRunStart={false} className="chat-thread" role="log" aria-live="polite" aria-relevant="additions">
+          <div ref={scrolling.contentRef} className="chat-thread-content">
           {props.messages.length === 0 && props.density === "dock" ? (
             <div className="chat-welcome"><span className="assistant-welcome-mark" aria-hidden="true">✦</span><h2>有什么可以帮你？</h2><p>提问、整理资料，或一起完成一段创作。</p></div>
           ) : null}
@@ -264,26 +341,13 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             </ThreadPrimitive.Messages>
           )}
 
-          {props.chatBusy && !props.messages.some((message) => message.id < 0 && message.role === "assistant") ? (
-            <article className="message assistant is-loading">
-              <div className="message-content thinking-state">
-                <div className="thinking-indicator">
-                  <LoaderCircle size={14} />
-                  <span className="thinking-indicator-copy">
-                    <strong><span className="thinking-process-title">{placeholderThinking.title}</span></strong>
-                    {placeholderThinking.currentTask ? (
-                      <small className="thinking-process-current" title={placeholderThinking.currentTask}>{placeholderThinking.currentTask}</small>
-                    ) : null}
-                  </span>
-                  <span className="thinking-dots"><i /><i /><i /></span>
-                </div>
-              </div>
-            </article>
-          ) : null}
           <div ref={props.chatEndRef} />
+          </div>
         </ThreadPrimitive.Viewport>
 
         <div className="chat-composer">
+          {scrolling.away ? <button type="button" className="chat-jump-latest" onClick={scrolling.jumpToLatest}>{scrolling.unread ? "有新内容 · 回到最新 ↓" : "回到最新 ↓"}</button> : null}
+          {props.chatBusy ? <RunStatus key={props.currentConversationId} title={generatingReply ? "正在生成回复" : placeholderThinking.title} task={placeholderThinking.currentTask} /> : null}
           {props.messages.length === 0 && props.density !== "dock" ? (
             <div className="chat-welcome">
               <h2>你想完成什么？</h2>
@@ -344,6 +408,15 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             </section>
           ) : null}
 
+          {incomingDraft && appliedDraftId.current !== incomingDraft.id ? (
+            <section className="chat-retry-prompt" aria-label="资讯分析草稿">
+              <FileText size={14} />
+              <span>资讯分析草稿已准备，当前输入已保留。</span>
+              <button type="button" disabled={props.chatBusy} onClick={importIncomingDraft}>替换为资讯草稿</button>
+              <button type="button" onClick={props.onComposerDraftConsumed}>保留当前输入</button>
+            </section>
+          ) : null}
+
           <div
             className={`composer-dropzone ${isDraggingAttachment ? "is-dragging" : ""}`}
             onDragEnter={handleDragOver}
@@ -358,14 +431,57 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
               accept=".png,.jpg,.jpeg,.webp,.pdf,.docx,.txt,.md,image/png,image/jpeg,image/webp,application/pdf"
               onChange={handleAttachmentChange}
             />
-            <ComposerPrimitive.Root className="composer-input">
+            {props.uploadingPreview ? (
+              <div className="composer-attachments" aria-label="正在处理的附件">
+                <article className="composer-image-attachment uploading">
+                  <img className="composer-attachment-preview" src={props.uploadingPreview.url} alt={`${props.uploadingPreview.filename} 预览`} />
+                </article>
+              </div>
+            ) : null}
+            {props.pendingAttachments.length ? (
+              <div className="composer-attachments" aria-label="待发送附件">
+                {props.pendingAttachments.map((attachment) => (
+                  <article key={attachment.id} className={attachment.kind === "image" ? "composer-image-attachment" : "composer-file-attachment"}>
+                    {attachment.kind === "image" && props.previewUrls[attachment.id]
+                      ? <button
+                        type="button"
+                        className="composer-attachment-preview-button"
+                        onClick={() => setExpandedPreview({ filename: attachment.original_filename, url: props.previewUrls[attachment.id] })}
+                        aria-label={`查看 ${attachment.original_filename}`}
+                      ><img className="composer-attachment-preview" src={props.previewUrls[attachment.id]} alt={`${attachment.original_filename} 预览`} /></button>
+                      : <span className="composer-attachment-icon">
+                        {attachment.kind === "document" ? <FileText size={15} /> : <ImagePlus size={15} />}
+                      </span>}
+                    {attachment.kind === "document" ? <span>
+                      <strong>{attachment.original_filename}</strong>
+                      <small>随本轮消息发送</small>
+                    </span> : null}
+                    <button className="composer-attachment-remove" type="button" onClick={() => void props.onRemovePendingAttachment(attachment.id)} aria-label={`移除 ${attachment.original_filename}`}>
+                      <X size={14} />
+                    </button>
+                  </article>
+                ))}
+              </div>
+            ) : null}
+            <div className="composer-model-selection">
+              <span className="composer-current-model">模型：{props.currentModelName || "尚未配置"}{props.modelProfileUnavailable ? "（已停用）" : ""}</span>
+              {(props.modelProfiles?.length ?? 0) > 1 ? <select aria-label="会话模型" value={props.selectedModelProfileId ?? ""} disabled={props.chatBusy || props.modelSelectionBusy || !props.currentConversationId} onChange={event => void props.onModelProfileChange?.(event.target.value || null)}>
+                <option value="">跟随默认{props.defaultModelName ? `（${props.defaultModelName}）` : ""}</option>
+                {props.modelProfileUnavailable && props.selectedModelProfileId ? <option value={props.selectedModelProfileId} disabled>{props.currentModelName}（已停用）</option> : null}
+                {props.modelProfiles?.map(profile => <option key={profile.id} value={profile.id}>{profile.connection_name} / {profile.model_name}</option>)}
+              </select> : props.modelProfileUnavailable ? <button type="button" disabled={props.chatBusy || props.modelSelectionBusy} onClick={() => void props.onModelProfileChange?.(null)}>恢复默认模型</button> : null}
+              {props.modelSelectionBusy ? <small role="status">正在保存模型选择…</small> : null}
+            </div>
+            <ComposerPrimitive.Root className="composer-input composer-input--enhanced" onSubmit={(event) => { if (props.attachmentBusy || props.modelSelectionBusy || props.modelProfileUnavailable) event.preventDefault(); }}>
               <ComposerPrimitive.Input
                 ref={props.chatInputRef}
                 rows={1}
-                maxLength={1000}
+                maxLength={200_000}
                 aria-label="输入消息"
+                aria-describedby="composer-input-hint"
                 placeholder={clarification ? "回答上面的问题，或直接说下一件…" : "描述任务，或添加一份资料…"}
                 submitMode="enter"
+                unstable_insertNewlineOnTouchEnter
                 onPaste={handleComposerPaste}
               />
               <div className="composer-bottom-row">
@@ -406,44 +522,13 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                     <Square size={14} fill="currentColor" /><span>停止</span>
                   </ComposerPrimitive.Cancel>
                 ) : (
-                  <ComposerPrimitive.Send className="send-button" aria-label="发送">
+                  <ComposerPrimitive.Send className="send-button" aria-label="发送" disabled={props.attachmentBusy || props.modelSelectionBusy || props.modelProfileUnavailable} title={props.attachmentBusy ? "资料处理完成后即可发送" : props.modelSelectionBusy ? "模型选择保存后即可发送" : "发送消息"}>
                     <Send size={16} /><span>发送</span>
                   </ComposerPrimitive.Send>
                 )}
               </div>
             </ComposerPrimitive.Root>
-            {props.uploadingPreview ? (
-              <div className="composer-attachments" aria-label="正在处理的附件">
-                <article className="composer-image-attachment uploading">
-                  <img className="composer-attachment-preview" src={props.uploadingPreview.url} alt={`${props.uploadingPreview.filename} 预览`} />
-                </article>
-              </div>
-            ) : null}
-            {props.pendingAttachments.length ? (
-              <div className="composer-attachments" aria-label="待发送附件">
-                {props.pendingAttachments.map((attachment) => (
-                  <article key={attachment.id} className={attachment.kind === "image" ? "composer-image-attachment" : "composer-file-attachment"}>
-                    {attachment.kind === "image" && props.previewUrls[attachment.id]
-                      ? <button
-                        type="button"
-                        className="composer-attachment-preview-button"
-                        onClick={() => setExpandedPreview({ filename: attachment.original_filename, url: props.previewUrls[attachment.id] })}
-                        aria-label={`查看 ${attachment.original_filename}`}
-                      ><img className="composer-attachment-preview" src={props.previewUrls[attachment.id]} alt={`${attachment.original_filename} 预览`} /></button>
-                      : <span className="composer-attachment-icon">
-                        {attachment.kind === "document" ? <FileText size={15} /> : <ImagePlus size={15} />}
-                      </span>}
-                    {attachment.kind === "document" ? <span>
-                      <strong>{attachment.original_filename}</strong>
-                      <small>随本轮消息发送</small>
-                    </span> : null}
-                    <button className="composer-attachment-remove" type="button" onClick={() => void props.onRemovePendingAttachment(attachment.id)} aria-label={`移除 ${attachment.original_filename}`}>
-                      <X size={14} />
-                    </button>
-                  </article>
-                ))}
-              </div>
-            ) : null}
+            <div className="composer-input-hint" id="composer-input-hint"><span className="composer-keyboard-hint">Enter 发送 · Shift + Enter 换行</span><span className="composer-touch-hint">支持多行输入，点击按钮发送</span>{composerText.length >= 180_000 && <span role="status">{composerText.length.toLocaleString()} / 200,000 字</span>}</div>
             {isDraggingAttachment ? <div className="composer-drop-hint" aria-live="polite">松开即可添加图片或文档</div> : null}
           </div>
           {showStarters ? (
@@ -511,6 +596,13 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     setWebSearchSelected(false);
     setWebSearchMode("auto");
   }, [props.currentConversationId]);
+
+  useEffect(() => {
+    const imported = props.libraryAttachments;
+    if (!imported || imported.conversationId !== props.currentConversationId) return;
+    setPendingAttachments(current => [...current, ...imported.attachments.filter(item => !current.some(existing => existing.id === item.id))]);
+    props.onLibraryAttachmentsConsumed?.();
+  }, [props.currentConversationId, props.libraryAttachments, props.onLibraryAttachmentsConsumed]);
 
   useEffect(() => () => {
     Object.values(previewUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));

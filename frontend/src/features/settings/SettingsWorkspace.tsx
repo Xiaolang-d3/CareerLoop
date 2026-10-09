@@ -6,6 +6,7 @@ import {
   Cpu,
   FileText,
   KeyRound,
+  Palette,
   ShieldCheck,
   TriangleAlert,
   UserRound
@@ -22,6 +23,7 @@ type WorkspaceProps = {
 };
 
 const pageLabels: Record<Exclude<SettingsPage, "overview">, string> = {
+  appearance: "外观",
   account: "账号与安全",
   library: "资料库",
   model: "模型设置",
@@ -115,6 +117,11 @@ export function SettingsOverview({
             <span className="settings-entry-meta"><Cpu size={13} />对话与分析共用此模型</span>
             <span className="settings-entry-meta"><ShieldCheck size={13} />{apiKeyConfigured ? "密钥只保存在本机，页面不显示原文" : "填写模型名称、服务地址和 API Key"}</span>
           </span>
+          <ChevronRight size={19} />
+        </button>
+        <button className="settings-entry-card appearance" type="button" onClick={() => onOpen("appearance")}>
+          <span className="settings-entry-icon"><Palette size={21} /></span>
+          <span className="settings-entry-copy"><span className="settings-entry-title"><strong>外观</strong></span><span className="settings-entry-primary">全局主题</span><span className="settings-entry-meta">浅色、深色或跟随系统</span><span className="settings-entry-meta">所有模块统一外观，立即生效</span></span>
           <ChevronRight size={19} />
         </button>
       </div>

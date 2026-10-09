@@ -89,12 +89,15 @@ describe("AuthGate", () => {
     expect(screen.getByLabelText("密码")).toHaveAttribute("type", "password");
   });
 
-  it("keeps credential errors generic", async () => {
+  it.each([
+    ["密码不正确", "密码不正确，请重新输入。"],
+    ["邮箱或密码不正确", "邮箱或密码不正确，请核对后重试。"]
+  ])("shows a password error without offering account creation: %s", async (detail, expected) => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path.endsWith("/auth/config")) return authConfig();
       if (path.endsWith("/auth/login") && init?.method === "POST") {
-        return new Response(JSON.stringify({ detail: "邮箱或密码不正确" }), { status: 401, headers: { "Content-Type": "application/json" } });
+        return new Response(JSON.stringify({ detail }), { status: 401, headers: { "Content-Type": "application/json" } });
       }
       throw new Error(`Unexpected request: ${path}`);
     });
@@ -103,11 +106,132 @@ describe("AuthGate", () => {
     render(<AuthGate apiBase="https://app.example.com">{() => null}</AuthGate>);
     await screen.findByLabelText("邮箱");
     fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "owner@example.com" } });
-    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "password-123" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "a-long-test-password" } });
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("邮箱或密码不正确，请核对后重试。");
+    expect(await screen.findByRole("alert")).toHaveTextContent(expected);
     await waitFor(() => expect(screen.getByLabelText("密码")).toHaveFocus());
+    expect(screen.queryByRole("button", { name: "创建并登录" })).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("creates and signs in an unknown account only after accepting the creation notice", async () => {
+    let finishRegistration: (response: Response) => void = () => undefined;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.endsWith("/auth/config")) return authConfig();
+      if (path.endsWith("/auth/login")) return new Response(JSON.stringify({ detail: "该邮箱尚未注册" }), { status: 404 });
+      if (path.endsWith("/auth/register")) {
+        expect(JSON.parse(String(init?.body))).toEqual({ email: "new@example.com", password: "rkt9876543!" });
+        return new Promise<Response>((resolve) => { finishRegistration = resolve; });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthGate apiBase="https://app.example.com">{(_token, _logout, user) => <div>已进入 {user.email}</div>}</AuthGate>);
+    await screen.findByLabelText("邮箱");
+    fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: " New@Example.com " } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "rkt9876543!" } });
+    fireEvent.click(screen.getByLabelText("保持登录"));
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+    const create = await screen.findByRole("button", { name: "创建并登录" });
+    expect(screen.getByText(/该邮箱尚未注册。确认邮箱无误后/)).toHaveTextContent("使用当前邮箱和密码创建本地账户，并自动登录");
+    expect(screen.getByLabelText("密码")).toHaveValue("rkt9876543!");
+    expect(screen.queryByLabelText("确认密码")).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    fireEvent.click(create);
+    fireEvent.click(create);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(screen.getByRole("button", { name: "正在创建…" })).toBeDisabled();
+    finishRegistration(new Response(JSON.stringify({ access_token: "new-token", user: { email: "new@example.com" } }), { status: 200 }));
+    expect(await screen.findByText("已进入 new@example.com")).toBeInTheDocument();
+    expect(window.sessionStorage.getItem("careerloop-auth-token")).toBe("new-token");
+    expect(window.localStorage.getItem("careerloop-auth-token")).toBeNull();
+  });
+
+  it.each(["short", "passwordpassword"])("enforces the new password policy before creating from login: %s", async (password) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.endsWith("/auth/config")) return authConfig();
+      if (path.endsWith("/auth/login")) return new Response(JSON.stringify({ detail: "该邮箱尚未注册" }), { status: 404 });
+      if (path.endsWith("/auth/register")) return new Response(JSON.stringify({ access_token: "new-token", user: { email: "new@example.com" } }), { status: 200 });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthGate apiBase="https://app.example.com">{() => <div>应用已就绪</div>}</AuthGate>);
+    await screen.findByLabelText("邮箱");
+    fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "new@example.com" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: password } });
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+    fireEvent.click(await screen.findByRole("button", { name: "创建并登录" }));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("alert")).toHaveTextContent(password === "short" ? "密码至少需要 8 个字符" : "容易被猜到");
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "a-long-test-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建并登录" }));
+    expect(await screen.findByText("应用已就绪")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(["edit", "cancel"])("cancels pending creation when the user changes their intent: %s", async (action) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/auth/config")) return authConfig();
+      if (String(input).endsWith("/auth/login")) return new Response(JSON.stringify({ detail: "该邮箱尚未注册" }), { status: 404 });
+      throw new Error(`Unexpected request: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthGate apiBase="https://app.example.com">{() => null}</AuthGate>);
+    await screen.findByLabelText("邮箱");
+    fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "new@example.com" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "a-long-test-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+    await screen.findByRole("button", { name: "创建并登录" });
+    if (action === "edit") fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "other@example.com" } });
+    else fireEvent.click(screen.getByRole("button", { name: "返回登录" }));
+    expect(screen.queryByText(/该邮箱尚未注册。确认邮箱无误后/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "登录" })).toBeInTheDocument();
+    expect(screen.getByLabelText("密码")).toHaveAttribute("autocomplete", "current-password");
+    if (action === "cancel") expect(screen.getByLabelText("密码")).toHaveValue("");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns to login if another request registered the email before confirmation", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.endsWith("/auth/config")) return authConfig();
+      if (path.endsWith("/auth/login")) return new Response(JSON.stringify({ detail: "该邮箱尚未注册" }), { status: 404 });
+      if (path.endsWith("/auth/register")) return new Response(JSON.stringify({ detail: "该邮箱已注册，请直接登录" }), { status: 409 });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthGate apiBase="https://app.example.com">{() => null}</AuthGate>);
+    await screen.findByLabelText("邮箱");
+    fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "new@example.com" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "a-long-test-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+    fireEvent.click(await screen.findByRole("button", { name: "创建并登录" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("该邮箱已注册，请直接登录。");
+    expect(screen.queryByRole("button", { name: "创建并登录" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "登录" })).toBeInTheDocument();
+    expect(window.localStorage.getItem("careerloop-auth-token")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    [false, "该邮箱尚未注册"],
+    [true, "Not Found"]
+  ])("does not offer creation for closed registration or unrelated 404 errors", async (registrationOpen, detail) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/auth/config")
+      ? new Response(JSON.stringify({ enabled: true, setup_required: false, registration_open: registrationOpen }), { status: 200 })
+      : new Response(JSON.stringify({ detail }), { status: 404 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthGate apiBase="https://app.example.com">{() => null}</AuthGate>);
+    await screen.findByLabelText("邮箱");
+    fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "new@example.com" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "a-long-test-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(detail);
+    expect(screen.queryByRole("button", { name: "创建并登录" })).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("offers reconnect when login cannot reach the server", async () => {
@@ -122,11 +246,71 @@ describe("AuthGate", () => {
     render(<AuthGate apiBase="https://app.example.com">{() => null}</AuthGate>);
     await screen.findByLabelText("邮箱");
     fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "owner@example.com" } });
-    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "password-123" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "a-long-test-password" } });
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
 
     expect(await screen.findByText("暂时无法连接登录服务，请检查连接后重试。")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重新连接" })).toBeInTheDocument();
+  });
+
+  it("validates the registration email while typing and clears errors when corrected", async () => {
+    const fetchMock = vi.fn(async () => authConfig(true));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AuthGate apiBase="https://app.example.com">{() => null}</AuthGate>);
+    const email = await screen.findByLabelText("邮箱");
+    expect(screen.queryByText("请输入邮箱")).not.toBeInTheDocument();
+    expect(email).toHaveAttribute("aria-invalid", "false");
+
+    for (const value of ["name", "name@", "name@example", "name @example.com"]) {
+      fireEvent.change(email, { target: { value } });
+      expect(screen.getByText("请输入有效的邮箱地址")).toBeInTheDocument();
+      expect(email).toHaveAttribute("aria-invalid", "true");
+      expect(email).toHaveAccessibleDescription("请输入有效的邮箱地址");
+    }
+
+    fireEvent.change(email, { target: { value: " name@example.com " } });
+    expect(screen.queryByText("请输入有效的邮箱地址")).not.toBeInTheDocument();
+    expect(email).toHaveAttribute("aria-invalid", "false");
+    expect(email).not.toHaveAttribute("aria-describedby");
+
+    fireEvent.change(email, { target: { value: "" } });
+    expect(screen.getByText("请输入邮箱")).toBeInTheDocument();
+    expect(email).toHaveAttribute("aria-invalid", "true");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears registration format errors after selecting an email suggestion", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => authConfig(true)));
+    render(<AuthGate apiBase="https://app.example.com">{() => null}</AuthGate>);
+    const email = await screen.findByLabelText("邮箱");
+    fireEvent.change(email, { target: { value: "reader@q" } });
+    expect(screen.getByText("请输入有效的邮箱地址")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("option", { name: "reader@qq.com" }));
+    expect(email).toHaveValue("reader@qq.com");
+    expect(email).toHaveAttribute("aria-invalid", "false");
+    expect(screen.queryByText("请输入有效的邮箱地址")).not.toBeInTheDocument();
+  });
+
+  it("allows legacy login names and validates existing input when switching to registration", async () => {
+    const fetchMock = vi.fn(async () => authConfig());
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AuthGate apiBase="https://app.example.com">{() => null}</AuthGate>);
+    const email = await screen.findByLabelText("邮箱");
+    fireEvent.change(email, { target: { value: "legacy-owner" } });
+    expect(email).toHaveAttribute("aria-invalid", "false");
+    expect(screen.queryByText("请输入有效的邮箱地址")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "没有账号？创建账号" }));
+    expect(screen.getByText("请输入有效的邮箱地址")).toBeInTheDocument();
+    expect(email).toHaveAttribute("aria-invalid", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "已有账号？去登录" }));
+    expect(email).toHaveValue("legacy-owner");
+    expect(email).toHaveAttribute("aria-invalid", "false");
+    expect(screen.queryByText("请输入有效的邮箱地址")).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("validates registration fields before sending credentials", async () => {
@@ -144,8 +328,33 @@ describe("AuthGate", () => {
     fireEvent.click(screen.getByRole("button", { name: "创建账号" }));
 
     expect(await screen.findByText("请输入有效的邮箱地址")).toBeInTheDocument();
-    expect(screen.getByText("密码至少 8 位")).toBeInTheDocument();
+    expect(screen.getByText("密码至少需要 8 个字符")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives live password guidance and rejects weak passwords before registration", async () => {
+    const fetchMock = vi.fn(async () => authConfig(true));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthGate apiBase="https://app.example.com">{() => null}</AuthGate>);
+    const email = await screen.findByLabelText("邮箱");
+    const password = screen.getByLabelText("密码");
+    expect(password).toHaveAttribute("placeholder", "设置登录密码");
+    expect(password).not.toHaveAttribute("maxlength");
+    expect(screen.getByText("8–128 个字符，建议使用较长的密码或短语")).toBeInTheDocument();
+    fireEvent.change(email, { target: { value: "reader@example.com" } });
+    fireEvent.change(password, { target: { value: "short" } });
+    expect(screen.getByRole("status")).toHaveTextContent("还需 3 个字符");
+    fireEvent.change(password, { target: { value: "passwordpassword" } });
+    expect(screen.getByRole("status")).toHaveTextContent("容易被猜到");
+    fireEvent.change(screen.getByLabelText("确认密码"), { target: { value: "passwordpassword" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建账号" }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    fireEvent.change(password, { target: { value: "a long memorable phrase" } });
+    expect(screen.getByRole("status")).toHaveTextContent("符合密码要求");
+    expect(password).toHaveAttribute("aria-invalid", "false");
+    fireEvent.change(password, { target: { value: "x".repeat(129) } });
+    expect(password).toHaveValue("x".repeat(129));
+    expect(screen.getByRole("status")).toHaveTextContent("密码不能超过 128 个字符");
   });
 
   it("lets a visitor create another local account", async () => {
@@ -153,7 +362,7 @@ describe("AuthGate", () => {
       const path = String(input);
       if (path.endsWith("/auth/config")) return authConfig();
       if (path.endsWith("/auth/register") && init?.method === "POST") {
-        expect(JSON.parse(String(init.body))).toEqual({ email: "new@example.com", password: "password-123" });
+        expect(JSON.parse(String(init.body))).toEqual({ email: "new@example.com", password: "rkt9876543!" });
         return new Response(JSON.stringify({ access_token: "new-token", user: { email: "new@example.com" } }), { status: 200 });
       }
       throw new Error(`Unexpected request: ${path}`);
@@ -164,8 +373,8 @@ describe("AuthGate", () => {
     await screen.findByLabelText("邮箱");
     fireEvent.click(screen.getByRole("button", { name: "没有账号？创建账号" }));
     fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "new@example.com" } });
-    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "password-123" } });
-    fireEvent.change(screen.getByLabelText("确认密码"), { target: { value: "password-123" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "rkt9876543!" } });
+    fireEvent.change(screen.getByLabelText("确认密码"), { target: { value: "rkt9876543!" } });
     fireEvent.click(screen.getByRole("button", { name: "创建账号" }));
 
     expect(await screen.findByText("已进入 new@example.com")).toBeInTheDocument();
@@ -336,8 +545,8 @@ describe("account session lifecycle", () => {
     await screen.findByLabelText("邮箱");
     fireEvent.click(screen.getByRole("button", { name: "没有账号？创建账号" }));
     fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "owner@example.com" } });
-    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "password-123" } });
-    fireEvent.change(screen.getByLabelText("确认密码"), { target: { value: "password-123" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "a-long-test-password" } });
+    fireEvent.change(screen.getByLabelText("确认密码"), { target: { value: "a-long-test-password" } });
     fireEvent.click(screen.getByRole("button", { name: "创建账号" }));
     fireEvent.click(await screen.findByRole("button", { name: "去登录" }));
     expect(screen.getByLabelText("邮箱")).toHaveValue("owner@example.com");
@@ -358,7 +567,7 @@ describe("account session lifecycle", () => {
     render(<AuthGate apiBase="https://app.example.com">{() => <div>账户已就绪</div>}</AuthGate>);
     await screen.findByLabelText("邮箱");
     fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "owner@example.com" } });
-    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "password-123" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "a-long-test-password" } });
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
     await screen.findByText("登录服务返回了无效数据，请重试");
     expect(window.localStorage.getItem("careerloop-auth-token")).toBeNull();
@@ -371,7 +580,7 @@ describe("account session lifecycle", () => {
     await screen.findByLabelText("邮箱");
     vi.useFakeTimers();
     fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "owner@example.com" } });
-    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "password-123" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "a-long-test-password" } });
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(screen.getByRole("button", { name: "2 秒后重试" })).toBeDisabled();
@@ -411,7 +620,7 @@ describe("restricted storage and request cancellation", () => {
     render(<AuthGate apiBase="https://app.example.com">{() => <div>账户已就绪</div>}</AuthGate>);
     await screen.findByLabelText("邮箱");
     fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "owner@example.com" } });
-    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "password-123" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "a-long-test-password" } });
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
     expect(await screen.findByText("账户已就绪")).toBeInTheDocument();
   });
@@ -427,7 +636,7 @@ describe("restricted storage and request cancellation", () => {
     const rendered = render(<AuthGate apiBase="https://app.example.com">{() => null}</AuthGate>);
     await screen.findByLabelText("邮箱");
     fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "owner@example.com" } });
-    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "password-123" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "a-long-test-password" } });
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
     rendered.unmount();
     expect(signal?.aborted).toBe(true);

@@ -19,20 +19,12 @@ from ..domain import ModelRequest, ModelResponse, ModelStreamEvent, ModelUsage, 
 from ..agent.settings import get_agent_settings, persona_prompt
 from ..observability.model_monitor import record_model_service_event
 from .base import ModelProviderError
+from .validation import is_vision_rejection, upstream_error_detail, validate_diagnostic_response
 
 
 _TINY_PNG_DATA_URL = (
     "data:image/png;base64,"
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
-)
-_VISION_REJECTION_MARKERS = (
-    "image",
-    "vision",
-    "multimodal",
-    "does not support",
-    "not support",
-    "unsupported",
-    "invalid content",
 )
 _ACCOUNT_POOL_MARKERS = (
     "all available accounts exhausted",
@@ -48,8 +40,7 @@ _MODEL_UNAVAILABLE_MARKERS = (
 
 
 def _looks_like_vision_rejection(message: str, status_code: int | None) -> bool:
-    del status_code
-    return any(marker in message for marker in _VISION_REJECTION_MARKERS)
+    return is_vision_rejection(message, status_code)
 
 
 def _status_error_detail(exc: APIStatusError) -> str:
@@ -144,6 +135,7 @@ class OpenAICompatibleProvider:
             "generate",
             started_at,
             total_tokens=result.usage.total_tokens if result.usage else 0,
+            usage=result.usage,
             response_id=result.provider_metadata.get("response_id", ""),
         )
         return result
@@ -275,6 +267,7 @@ class OpenAICompatibleProvider:
             raise error from exc
         try:
             result = self._response_from_completion(response)
+            validate_diagnostic_response(result, response, self.name)
         except ModelProviderError as error:
             self._record_event("health_check", started_at, error=error)
             raise
@@ -282,6 +275,7 @@ class OpenAICompatibleProvider:
             "health_check",
             started_at,
             total_tokens=result.usage.total_tokens if result.usage else 0,
+            usage=result.usage,
             response_id=result.provider_metadata.get("response_id", ""),
         )
 
@@ -289,7 +283,7 @@ class OpenAICompatibleProvider:
         """Send a 1x1 PNG to see whether the current model accepts image input."""
         started_at = perf_counter()
         try:
-            await self._client.chat.completions.create(
+            response = await self._client.chat.completions.create(
                 model=self._model,
                 messages=[
                     {
@@ -305,6 +299,11 @@ class OpenAICompatibleProvider:
                 ],
                 max_tokens=8,
             )
+            result = self._response_from_completion(response)
+            validate_diagnostic_response(result, response, self.name)
+        except ModelProviderError as error:
+            self._record_event("health_check", started_at, error=error)
+            raise
         except (
             AuthenticationError,
             RateLimitError,
@@ -314,7 +313,7 @@ class OpenAICompatibleProvider:
         ) as exc:
             error = self._provider_error(exc)
             self._record_event("health_check", started_at, error=error)
-            message = str(exc).lower()
+            message = upstream_error_detail(exc)
             if _looks_like_vision_rejection(message, getattr(exc, "status_code", None)):
                 return {
                     "status": "unsupported",
@@ -322,7 +321,7 @@ class OpenAICompatibleProvider:
                     "detail": "服务拒绝了图片输入，当前模型不支持多模态",
                 }
             raise error from exc
-        self._record_event("health_check", started_at)
+        self._record_event("health_check", started_at, total_tokens=result.usage.total_tokens if result.usage else 0, usage=result.usage)
         return {
             "status": "supported",
             "source": "probe",
@@ -426,6 +425,7 @@ class OpenAICompatibleProvider:
         *,
         error: ModelProviderError | None = None,
         total_tokens: int = 0,
+        usage: ModelUsage | None = None,
         response_id: str = "",
     ) -> None:
         try:
@@ -436,6 +436,8 @@ class OpenAICompatibleProvider:
                 error_message=str(error) if error else "",
                 latency_ms=round((perf_counter() - started_at) * 1000),
                 total_tokens=total_tokens,
+                input_tokens=usage.input_tokens if usage else 0,
+                output_tokens=usage.output_tokens if usage else 0,
                 model_name=self._model,
                 base_url=self._base_url,
                 response_id=response_id,
@@ -471,12 +473,14 @@ class OpenAICompatibleProvider:
 
     def _response_from_completion(self, response: Any) -> ModelResponse:
         choices = getattr(response, "choices", None) or []
-        if not choices:
+        if not isinstance(choices, list) or not choices:
             raise self._empty_response_error()
         choice = choices[0]
-        message = choice.message
+        message = getattr(choice, "message", None)
+        if message is None:
+            raise self._empty_response_error()
         tool_calls = []
-        for call in message.tool_calls or []:
+        for call in getattr(message, "tool_calls", None) or []:
             try:
                 parsed_arguments = json.loads(call.function.arguments or "{}")
             except json.JSONDecodeError as exc:
@@ -489,20 +493,20 @@ class OpenAICompatibleProvider:
             )
 
         usage = None
-        if response.usage is not None:
+        if getattr(response, "usage", None) is not None:
             usage = ModelUsage(
                 input_tokens=response.usage.prompt_tokens,
                 output_tokens=response.usage.completion_tokens,
                 total_tokens=response.usage.total_tokens,
             )
         return ModelResponse(
-            content=message.content or "",
+            content=getattr(message, "content", None) or "",
             tool_calls=tool_calls,
             usage=usage,
             provider_metadata={
-                "model": response.model,
-                "finish_reason": choice.finish_reason,
-                "response_id": response.id,
+                "model": getattr(response, "model", self._model),
+                "finish_reason": getattr(choice, "finish_reason", None),
+                "response_id": getattr(response, "id", ""),
                 "base_url": self._base_url,
             },
         )

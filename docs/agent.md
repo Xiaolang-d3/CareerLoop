@@ -2,11 +2,21 @@
 
 本文是灯灯**智能体层的维护文档**。代码是行为的事实来源；本文记录意图、边界和同步点。改智能体行为时必须在同一变更中更新本文。
 
-最近校准：2026-10-02（灯灯品牌与公共产品演示；持久化运行 JSON 容错；删除退役求职实现；资料库与持久化独立；数据库版本 24）。
+最近校准：2026-10-09（全局外观设置；开发者资讯首页与显式文件库/对话联动；灯灯品牌与公共产品演示；持久化运行 JSON 容错；删除退役求职实现；资料库与持久化独立；数据库版本 25）。
 
 ## 定位
 
-灯灯是从对话开始的个人 AI 协作助手，优先理解意图、接续上下文、协助分析和生成可修改的成果。资料库是按需带入依据与复用知识的支撑能力。主入口为首页、我的知识库、AI 工作区、设置；问答、搜索、分析和内容创作统一在 AI 工作区完成。
+灯灯是从对话开始的个人 AI 协作助手，优先理解意图、接续上下文、协助分析和生成可修改的成果。资料库是按需带入依据与复用知识的支撑能力。主入口为首页、文件库、AI 工作区、设置；问答、搜索、分析和内容创作统一在 AI 工作区完成。
+
+首页保留实时本地时间与欢迎语，按开发者定稿展示 AI / Agent 官方动态、GitHub 日榜/周榜、关注仓库 Releases 和工程实践；“简洁”改为密集信息列表，仍读取资讯。全局导航保持首页、文件库、AI 工作区、设置四个平级入口，保留灯灯品牌。首页通用路由数据依赖仍为空，由 `features/home/useHomeFeed.ts` 独立加载资讯；不预取资料、会话、模型能力或附件配置。
+
+全局外观入口为 `#/settings/appearance`，放在设置模块内，不新增侧栏子导航。`features/appearance/ThemeProvider.tsx` 在应用入口包裹认证与业务页面，解析浅色、深色或跟随系统偏好，在文档根节点设置 `data-theme` 与 `color-scheme`。偏好仅保存到当前设备浏览器的 `careerloop-theme`，跨标签页同步；未保存全局偏好时迁移当前账号旧首页主题，不覆盖已有全局选择。该前端路由无需 API 数据，不增加 Agent 路由、工具或权限。验证记录见 [global-theme-qa.md](global-theme-qa.md)。
+
+`api/home.py` 提供 `GET /home/feed`、`POST /home/feed/refresh`、`PUT /home/preferences` 与 `PATCH /home/feed/items/{id}/state`。`feeds/` 只读取允许列表内的公开来源，不执行 Agent 工具或模型调用；主题与公开仓库关注由用户显式配置，不读取私人资料作推荐。快照、偏好、隐藏状态与收藏保存在账号工作区 `home-feed.json`，原子写入；后台线程显式绑定工作区，进程内锁合并刷新，来源失败保留旧快照。数据库版本仍为 25。
+
+收藏保留当时的内容快照，资讯移出榜单、超过动态窗口或取消仓库关注后仍可在首页收藏弹窗访问，不自动加入模型记忆。存入文件库由用户确认可编辑的标题、摘要和原文链接后调用既有 `/library/sources`，默认 `privacy_mode=redacted`；保存的是摘要与来源元数据，不代表已获取全文。
+
+“交给 AI 分析”通过既有 `/conversations` 创建新对话，将标题、来源、日期、链接与摘要放入可编辑草稿；不发送消息、不启动模型、不声称已读取原文。草稿只导入对应对话；输入框已有文本时保留输入，由用户选择替换或保留。详情及当前未实现项见 [developer-home-plan.md](developer-home-plan.md)。
 
 品牌为“灯灯”，Logo 使用基于火字旁的四笔结构。默认助手名与系统提示中的名称同步为灯灯；读取设置时，旧内置助手名会改写为灯灯，用户自定义名称保留。桌面应用标识和数据目录环境变量保持不变。本轮未增加工具、路由或自主执行权限。品牌定义见 [brand.md](brand.md)。
 
@@ -93,6 +103,7 @@ backend/app/
 ├── api/                     按职责划分的 HTTP 路由
 ├── chat/                    协议、历史、运行协调、AG-UI 编码与落库
 ├── library/                 独立来源、模型上下文与待确认知识
+├── feeds/                   公开资讯适配、账号快照与后台刷新
 ├── documents/               共享文档提取与可选 OCR
 ├── persistence/             当前表与版本升级
 ├── compatibility/           仅供旧库升级读取的冻结历史格式
@@ -102,13 +113,19 @@ backend/app/
 
 前端：`frontend/src/components/ChatWorkspace.tsx` 消费流式事件，并在同一个对话输入框提供联网开关、来源模式和回答内来源详情；`frontend/src/features/settings/AgentOperationsDashboard.tsx` 展示运营快照。
 
+输入框按内容自动增高，超过视口约 30% 或 240px 后内部滚动；桌面 Enter 发送、Shift+Enter 换行，触摸设备 Enter 换行、点击发送。单条输入上限与聊天 API 一致为 200000 字，附件处理中阻止按钮与表单发送。文字草稿按账号、对话保存在当前 App 内存，切换对话或离开工作区再返回可恢复；刷新、退出或关闭应用不持久保存。附件及联网选项仍按原规则在切换对话时重置，草稿恢复只恢复文字，不自动发送或重新上传资料。
+
+对话滚动由 `useConversationScroll` 统一管理，靠近底部时跟随输出，向上阅读时保留位置并提示新内容；加载更早消息补偿高度，切换对话定位末尾。`RunStatus` 根据现有活动摘要与流式正文显示阶段，超过 10 秒显示当前页面等待时长（不是服务端运行计时或预计完成时间），保留底部停止按钮。Markdown 代码块完整复制、超过 24 行可折叠，流式期间不折叠；Mermaid 图形继续使用专用渲染，宽表格在独立容器中滚动。
+
+引用详情打开时暂停自动跟随，关闭恢复打开前的滚动位置及触发引用焦点；来源列表标题可查看完整提示，选中来源摘要优先展示。消息复制只复制用户文本或助手结果正文，失败显示可重试反馈。编辑输入上限与新消息相同；编辑重发/重新生成继续沿用既有删除消息尾部再发送的协议，会替换本轮及后续消息，编辑界面说明资料与联网选项不会自动沿用。对话记录仅在已加载列表内搜索标题/摘要，不额外请求服务端或读取消息全文。
+
 外部感知：`agent-search/` 是独立仓库，对话里的 `search_public_web` 会调用它。它不是灯灯 runtime 的一部分，`scripts/dev.sh` 不负责启动它。`search_public_web` 按 `category` 走 `general` / `news` / `company` 策略；用户选择“技术来源”时，工具会在 `general` 查询中优先加入官方文档、GitHub 与 Stack Overflow；“自动来源”只在识别到技术关键词时采用该策略。使用 company 搜索策略时，配套 AgentSearch 必须支持 `/search?...&mode=company`。AgentSearch 可配置 Brave / 博查作为主检索，未配置时仍走 SearXNG；中文查询会再融合国内搜索源。部署、环境变量和健康检查步骤见根目录 `README.md`。
 
 运行边界：AgentSearch 默认地址是 `http://127.0.0.1:3939`，由 `WEB_RESEARCH_ENABLED`、`AGENT_SEARCH_BASE_URL` 和可选的 `AGENT_SEARCH_TOKEN` 控制。单个上游引擎失败可以让 `/health` 显示 `degraded`，不能仅据此判定全部搜索不可用，应以实际 `/search` 结果为准。连接失败、超时或所有查询均失败时，工具必须返回“联网服务暂不可用”的可重试结论，不能把它解释为公司名称不完整、公司不存在或招聘平台没有岗位。
 
 ## 对话运行时
 
-实现：`backend/app/agent/runtime.py`。组装：`backend/app/agent/bootstrap.py`。HTTP 路由在 `api/` 按认证、系统、资料库、会话、附件、模型及聊天划分；`main.py` 只组装服务、中间件和静态资源。`chat/execution.py` 管理任务幂等、恢复、并发、取消与保存，`chat/ag_ui.py` 将单一内部事件队列编码为 AG-UI SSE，不再混在入口中。业务模块不导入 main.py 的可变状态。
+实现：`backend/app/agent/runtime.py`。组装：`backend/app/agent/bootstrap.py`。HTTP 路由在 `api/` 按认证、系统、资料库、会话、附件、模型、聊天及首页资讯划分；首页采集独立于 Agent 循环。`main.py` 只组装服务、中间件和静态资源。`chat/execution.py` 管理任务幂等、恢复、并发、取消与保存，`chat/ag_ui.py` 将单一内部事件队列编码为 AG-UI SSE，不再混在入口中。业务模块不导入 main.py 的可变状态。
 
 默认上限：`MODEL_MAX_TOOL_ROUNDS=8`，单次工具超时 `TOOL_EXECUTION_TIMEOUT_SECONDS=60`，模型与安全工具重试预算分别为 `MODEL_RETRY_ATTEMPTS=1`、`TOOL_RETRY_ATTEMPTS=1`。同一对话同时只允许一个运行中的任务（HTTP 409）。
 
@@ -201,7 +218,11 @@ runtime 在进入循环、完成每个工具轮、写入完成修复提示和引
 
 `library_sources` 是资料的权威目录，每个上传文件或粘贴文本独立保存标题、类型、原始文件名、正文、脱敏正文、隐私模式、启用状态、解析状态、哈希与元数据。上传原件位于当前账户工作区的 `library/<source_id>/`，目录权限 `0700`、文件权限 `0600`。禁用来源会同步移除其检索分块；删除来源会永久删除原件、正文与索引，只依赖该来源的待确认知识同步删除，已确认知识保留并标记原来源已删除。
 
-当前版本为 24。`persistence/schema.py` 管理当前表，`persistence/upgrades.py` 串行执行版本升级；`compatibility/` 仅在旧库升级时加载。版本 1–23 先备份到 `.upgrade-backups/before-library-v23/`，再将旧 Markdown/画像基础资料、旧知识审核状态和证据导入独立资料表。历史公开知识标识保留；旧求职业务表和原始文件不删除。已有启用/禁用来源保持，完成升级后不再从旧原文补来源，已删除来源不会复活。来源导入和索引成功后记录当前版本；失败可重试且不会重复导入。
+当前版本为 25。`persistence/schema.py` 管理当前表，`persistence/upgrades.py` 串行执行版本升级；`compatibility/` 仅在旧库升级时加载。版本 1–23 先备份到 `.upgrade-backups/before-library-v23/`，再将旧 Markdown/画像基础资料、旧知识审核状态和证据导入独立资料表。历史公开知识标识保留；旧求职业务表和原始文件不删除。已有启用/禁用来源保持，完成升级后不再从旧原文补来源，已删除来源不会复活。来源导入和索引成功后记录当前版本；失败可重试且不会重复导入。
+
+称呼可留空，不影响文件库的可用状态。文件库采用扁平主导航，分类（全部、最近、收藏、回收站）和文件夹在模块内。数据库 v25 新增账户内 `library_folders`；来源的文件夹、收藏、打开时间及回收站时间写入 `metadata.organization`，合并时保留解析元数据。v24 升级只扩展表及重建可恢复索引，不改来源 ID、原件或启用状态。`PATCH /library/sources/{id}/organization` 管理组织状态，回收站移除通用上下文和检索分块，恢复按原启用状态重新索引；原 `DELETE` 保持永久删除语义，前端只在回收站二次确认后调用。组织操作不会更改文件修改时间。上传解析失败仍保存原件并标记 failed，正文补充后可恢复 ready；PDF/图片直接读取鉴权原件（PDF 使用本地打包的 PDF.js worker、字体与 CMap，支持翻页/缩放），文本原件与校正的 AI 文字分别展示，DOCX 可下载原件或查看提取文字。`GET /library/sources?q=` 支持文件名与正文搜索。
+
+`POST /library/conversations` 将最多 10 个选中文件复制为新会话的待发送 document 附件，不启动模型请求。每份快照使用来源当前隐私模式（默认脱敏），去重并拒绝回收站或无文字来源；附件创建失败清理本次会话与附件。前端一次性消费待发送附件，用户仍需填写消息并发送。该动作不限制 Agent 现有的资料记忆范围，其他启用资料仍按原记忆规则读取；之后校正、删除来源或改变隐私模式不会追溯改写已有会话快照。
 
 默认向模型提供 `scan_and_redact` 后的文本；用户只可对单个来源开启 original。`get_library_context` 每个启用来源最多取 4000 字、总量最多约 12000 字并附来源摘要；更长资料由 `search_library` 按 `library_source` 分块检索并返回来源 ID、标题和片段。
 
@@ -217,9 +238,11 @@ Agent 新知识写入 library_knowledge 的 pending 状态；用户确认后才�
 
 模型连接支持 OpenAI 兼容 Chat Completions、OpenAI Responses、Anthropic Messages、Google Gemini `generateContent` 与 Ollama Chat。显式 `model_protocol` 永远优先；`auto` 会先识别官方域名和 Ollama 地址，再按模型家族选择协议（`claude-*` → Anthropic、`gemini-*` → Gemini，其他 → OpenAI 兼容）。自定义多协议网关上的 Claude/Gemini 会先调用原生协议；只有 404/405 路由不存在、HTTP 200 却无法解析为该协议等可证明的协议不匹配，才回退到 OpenAI 兼容，并按网关 + 模型 + 密钥指纹缓存成功协议。认证失败、限流、模型不可用、上游账户池耗尽和其他 5xx 都不得换协议重试；流式响应一旦输出任何事件也不得回退，以免重复正文。根地址回退到 OpenAI 兼容时会尝试标准 `/v1`，已带路径的自定义 API 根地址不改写。Responses 与非标准包装仍可在设置页显式选择。
 
-Base URL 视为对应协议的 API 根地址：显式 OpenAI 兼容客户端不自动追加 `/v1`，Responses 请求 `/responses`，Anthropic 请求 `/v1/messages`，Gemini 请求 `/models/{model}:generateContent`，Ollama 请求 `/api/chat`。OpenAI 兼容调用还会验证响应中存在 `choices`，流式调用至少返回响应 ID、用量、结束原因、正文或工具调用之一；网页回退或空响应即使 HTTP 状态为 200 也会记为 `invalid_provider_response`，不得标记为健康。模型目录只证明名称可见，不证明当前账户可实际调用；设置页将目录项标记为“仅目录可见”，默认模型只有在调用监控健康时才显示“已验证”。本地 Ollama 可不配置 API Key；其他协议要求密钥。`GET /agent/capabilities` 在缺少密钥时返回 200 与 `configured: false`（可先配置再对话），真正运行 Agent 仍要求已配置密钥。runtime、模型发现、能力检测与健康监控使用同一协议解析结果。runtime 的 system 消息必须保持协议级 system 语义：Anthropic 合并到顶层 `system`，不能降级成 `user` 消息。系统提示在 `backend/app/models/openai_compatible.py`：中文、不编造经历与来源、只使用本轮实际提供的工具、不点名具体工具名、过程叙述交给界面。本轮工具清单由 runtime 注入。缺少关键信息或指代有歧义时必须调用 `ask_user`，不要猜测，也不要只在正文里提问。用户明确要求思维导图时可输出 Mermaid `mindmap` 代码块，界面渲染为可展开、缩放的交互导图；普通回答不主动生成图。
+Base URL 视为对应协议的 API 根地址：显式 OpenAI 兼容客户端不自动追加 `/v1`，Responses 请求 `/responses`，Anthropic 请求 `/v1/messages`，Gemini 请求 `/models/{model}:generateContent`，Ollama 请求 `/api/chat`。OpenAI 兼容调用还会验证响应中存在 `choices`，流式调用至少返回响应 ID、用量、结束原因、正文或工具调用之一；网页回退或空响应即使 HTTP 状态为 200 也会记为 `invalid_provider_response`，不得标记为健康。模型目录只证明名称可见，不证明当前账户可实际调用；设置页提示是否可用以连接检测为准，诊断区展示已保存连接的调用结果。本地 Ollama 可不配置 API Key；其他协议要求密钥。`GET /agent/capabilities` 在缺少密钥时返回 200 与 `configured: false`（可先配置再对话），真正运行 Agent 仍要求已配置密钥。runtime、模型发现、能力检测与健康监控使用同一协议解析结果。runtime 的 system 消息必须保持协议级 system 语义：Anthropic 合并到顶层 `system`，不能降级成 `user` 消息。系统提示在 `backend/app/models/openai_compatible.py`：中文、不编造经历与来源、只使用本轮实际提供的工具、不点名具体工具名、过程叙述交给界面。本轮工具清单由 runtime 注入。缺少关键信息或指代有歧义时必须调用 `ask_user`，不要猜测，也不要只在正文里提问。用户明确要求思维导图时可输出 Mermaid `mindmap` 代码块，界面渲染为可展开、缩放的交互导图；普通回答不主动生成图。
 
-用户可配置人设（名称、角色、详略、补充指令）不能覆盖事实要求、工具权限和人工确认规则。模型名、Base URL 和协议保存在 `agent_settings`。新 API Key 不写 SQLite：macOS 桌面版使用 Keychain，开发/无钥匙串环境可回落到 `OPENAI_API_KEY`；发现历史明文密钥时仅在成功迁入 Keychain 后清空原字段，失败会保留旧值并在设置页告警。
+用户可配置人设（名称、角色、详略、补充指令）不能覆盖事实要求、工具权限和人工确认规则。模型名、Base URL 和协议保存在 `agent_settings`。新 API Key 不写 SQLite：macOS 单机网页和桌面使用 Keychain，其他环境根据可写凭证服务能力处理；环境密钥只绑定环境提供的连接，不能用于用户修改后的任意地址。密钥采用不可变版本引用，数据库事务一次切换连接配置和引用，失败保留完整旧连接。发现历史明文密钥时仅在成功迁移后清空原字段；不同环境 Key 不代表迁移完成，失败保留旧值并告警。
+
+模型设置主界面仅显示 Base URL、API Key 与模型名称，支持目录选择及手动填写，字段无需先解锁；首次读取完整配置后才展示表单。修改为草稿，单次点击“保存并应用”才保存，并从下一次模型调用生效。保存期间禁用字段及取消操作，空密钥继续沿用已保存密钥；配置保存成功与连接检测失败分别反馈。接口协议、额度、能力探测及调用监控保留在默认折叠的高级设置，已有显式协议不被自动重置，能力读取/探测仅使用已保存连接。`features/settings/useModelDiscovery.ts` 取消旧请求并用序号屏蔽迟到结果；更改地址、密钥或协议清空目录，更改模型名称保留已加载目录并使旧请求失效。目录失败可重试，具体错误只在高级设置展示。详情见 [model-settings-qa.md](model-settings-qa.md)。
 
 联网研究默认关闭（`WEB_RESEARCH_ENABLED`）。即使服务端开启，`search_public_web` 仍要求本轮用户打开联网开关。
 
@@ -273,7 +296,7 @@ cd evals && PROMPTFOO_PYTHON=../backend/.venv/bin/python npx --yes promptfoo@0.1
 
 `PUT /agent/settings` 只表示配置已保存；设置页保存后会额外调用一次 `POST /agent/model-monitor/check`，分别显示连接成功、连接失败或未完成检测。问答发送前不做真实模型预检，直接发起正式请求，避免一次用户操作产生两次模型调用。正式请求失败时，界面保留输入、附件和联网选项，并展示稳定错误码对应原因。`GET /agent/capabilities` 失败必须显示后端服务不可用，不能伪装为未配置密钥。
 
-macOS 桌面版的新密钥写入 Keychain；开发和无钥匙串环境可读取 `OPENAI_API_KEY`。新密钥不写 SQLite。发现旧明文密钥时，只在 Keychain 写入成功后清空旧字段；失败则保留旧值并返回迁移警告。日志、健康接口和错误响应不得出现密钥。
+macOS 单机网页和桌面的新密钥写入 Keychain；环境模式只读管理员提供的密钥，不能向用户草稿的新地址自动发送。新密钥不写 SQLite，保存采用独立凭证版本与数据库原子引用切换。发现旧明文密钥时，只在成功迁移并绑定引用后清空旧字段；失败保留旧值并返回迁移警告。日志、健康接口和错误响应不得出现密钥。
 
 ## 架构收敛进度
 
@@ -281,7 +304,7 @@ macOS 桌面版的新密钥写入 Keychain；开发和无钥匙串环境可读�
 
 ## 兼容白名单与验证边界
 
-- `compatibility/schema_v22.py`、`profile_document.py`、`library_v23.py` 只供版本 1–22 的升级及合成迁移测试使用；版本 23–24 的业务不重新解析旧画像。升级入口统一在 `persistence/upgrades.py`，版本号完成后才标记迁移成功。
+- `compatibility/schema_v22.py`、`profile_document.py`、`library_v23.py` 只供版本 1–22 的升级及合成迁移测试使用；版本 23–25 的业务不重新解析旧画像。升级入口统一在 `persistence/upgrades.py`，版本号完成后才标记迁移成功。
 - `career-profile.md`、`bosscopilot.db` 等历史文件名只用于工作区认领、备份及迁移；旧表保留原记录，当前业务无写入。新工作区没有这些表。
 - 历史附件 `resume/job_screenshot` 与设置 `profile_memory_enabled` 只在升级转换；新协议只写 `document/image` 和 `library_memory_enabled`。`/library` 的 `profile`、`facts` JSON 键保留接口兼容，内部对应通用元数据和知识条目。
 - 前端 `routing.ts` 只识别当前入口；未知 hash 打开首页。旧品牌本地存储键由应用入口读取；历史 `research_company` 事件只作为来源展示，不注册或执行旧工具。快照恢复必须符合当前路由与工具白名单。

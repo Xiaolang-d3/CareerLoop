@@ -1,21 +1,32 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from fastapi import APIRouter, HTTPException
 from ..agent import get_agent_capabilities
 from ..agent.bootstrap import reload_agent_components
-from ..agent.model_capabilities import build_model_list, infer_model_capabilities
-from ..agent.settings import get_agent_settings, get_model_connection, save_agent_settings
+from ..agent.model_capabilities import apply_actual_protocol, build_model_list, infer_model_capabilities
+from ..agent.settings import AgentSettingsConflict, get_agent_settings, get_model_connection, save_agent_settings
+from ..model_connection import resolve_model_connection
+from ..models.auto_negotiating import get_negotiated_model_protocol
 from ..secret_store import SecretStoreUnavailable
 from ..agent.operations import get_agent_operations_snapshot
 from ..config import get_settings
+from ..db import connect
 from ..observability.model_monitor import get_model_monitor_snapshot, record_model_service_event
+from ..observability.model_context import model_call_scope
 from ..models import ModelProviderError, OpenAICompatibleProvider, build_model_provider
-from ..model_protocol import protocol_requires_api_key, resolve_model_protocol
+from ..model_protocol import protocol_requires_api_key
 from .schemas import AgentSettingsIn, ModelCapabilitiesIn, ModelDiscoveryIn
+from .model_contracts import ConnectionCreateIn, ConnectionUpdateIn, DefaultProfileIn, ProfileCreateIn, ProfileUpdateIn
 
 
 router = APIRouter()
+
+
+def _diagnostic_timeout() -> float:
+    # A total budget covers protocol negotiation and SDK retries as well.
+    return min(get_settings().model_timeout_seconds, 25)
 
 
 @router.get("/agent/capabilities")
@@ -31,21 +42,143 @@ def agent_settings_get() -> dict[str, Any]:
 @router.put("/agent/settings")
 def agent_settings_put(payload: AgentSettingsIn) -> dict[str, Any]:
     try:
-        saved = save_agent_settings(payload.model_dump())
+        saved = save_agent_settings(payload.model_dump(exclude_unset=True))
     except SecretStoreUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except AgentSettingsConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     reload_agent_components()
     return saved
 
 
+@router.get("/agent/settings/requests/{request_id}")
+def agent_settings_request_get(request_id: str) -> dict[str, Any]:
+    if not request_id or len(request_id) > 120:
+        raise HTTPException(status_code=400, detail="保存请求 ID 格式不正确")
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT saved_revision FROM model_settings_requests WHERE request_id = ?", (request_id,),
+        ).fetchone()
+    # A missing receipt says only that no commit was visible at this instant.
+    # The browser must not interpret it as cancellation or automatic rollback.
+    return {
+        "committed": row is not None,
+        "saved_revision": int(row["saved_revision"]) if row else None,
+        "settings": get_agent_settings(),
+    }
+
+
+def _catalog_mutation(operation, *args) -> dict[str, Any]:
+    from ..agent.model_catalog import get_model_catalog
+
+    try:
+        operation(*args)
+        reload_agent_components()
+        return get_model_catalog()
+    except AgentSettingsConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SecretStoreUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/agent/model-connections")
+def model_connections_get() -> dict[str, Any]:
+    from ..agent.model_catalog import get_model_catalog
+
+    return get_model_catalog()
+
+
+@router.post("/agent/model-connections")
+def model_connections_create(payload: ConnectionCreateIn) -> dict[str, Any]:
+    from ..agent.model_catalog import create_model_connection
+
+    return _catalog_mutation(create_model_connection, payload.model_dump(exclude_unset=True))
+
+
+@router.patch("/agent/model-connections/{connection_id}")
+def model_connections_update(connection_id: str, payload: ConnectionUpdateIn) -> dict[str, Any]:
+    from ..agent.model_catalog import update_model_connection
+
+    return _catalog_mutation(update_model_connection, connection_id, payload.model_dump(exclude_unset=True))
+
+
+@router.delete("/agent/model-connections/{connection_id}")
+def model_connections_archive(connection_id: str) -> dict[str, Any]:
+    from ..agent.model_catalog import archive_model_connection
+
+    return _catalog_mutation(archive_model_connection, connection_id)
+
+
+@router.post("/agent/model-profiles")
+def model_profiles_create(payload: ProfileCreateIn) -> dict[str, Any]:
+    from ..agent.model_catalog import add_model_profile
+
+    return _catalog_mutation(add_model_profile, payload.model_dump(exclude_unset=True))
+
+
+@router.patch("/agent/model-profiles/{profile_id}")
+def model_profiles_update(profile_id: str, payload: ProfileUpdateIn) -> dict[str, Any]:
+    from ..agent.model_catalog import update_model_profile
+
+    return _catalog_mutation(update_model_profile, profile_id, payload.model_dump(exclude_unset=True))
+
+
+@router.post("/agent/model-default")
+def model_profiles_default(payload: DefaultProfileIn) -> dict[str, Any]:
+    from ..agent.model_catalog import set_default_model_profile
+
+    return _catalog_mutation(set_default_model_profile, payload.profile_id)
+
+
+def _profile_for_connection(connection_id: str) -> dict[str, Any]:
+    from ..agent.model_catalog import get_model_catalog, get_profile_connection
+
+    catalog = get_model_catalog()
+    profiles = [profile for profile in catalog["profiles"] if profile["connection_id"] == connection_id and profile["enabled"]]
+    if not profiles:
+        raise HTTPException(status_code=400, detail="连接没有启用的模型档案")
+    profile = next((item for item in profiles if item["id"] == catalog["default_profile_id"]), profiles[0])
+    try:
+        return get_profile_connection(profile["id"])
+    except SecretStoreUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/agent/model-connections/{connection_id}/discover")
+async def model_connection_discover(connection_id: str) -> dict[str, Any]:
+    connection = _profile_for_connection(connection_id)
+    return await _discover_connection(connection)
+
+
+@router.post("/agent/model-connections/{connection_id}/check")
+async def model_connection_check(connection_id: str) -> dict[str, Any]:
+    connection = _profile_for_connection(connection_id)
+    return await _check_connection(connection)
+
+
 @router.post("/agent/models/discover")
 async def discover_models(payload: ModelDiscoveryIn) -> dict[str, Any]:
-    connection = get_model_connection()
-    api_key = payload.api_key.strip() or connection["api_key"]
-    base_url = payload.model_base_url.strip()
-    model_name = payload.model_name.strip() or connection["model_name"]
-    model_protocol = payload.model_protocol or connection.get("model_protocol", "auto")
-    resolved_protocol = resolve_model_protocol(model_name, model_protocol, base_url)
+    try:
+        connection = resolve_model_connection(
+            payload.model_dump(exclude_unset=True), saved=get_model_connection()
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return await _discover_connection(connection)
+
+
+async def _discover_connection(connection: dict[str, Any]) -> dict[str, Any]:
+    api_key = connection["api_key"]
+    base_url = connection["model_base_url"]
+    model_name = connection["model_name"]
+    model_protocol = connection["model_protocol"]
+    resolved_protocol = connection["resolved_model_protocol"]
     if protocol_requires_api_key(resolved_protocol) and not api_key:
         raise HTTPException(status_code=400, detail="请先填写或保存 API Key")
 
@@ -57,7 +190,11 @@ async def discover_models(payload: ModelDiscoveryIn) -> dict[str, Any]:
         protocol=model_protocol,
     )
     try:
-        models = await provider.list_models()
+        with model_call_scope(connection, stage="discover"):
+            async with asyncio.timeout(_diagnostic_timeout()):
+                models = await provider.list_models()
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="读取模型列表超时，请重试或手动填写模型名称") from exc
     except ModelProviderError as exc:
         raise HTTPException(
             status_code=503 if exc.retryable else 400,
@@ -100,33 +237,46 @@ async def discover_models(payload: ModelDiscoveryIn) -> dict[str, Any]:
 @router.get("/agent/models/capabilities")
 def model_capabilities_get(model_name: str = "") -> dict[str, Any]:
     connection = get_model_connection()
-    settings = get_settings()
-    return infer_model_capabilities(
+    report = infer_model_capabilities(
         model_name.strip() or connection["model_name"],
         provider=connection.get("resolved_model_protocol", "openai"),
         base_url=connection["model_base_url"],
         protocol=connection.get("model_protocol", "auto"),
+        actual_protocol=get_negotiated_model_protocol(
+            model_name.strip() or connection["model_name"],
+            connection.get("model_protocol", "auto"),
+            connection["model_base_url"], connection["api_key"],
+        ),
     )
+    return {**report, "connection_id": connection.get("connection_id", ""),
+            "config_revision": connection.get("config_revision", 0)}
 
 
 @router.post("/agent/models/capabilities")
 async def model_capabilities_probe(payload: ModelCapabilitiesIn) -> dict[str, Any]:
-    connection = get_model_connection()
+    try:
+        connection = resolve_model_connection(
+            payload.model_dump(exclude_unset=True), saved=get_model_connection()
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     settings = get_settings()
-    model_name = payload.model_name.strip() or connection["model_name"]
-    base_url = payload.model_base_url.strip() or connection["model_base_url"]
-    model_protocol = payload.model_protocol or connection.get("model_protocol", "auto")
-    resolved_protocol = resolve_model_protocol(model_name, model_protocol, base_url)
+    model_name = connection["model_name"]
+    base_url = connection["model_base_url"]
+    model_protocol = connection["model_protocol"]
+    resolved_protocol = connection["resolved_model_protocol"]
     report = infer_model_capabilities(
         model_name,
         provider=resolved_protocol,
         base_url=base_url,
         protocol=model_protocol,
     )
+    report.update(connection_id=connection.get("connection_id", ""),
+                  config_revision=connection.get("config_revision", 0))
     if not payload.probe:
         return report
 
-    api_key = payload.api_key.strip() or connection["api_key"]
+    api_key = connection["api_key"]
     if protocol_requires_api_key(resolved_protocol) and not api_key:
         report["probe_error"] = "请先填写或保存 API Key"
         return report
@@ -139,12 +289,21 @@ async def model_capabilities_probe(payload: ModelCapabilitiesIn) -> dict[str, An
         protocol=model_protocol,
     )
     try:
-        report["vision"] = await provider.probe_vision()
+        with model_call_scope(connection, stage="vision_probe"):
+            async with asyncio.timeout(_diagnostic_timeout()):
+                report["vision"] = await provider.probe_vision()
+        apply_actual_protocol(report, provider.name, base_url)
         report["probed"] = True
         report["probe_error"] = None
+    except TimeoutError:
+        report["probed"] = False
+        report["probe_error"] = "图片输入检测超时，请重试"
     except ModelProviderError as exc:
         report["probed"] = False
         report["probe_error"] = str(exc)
+    except Exception:
+        report["probed"] = False
+        report["probe_error"] = "图片输入检测失败，请确认服务配置后重试"
     return report
 
 
@@ -164,6 +323,21 @@ def agent_operations_get(days: int = 7, limit: int = 20) -> dict[str, Any]:
 @router.post("/agent/model-monitor/check")
 async def model_monitor_check() -> dict[str, Any]:
     connection = get_model_connection()
+    return await _check_connection(connection)
+
+
+async def _check_connection(connection: dict[str, Any]) -> dict[str, Any]:
+    with model_call_scope(connection, stage="health_check"):
+        return await _check_scoped_connection(connection)
+
+
+def _monitor_for_connection(connection: dict[str, Any]) -> dict[str, Any]:
+    if connection.get("profile_id"):
+        return get_model_monitor_snapshot(connection=connection)
+    return get_model_monitor_snapshot()
+
+
+async def _check_scoped_connection(connection: dict[str, Any]) -> dict[str, Any]:
     if (
         protocol_requires_api_key(connection.get("resolved_model_protocol", "openai"))
         and not connection["api_key"]
@@ -176,14 +350,14 @@ async def model_monitor_check() -> dict[str, Any]:
             error_message=error_message,
             latency_ms=0,
             model_name=connection["model_name"],
-            base_url=OpenAICompatibleProvider._normalize_base_url(
-                connection["model_base_url"]
-            ),
+            base_url=connection["model_base_url"],
             protocol=connection.get("resolved_model_protocol", "openai"),
         )
         return {
-            **get_model_monitor_snapshot(),
+            **_monitor_for_connection(connection),
             "available": False,
+            "connection_id": connection.get("connection_id", ""),
+            "config_revision": connection.get("config_revision", 0),
             "check_error_code": "not_configured",
             "check_error_message": error_message,
         }
@@ -199,8 +373,18 @@ async def model_monitor_check() -> dict[str, Any]:
     check_error_code: str | None = None
     check_error_message: str | None = None
     try:
-        await provider.check_connection()
+        async with asyncio.timeout(_diagnostic_timeout()):
+            await provider.check_connection()
         available = True
+    except TimeoutError:
+        check_error_code = "request_timeout"
+        check_error_message = "连接检测超时，请稍后重试"
+        record_model_service_event(
+            request_kind="health_check", status="error", error_code=check_error_code,
+            error_message=check_error_message, latency_ms=round(_diagnostic_timeout() * 1000),
+            model_name=connection["model_name"], base_url=connection["model_base_url"],
+            protocol=provider.name,
+        )
     except ModelProviderError as exc:
         # The provider already stored a classified failure without prompt content.
         check_error_code = exc.code
@@ -215,14 +399,14 @@ async def model_monitor_check() -> dict[str, Any]:
             error_message=check_error_message,
             latency_ms=0,
             model_name=connection["model_name"],
-            base_url=OpenAICompatibleProvider._normalize_base_url(
-                connection["model_base_url"]
-            ),
+            base_url=connection["model_base_url"],
             protocol=connection.get("resolved_model_protocol", "openai"),
         )
     return {
-        **get_model_monitor_snapshot(),
+        **_monitor_for_connection(connection),
         "available": available,
+        "connection_id": connection.get("connection_id", ""),
+        "config_revision": connection.get("config_revision", 0),
         "check_error_code": check_error_code,
         "check_error_message": check_error_message,
     }

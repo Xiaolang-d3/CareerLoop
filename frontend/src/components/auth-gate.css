@@ -318,6 +318,40 @@ html:has(.auth-gate) { scrollbar-gutter: auto; }
   font-weight: 550;
 }
 
+.auth-email-field { position: relative; min-width: 0; }
+.auth-email-suggestions {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 0;
+  right: 0;
+  z-index: 5;
+  padding: 5px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(37, 28, 80, .14);
+}
+.auth-email-suggestions button {
+  display: block;
+  width: 100%;
+  min-height: 36px;
+  padding: 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.auth-email-suggestions button:hover,
+.auth-email-suggestions button[aria-selected="true"] {
+  background: #f1effb;
+  color: var(--color-brand);
+}
+
 .auth-password-field { position: relative; display: block; height: 46px; }
 .auth-password-field input { height: 100%; padding-right: 48px; }
 .auth-password-field input::-ms-reveal,
@@ -469,6 +503,15 @@ html:has(.auth-gate) { scrollbar-gutter: auto; }
   color: var(--color-danger);
   background: var(--color-danger-soft);
   font-size: 13px;
+}
+.auth-create-notice {
+  margin: 0;
+  padding: 12px;
+  border-radius: 10px;
+  color: var(--color-brand);
+  background: var(--color-brand-soft);
+  font-size: 13px;
+  line-height: 1.6;
 }
 .auth-error-action {
   justify-self: start;

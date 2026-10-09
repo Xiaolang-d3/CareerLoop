@@ -19,6 +19,18 @@ from ..documents.service import parse_document_upload
 SOURCE_TYPE = "library_source"
 
 
+
+# The system MIME table differs between macOS, Linux and packaged runtimes; pin the
+# text formats the library accepts so previews do not depend on the host.
+_KNOWN_MIME_TYPES = {".md": "text/markdown", ".markdown": "text/markdown", ".txt": "text/plain"}
+
+
+def _guess_mime_type(filename: str) -> str:
+    suffix = Path(filename).suffix.lower()
+    if suffix in _KNOWN_MIME_TYPES:
+        return _KNOWN_MIME_TYPES[suffix]
+    return mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
 def _clean_title(value: str, fallback: str = "未命名资料") -> str:
     return " ".join(value.split())[:255] or fallback
 
@@ -60,7 +72,7 @@ def _model_content(source: dict[str, Any]) -> str:
 
 def _index_source(source: dict[str, Any], db_path: str | Path | None = None) -> None:
     source_id = int(source["id"])
-    if not source.get("enabled") or source.get("parse_status") != "ready":
+    if not source.get("enabled") or source.get("parse_status") != "ready" or source.get("trashed_at"):
         delete_document(SOURCE_TYPE, source_id, db_path=db_path)
         return
     content = _model_content(source).strip()
@@ -85,6 +97,9 @@ def _source_from_row(row: Any) -> dict[str, Any]:
     source = row_to_dict(row) or {}
     source["enabled"] = bool(source.get("enabled"))
     source["character_count"] = int(source.get("character_count") or 0)
+    organization = (source.get("metadata") or {}).get("organization") or {}
+    source.update({key: organization.get(key) for key in ("folder_id", "trashed_at", "last_opened_at")})
+    source["favorite"] = bool(organization.get("favorite"))
     return source
 
 
@@ -103,6 +118,11 @@ def _summary(source: dict[str, Any]) -> dict[str, Any]:
         "file_available": bool(source.get("stored_path")),
         "created_at": source.get("created_at") or "",
         "updated_at": source.get("updated_at") or "",
+        "folder_id": source.get("folder_id"),
+        "favorite": bool(source.get("favorite")),
+        "trashed_at": source.get("trashed_at"),
+        "last_opened_at": source.get("last_opened_at"),
+        "size_bytes": (source.get("metadata") or {}).get("size_bytes", 0),
     }
 
 
@@ -185,16 +205,20 @@ def import_file_source(
     if privacy_mode not in {"redacted", "original"}:
         raise ValueError("隐私模式不合法")
     safe_name = _safe_filename(filename)
-    parsed = parse_document_upload(safe_name, content_bytes, mode)
-    extracted = str(parsed.get("text") or "").strip()
-    if not extracted:
-        raise ValueError("资料中未识别到可用文字")
+    try:
+        parsed = parse_document_upload(safe_name, content_bytes, mode)
+        extracted = str(parsed.get("text") or "").strip()
+    except Exception:
+        # The original is the file library's durable record; extraction is optional.
+        parsed = {"warnings": ["文字提取失败，原文件已保存，可预览或下载。"]}
+        extracted = ""
     redacted = str(parsed.get("redacted_text") or scan_and_redact(extracted)[1])
-    mime_type = mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
+    mime_type = _guess_mime_type(safe_name)
     digest = sha256(content_bytes).hexdigest()
     metadata = {
         "parser": parsed.get("parser") or "unknown",
         "warnings": parsed.get("warnings") or [],
+        "size_bytes": len(content_bytes),
     }
     with connect(db_path) as conn:
         cursor = conn.execute(
@@ -203,7 +227,7 @@ def import_file_source(
                 source_kind, title, original_filename, mime_type, content,
                 redacted_content, privacy_mode, enabled, parse_status,
                 content_hash, character_count, metadata_json
-            ) VALUES ('upload', ?, ?, ?, ?, ?, ?, 1, 'ready', ?, ?, ?)
+            ) VALUES ('upload', ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
             """,
             (
                 _clean_title(Path(safe_name).stem),
@@ -212,6 +236,7 @@ def import_file_source(
                 extracted,
                 redacted,
                 privacy_mode,
+                "ready" if extracted else "failed",
                 digest,
                 len(extracted),
                 json_dump(metadata),
@@ -259,7 +284,7 @@ def update_source(
         raise ValueError("隐私模式不合法")
     next_enabled = current["enabled"] if enabled is None else enabled
     next_content = current["content"] if content is None else content.strip()
-    if not next_content:
+    if content is not None and not next_content:
         raise ValueError("资料内容不能为空")
     if len(next_content) > 200_000:
         raise ValueError("资料内容不能超过 20 万字")
@@ -278,13 +303,14 @@ def update_source(
             SET title = ?, content = ?, redacted_content = ?,
                 content_hash = COALESCE(?, content_hash), character_count = ?,
                 metadata_json = ?, privacy_mode = ?, enabled = ?,
+                parse_status = CASE WHEN ? IS NOT NULL THEN 'ready' ELSE parse_status END,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
             (
                 next_title, next_content, next_redacted, next_hash,
                 len(next_content), json_dump(metadata), next_privacy,
-                int(next_enabled), source_id,
+                int(next_enabled), content, source_id,
             ),
         )
     source = get_source(source_id, db_path=db_path)
@@ -389,4 +415,4 @@ def enabled_source_details(db_path: str | Path | None = None) -> list[dict[str, 
             ORDER BY updated_at DESC, id DESC
             """
         ).fetchall()
-    return [_source_from_row(row) for row in rows]
+    return [source for row in rows if not (source := _source_from_row(row)).get("trashed_at")]

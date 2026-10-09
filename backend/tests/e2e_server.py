@@ -1,6 +1,6 @@
 """Isolated browser-test server with the real API, SQLite and Agent runtime.
 
-Only model generation is replaced; no external model/search requests are made.
+Model generation and public feeds are replaced; no external requests are made.
 """
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ def main() -> None:
         from app.domain import ModelResponse, ToolCall
         from app.models import ModelProviderRegistry
         from app.chat import execution
+        from app.feeds import sources as feed_sources
         import uvicorn
 
         class LocalTestModel:
@@ -74,6 +75,7 @@ def main() -> None:
             )
 
         execution.get_agent_runtime = test_runtime
+        feed_sources.fetch_source = lambda source: []
         uvicorn.run(app, host="127.0.0.1", port=4184, log_level="warning")
 
 

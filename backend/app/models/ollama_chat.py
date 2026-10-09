@@ -11,6 +11,7 @@ from ..agent.settings import get_agent_settings, persona_prompt
 from ..domain import ModelRequest, ModelResponse, ModelStreamEvent, ModelUsage, ToolCall
 from ..observability.model_monitor import record_model_service_event
 from .base import ModelProviderError
+from .validation import upstream_error_detail, validate_diagnostic_response
 from .openai_compatible import SYSTEM_PROMPT, _TINY_PNG_DATA_URL, _looks_like_vision_rejection
 
 
@@ -49,11 +50,14 @@ class OllamaChatProvider:
             response = await self._client.post(self.chat_url, json=body)
             response.raise_for_status()
             result = self._response_from_payload(response.json())
+        except ModelProviderError as error:
+            self._record_event("generate", started_at, error=error)
+            raise
         except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError, ValueError, TypeError) as exc:
             error = self._provider_error(exc)
             self._record_event("generate", started_at, error=error)
             raise error from exc
-        self._record_event("generate", started_at, total_tokens=result.usage.total_tokens if result.usage else 0)
+        self._record_event("generate", started_at, total_tokens=result.usage.total_tokens if result.usage else 0, usage=result.usage)
         return result
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
@@ -86,7 +90,7 @@ class OllamaChatProvider:
             error = self._provider_error(exc)
             self._record_event("stream", started_at, error=error)
             raise error from exc
-        self._record_event("stream", started_at, total_tokens=usage.total_tokens)
+        self._record_event("stream", started_at, total_tokens=usage.total_tokens, usage=usage)
         yield ModelStreamEvent(
             type="completed",
             response=ModelResponse(
@@ -117,11 +121,16 @@ class OllamaChatProvider:
             )
             response.raise_for_status()
             payload = response.json()
+            result = self._response_from_payload(payload)
+            validate_diagnostic_response(result, payload, self.name)
+        except ModelProviderError as error:
+            self._record_event("health_check", started_at, error=error)
+            raise
         except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError, ValueError) as exc:
             error = self._provider_error(exc)
             self._record_event("health_check", started_at, error=error)
             raise error from exc
-        self._record_event("health_check", started_at, total_tokens=self._usage_from_payload(payload).total_tokens)
+        self._record_event("health_check", started_at, total_tokens=self._usage_from_payload(payload).total_tokens, usage=self._usage_from_payload(payload))
 
     async def probe_vision(self) -> dict[str, str]:
         started_at = perf_counter()
@@ -142,14 +151,20 @@ class OllamaChatProvider:
                 },
             )
             response.raise_for_status()
+            payload = response.json()
+            result = self._response_from_payload(payload)
+            validate_diagnostic_response(result, payload, self.name)
+        except ModelProviderError as error:
+            self._record_event("health_check", started_at, error=error)
+            raise
         except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError, ValueError) as exc:
             error = self._provider_error(exc)
             self._record_event("health_check", started_at, error=error)
             status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
-            if _looks_like_vision_rejection(str(exc).lower(), status):
+            if _looks_like_vision_rejection(upstream_error_detail(exc), status):
                 return {"status": "unsupported", "source": "probe", "detail": "服务拒绝了图片输入，当前模型不支持多模态"}
             raise error from exc
-        self._record_event("health_check", started_at)
+        self._record_event("health_check", started_at, total_tokens=result.usage.total_tokens if result.usage else 0, usage=result.usage)
         return {"status": "supported", "source": "probe", "detail": "服务接受了图片输入，当前模型支持多模态"}
 
     async def list_models(self) -> list[str]:
@@ -226,6 +241,8 @@ class OllamaChatProvider:
         return result
 
     def _response_from_payload(self, payload: dict[str, Any]) -> ModelResponse:
+        if not isinstance(payload, dict) or not isinstance(payload.get("message"), dict):
+            raise ModelProviderError("invalid_provider_response", "Ollama 返回了无法解析的响应")
         message = payload.get("message") or {}
         return ModelResponse(
             content=str(message.get("content") or ""),
@@ -297,7 +314,7 @@ class OllamaChatProvider:
             if detail:
                 message = f"{message}：{detail[:200]}"
             return ModelProviderError("provider_error", message, retryable=status >= 500)
-        return ModelProviderError("provider_error", "Ollama 返回了无法解析的响应")
+        return ModelProviderError("invalid_provider_response", "Ollama 返回了无法解析的响应")
 
     def _record_event(
         self,
@@ -306,6 +323,7 @@ class OllamaChatProvider:
         *,
         error: ModelProviderError | None = None,
         total_tokens: int = 0,
+        usage: ModelUsage | None = None,
     ) -> None:
         try:
             record_model_service_event(
@@ -315,6 +333,8 @@ class OllamaChatProvider:
                 error_message=str(error) if error else "",
                 latency_ms=round((perf_counter() - started_at) * 1000),
                 total_tokens=total_tokens,
+                input_tokens=usage.input_tokens if usage else 0,
+                output_tokens=usage.output_tokens if usage else 0,
                 model_name=self._model,
                 base_url=self._base_url,
                 protocol=self.name,

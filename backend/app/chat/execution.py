@@ -16,6 +16,8 @@ from ..domain import AgentRunResult, ToolError, ToolEvent
 from ..agent.resume_policy import should_abandon_snapshot
 from ..agent.snapshots import clear_run_snapshot, load_run_snapshot
 from ..agent.run_store import AgentRunStore
+from ..agent.model_binding import internal_model_selection, is_bound_selection, is_legacy_selection
+from ..observability.model_context import public_model_selection
 from .service import (
     agent_history as _agent_history,
     attachment_context as _attachment_context,
@@ -98,6 +100,7 @@ def _durable_run_payload(run: dict[str, Any]) -> dict[str, Any]:
         "status": run.get("status"),
         "route_kind": run.get("route_kind"),
         "round_number": run.get("round_number"),
+        "model_selection": public_model_selection(run.get("model_selection")),
         "stop_reason": run.get("stop_reason"),
         "cancel_requested": bool(run.get("cancel_requested")),
         "can_resume": bool(
@@ -135,18 +138,22 @@ def cancel_durable_agent_run(run_id: str) -> dict[str, Any]:
     }
 
 
-def require_configured_runtime():
+def require_configured_runtime(profile_id: str | None = None, *, selection: dict[str, Any] | None = None):
     """Ensure model is configured before AG-UI streaming starts.
 
     Missing API key must surface as HTTP 400 (not an in-stream 200 failure or 500).
     """
     try:
+        if selection is not None:
+            return get_agent_runtime(selection=selection)
+        if profile_id is not None:
+            return get_agent_runtime(profile_id)
         return get_agent_runtime()
     except ValueError as exc:
         detail = str(exc)
         if "必须先配置模型服务 API Key" in detail or "API Key" in detail:
             raise HTTPException(status_code=400, detail="必须先配置模型服务 API Key") from exc
-        raise
+        raise HTTPException(status_code=400, detail=detail) from exc
 
 
 async def stream_chat_response(
@@ -156,13 +163,15 @@ async def stream_chat_response(
     accept: str | None = None,
 ) -> StreamingResponse:
     conversation_id = payload.conversation_id or _default_conversation_id()
-    require_conversation(conversation_id)
+    conversation = require_conversation(conversation_id)
     active = _active_chat_runs.get(_chat_run_key(conversation_id))
     if active is not None and not active.done():
         raise HTTPException(status_code=409, detail="当前对话已有正在执行的任务")
 
     run_store = AgentRunStore()
     persisted_run = run_store.get_run(ag_ui_input.run_id)
+    if persisted_run is not None and persisted_run.get("model_selection_invalid"):
+        raise HTTPException(status_code=409, detail="运行的模型绑定信息损坏，无法恢复")
     if (
         persisted_run is not None
         and persisted_run.get("conversation_id") is not None
@@ -212,6 +221,49 @@ async def stream_chat_response(
         if bound_user is not None:
             recovered_user_message = row_to_dict(bound_user)
 
+    trusted_routing_content = payload.content.replace("[系统可信开关：本轮允许联网搜索]", "")
+    if payload.web_search:
+        trusted_routing_content += "\n[系统可信开关：本轮允许联网搜索]"
+    resume_snapshot = load_run_snapshot(conversation_id) if cached_execution is None else None
+    abandon_snapshot = bool(resume_snapshot is not None and should_abandon_snapshot(
+        payload.content, resume_snapshot, routing_text=trusted_routing_content,
+    ))
+    if abandon_snapshot:
+        resume_snapshot = None
+
+    runtime = None
+    model_selection: dict[str, Any] = {}
+    if cached_execution is None:
+        persisted_selection = persisted_run.get("model_selection") if persisted_run is not None else None
+        if persisted_run is not None and persisted_run.get("status") == "interrupted":
+            historical_selection = persisted_selection
+        elif resume_snapshot is not None:
+            historical_selection = resume_snapshot.model_selection
+        else:
+            historical_selection = None
+        if historical_selection is not None and not is_bound_selection(historical_selection) and not is_legacy_selection(historical_selection):
+            raise HTTPException(status_code=409, detail="运行的模型绑定信息不完整，无法恢复")
+        if is_bound_selection(historical_selection):
+            runtime = require_configured_runtime(selection=historical_selection)
+            model_selection = internal_model_selection(historical_selection)
+        else:
+            # Omitted inherits conversation; explicit null selects the account default.
+            profile_id = (getattr(payload, "model_profile_id", None)
+                          if "model_profile_id" in payload.model_fields_set
+                          else conversation.get("model_profile_id"))
+            runtime = require_configured_runtime(profile_id)
+            if historical_selection is not None:
+                model_selection = internal_model_selection(historical_selection)
+            else:
+                model_selection = internal_model_selection(getattr(runtime, "model_selection", None))
+                if is_bound_selection(model_selection):
+                    model_selection["selection_reason"] = (
+                        "explicit_profile" if "model_profile_id" in payload.model_fields_set and profile_id is not None
+                        else "conversation_profile" if profile_id is not None else "default_profile"
+                    )
+        if abandon_snapshot:
+            clear_run_snapshot(conversation_id)
+
     if cached_execution is not None or recovered_user_message is not None:
         task_id = int(persisted_run.get("task_id") or 0) or None
         attachment_context, attachment_summaries, image_urls = "", [], []
@@ -245,6 +297,7 @@ async def stream_chat_response(
                 conversation_id=conversation_id,
                 task_id=task_id,
                 user_content=agent_input,
+                model_selection=model_selection,
             )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -261,8 +314,6 @@ async def stream_chat_response(
         )
         maybe_title_from_first_message(conversation_id, payload.content)
         history = _agent_history(conversation_id, user_message["id"])
-    if cached_execution is None:
-        require_configured_runtime()
 
     queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue()
 
@@ -288,26 +339,12 @@ async def stream_chat_response(
                 )
                 return
             result = None
-            trusted_routing_content = payload.content.replace(
-                "[系统可信开关：本轮允许联网搜索]",
-                "",
-            )
-            if payload.web_search:
-                trusted_routing_content += "\n[系统可信开关：本轮允许联网搜索]"
-            resume_snapshot = load_run_snapshot(conversation_id)
-            if resume_snapshot is not None and should_abandon_snapshot(
-                payload.content,
-                resume_snapshot,
-                routing_text=trusted_routing_content,
-            ):
-                clear_run_snapshot(conversation_id)
-                resume_snapshot = None
             if resume_snapshot is not None:
                 run_store.link_waiting_resume(
                     conversation_id,
                     ag_ui_input.run_id,
                 )
-            async for stream_event in get_agent_runtime().run_stream(
+            async for stream_event in runtime.run_stream(
                 agent_input,
                 history=history,
                 conversation_id=conversation_id,
@@ -317,6 +354,7 @@ async def stream_chat_response(
                 web_search_mode=payload.web_search_mode,
                 resume=resume_snapshot,
                 run_id=ag_ui_input.run_id,
+                model_selection=model_selection,
             ):
                 if stream_event.type == "text_delta":
                     partial_content += stream_event.delta
@@ -352,7 +390,8 @@ async def stream_chat_response(
             streamed_events[cancel_event.tool_call_id] = cancel_event
             cancelled_result = AgentRunResult(
                 content=partial_content.strip() or "已停止生成。",
-                provider="openai",
+                provider=str(model_selection.get("profile_id") or "legacy"),
+                model_selection=model_selection,
                 platform="manual",
                 rounds=0,
                 status="cancelled",
@@ -371,7 +410,8 @@ async def stream_chat_response(
         except Exception as exc:
             failed_result = AgentRunResult(
                 content="流式执行发生异常，本次任务已终止。",
-                provider="openai",
+                provider=str(model_selection.get("profile_id") or "legacy"),
+                model_selection=model_selection,
                 platform="manual",
                 rounds=0,
                 status="failed",

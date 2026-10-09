@@ -16,7 +16,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = Path(os.getenv("CAREERLOOP_DATA_DIR", ROOT_DIR / "data")).expanduser()
 DB_PATH = DATA_DIR / "careerloop.db"
 LEGACY_DB_PATH = DATA_DIR / "bosscopilot.db"
-DB_SCHEMA_VERSION = 24
+DB_SCHEMA_VERSION = 27
 
 
 def adopt_legacy_database() -> None:

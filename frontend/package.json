@@ -16,6 +16,7 @@
     "@tauri-apps/plugin-http": "^2.6.1",
     "lucide-react": "^0.468.0",
     "mermaid": "^11.16.1",
+    "pdfjs-dist": "^6.4.299",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",

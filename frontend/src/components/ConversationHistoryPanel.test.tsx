@@ -29,12 +29,44 @@ function renderPanel(open = true) {
     onArchive: vi.fn(),
     onRemove: vi.fn()
   };
-  render(<ConversationHistoryPanel {...props} />);
-  return props;
+  const view = render(<ConversationHistoryPanel {...props} />);
+  return { ...props, view };
 }
 
 describe("ConversationHistoryPanel", () => {
   afterEach(cleanup);
+
+  it("searches titles and summaries, identifies the current conversation and clears an empty search with Escape", () => {
+    const { view, ...props } = renderPanel();
+    const longTitle = "很长的开发记录".repeat(12);
+    view.rerender(<ConversationHistoryPanel {...props} conversations={[conversation, { ...conversation, id: 2, title: longTitle, summary: "Agent 工具研究" }]} />);
+    expect(screen.getByTitle(conversation.title)).toHaveAttribute("aria-current", "page");
+    expect(screen.getByTitle(longTitle)).toBeInTheDocument();
+    const search = screen.getByRole("searchbox", { name: "搜索对话标题或摘要" });
+    fireEvent.change(search, { target: { value: "agent" } });
+    expect(screen.queryByTitle(conversation.title)).not.toBeInTheDocument();
+    expect(screen.getByTitle(longTitle)).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "没有这条对话" } });
+    expect(screen.getByRole("status")).toHaveTextContent("没有匹配的对话");
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect(search).toHaveValue("");
+    expect(props.onClose).not.toHaveBeenCalled();
+  });
+
+  it("supports menu keyboard navigation and restores its trigger on Escape", () => {
+    const props = renderPanel();
+    const trigger = screen.getByRole("button", { name: "项目表达练习 的更多操作" });
+    fireEvent.click(trigger);
+    expect(screen.getByRole("menuitem", { name: "重命名" })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "ArrowDown" });
+    expect(screen.getByRole("menuitem", { name: "归档" })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "End" });
+    expect(screen.getByRole("menuitem", { name: "删除" })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    expect(props.onClose).not.toHaveBeenCalled();
+  });
 
   it("creates a conversation from the chat-side history panel", () => {
     const props = renderPanel();

@@ -1,0 +1,117 @@
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  color: var(--color-text);
+  background: var(--color-bg);
+  --color-bg: #111117;
+  --color-surface: #1b1b24;
+  --color-surface-subtle: #22222e;
+  --color-surface-emphasis: #2b2744;
+  --color-text: #ededf4;
+  --color-text-secondary: #bebdce;
+  --color-text-muted: #a09eb3;
+  --color-border: #353443;
+  --color-border-strong: #514d65;
+  --color-brand: #a498ff;
+  --color-brand-strong: #c1b8ff;
+  --color-brand-soft: #302947;
+  --color-success: #76d5b5;
+  --color-success-soft: #18392f;
+  --color-warning: #f0c375;
+  --color-warning-soft: #3c2e18;
+  --color-danger: #f6a2b3;
+  --color-danger-soft: #432330;
+  --color-info: #a3b6ff;
+  --color-info-soft: #252e49;
+  --shadow-sm: 0 2px 12px rgba(0,0,0,.18);
+  --shadow-md: 0 18px 48px rgba(0,0,0,.4);
+  --focus-ring: 0 0 0 3px rgba(164,152,255,.22);
+  --surface: var(--color-surface);
+  --shadow: var(--shadow-md);
+}
+/* Shared shell, overlays, and forms use semantic surfaces in every module. */
+:root[data-theme="dark"] body { background: var(--color-bg); }
+:root[data-theme="dark"] .app-shell { background: var(--color-bg); }
+:root[data-theme="dark"] .app-shell.has-chat-dock.shell-light .sidebar.shell-light { background: var(--color-surface); border-color: var(--color-border); }
+:root[data-theme="dark"] .app-shell.has-chat-dock .content { background: var(--color-bg); color: var(--color-text); }
+:root[data-theme="dark"] .app-topbar { background: var(--color-bg); border-color: var(--color-border); }
+:root[data-theme="dark"] :is(.app-topbar-context h1, .sidebar.shell-light .brand strong, .app-identity-name) { color: var(--color-text); }
+:root[data-theme="dark"] :is(.app-identity-menu, .sidebar-identity-menu, .conversation-dialog, .ui-panel-emphasis, .account-card, .library-foundation-card, .library-source-workspace, .auth-card, .auth-form-panel) { background: var(--color-surface); border-color: var(--color-border); color: var(--color-text); }
+:root[data-theme="dark"] :is(.app-identity-menu button, .sidebar-identity-menu button, .sidebar-identity, .account-avatar-actions button) { color: var(--color-text-secondary); }
+:root[data-theme="dark"] :is(.account-settings-page, .model-settings-page, .settings-workspace, .conversation-dialog, .auth-card, .auth-form-panel) :is(input:not([type="radio"]):not([type="checkbox"]), textarea, select) { color: var(--color-text); background: var(--color-surface-subtle); border-color: var(--color-border-strong); }
+:root[data-theme="dark"] :is(.sidebar .sidebar-toggle, .account-avatar-actions button, .model-settings-card, .model-monitor-card, .agent-window-switch button.active) { background: var(--color-surface); border-color: var(--color-border); }
+:root[data-theme="dark"] :is(.ui-button-primary, .account-primary-button, .file-library .fl-button.primary) { color: #fff; background: #6d59d3; border-color: #6d59d3; }
+:root[data-theme="dark"] :is(.ui-button-primary, .account-primary-button, .file-library .fl-button.primary):hover:not(:disabled) { background: #7c67e3; border-color: #7c67e3; }
+:root[data-theme="dark"] .model-settings-notice { background: var(--color-warning-soft); border-color: var(--color-warning); color: var(--color-warning); }
+:root[data-theme="dark"] .global-notice-toast { background: var(--color-success-soft); color: var(--color-success); border-color: var(--color-success); }
+:root[data-theme="dark"] .error-banner { background: var(--color-danger-soft); color: var(--color-danger); border-color: var(--color-danger); }
+:root[data-theme="dark"] .auth-gate { background: var(--color-bg); }
+
+/* Conversation panels retain the same palette as the shell, including popups. */
+:root[data-theme="dark"] .chat-workspace :is(.research-panel, .conversation-history-panel, .research-process-list > li:has(button[aria-expanded="true"]), .research-source-detail, .research-source-list > button.is-active, .research-source-list > button:hover, .research-source-list > button:focus-visible) { background: var(--color-surface); border-color: var(--color-border); }
+:root[data-theme="dark"] .chat-workspace :is(.research-empty-state, .composer-shortcuts button, .research-process-list button:hover, .research-process-list button:focus-visible) { background: var(--color-surface-subtle); border-color: var(--color-border); color: var(--color-text-secondary); }
+:root[data-theme="dark"] .chat-workspace .chat-session-header :is(.chat-session-tool, .chat-history-toggle) { color: var(--color-text-secondary); }
+:root[data-theme="dark"] .chat-workspace .chat-session-header .chat-research-toggle em { background: var(--color-brand-soft); color: var(--color-brand-strong); }
+:root[data-theme="dark"] .chat-workspace :is(.research-section h2, .research-process-list button strong, .research-source-copy strong) { color: var(--color-text); }
+:root[data-theme="dark"] .chat-workspace :is(.research-empty-state, .research-step-copy small, .research-source-copy small) { color: var(--color-text-muted); }
+:root[data-theme="dark"] .chat-workspace .research-source-list em.is-high { background: var(--color-success-soft); color: var(--color-success); }
+:root[data-theme="dark"] .chat-workspace .research-source-list em.is-review { background: var(--color-warning-soft); color: var(--color-warning); }
+:root[data-theme="dark"] .chat-workspace .conversation-history-item.active { background: var(--color-brand-soft); }
+:root[data-theme="dark"] .chat-workspace :is(.conversation-history-item:hover, .conversation-history-menu button:hover) { background: var(--color-surface-subtle); }
+:root[data-theme="dark"] .chat-workspace :is(.chat-retry-prompt, .task-prompt.attention) { background: var(--color-warning-soft); color: var(--color-warning); border-color: var(--color-warning); }
+:root[data-theme="dark"] .chat-workspace .chat-retry-prompt button { background: var(--color-surface); color: var(--color-warning); border-color: var(--color-warning); }
+:root[data-theme="dark"] .chat-workspace .chat-composer .composer-input { background: var(--color-surface) !important; border-color: var(--color-border) !important; }
+:root[data-theme="dark"] .chat-workspace .composer-input textarea { color: var(--color-text); }
+:root[data-theme="dark"] .chat-workspace .chat-composer .send-button { color: #fff; background: #6d59d3; }
+:root[data-theme="dark"] .chat-workspace .chat-composer .send-button:hover { background: #7c67e3; }
+:root[data-theme="dark"] .chat-workspace .message-markdown :is(pre, code, th) { background: var(--color-surface-subtle); color: var(--color-text); border-color: var(--color-border); }
+:root[data-theme="dark"] .chat-workspace .message-markdown :is(td, th) { border-color: var(--color-border); }
+:root[data-theme="dark"] .assistant-popup .chat-workspace :is(.chat-composer, .chat-session-header),
+:root[data-theme="dark"] .assistant-surface > .chat-dock-header { background: var(--color-surface); border-color: var(--color-border); }
+:root[data-theme="dark"] .assistant-controls button { background: var(--color-surface-subtle); color: var(--color-text-secondary); }
+:root[data-theme="dark"] .chat-workspace .message-edit-composer textarea { color: var(--color-text); background: var(--color-surface-subtle); border-color: var(--color-border-strong); }
+
+/* File-library tokens preserve its existing light colors while sharing dark ones. */
+:root[data-theme="dark"] .file-library {
+  --fl-brand: var(--color-brand);
+  --fl-soft: var(--color-brand-soft);
+  --fl-line: var(--color-border);
+  --fl-text: var(--color-text);
+  --fl-secondary: var(--color-text-secondary);
+  --fl-muted: var(--color-text-muted);
+  --fl-panel: var(--color-surface);
+  --fl-subtle: var(--color-surface-subtle);
+  --fl-danger: var(--color-danger);
+  --fl-danger-bg: var(--color-danger-soft);
+}
+:root[data-theme="dark"] :is(.action-dialog, .auth-status-card, .auth-email-suggestions) { color: var(--color-text); background: var(--color-surface); border-color: var(--color-border); }
+:root[data-theme="dark"] :is(.action-dialog input, .auth-email-suggestions button, .auth-card label) { color: var(--color-text-secondary); }
+:root[data-theme="dark"] .action-dialog input { background: var(--color-surface-subtle); border-color: var(--color-border-strong); }
+:root[data-theme="dark"] .app-identity-menu button:hover,
+:root[data-theme="dark"] .auth-email-suggestions button:hover { background: var(--color-surface-subtle); color: var(--color-text); }
+:root[data-theme="dark"] .auth-status-retry,
+:root[data-theme="dark"] .auth-submit { background: #6d59d3; color: #fff; }
+:root[data-theme="dark"] .auth-veil { background: rgba(17,17,23,.8); }
+:root[data-theme="dark"] .chat-workspace .message-markdown :is(h1, h2, h3, h4, h5, h6) { color: var(--color-text); }
+:root[data-theme="dark"] .chat-workspace .message-markdown a { color: var(--color-brand-strong); }
+:root[data-theme="dark"] .chat-workspace .message-markdown blockquote { color: var(--color-text-secondary); border-color: var(--color-brand); }
+:root[data-theme="dark"] .chat-workspace :is(.md-citation-card, .web-sources-heading, .web-source-item) { color: var(--color-text); background: var(--color-surface); border-color: var(--color-border); }
+:root[data-theme="dark"] .chat-workspace .thinking-process {
+  --think-bg: var(--color-surface-subtle);
+  --think-bg-hover: var(--color-brand-soft);
+  --think-border: var(--color-border);
+  --think-text: var(--color-text-secondary);
+  --think-body: var(--color-text);
+  --think-accent: var(--color-brand);
+}
+:root[data-theme="light"] .chat-workspace .thinking-process {
+  --think-bg: #f7f5ff;
+  --think-bg-hover: #f1eeff;
+  --think-border: #e6e1f6;
+  --think-text: #6a6490;
+  --think-body: #4f4b68;
+}
+:root[data-theme="dark"] .file-library :is(.fl-search, .fl-button, .fl-dialog, .fl-dialog input, .fl-dialog textarea) { border-color: var(--fl-line); }
+:root[data-theme="dark"] .file-library .fl-button.primary { border-color: #6d59d3; }
+:root[data-theme="dark"] .file-library .fl-table :is(td, th) { border-color: var(--fl-line); }
+:root[data-theme="dark"] .file-library .fl-table th { color: var(--fl-muted) !important; }

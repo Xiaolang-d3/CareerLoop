@@ -1,27 +1,42 @@
 import { useState } from "react";
 import { createApiClient, fetchWithTimeout } from "../../api/client";
 import { emptyLibraryEditor } from "../../constants";
-import type { LibraryBundle, LibrarySource, LibrarySourceDetail } from "../../types";
+import type {
+  LibraryBundle,
+  LibraryFolder,
+  LibraryOrganization,
+  LibrarySource,
+  LibrarySourceDetail
+} from "../../types";
 
-type Options = { fetchJson: ReturnType<typeof createApiClient>; apiBase: string; accessToken: string; setErrorMessage: (message: string) => void; setNoticeMessage: (message: string) => void };
+type Options = {
+  fetchJson: ReturnType<typeof createApiClient>;
+  apiBase: string;
+  accessToken: string;
+  setErrorMessage: (message: string) => void;
+  setNoticeMessage: (message: string) => void;
+};
 
 export function useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, setNoticeMessage }: Options) {
   const [libraryEditor, setLibraryEditor] = useState(emptyLibraryEditor);
 
   const [librarySources, setLibrarySources] = useState<LibrarySource[]>([]);
+  const [libraryFolders, setLibraryFolders] = useState<LibraryFolder[]>([]);
 
   const [confirmedKnowledgeCount, setConfirmedKnowledgeCount] = useState(0);
 
   const [sourceCount, setSourceCount] = useState(0);
 
-  const [pendingKnowledge, setPendingKnowledge] = useState<Array<{
-    id: number;
-    statement: string;
-    category?: string;
-    value?: { name?: string };
-    sourceKind?: string;
-    evidence?: Array<{ excerpt?: string; source_title?: string }>;
-  }>>([]);
+  const [pendingKnowledge, setPendingKnowledge] = useState<
+    Array<{
+      id: number;
+      statement: string;
+      category?: string;
+      value?: { name?: string };
+      sourceKind?: string;
+      evidence?: Array<{ excerpt?: string; source_title?: string }>;
+    }>
+  >([]);
 
   const [libraryLoaded, setLibraryLoaded] = useState(false);
 
@@ -37,16 +52,19 @@ export function useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, s
       const confirmedFacts = bundle.facts.filter((fact) => fact.status === "confirmed");
       const pendingFacts = bundle.facts.filter((fact) => fact.status === "pending");
       setConfirmedKnowledgeCount(confirmedFacts.length);
-      setSourceCount(bundle.sources.length);
+      setSourceCount(bundle.sources.filter((source) => !source.trashed_at).length);
       setLibrarySources(bundle.sources);
-      setPendingKnowledge(pendingFacts.map((fact) => ({
-        id: fact.id,
-        statement: fact.statement,
-        category: fact.category,
-        value: fact.value as { name?: string } | undefined,
-        sourceKind: fact.source_kind,
-        evidence: fact.evidence
-      })));
+      setLibraryFolders(bundle.folders || []);
+      setPendingKnowledge(
+        pendingFacts.map((fact) => ({
+          id: fact.id,
+          statement: fact.statement,
+          category: fact.category,
+          value: fact.value as { name?: string } | undefined,
+          sourceKind: fact.source_kind,
+          evidence: fact.evidence
+        }))
+      );
       setLibraryEditor((current) => ({
         ...current,
         name: bundle.profile?.name || "",
@@ -81,7 +99,7 @@ export function useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, s
     }
   }
 
-  async function importLibraryFiles(files: File[]) {
+  async function importLibraryFiles(files: File[], folderId?: number | null) {
     if (!files.length) return;
     setSourceImportBusy(true);
     setErrorMessage("");
@@ -90,35 +108,70 @@ export function useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, s
       files.forEach((file) => form.append("files", file));
       form.append("mode", enhancedDocumentParse ? "enhanced" : "fast");
       form.append("privacy_mode", "redacted");
-      const response = await fetchJson<{ results: Array<{ filename: string; ok: boolean; error?: string }> }>("/library/sources/import", {
+      const response = await fetchJson<{
+        results: Array<{ filename: string; ok: boolean; error?: string; source?: LibrarySource }>;
+      }>("/library/sources/import", {
         method: "POST",
         body: form
       });
+      try {
+        if (folderId) {
+          for (const item of response.results) {
+            if (item.ok && item.source)
+              await fetchJson(`/library/sources/${item.source.id}/organization`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ folder_id: folderId })
+              });
+          }
+        }
+      } finally {
+        await refreshLibrary();
+      }
       const failures = response.results.filter((item) => !item.ok);
-      await Promise.all([refreshLibrary()]);
       if (failures.length) {
-        setErrorMessage(`${response.results.length - failures.length} 个文件已导入，${failures.length} 个失败：${failures.map((item) => item.filename).join("、")}`);
+        setErrorMessage(
+          `${response.results.length - failures.length} 个文件已导入，${failures.length} 个失败：${failures.map((item) => item.filename).join("、")}`
+        );
       } else {
         setNoticeMessage(`${response.results.length} 个来源已独立导入`);
       }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "资料解析失败");
+      throw error;
     } finally {
       setSourceImportBusy(false);
     }
   }
 
-  async function createPastedSource(title: string, content: string, privacyMode: "redacted" | "original") {
-    await fetchJson("/library/sources", {
+  async function createPastedSource(
+    title: string,
+    content: string,
+    privacyMode: "redacted" | "original",
+    folderId?: number | null
+  ) {
+    const response = await fetchJson<{ source: LibrarySource }>("/library/sources", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title, content, privacy_mode: privacyMode })
     });
-    await Promise.all([refreshLibrary()]);
+    try {
+      if (folderId)
+        await fetchJson(`/library/sources/${response.source.id}/organization`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ folder_id: folderId })
+        });
+    } finally {
+      await refreshLibrary();
+    }
     setNoticeMessage("文本来源已创建");
   }
 
-  async function updateLibrarySource(sourceId: number, changes: Partial<Pick<LibrarySource, "title" | "privacy_mode" | "enabled">> & { content?: string }) {
+  async function updateLibrarySource(
+    sourceId: number,
+    changes: Partial<Pick<LibrarySource, "title" | "privacy_mode" | "enabled">> & { content?: string }
+  ) {
     await fetchJson(`/library/sources/${sourceId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -128,18 +181,48 @@ export function useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, s
   }
 
   async function downloadLibrarySource(source: LibrarySourceDetail) {
-    const response = await fetchWithTimeout(`${apiBase}/library/sources/${source.id}/file`, {
-      headers: { Authorization: `Bearer ${accessToken}` }
-    });
-    if (!response.ok) throw new Error("原文件下载失败，请重试");
-    const objectUrl = URL.createObjectURL(await response.blob());
+    const blob = source.file_available
+      ? await loadLibraryOriginal(source)
+      : new Blob([source.content], { type: "text/plain;charset=utf-8" });
+    const objectUrl = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = objectUrl;
-    link.download = source.original_filename || source.title;
+    link.download = source.original_filename || `${source.title}.txt`;
     document.body.appendChild(link);
     link.click();
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
+  }
+
+  async function loadLibraryOriginal(source: LibrarySourceDetail, signal?: AbortSignal) {
+    const response = await fetchWithTimeout(`${apiBase}/library/sources/${source.id}/file`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal
+    });
+    if (!response.ok) throw new Error("原文件读取失败，请重试");
+    return response.blob();
+  }
+
+  async function organizeLibrarySource(sourceId: number, changes: LibraryOrganization) {
+    await fetchJson(`/library/sources/${sourceId}/organization`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(changes)
+    });
+    await refreshLibrary();
+  }
+
+  async function createLibraryFolder(name: string) {
+    await fetchJson("/library/folders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name })
+    });
+    await refreshLibrary();
+  }
+
+  async function searchLibrarySources(query: string) {
+    return fetchJson<LibrarySource[]>(`/library/sources?q=${encodeURIComponent(query)}`);
   }
 
   async function deleteLibrarySource(sourceId: number) {
@@ -148,5 +231,29 @@ export function useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, s
     setNoticeMessage("来源及本地原文件已删除");
   }
 
-  return { libraryEditor, librarySources, confirmedKnowledgeCount, sourceCount, pendingKnowledge, libraryLoaded, libraryBusy, sourceImportBusy, enhancedDocumentParse, setLibraryEditor, setEnhancedDocumentParse, refreshLibrary, saveLibraryMetadata, importLibraryFiles, createPastedSource, updateLibrarySource, downloadLibrarySource, deleteLibrarySource };
+  return {
+    libraryEditor,
+    librarySources,
+    libraryFolders,
+    loadLibraryOriginal,
+    organizeLibrarySource,
+    createLibraryFolder,
+    searchLibrarySources,
+    confirmedKnowledgeCount,
+    sourceCount,
+    pendingKnowledge,
+    libraryLoaded,
+    libraryBusy,
+    sourceImportBusy,
+    enhancedDocumentParse,
+    setLibraryEditor,
+    setEnhancedDocumentParse,
+    refreshLibrary,
+    saveLibraryMetadata,
+    importLibraryFiles,
+    createPastedSource,
+    updateLibrarySource,
+    downloadLibrarySource,
+    deleteLibrarySource
+  };
 }

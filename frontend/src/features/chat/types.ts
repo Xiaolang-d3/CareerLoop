@@ -1,7 +1,19 @@
 import type { RefObject } from "react";
 import type { Conversation } from "../../types";
 
+export type ModelSelection = {
+  profile_id: string;
+  connection_id: string;
+  profile_revision: number;
+  connection_revision: number;
+  model_name: string;
+  model_base_url?: string;
+  model_protocol?: string;
+  stage_selections?: Record<string, { model_name?: string; profile_id?: string; profile_revision?: number; connection_revision?: number }>;
+};
+
 export type AgentRunResult = {
+  model_selection?: ModelSelection;
   provider: string;
   platform: string;
   rounds: number;
@@ -37,6 +49,7 @@ export type ChatMessage = {
   created_at: string;
   payload?: {
     agent?: AgentRunResult;
+    model_selection?: ModelSelection;
     attachments?: ChatAttachment[];
     web_search?: boolean;
     web_search_mode?: WebSearchMode;
@@ -70,6 +83,7 @@ export type AttachmentConfig = {
 
 export type ChatRetryDraft = {
   content: string;
+  modelProfileId?: string | null;
   attachmentIds: string[];
   visionAttachmentIds: string[];
   webSearch: boolean;
@@ -98,8 +112,21 @@ export type ChatSessionContext = {
   analysisLabel?: string | null;
 };
 
+export type ChatComposerDraft = {
+  id: string;
+  conversationId: number;
+  content: string;
+};
+
 export type ChatWorkspaceProps = {
   conversationTitle?: string;
+  currentModelName?: string;
+  modelProfiles?: Array<{ id: string; model_name: string; connection_name: string }>;
+  selectedModelProfileId?: string | null;
+  defaultModelName?: string;
+  modelSelectionBusy?: boolean;
+  modelProfileUnavailable?: boolean;
+  onModelProfileChange?: (profileId: string | null) => Promise<void>;
   modelChecking?: boolean;
   modelUnavailable?: string | null;
   onOpenModelSettings?: () => void;
@@ -107,6 +134,11 @@ export type ChatWorkspaceProps = {
   hiddenMessageCount: number;
   chatBusy: boolean;
   currentConversationId: number | null;
+  libraryAttachments?: { conversationId: number; attachments: ChatAttachment[] } | null;
+  onLibraryAttachmentsConsumed?: () => void;
+  composerDraft?: ChatComposerDraft | null;
+  composerDrafts?: Map<number, string>;
+  onComposerDraftConsumed?: () => void;
   conversations: Conversation[];
   conversationBusy: boolean;
   waitingForUser: boolean;

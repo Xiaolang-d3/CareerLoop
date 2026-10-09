@@ -52,6 +52,8 @@ def main() -> None:
             pyinstaller, "--noconfirm", "--clean", "--onedir", "--name", "careerloop-runtime",
             "--paths", str(BACKEND), "--distpath", str(dist), "--workpath", str(work),
             "--specpath", str(work),
+            "--add-data", f"{BACKEND / 'app' / 'password_policy.json'}{os.pathsep}app",
+            "--add-data", f"{BACKEND / 'app' / 'password_policy-LICENSE.txt'}{os.pathsep}app",
             # These are development or optional-model dependencies.  Runtime
             # imports are lazy and already fall back when an optional parser is
             # not installed; including them turns a compact local API into a

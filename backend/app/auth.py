@@ -18,6 +18,7 @@ from fastapi import HTTPException, status
 from .config import get_settings
 from .db import connect
 from .workspace import auth_db_path, data_dir, ensure_workspace, init_auth_db
+from .password_policy import LEGACY_PASSWORD_MAX_LENGTH, normalize_password, password_error
 
 
 def _throttle_key(email: str, client: str | None) -> str:
@@ -107,14 +108,19 @@ def _decode(value: str) -> bytes:
 
 def _hash_password(password: str, salt: bytes | None = None) -> str:
     salt = salt or os.urandom(16)
-    password_hash = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=2**14, r=8, p=1)
-    return f"{_encode(salt)}${_encode(password_hash)}"
+    password_hash = hashlib.scrypt(normalize_password(password).encode("utf-8"), salt=salt, n=2**14, r=8, p=1)
+    return f"scrypt-nfc-v1${_encode(salt)}${_encode(password_hash)}"
 
 
 def _verify_password(password: str, stored: str) -> bool:
     try:
-        encoded_salt, expected = stored.split("$", 1)
-        actual = _hash_password(password, _decode(encoded_salt)).split("$", 1)[1]
+        if stored.startswith("scrypt-nfc-v1$"):
+            _, encoded_salt, expected = stored.split("$", 2)
+            password = normalize_password(password)
+        else:
+            # Existing unversioned hashes used the exact input bytes.
+            encoded_salt, expected = stored.split("$", 1)
+        actual = _encode(hashlib.scrypt(password.encode("utf-8"), salt=_decode(encoded_salt), n=2**14, r=8, p=1))
     except (ValueError, TypeError):
         return False
     return hmac.compare_digest(actual.encode("utf-8"), expected.encode("utf-8"))
@@ -145,9 +151,10 @@ def _issue_token(user: dict[str, Any]) -> str:
     return token
 
 
-def _validate_password(password: str) -> None:
-    if not 8 <= len(password) <= 500:
-        raise HTTPException(status_code=422, detail="密码须为 8–500 位")
+def _validate_password(password: str, email: str = "") -> None:
+    error = password_error(password, email)
+    if error:
+        raise HTTPException(status_code=422, detail=error)
 
 
 # Match the form's email syntax without a DNS lookup; these are local accounts.
@@ -158,7 +165,7 @@ _DUMMY_PASSWORD_HASH = _hash_password(secrets.token_urlsafe(32))
 
 def authenticate(email: str, password: str, client: str | None = None) -> str:
     normalized = email.strip().lower()
-    if not normalized or len(normalized) > 320 or not 1 <= len(password) <= 500:
+    if not normalized or len(normalized) > 320 or not 1 <= len(password) <= LEGACY_PASSWORD_MAX_LENGTH:
         raise HTTPException(status_code=422, detail="请输入邮箱和密码，密码不能超过 500 位")
     check_login_allowed(normalized, client)
     with _connect_auth() as conn:
@@ -168,7 +175,9 @@ def authenticate(email: str, password: str, client: str | None = None) -> str:
     verified = _verify_password(password, row["password_hash"] if row else _DUMMY_PASSWORD_HASH)
     if row is None or not verified:
         _record_login_failure(normalized, client)
-        raise HTTPException(status_code=401, detail="邮箱或密码不正确")
+        if row is None:
+            raise HTTPException(status_code=404, detail="该邮箱尚未注册")
+        raise HTTPException(status_code=401, detail="密码不正确")
     _clear_login_failures(normalized, client)
     ensure_workspace(int(row["id"]))
     return _issue_token(dict(row))
@@ -178,7 +187,7 @@ def register_user(email: str, password: str, *, initial_only: bool = False) -> s
     normalized_email = email.strip().lower()
     if len(normalized_email) > 320 or not _EMAIL_PATTERN.fullmatch(normalized_email):
         raise HTTPException(status_code=422, detail="请输入有效的邮箱地址，长度不能超过 320 个字符")
-    _validate_password(password)
+    _validate_password(password, normalized_email)
     password_hash = _hash_password(password)
     with _connect_auth() as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -307,10 +316,9 @@ def update_account(user_id: int, display_name: str) -> dict[str, Any]:
 
 
 def change_password(user_id: int, current_password: str, new_password: str, client: str | None = None) -> str:
-    _validate_password(new_password)
     if not 1 <= len(current_password) <= 500:
         raise HTTPException(status_code=422, detail="请输入当前密码")
-    if current_password == new_password:
+    if normalize_password(current_password) == normalize_password(new_password):
         raise HTTPException(status_code=422, detail="新密码不能与当前密码相同")
     with _connect_auth() as conn:
         row = conn.execute(
@@ -318,6 +326,7 @@ def change_password(user_id: int, current_password: str, new_password: str, clie
         ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="账号不存在")
+    _validate_password(new_password, row["email"])
     check_login_allowed(row["email"], client)
     if not _verify_password(current_password, row["password_hash"]):
         _record_login_failure(row["email"], client)

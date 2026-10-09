@@ -26,7 +26,7 @@ class AgentCapabilitiesApiTest(unittest.TestCase):
 
     def test_capabilities_returns_200_when_api_key_missing(self) -> None:
         with patch(
-            "app.agent.bootstrap.get_model_connection",
+            "app.agent.bootstrap.get_profile_connection",
             return_value={
                 "model_name": "gpt-5.5",
                 "model_base_url": "",
@@ -47,7 +47,7 @@ class AgentCapabilitiesApiTest(unittest.TestCase):
 
     def test_capabilities_marks_configured_when_key_present(self) -> None:
         with patch(
-            "app.agent.bootstrap.get_model_connection",
+            "app.agent.bootstrap.get_profile_connection",
             return_value={
                 "model_name": "gpt-5.5",
                 "model_base_url": "https://gateway.example.test",
@@ -67,7 +67,7 @@ class AgentCapabilitiesApiTest(unittest.TestCase):
     def test_ag_ui_returns_400_when_api_key_missing(self) -> None:
         conversation = self.client.post("/conversations", json={"title": "未配置模型"}).json()
         with patch(
-            "app.agent.bootstrap.get_model_connection",
+            "app.agent.bootstrap.get_profile_connection",
             return_value={
                 "model_name": "gpt-5.5",
                 "model_base_url": "",

@@ -3,6 +3,8 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { createApiClient } from "../../api/client";
 import type { AuthUser } from "../../components/AuthGate";
 import { ActionButton } from "../../components/ui/ActionButton";
+import { PasswordGuidance } from "../../components/PasswordGuidance";
+import { newPasswordError, passwordLength, passwordMaxLength, passwordMinLength } from "../auth/passwordPolicy";
 import "./account-settings.css";
 
 type Props = {
@@ -95,12 +97,12 @@ export function AccountSettingsPage({
   const initial = (displayName.trim() || account.email).slice(0, 1).toUpperCase();
   const passwordReady = Boolean(
     currentPassword
-    && newPassword.length >= 8
-    && newPassword !== currentPassword
+    && !newPasswordError(newPassword, account.email)
+    && newPassword.normalize("NFC") !== currentPassword.normalize("NFC")
     && confirmPassword
-    && newPassword === confirmPassword
+    && newPassword.normalize("NFC") === confirmPassword.normalize("NFC")
   );
-  const confirmMismatch = Boolean(confirmPassword && newPassword !== confirmPassword);
+  const confirmMismatch = Boolean(confirmPassword && newPassword.normalize("NFC") !== confirmPassword.normalize("NFC"));
 
   async function saveProfile(event?: FormEvent) {
     event?.preventDefault();
@@ -179,7 +181,12 @@ export function AccountSettingsPage({
       setPasswordError("两次输入的新密码不一致");
       return;
     }
-    if (newPassword === currentPassword) {
+    const policyError = newPasswordError(newPassword, account.email);
+    if (policyError) {
+      setPasswordError(policyError);
+      return;
+    }
+    if (newPassword.normalize("NFC") === currentPassword.normalize("NFC")) {
       setPasswordError("新密码不能与当前密码相同");
       return;
     }
@@ -331,7 +338,7 @@ export function AccountSettingsPage({
         </div>
       </form>
 
-      <form className="account-card" onSubmit={(event) => void savePassword(event)}>
+      <form className="account-card" onSubmit={(event) => void savePassword(event)} noValidate>
         <header className="library-foundation-heading">
           <span><ShieldCheck size={18} /></span>
           <div>
@@ -341,13 +348,13 @@ export function AccountSettingsPage({
         </header>
         <div className="account-password-fields">
           <label htmlFor="account-current-password">
-            <span>当前密码</span>
+            <span id="account-current-password-label">当前密码</span>
             <span className="account-password-input">
               <input
                 id="account-current-password"
+                aria-labelledby="account-current-password-label"
                 type={visibleFields.current ? "text" : "password"}
                 autoComplete="current-password"
-                maxLength={500}
                 disabled={passwordBusy}
                 value={currentPassword}
                 aria-invalid={Boolean(currentPasswordError)}
@@ -365,16 +372,18 @@ export function AccountSettingsPage({
             {currentPasswordError ? <small className="account-field-error" role="alert">{currentPasswordError}</small> : null}
           </label>
           <label htmlFor="account-new-password">
-            <span>新密码</span>
+            <span id="account-new-password-label">新密码</span>
             <span className="account-password-input">
               <input
                 id="account-new-password"
+                aria-labelledby="account-new-password-label"
                 type={visibleFields.next ? "text" : "password"}
                 autoComplete="new-password"
-                minLength={8}
-                maxLength={500}
+                placeholder="设置新密码"
                 disabled={passwordBusy}
                 value={newPassword}
+                aria-invalid={Boolean(newPassword && newPasswordError(newPassword, account.email))}
+                aria-describedby="account-password-guidance"
                 onChange={(event) => {
                   setNewPassword(event.target.value);
                   setPasswordError("");
@@ -385,16 +394,16 @@ export function AccountSettingsPage({
                 {visibleFields.next ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </span>
+            <PasswordGuidance password={newPassword} email={account.email} id="account-password-guidance" />
           </label>
           <label htmlFor="account-confirm-password">
-            <span>确认新密码</span>
+            <span id="account-confirm-password-label">确认新密码</span>
             <span className="account-password-input">
               <input
                 id="account-confirm-password"
+                aria-labelledby="account-confirm-password-label"
                 type={visibleFields.confirm ? "text" : "password"}
                 autoComplete="new-password"
-                minLength={8}
-                maxLength={500}
                 disabled={passwordBusy}
                 value={confirmPassword}
                 aria-invalid={confirmMismatch}
@@ -412,8 +421,8 @@ export function AccountSettingsPage({
           </label>
         </div>
         <ul className="account-password-hints" aria-live="polite">
-          <li className={newPassword.length >= 8 ? "ok" : undefined}>至少 8 位</li>
-          <li className={newPassword && newPassword !== currentPassword ? "ok" : undefined}>与当前密码不同</li>
+          <li className={passwordLength(newPassword) >= passwordMinLength && passwordLength(newPassword) <= passwordMaxLength ? "ok" : undefined}>至少 {passwordMinLength} 个字符</li>
+          <li className={newPassword && newPassword.normalize("NFC") !== currentPassword.normalize("NFC") ? "ok" : undefined}>与当前密码不同</li>
           <li className={confirmPassword && !confirmMismatch ? "ok" : undefined}>两次输入一致</li>
         </ul>
         {passwordError ? <p className="account-field-error" role="alert">{passwordError}</p> : null}

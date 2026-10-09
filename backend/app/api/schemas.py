@@ -13,14 +13,14 @@ class LoginIn(BaseModel):
 
 class RegisterIn(BaseModel):
     email: str = Field(min_length=3, max_length=320)
-    password: str = Field(min_length=8, max_length=500)
+    password: str
 
 class AccountUpdateIn(BaseModel):
     display_name: str = Field(default="", max_length=40)
 
 class PasswordChangeIn(BaseModel):
     current_password: str = Field(min_length=1, max_length=500)
-    new_password: str = Field(min_length=8, max_length=500)
+    new_password: str
 
 
 class ConversationIn(BaseModel):
@@ -44,6 +44,8 @@ class AgentSettingsIn(BaseModel):
     model_base_url: str = Field(default="", max_length=500)
     model_protocol: Literal["auto", "openai", "responses", "anthropic", "gemini", "ollama"] = "auto"
     api_key: str = Field(default="", max_length=500)
+    expected_revision: int | None = Field(default=None, ge=0)
+    request_id: str | None = Field(default=None, max_length=120)
 
 class ModelDiscoveryIn(BaseModel):
     model_base_url: str = Field(default="", max_length=500)

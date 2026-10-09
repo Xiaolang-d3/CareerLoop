@@ -29,12 +29,8 @@ describe("requiredDataForRoute", () => {
       "capabilities",
       "attachmentConfig"
     ]);
-    expect(requiredDataForRoute({ section: "dashboard" })).toEqual([
-      "library",
-      "conversations",
-      "capabilities",
-      "attachmentConfig"
-    ]);
+    expect(requiredDataForRoute({ section: "dashboard" })).toEqual([]);
+    expect(requiredDataForRoute({ section: "settings", page: "appearance" })).toEqual([]);
   });
 });
 

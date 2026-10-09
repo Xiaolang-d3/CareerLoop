@@ -15,8 +15,9 @@ export function requiredDataForRoute(route: AppRoute): RouteDataKey[] {
     case "chat":
       return ["conversations", "capabilities", "attachmentConfig"];
     case "dashboard":
-      return ["library", "conversations", "capabilities", "attachmentConfig"];
+      return [];
     case "settings":
+      if (route.page === "appearance") return [];
       if (route.page === "agent") return ["agentOperations", "conversations", "capabilities", "attachmentConfig"];
       if (route.page === "model") return ["agentSettings", "modelMonitor", "modelCapabilities", "conversations", "capabilities", "attachmentConfig"];
       if (route.page === "overview") return ["library", "agentSettings", "conversations", "capabilities", "attachmentConfig"];

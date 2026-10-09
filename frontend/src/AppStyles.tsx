@@ -8,3 +8,4 @@ import "./styles/careerloop.css";
 import "./features/home/styles-theme.css";
 import "./features/library/styles-theme.css";
 import "./features/chat/styles-theme.css";
+import "./components/app-navigation-identity.css";
