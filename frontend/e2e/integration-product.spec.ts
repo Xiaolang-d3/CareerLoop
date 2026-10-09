@@ -60,7 +60,8 @@ test("new account imports, corrects and reviews knowledge through the real backe
   await page.getByRole("button", { name: "操作 reading" }).click();
   await page.getByRole("button", { name: "快速预览" }).click();
   await page.getByText("文件设置", { exact: true }).click();
-  await page.getByRole("checkbox", { name: "启用为资料依据" }).uncheck();
+  // 勾选框由接口结果驱动，点击后等待保存完成再断言，而不是要求点击当下立即变化。
+  await page.getByRole("checkbox", { name: "启用为资料依据" }).click();
   await expect(page.getByRole("checkbox", { name: "启用为资料依据" })).not.toBeChecked();
   await page.getByRole("button", { name: "关闭快速预览" }).click();
   await page.getByRole("button", { name: "操作 notes" }).click();
