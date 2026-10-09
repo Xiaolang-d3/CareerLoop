@@ -393,7 +393,7 @@ fn main() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("error while building CareerLoop desktop");
+        .expect("error while building 灯灯 desktop");
 
     app.run(|app_handle, event| {
         if matches!(event, tauri::RunEvent::Exit) {

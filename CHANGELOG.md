@@ -1,10 +1,12 @@
 # 更新日志
 
-本文件记录 CareerLoop 的用户可见变更。版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)，条目结构参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
+本文件记录灯灯的用户可见变更。版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)，条目结构参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
 ## [Unreleased]
 
 ### 移除
+
+- 产品名称只保留灯灯。已保存的内置助手名会改写为灯灯，用户自定义名称保留；重建数据库的确认文本改为「确认重建灯灯数据库」。
 
 - 不再把旧 `#/workspace`、`#/workbench`、`#/opportunities`、`#/interview-prep`、`#/projects`、`#/knowledge` 等深链转进 AI 工作区或资料库。无法识别的地址打开首页，并改写为 `#/home`。
 

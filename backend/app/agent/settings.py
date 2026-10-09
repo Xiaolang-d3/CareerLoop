@@ -59,6 +59,11 @@ def get_agent_settings(db_path: str | Path | None = None) -> dict[str, Any]:
     result = row_to_dict(row)
     if result.get("display_name") in {"CareerLoop", "BossCopilot"}:
         result["display_name"] = DEFAULT_AGENT_SETTINGS["display_name"]
+        with connect(db_path) as conn:
+            conn.execute(
+                "UPDATE agent_settings SET display_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1",
+                (result["display_name"],),
+            )
     legacy_api_key = str(result.pop("model_api_key", "") or "")
     api_key, migration_warning = _resolved_model_api_key(db_path, legacy_api_key)
     for key in (

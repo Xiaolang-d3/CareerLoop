@@ -1,6 +1,6 @@
 # 灯灯
 
-灯灯（原 CareerLoop / BossCopilot）是从对话开始的个人 AI 协作助手。一起想清楚，一步步做好。
+灯灯是从对话开始的个人 AI 协作助手。一起想清楚，一步步做好。
 
 [![CI](https://github.com/Xiaolang-d3/CareerLoop/actions/workflows/ci.yml/badge.svg)](https://github.com/Xiaolang-d3/CareerLoop/actions/workflows/ci.yml)
 
