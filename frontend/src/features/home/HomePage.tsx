@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Bookmark, ChevronRight, Github, Layers, LayoutList, List, Moon, RefreshCw, SlidersHorizontal, Sparkles, Star, Sun, TriangleAlert, Wrench, X } from "lucide-react";
+import { Bookmark, ChevronRight, Github, Layers, LayoutList, List, RefreshCw, SlidersHorizontal, Sparkles, Star, TriangleAlert, Wrench, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { FetchJson, HomeArticle, HomeReadableItem } from "./types";
 import { useHomeFeed } from "./useHomeFeed";
@@ -12,7 +12,6 @@ type HomePageProps = {
   accountKey: string;
   onAnalyze: (item: HomeReadableItem) => Promise<void>;
   onLibraryChanged: () => Promise<void>;
-  onThemeChange?: (theme: "light" | "dark") => void;
 };
 
 function greetingPrefix(date: Date) { return date.getHours() < 12 ? "早上好" : date.getHours() < 18 ? "下午好" : "晚上好"; }
@@ -36,11 +35,10 @@ function ModuleSkeleton({ variant = "cards" }: { variant?: "cards" | "rows" }) {
   return <div className={`home-skeleton-list home-skeleton-list--${variant}`} role="status" aria-label="资讯加载中">{Array.from({ length: variant === "rows" ? 5 : 3 }, (_, index) => <div className="home-skeleton-card" key={index}><div className="home-skeleton home-skeleton-tag" /><div className="home-skeleton home-skeleton-title" /><div className="home-skeleton home-skeleton-line" /><div className="home-skeleton home-skeleton-line short" /></div>)}</div>;
 }
 
-export function HomePage({ fetchJson, accountName, accountKey, onAnalyze, onLibraryChanged, onThemeChange }: HomePageProps) {
+export function HomePage({ fetchJson, accountName, accountKey, onAnalyze, onLibraryChanged }: HomePageProps) {
   const { feed, loading, error, refreshing, notice, setNotice, refresh, savePreferences, setItemState } = useHomeFeed(fetchJson);
   const [now, setNow] = useState(() => new Date());
   const [mode, setMode] = useState<"info" | "compact">(() => readDisplayPreference(`careerloop-home-mode:${accountKey}`, "info") === "compact" ? "compact" : "info");
-  const [theme, setTheme] = useState<"light" | "dark">(() => readDisplayPreference(`careerloop-home-theme:${accountKey}`, "light") === "dark" ? "dark" : "light");
   const [newsFilter, setNewsFilter] = useState("all");
   const [repoFilter, setRepoFilter] = useState("all");
   const [practiceFilter, setPracticeFilter] = useState("all");
@@ -64,7 +62,6 @@ export function HomePage({ fetchJson, accountName, accountKey, onAnalyze, onLibr
     document.addEventListener("visibilitychange", updateTime);
     return () => { window.clearInterval(timer); window.removeEventListener("focus", updateTime); document.removeEventListener("visibilitychange", updateTime); };
   }, []);
-  useEffect(() => { onThemeChange?.(theme); }, [theme, onThemeChange]);
   useEffect(() => { if (!notice) return; const timer = window.setTimeout(() => { setNotice(null); setUndoItem(null); }, 7000); return () => window.clearTimeout(timer); }, [notice, setNotice]);
 
   function normalizedTag(value: string) { return ({ "评测": "eval", "开发工具": "tools" }[value] || value).toLowerCase(); }
@@ -98,8 +95,8 @@ export function HomePage({ fetchJson, accountName, accountKey, onAnalyze, onLibr
   const syncDate = feed?.last_synced_at ? new Date(feed.last_synced_at) : null;
   const syncTime = syncDate && Number.isFinite(syncDate.getTime()) ? syncDate.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }) : "尚未同步";
 
-  return <section className="home-page" aria-label="开发者首页" data-mode={mode} data-theme={theme}>
-    <header className="home-head"><div className="home-hello"><div className="home-eyebrow"><span>{now.toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long" })}</span><span>·</span><time className="home-time" aria-label="当前时间" dateTime={now.toISOString()}>{now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })}</time></div><h1 className="home-welcome">{greetingPrefix(now)}，{accountName.trim() || "欢迎回来"}</h1><p className="home-digest">{loading && !feed ? "正在获取你的开发者资讯…" : <>过去 24 小时有 <b>{newCount}</b> 条新动态；已关注 <b>{feed?.preferences.repositories.length || 0}</b> 个公开仓库，收录 <b>{feed?.updates.length || 0}</b> 条版本更新。</>}</p></div><div className="home-head-tools"><div className="home-segment" role="group" aria-label="显示模式"><button className={mode === "compact" ? "on" : ""} type="button" aria-pressed={mode === "compact"} onClick={() => { setMode("compact"); saveDisplayPreference(`careerloop-home-mode:${accountKey}`, "compact"); }}><List size={14} />简洁</button><button className={mode === "info" ? "on" : ""} type="button" aria-pressed={mode === "info"} onClick={() => { setMode("info"); saveDisplayPreference(`careerloop-home-mode:${accountKey}`, "info"); }}><LayoutList size={14} />信息</button></div><span className="home-vsep" /><span className="home-sync"><span className={`home-sync-dot${failedSources.length || !feed?.last_synced_at ? " stale" : ""}`} />最近同步 <b>{syncTime}</b></span><button className={`home-icon-btn${refreshing ? " home-spin" : ""}`} type="button" disabled={refreshing} onClick={() => { void refresh(); }} aria-label="刷新资讯" title="刷新资讯"><RefreshCw size={16} /></button><button className="home-icon-btn" type="button" aria-label="查看收藏" title="查看收藏" onClick={() => setBookmarksOpen(true)}><Bookmark size={16} /></button><button className="home-link-btn" type="button" onClick={() => setInterestOpen(true)}><SlidersHorizontal size={14} />兴趣设置</button><button className="home-icon-btn" type="button" aria-label={theme === "light" ? "切换深色主题" : "切换浅色主题"} title="切换主题" onClick={() => { const next = theme === "light" ? "dark" : "light"; setTheme(next); saveDisplayPreference(`careerloop-home-theme:${accountKey}`, next); }}>{theme === "light" ? <Moon size={16} /> : <Sun size={16} />}</button></div></header>
+  return <section className="home-page" aria-label="开发者首页" data-mode={mode}>
+    <header className="home-head"><div className="home-hello"><div className="home-eyebrow"><span>{now.toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long" })}</span><span>·</span><time className="home-time" aria-label="当前时间" dateTime={now.toISOString()}>{now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })}</time></div><h1 className="home-welcome">{greetingPrefix(now)}，{accountName.trim() || "欢迎回来"}</h1><p className="home-digest">{loading && !feed ? "正在获取你的开发者资讯…" : <>过去 24 小时有 <b>{newCount}</b> 条新动态；已关注 <b>{feed?.preferences.repositories.length || 0}</b> 个公开仓库，收录 <b>{feed?.updates.length || 0}</b> 条版本更新。</>}</p></div><div className="home-head-tools"><div className="home-segment" role="group" aria-label="显示模式"><button className={mode === "compact" ? "on" : ""} type="button" aria-pressed={mode === "compact"} onClick={() => { setMode("compact"); saveDisplayPreference(`careerloop-home-mode:${accountKey}`, "compact"); }}><List size={14} />简洁</button><button className={mode === "info" ? "on" : ""} type="button" aria-pressed={mode === "info"} onClick={() => { setMode("info"); saveDisplayPreference(`careerloop-home-mode:${accountKey}`, "info"); }}><LayoutList size={14} />信息</button></div><span className="home-vsep" /><span className="home-sync"><span className={`home-sync-dot${failedSources.length || !feed?.last_synced_at ? " stale" : ""}`} />最近同步 <b>{syncTime}</b></span><button className={`home-icon-btn${refreshing ? " home-spin" : ""}`} type="button" disabled={refreshing} onClick={() => { void refresh(); }} aria-label="刷新资讯" title="刷新资讯"><RefreshCw size={16} /></button><button className="home-icon-btn" type="button" aria-label="查看收藏" title="查看收藏" onClick={() => setBookmarksOpen(true)}><Bookmark size={16} /></button><button className="home-link-btn" type="button" onClick={() => setInterestOpen(true)}><SlidersHorizontal size={14} />兴趣设置</button></div></header>
     {(error || failedSources.length > 0) && <div className="home-banner" role="alert"><TriangleAlert size={16} /><span>{error || `${failedSources.map((source) => source.label).join("、")}暂时更新失败`}{feed && " · 已保留现有内容"}</span><button type="button" onClick={() => { void refresh(); }} disabled={refreshing}>重试</button></div>}
     {refreshing && <p className="home-refresh-status" role="status">正在同步公开资讯，已有内容可继续阅读。</p>}
     <div className="home-row-one">

@@ -38,6 +38,13 @@ describe("SettingsOverview", () => {
     expect(onOpen).toHaveBeenCalledWith("account");
   });
 
+  it("opens a dedicated global appearance page without adding sidebar children", () => {
+    const { onOpen } = renderOverview();
+    fireEvent.click(screen.getByRole("button", { name: /外观/ }));
+    expect(onOpen).toHaveBeenCalledWith("appearance");
+    expect(screen.getByText("浅色、深色或跟随系统")).toBeInTheDocument();
+  });
+
   it("includes 模型设置 and opens the existing model page", () => {
     const { onOpen } = renderOverview({
       modelName: "gpt-5.5",
@@ -94,7 +101,7 @@ describe("SettingsWorkspace", () => {
   afterEach(cleanup);
 
   it("uses the shared content container for every settings page", () => {
-    const pages: SettingsPage[] = ["overview", "model", "agent", "library", "account"];
+    const pages: SettingsPage[] = ["overview", "model", "agent", "library", "account", "appearance"];
     const { container, rerender } = render(
       <SettingsWorkspace page={pages[0]} onBack={vi.fn()}>
         <div data-testid="settings-content" />

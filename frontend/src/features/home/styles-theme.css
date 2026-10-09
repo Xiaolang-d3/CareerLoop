@@ -12,7 +12,7 @@
   --home-shadow-small: 0 1px 2px rgba(16, 16, 24, .05);
   --home-shadow-popup: 0 12px 32px -8px rgba(16, 16, 40, .2), 0 2px 8px rgba(16, 16, 40, .06);
 }
-.home-page[data-theme="dark"], .developer-home-shell[data-home-theme="dark"] {
+:root[data-theme="dark"] .home-page, :root[data-theme="dark"] .developer-home-shell {
   color-scheme: dark;
   --home-bg: #0e0e11; --home-panel: #16161a; --home-panel-2: #1b1b20;
   --home-line: #2e2e36; --home-line-2: #26262d; --home-line-strong: #45454f;
@@ -74,7 +74,7 @@
 .home-bookmark.on svg { fill: currentColor; }
 .home-card--art.home-no-img { background: linear-gradient(180deg, hsl(var(--home-hue, 230) 70% 97%) 0, var(--home-panel) 160px); }
 .home-card--art.home-no-img::before { content: ""; position: absolute; left: 16px; right: 16px; top: 0; height: 3px; border-radius: 0 0 3px 3px; background: linear-gradient(90deg, hsl(var(--home-hue, 230) 60% 50%), transparent); }
-.home-page[data-theme="dark"] .home-card--art.home-no-img { background: linear-gradient(180deg, hsl(var(--home-hue, 230) 30% 13%) 0, var(--home-panel) 160px); }
+:root[data-theme="dark"] .home-page .home-card--art.home-no-img { background: linear-gradient(180deg, hsl(var(--home-hue, 230) 30% 13%) 0, var(--home-panel) 160px); }
 .home-repo, .home-stack-row { border-color: var(--home-line-2); }
 .home-repo:first-child, .home-stack-row:first-child { border-top-color: transparent; }
 .home-repo:hover, .home-repo:focus-within { background: var(--home-hover); }
@@ -111,7 +111,7 @@
 .home-dialog-error { color: var(--home-danger-text); }
 .home-toast { color: #fff; background: #18181b; border-color: transparent; box-shadow: var(--home-shadow-popup); }
 .home-toast button { color: #b4b4ff; }
-.home-page[data-theme="dark"] .home-toast { background: #2a2a32; border-color: var(--home-line-strong); }
+:root[data-theme="dark"] .home-page .home-toast { background: #2a2a32; border-color: var(--home-line-strong); }
 .home-footnote { color: var(--home-text-3); border-color: var(--home-line-2); }
 .home-page[data-mode="compact"] .home-card { border-top-color: var(--home-line-2); background: transparent; }
 .home-page[data-mode="compact"] .home-card:first-child { border-top-color: transparent; }

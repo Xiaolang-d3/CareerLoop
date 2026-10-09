@@ -37,8 +37,7 @@ function setup(initial = fixtureFeed()) {
   });
   const onAnalyze = vi.fn(async () => {});
   const onLibraryChanged = vi.fn(async () => {});
-  const onThemeChange = vi.fn();
-  const props = { fetchJson: request as FetchJson, accountName: "测试开发者", accountKey: "qa-account", onAnalyze, onLibraryChanged, onThemeChange };
+  const props = { fetchJson: request as FetchJson, accountName: "测试开发者", accountKey: "qa-account", onAnalyze, onLibraryChanged };
   return { ...props, request, getSnapshot: () => snapshot, updateSnapshot: (value: HomeFeedResponse) => { snapshot = value; }, render: () => render(<HomePage {...props} />) };
 }
 async function load() { await screen.findByRole("link", { name: "测试 Agent 更新 1" }); }
@@ -73,13 +72,12 @@ describe("developer HomePage", () => {
     expect(screen.getByLabelText("开发者首页")).toHaveAttribute("data-mode", "compact");
     expect(screen.getByRole("link", { name: "测试 Agent 更新 7" })).toBeInTheDocument();
     expect(window.localStorage.getItem("careerloop-home-mode:qa-account")).toBe("compact");
-    fireEvent.click(screen.getByRole("button", { name: "切换深色主题" }));
-    expect(page.onThemeChange).toHaveBeenLastCalledWith("dark");
-    expect(screen.getByLabelText("开发者首页")).toHaveAttribute("data-theme", "dark");
+    expect(screen.queryByRole("button", { name: /切换.*主题/ })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("开发者首页")).not.toHaveAttribute("data-theme");
     view.unmount();
     render(<HomePage {...page} accountKey="another-account" />); await load();
     expect(screen.getByLabelText("开发者首页")).toHaveAttribute("data-mode", "info");
-    expect(screen.getByLabelText("开发者首页")).toHaveAttribute("data-theme", "light");
+    expect(screen.getByLabelText("开发者首页")).not.toHaveAttribute("data-theme");
   });
 
   it("filters news, resets an empty selection, and expands then collapses the real list", async () => {

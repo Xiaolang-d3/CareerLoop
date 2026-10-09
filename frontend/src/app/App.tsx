@@ -1,3 +1,5 @@
+import { useTheme } from "../features/appearance/ThemeProvider";
+import { AppearanceSettingsPage } from "../features/settings/AppearanceSettingsPage";
 import { PageLoading } from "../components/PageLoading";
 import { useChatRun } from "../features/chat/useChatRun";
 import { useConversations } from "../features/chat/useConversations";
@@ -128,7 +130,8 @@ export function App({
   const [libraryAttachments, setLibraryAttachments] = useState<{ conversationId: number; attachments: ChatAttachment[] } | null>(null);
   const [homeComposerDraft, setHomeComposerDraft] = useState<ChatComposerDraft | null>(null);
   const composerDrafts = useMemo(() => new Map<number, string>(), [userEmail]);
-  const [homeTheme, setHomeTheme] = useState<"light" | "dark">("light");
+  const { migrateHomeTheme } = useTheme();
+  useEffect(() => { migrateHomeTheme(userEmail); }, [migrateHomeTheme, userEmail]);
   const homeAnalysisBusyRef = useRef(false);
   const homeAnalysisControllerRef = useRef<AbortController | null>(null);
   useEffect(() => () => {
@@ -621,6 +624,7 @@ export function App({
   const routePageMeta = appRoute.section === "settings"
     ? {
       overview: pageMeta.settings,
+      appearance: { title: "外观", description: "统一设置所有模块的主题" },
       account: { title: "账号与安全", description: "管理跟随登录账号的昵称、头像和密码" },
       library: { title: "文件库", description: "整理文件、阅读原件，选取资料用于对话" },
       model: { title: "模型设置", description: "配置推理模型、服务地址和 API Key，并检查连接质量" },
@@ -700,7 +704,7 @@ export function App({
   }
 
   return (
-    <main className={`app-shell has-chat-dock shell-light${activeView === "chat" ? " chat-focused" : ""}${activeView === "dashboard" ? " developer-home-shell" : ""}`} data-home-theme={activeView === "dashboard" ? homeTheme : undefined}>
+    <main className={`app-shell has-chat-dock shell-light${activeView === "chat" ? " chat-focused" : ""}${activeView === "dashboard" ? " developer-home-shell" : ""}`}>
       <AppSidebar
         collapsed={sidebarCollapsed}
         activeView={activeView}
@@ -746,7 +750,6 @@ export function App({
               accountKey={userEmail}
               onAnalyze={analyzeHomeItem}
               onLibraryChanged={refreshLibrary}
-              onThemeChange={setHomeTheme}
             />
           </Suspense>
         ) : null}
@@ -769,6 +772,7 @@ export function App({
                   onOpen={(page) => navigateRoute({ section: "settings", page })}
                 />
               ) : null}
+              {appRoute.page === "appearance" ? <AppearanceSettingsPage /> : null}
               {appRoute.page === "account" ? (
                 <AccountSettingsPage
                   apiBase={apiBase}
