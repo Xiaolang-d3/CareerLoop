@@ -240,7 +240,7 @@ Agent 新知识写入 library_knowledge 的 pending 状态；用户确认后才�
 
 Base URL 视为对应协议的 API 根地址：显式 OpenAI 兼容客户端不自动追加 `/v1`，Responses 请求 `/responses`，Anthropic 请求 `/v1/messages`，Gemini 请求 `/models/{model}:generateContent`，Ollama 请求 `/api/chat`。OpenAI 兼容调用还会验证响应中存在 `choices`，流式调用至少返回响应 ID、用量、结束原因、正文或工具调用之一；网页回退或空响应即使 HTTP 状态为 200 也会记为 `invalid_provider_response`，不得标记为健康。模型目录只证明名称可见，不证明当前账户可实际调用；设置页提示是否可用以连接检测为准，诊断区展示已保存连接的调用结果。本地 Ollama 可不配置 API Key；其他协议要求密钥。`GET /agent/capabilities` 在缺少密钥时返回 200 与 `configured: false`（可先配置再对话），真正运行 Agent 仍要求已配置密钥。runtime、模型发现、能力检测与健康监控使用同一协议解析结果。runtime 的 system 消息必须保持协议级 system 语义：Anthropic 合并到顶层 `system`，不能降级成 `user` 消息。系统提示在 `backend/app/models/openai_compatible.py`：中文、不编造经历与来源、只使用本轮实际提供的工具、不点名具体工具名、过程叙述交给界面。本轮工具清单由 runtime 注入。缺少关键信息或指代有歧义时必须调用 `ask_user`，不要猜测，也不要只在正文里提问。用户明确要求思维导图时可输出 Mermaid `mindmap` 代码块，界面渲染为可展开、缩放的交互导图；普通回答不主动生成图。
 
-用户可配置人设（名称、角色、详略、补充指令）不能覆盖事实要求、工具权限和人工确认规则。模型名、Base URL 和协议保存在 `agent_settings`。新 API Key 不写 SQLite：macOS 桌面版使用 Keychain，开发/无钥匙串环境可回落到 `OPENAI_API_KEY`；发现历史明文密钥时仅在成功迁入 Keychain 后清空原字段，失败会保留旧值并在设置页告警。
+用户可配置人设（名称、角色、详略、补充指令）不能覆盖事实要求、工具权限和人工确认规则。模型名、Base URL 和协议保存在 `agent_settings`。新 API Key 不写 SQLite：macOS 单机网页和桌面使用 Keychain，其他环境根据可写凭证服务能力处理；环境密钥只绑定环境提供的连接，不能用于用户修改后的任意地址。密钥采用不可变版本引用，数据库事务一次切换连接配置和引用，失败保留完整旧连接。发现历史明文密钥时仅在成功迁移后清空原字段；不同环境 Key 不代表迁移完成，失败保留旧值并告警。
 
 模型设置主界面仅显示 Base URL、API Key 与模型名称，支持目录选择及手动填写，字段无需先解锁；首次读取完整配置后才展示表单。修改为草稿，单次点击“保存并应用”才保存，并从下一次模型调用生效。保存期间禁用字段及取消操作，空密钥继续沿用已保存密钥；配置保存成功与连接检测失败分别反馈。接口协议、额度、能力探测及调用监控保留在默认折叠的高级设置，已有显式协议不被自动重置，能力读取/探测仅使用已保存连接。`features/settings/useModelDiscovery.ts` 取消旧请求并用序号屏蔽迟到结果；更改地址、密钥或协议清空目录，更改模型名称保留已加载目录并使旧请求失效。目录失败可重试，具体错误只在高级设置展示。详情见 [model-settings-qa.md](model-settings-qa.md)。
 
@@ -296,7 +296,7 @@ cd evals && PROMPTFOO_PYTHON=../backend/.venv/bin/python npx --yes promptfoo@0.1
 
 `PUT /agent/settings` 只表示配置已保存；设置页保存后会额外调用一次 `POST /agent/model-monitor/check`，分别显示连接成功、连接失败或未完成检测。问答发送前不做真实模型预检，直接发起正式请求，避免一次用户操作产生两次模型调用。正式请求失败时，界面保留输入、附件和联网选项，并展示稳定错误码对应原因。`GET /agent/capabilities` 失败必须显示后端服务不可用，不能伪装为未配置密钥。
 
-macOS 桌面版的新密钥写入 Keychain；开发和无钥匙串环境可读取 `OPENAI_API_KEY`。新密钥不写 SQLite。发现旧明文密钥时，只在 Keychain 写入成功后清空旧字段；失败则保留旧值并返回迁移警告。日志、健康接口和错误响应不得出现密钥。
+macOS 单机网页和桌面的新密钥写入 Keychain；环境模式只读管理员提供的密钥，不能向用户草稿的新地址自动发送。新密钥不写 SQLite，保存采用独立凭证版本与数据库原子引用切换。发现旧明文密钥时，只在成功迁移并绑定引用后清空旧字段；失败保留旧值并返回迁移警告。日志、健康接口和错误响应不得出现密钥。
 
 ## 架构收敛进度
 
