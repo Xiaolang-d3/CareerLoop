@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { cleanup, fireEvent, render as baseRender, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultAgentSettings } from "../../constants";
 import type { AgentSettings, ModelCapabilityReport, ModelServiceMonitor } from "../../types";
@@ -83,7 +84,15 @@ function props(overrides: Partial<Parameters<typeof ModelSettingsPage>[0]> = {})
   };
 }
 
+function render(ui: ReactElement) {
+  const result = baseRender(ui);
+  if (!screen.queryByRole("dialog")) fireEvent.click(screen.getByRole("button", { name: "配置模型" }));
+  return result;
+}
+
 function openAdvancedSettings() {
+  const protocol = screen.queryByText("接口选项")?.closest("details");
+  if (protocol) protocol.open = true;
   const summary = screen.getByText("高级设置");
   fireEvent.click(summary);
   const details = summary.closest("details");
@@ -94,6 +103,56 @@ describe("ModelSettingsPage", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+  });
+
+  it("keeps fields in a dialog and restores focus after cancel", () => {
+    const onCancelEdit = vi.fn();
+    baseRender(<ModelSettingsPage {...props({ onCancelEdit })} />);
+    expect(screen.queryByLabelText("API Key")).not.toBeInTheDocument();
+    const trigger = screen.getByRole("button", { name: "配置模型" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    expect(screen.getByRole("dialog", { name: "配置模型" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Base URL")).toHaveFocus();
+    fireEvent.keyDown(screen.getByLabelText("Base URL"), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(onCancelEdit).toHaveBeenCalledOnce();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("keeps a failed save open and closes only after editing finishes", () => {
+    const page = props({ editing: true });
+    const { rerender } = baseRender(<ModelSettingsPage {...page} />);
+    rerender(<ModelSettingsPage {...page} busy />);
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(page.onCancelEdit).not.toHaveBeenCalled();
+    rerender(<ModelSettingsPage {...page} />);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    rerender(<ModelSettingsPage {...page} editing={false} />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("traps keyboard focus and shows save errors inside the dialog", () => {
+    baseRender(<ModelSettingsPage {...props({ editing: true, error: "保存失败，请重试" })} />);
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toContainElement(screen.getByRole("alert"));
+    const close = screen.getByRole("button", { name: "关闭模型设置" });
+    const save = screen.getByRole("button", { name: "保存并应用" });
+    save.focus();
+    fireEvent.keyDown(save, { key: "Tab" });
+    expect(close).toHaveFocus();
+    fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
+    expect(save).toHaveFocus();
+    fireEvent.mouseDown(dialog.parentElement!);
+    expect(dialog).toBeInTheDocument();
+  });
+
+  it("prevents dismissal while a save result is unknown", () => {
+    baseRender(<ModelSettingsPage {...props({ saveUnknown: true })} />);
+    expect(screen.getByRole("button", { name: "关闭模型设置" })).toBeDisabled();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
   it("shows editable connection fields and keeps technical settings collapsed initially", () => {

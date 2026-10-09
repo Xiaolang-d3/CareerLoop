@@ -3,6 +3,7 @@ import { ChevronDown, Plus, RefreshCw } from "lucide-react";
 import type { createApiClient } from "../../api/client";
 import type { ModelCatalog, ModelConnection, ModelProtocol } from "../../types";
 import "./model-connections.css";
+import { ModelSettingsDialog } from "./ModelSettingsDialog";
 
 type Draft = { name: string; model_base_url: string; model_protocol: ModelProtocol; api_key: string; model_name: string };
 const blankDraft: Draft = { name: "", model_base_url: "", model_protocol: "auto", api_key: "", model_name: "" };
@@ -95,7 +96,7 @@ export function ModelConnectionManager({ catalog, loading, busy, error, defaultL
   return <section className="settings-card model-settings-card model-connections-card" aria-labelledby="model-connections-title">
     <div className="model-connections-heading"><div><h3 id="model-connections-title">连接与模型</h3><p>保存多个服务连接，在模块内管理模型；每个连接独立保管密钥。</p></div><button type="button" disabled={busy} onClick={() => editConnection()}><Plus size={14} />添加连接</button></div>
     {error ? <p className="model-capability-error" role="alert">{error}<button type="button" disabled={busy || loading} onClick={() => void onReload()}>重新读取</button></p> : null}
-    {notice ? <p className="model-connections-notice" role="status">{notice}</p> : null}
+    {notice && !editor ? <p className="model-connections-notice" role="status">{notice}</p> : null}
     {defaultLocked ? <p className="model-connections-hint">默认配置有未保存的修改，保存或取消后可切换默认模型。</p> : null}
     {loading && !catalog.connections.length ? <p role="status">正在读取连接…</p> : null}
     {!loading && !catalog.connections.some(item => item.enabled) ? <p className="model-connections-hint">还没有可管理的连接，添加服务地址、密钥和首个模型即可。</p> : null}
@@ -106,8 +107,7 @@ export function ModelConnectionManager({ catalog, loading, busy, error, defaultL
       <div className="model-profile-list">{catalog.profiles.filter(profile => profile.connection_id === connection.id).map(profile => <div key={profile.id}><span><strong>{profile.model_name}</strong><small>{profile.id === catalog.default_profile_id ? "默认模型" : profile.enabled ? "可选择" : "已停用"}</small></span><div><button type="button" disabled={busy || defaultLocked || !profile.enabled || profile.id === catalog.default_profile_id} onClick={() => void setDefault(profile.id)}>设为默认</button><button type="button" disabled={busy || profile.id === catalog.default_profile_id} onClick={() => void onMutate(`/agent/model-profiles/${encodeURIComponent(profile.id)}`, "PATCH", { enabled: !profile.enabled, expected_revision: profile.revision })}>{profile.enabled ? "停用模型" : "启用模型"}</button></div></div>)}</div>
     </article>)}</div>
     {currentConnection ? <div className="model-add-profile"><label htmlFor="additional-model-name">为 {currentConnection.name || "此连接"} 添加模型</label><div><input id="additional-model-name" list="connection-model-suggestions" placeholder="输入模型名称" value={modelName} disabled={busy} onChange={event => setModelName(event.target.value)} /><datalist id="connection-model-suggestions">{catalogModels.map(model => <option key={model} value={model} />)}</datalist><button type="button" disabled={busy || !modelName.trim()} onClick={() => void addModel()}>添加模型</button></div><div className="model-connection-actions"><button type="button" disabled={busy || diagnosticBusy} onClick={() => void diagnose("discover")}><RefreshCw size={13} />读取模型列表</button><button type="button" disabled={busy || diagnosticBusy} onClick={() => void diagnose("check")}>检测此连接</button></div>{diagnosticMessage ? <p role="status">{diagnosticMessage}</p> : null}</div> : null}
-    {editor ? <form className="model-connection-editor" onSubmit={event => { event.preventDefault(); void saveConnection(); }}>
-      <h4>{editor.id ? "编辑连接" : "添加连接"}</h4>
+    {editor ? <ModelSettingsDialog title={editor.id ? "编辑连接" : "添加连接"} locked={busy} onClose={closeEditor}><div className="model-connections-card model-settings-card">{notice && <p role="status" className="model-connections-notice">{notice}</p>}{error && <p role="alert" className="model-capability-error">{error}</p>}<form className="model-connection-editor" onSubmit={event => { event.preventDefault(); void saveConnection(); }}>
       <label>连接名称（可选）<input value={draft.name} disabled={busy} onChange={event => setDraft({ ...draft, name: event.target.value })} placeholder="如工作模型、本地模型" /></label>
       <label>连接 Base URL<input type="url" autoComplete="off" value={draft.model_base_url} disabled={busy} onChange={event => setDraft({ ...draft, model_base_url: event.target.value, api_key: "" })} placeholder="服务商提供的 API 根地址" /></label>
       <label>连接 API Key<input type="password" autoComplete="new-password" value={draft.api_key} disabled={busy || secretWritable === false} onChange={event => setDraft({ ...draft, api_key: event.target.value })} placeholder={existingEditor?.api_key_configured && !needsKey ? "留空继续使用此连接的密钥" : keyOptional(draft) ? "本地 Ollama 可留空" : "请输入此连接的密钥"} /><small>{address(draft.model_base_url) !== address(editor.originalAddress) && editor.id ? "地址已更改，请填写新地址的密钥；不会复用原连接密钥。" : "密钥不会显示原文，提交或取消后清空输入。"}</small></label>
@@ -115,6 +115,6 @@ export function ModelConnectionManager({ catalog, loading, busy, error, defaultL
       <details><summary>接口协议<ChevronDown size={13} /></summary><select aria-label="连接接口协议" value={draft.model_protocol} disabled={busy} onChange={event => setDraft({ ...draft, model_protocol: event.target.value as ModelProtocol })}>{["auto", "openai", "responses", "anthropic", "gemini", "ollama"].map(value => <option key={value} value={value}>{({ auto: "自动匹配", openai: "OpenAI 兼容", responses: "OpenAI Responses", anthropic: "Anthropic", gemini: "Gemini", ollama: "Ollama" } as Record<string, string>)[value]}</option>)}</select></details>
       {secretWritable === false && needsKey ? <p className="model-connections-hint">当前密钥存储不可写，恢复后才能新增密钥连接。</p> : null}
       <div className="model-connection-actions"><button type="button" disabled={busy} onClick={closeEditor}>取消编辑</button><button type="submit" disabled={busy || needsKey || (!editor.id && !draft.model_name.trim()) || (secretWritable === false && Boolean(draft.api_key.trim()))}>{busy ? "提交中…" : "保存连接"}</button></div>
-    </form> : null}
+    </form></div></ModelSettingsDialog> : null}
   </section>;
 }

@@ -1058,6 +1058,7 @@ export function App({
               {appRoute.page === "model" ? (
                 modelSettingsReady ? (
                   <ModelSettingsPage
+                    error={errorMessage}
                     routingManager={<ModelRoutingPanel key={userEmail} fetchJson={fetchJson} catalog={modelCatalog.catalog}
                       disabled={agentSettingsBusy || modelCatalog.busy || Boolean(modelSaveUnknown)}
                       onApplied={async () => { await modelCatalog.reload(); await refreshDefaultModelSelection(); }} />}

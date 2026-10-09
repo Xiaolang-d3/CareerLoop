@@ -1,8 +1,9 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Activity, ChevronDown, Cpu, Gauge, Image, LoaderCircle, RefreshCw, Save, ScanSearch, Wrench } from "lucide-react";
 import { ActionButton } from "../../components/ui/ActionButton";
 import type { AgentSettings, ModelCapabilityFlag, ModelCapabilityReport, ModelServiceMonitor } from "../../types";
 import "./model-settings.css";
+import { ModelSettingsDialog } from "./ModelSettingsDialog";
 
 type Props = {
   connectionManager?: ReactNode;
@@ -12,6 +13,7 @@ type Props = {
   editing: boolean;
   busy: boolean;
   saveUnknown?: boolean;
+  error?: string;
   onConfirmSave?: () => void;
   onResumeEditing?: () => void;
   monitor: ModelServiceMonitor | null;
@@ -142,6 +144,7 @@ export function ModelSettingsPage({
   editing,
   busy,
   saveUnknown = false,
+  error = "",
   onConfirmSave,
   onResumeEditing,
   monitor,
@@ -159,6 +162,21 @@ export function ModelSettingsPage({
   onCancelEdit,
   onSave
 }: Props) {
+  const [dialogOpen, setDialogOpen] = useState(editing || saveUnknown);
+  const wasEditing = useRef(editing);
+  useEffect(() => {
+    if (editing) wasEditing.current = true;
+    else if (wasEditing.current && !saveUnknown) {
+      setDialogOpen(false);
+      wasEditing.current = false;
+    }
+  }, [editing, busy, saveUnknown]);
+  function closeDialog() {
+    if (busy || saveUnknown) return;
+    onCancelEdit();
+    setDialogOpen(false);
+    setManualModel(false);
+  }
   const [manualModel, setManualModel] = useState(false);
   const effectiveProtocol = resolvedProtocol(settings.model_name, settings.model_protocol, settings.model_base_url);
   const savedConnectionUnchanged = settings.model_name === savedSettings.model_name && settings.model_base_url === savedSettings.model_base_url && settings.model_protocol === savedSettings.model_protocol;
@@ -190,83 +208,92 @@ export function ModelSettingsPage({
 
   return (
     <section className="model-settings-page">
-      {savedSettings.secret_migration_warning ? <p className="model-settings-warning" role="alert">{savedSettings.secret_migration_warning}。旧密钥仍保留在本地数据库中，修复钥匙串后再次保存即可迁移。</p> : null}
-      {storageReadOnly ? <p className="model-settings-warning" role="status">{managedKey ? "当前使用只读环境变量密钥，页面无法更换；本地 macOS 可使用系统钥匙串保存个人密钥。" : "本机密钥存储暂不可写。已保存密钥仍可使用；更换密钥前请修复系统钥匙串。"}</p> : null}
-      {saveUnknown ? <p className="model-settings-warning" role="status">保存结果待确认，请重新读取服务端状态；不会自动重复提交。</p> : null}
-      <section className="settings-card model-settings-card model-connection-card">
-        <div className="settings-card-heading model-connection-heading">
-          <span><Cpu size={18} /></span>
-          <div><h3>连接你的模型</h3><p>填写服务地址和密钥，再选择要使用的模型。</p></div>
-        </div>
-        <label>
-          <span id="model-base-url-label">Base URL</span>
-          <input aria-labelledby="model-base-url-label" aria-describedby="model-base-url-help" type="url" autoComplete="off" spellCheck={false} value={settings.model_base_url} disabled={fieldsBusy} placeholder={protocolBaseUrl(effectiveProtocol)} onChange={(event) => changeSettings({ ...settings, model_base_url: event.target.value })} onBlur={discoverOnBlur} />
-          <small id="model-base-url-help">填写服务商提供的 API 地址，包含其要求的 /v1 等路径。</small>
-        </label>
-        <label>
-          <span id="model-api-key-label">API Key</span>
-          <input aria-labelledby="model-api-key-label" aria-describedby="model-api-key-help" type="password" autoComplete="new-password" value={settings.api_key} disabled={fieldsBusy || storageReadOnly} placeholder={effectiveProtocol === "ollama" ? "本地 Ollama 可留空" : canReuseStoredKey ? "已配置，留空则继续使用" : "请输入 API Key"} onChange={(event) => changeSettings({ ...settings, api_key: event.target.value })} onBlur={discoverOnBlur} />
-          <small id="model-api-key-help">{effectiveProtocol === "ollama" ? "本地 Ollama 可不填写密钥。" : addressChanged ? "服务地址已更改，请填写该服务的密钥；不会复用旧地址的密钥。" : canReuseStoredKey ? managedKey ? "当前使用环境变量中的密钥，页面不显示原文。" : "已保存密钥；留空继续使用，不显示原文。" : "填写服务商提供的密钥。"}</small>
-        </label>
-        <div className="model-name-setting">
-          <div className="model-field-heading">
-            <label htmlFor="model-name-input">模型名称</label>
-            <button type="button" className="model-discovery-button" disabled={fieldsBusy || discoveryBusy || keyRequired} onClick={() => onDiscoverModels(true)}>
-              <RefreshCw className={discoveryBusy ? "spinning" : ""} size={13} />
-              {discoveryBusy ? "读取中…" : "刷新列表"}
-            </button>
-          </div>
-          {catalog.length > 0 && !manualModel ? (
-            <select id="model-name-input" value={settings.model_name} disabled={fieldsBusy} onChange={(event) => changeSettings({ ...settings, model_name: event.target.value })}>
-              {!settings.model_name && <option value="">选择模型</option>}
-              {Array.from(new Set([settings.model_name, ...catalog].filter(Boolean))).map((model) => <option key={model} value={model}>{model}</option>)}
-            </select>
-          ) : (
-            <input id="model-name-input" value={settings.model_name} disabled={fieldsBusy} placeholder="输入模型名称" onChange={(event) => changeSettings({ ...settings, model_name: event.target.value })} />
-          )}
-          {catalog.length > 0 && <button className="model-manual-button" type="button" disabled={fieldsBusy} onClick={() => setManualModel(!manualModel)}>{manualModel ? "从列表选择" : "手动填写"}</button>}
-          <small className={discoveryError ? "model-discovery-error" : ""}>
-            {discoveryBusy
-              ? "正在读取模型列表…"
-              : discoveryError
-                ? "未能读取模型列表，可手动填写模型名称。"
-                : catalog.length
-                  ? `${catalog.length} 个模型可选择，是否可用以连接检测为准。`
-                  : "可直接填写模型名称，或读取服务商的模型列表。"}
-          </small>
-        </div>
-        <div className="model-settings-actions">
-          <p role="status">{saveUnknown ? "保存结果待确认" : editing ? "有未保存的修改" : `当前模型：${savedSettings.model_name || "尚未配置"}`}</p>
-          {saveUnknown && <ActionButton variant="secondary" disabled={busy} onClick={onResumeEditing}>读取最新配置并继续编辑</ActionButton>}
-          {editing && !saveUnknown && <ActionButton variant="secondary" disabled={fieldsBusy} onClick={onCancelEdit}>取消</ActionButton>}
-          {saveUnknown ? <ActionButton variant="primary" disabled={busy} onClick={onConfirmSave}>{busy ? "确认中…" : "重新确认保存结果"}</ActionButton> : <ActionButton variant="primary" disabled={busy || !editing || !settings.model_name.trim() || keyRequired || (storageReadOnly && Boolean(settings.api_key.trim()))} onClick={onSave}>
-            {busy ? <LoaderCircle className="spinning" size={16} /> : <Save size={16} />}{busy ? "保存中…" : "保存并应用"}
-          </ActionButton>}
-        </div>
-        <p className="model-save-note">{monitorBusy && !busy ? "配置已保存，连接检测中；可以继续编辑。" : "保存后从下一次对话生效。"}</p>
+      <section className="settings-card model-settings-card model-current-summary">
+        <div><h3>当前模型</h3><strong>{savedSettings.model_name || "尚未配置"}</strong><p>{savedSettings.model_base_url || "使用服务商默认地址"}</p></div>
+        <ActionButton variant="primary" onClick={() => { setManualModel(false); setDialogOpen(true); }}>配置模型</ActionButton>
       </section>
+      {dialogOpen && <ModelSettingsDialog title="配置模型" locked={fieldsBusy} onClose={closeDialog}>
+        {error && <p role="alert" className="model-capability-error">{error}</p>}
+        {savedSettings.secret_migration_warning ? <p className="model-settings-warning" role="alert">{savedSettings.secret_migration_warning}。旧密钥仍保留在本地数据库中，修复钥匙串后再次保存即可迁移。</p> : null}
+        {storageReadOnly ? <p className="model-settings-warning" role="status">{managedKey ? "当前使用只读环境变量密钥，页面无法更换；本地 macOS 可使用系统钥匙串保存个人密钥。" : "本机密钥存储暂不可写。已保存密钥仍可使用；更换密钥前请修复系统钥匙串。"}</p> : null}
+        {saveUnknown ? <p className="model-settings-warning" role="status">保存结果待确认，请重新读取服务端状态；不会自动重复提交。</p> : null}
+        <section className="settings-card model-settings-card model-connection-card">
+          <div className="settings-card-heading model-connection-heading">
+            <span><Cpu size={18} /></span>
+            <div><h3>连接你的模型</h3><p>填写服务地址和密钥，再选择要使用的模型。</p></div>
+          </div>
+          <label>
+            <span id="model-base-url-label">Base URL</span>
+            <input aria-labelledby="model-base-url-label" aria-describedby="model-base-url-help" type="url" autoComplete="off" spellCheck={false} value={settings.model_base_url} disabled={fieldsBusy} placeholder={protocolBaseUrl(effectiveProtocol)} onChange={(event) => changeSettings({ ...settings, model_base_url: event.target.value })} onBlur={discoverOnBlur} />
+            <small id="model-base-url-help">填写服务商提供的 API 地址，包含其要求的 /v1 等路径。</small>
+          </label>
+          <label>
+            <span id="model-api-key-label">API Key</span>
+            <input aria-labelledby="model-api-key-label" aria-describedby="model-api-key-help" type="password" autoComplete="new-password" value={settings.api_key} disabled={fieldsBusy || storageReadOnly} placeholder={effectiveProtocol === "ollama" ? "本地 Ollama 可留空" : canReuseStoredKey ? "已配置，留空则继续使用" : "请输入 API Key"} onChange={(event) => changeSettings({ ...settings, api_key: event.target.value })} onBlur={discoverOnBlur} />
+            <small id="model-api-key-help">{effectiveProtocol === "ollama" ? "本地 Ollama 可不填写密钥。" : addressChanged ? "服务地址已更改，请填写该服务的密钥；不会复用旧地址的密钥。" : canReuseStoredKey ? managedKey ? "当前使用环境变量中的密钥，页面不显示原文。" : "已保存密钥；留空继续使用，不显示原文。" : "填写服务商提供的密钥。"}</small>
+          </label>
+          <div className="model-name-setting">
+            <div className="model-field-heading">
+              <label htmlFor="model-name-input">模型名称</label>
+              <button type="button" className="model-discovery-button" disabled={fieldsBusy || discoveryBusy || keyRequired} onClick={() => onDiscoverModels(true)}>
+                <RefreshCw className={discoveryBusy ? "spinning" : ""} size={13} />
+                {discoveryBusy ? "读取中…" : "刷新列表"}
+              </button>
+            </div>
+            {catalog.length > 0 && !manualModel ? (
+              <select id="model-name-input" value={settings.model_name} disabled={fieldsBusy} onChange={(event) => changeSettings({ ...settings, model_name: event.target.value })}>
+                {!settings.model_name && <option value="">选择模型</option>}
+                {Array.from(new Set([settings.model_name, ...catalog].filter(Boolean))).map((model) => <option key={model} value={model}>{model}</option>)}
+              </select>
+            ) : (
+              <input id="model-name-input" value={settings.model_name} disabled={fieldsBusy} placeholder="输入模型名称" onChange={(event) => changeSettings({ ...settings, model_name: event.target.value })} />
+            )}
+            {catalog.length > 0 && <button className="model-manual-button" type="button" disabled={fieldsBusy} onClick={() => setManualModel(!manualModel)}>{manualModel ? "从列表选择" : "手动填写"}</button>}
+            <small className={discoveryError ? "model-discovery-error" : ""}>
+              {discoveryBusy
+                ? "正在读取模型列表…"
+                : discoveryError
+                  ? "未能读取模型列表，可手动填写模型名称。"
+                  : catalog.length
+                    ? `${catalog.length} 个模型可选择，是否可用以连接检测为准。`
+                    : "可直接填写模型名称，或读取服务商的模型列表。"}
+            </small>
+          </div>
+          <details className="model-dialog-protocol">
+            <summary>接口选项</summary>
+            <section className="settings-card model-settings-card model-protocol-card">
+              <label>
+                <span id="model-protocol-label">接口协议</span>
+                <select aria-labelledby="model-protocol-label" value={settings.model_protocol} disabled={fieldsBusy} onChange={(event) => changeSettings({ ...settings, model_protocol: event.target.value as AgentSettings["model_protocol"] })}>
+                  <option value="auto">自动匹配（{automaticProtocolLabel}）</option>
+                  <option value="openai">OpenAI 兼容 Chat Completions</option>
+                  <option value="responses">OpenAI Responses API</option>
+                  <option value="anthropic">Anthropic Messages API</option>
+                  <option value="gemini">Google Gemini generateContent</option>
+                  <option value="ollama">Ollama Chat API</option>
+                </select>
+                <small>默认自动匹配，服务商有明确要求时再更改。</small>
+                <small>{protocolBaseUrlHelp(effectiveProtocol)}</small>
+              </label>
+              {discoveryError && <p className="model-capability-error" role="alert">模型列表读取失败：{discoveryError}</p>}
+            </section>
+          </details>
+          <div className="model-settings-actions">
+            <p role="status">{saveUnknown ? "保存结果待确认" : editing ? "有未保存的修改" : `当前模型：${savedSettings.model_name || "尚未配置"}`}</p>
+            {saveUnknown && <ActionButton variant="secondary" disabled={busy} onClick={onResumeEditing}>读取最新配置并继续编辑</ActionButton>}
+            {editing && !saveUnknown && <ActionButton variant="secondary" disabled={fieldsBusy} onClick={closeDialog}>取消</ActionButton>}
+            {saveUnknown ? <ActionButton variant="primary" disabled={busy} onClick={onConfirmSave}>{busy ? "确认中…" : "重新确认保存结果"}</ActionButton> : <ActionButton variant="primary" disabled={busy || !editing || !settings.model_name.trim() || keyRequired || (storageReadOnly && Boolean(settings.api_key.trim()))} onClick={onSave}>
+              {busy ? <LoaderCircle className="spinning" size={16} /> : <Save size={16} />}{busy ? "保存中…" : "保存并应用"}
+            </ActionButton>}
+          </div>
+          <p className="model-save-note">{monitorBusy && !busy ? "配置已保存，连接检测中；可以继续编辑。" : "保存后从下一次对话生效。"}</p>
+        </section>
+      </ModelSettingsDialog>}
       {connectionManager}
       <details className="model-advanced-settings">
-        <summary><strong>高级设置</strong><span>接口协议与连接诊断</span><ChevronDown size={16} /></summary>
+        <summary><strong>高级设置</strong><span>阶段分工与连接诊断</span><ChevronDown size={16} /></summary>
         {routingManager}
         <div className="model-settings-panels">
-          <section className="settings-card model-settings-card model-protocol-card">
-            <label>
-              <span id="model-protocol-label">接口协议</span>
-              <select aria-labelledby="model-protocol-label" value={settings.model_protocol} disabled={fieldsBusy} onChange={(event) => changeSettings({ ...settings, model_protocol: event.target.value as AgentSettings["model_protocol"] })}>
-                <option value="auto">自动匹配（{automaticProtocolLabel}）</option>
-                <option value="openai">OpenAI 兼容 Chat Completions</option>
-                <option value="responses">OpenAI Responses API</option>
-                <option value="anthropic">Anthropic Messages API</option>
-                <option value="gemini">Google Gemini generateContent</option>
-                <option value="ollama">Ollama Chat API</option>
-              </select>
-              <small>默认自动匹配，服务商有明确要求时再更改。</small>
-              <small>{protocolBaseUrlHelp(effectiveProtocol)}</small>
-            </label>
-            {discoveryError && <p className="model-capability-error" role="alert">模型列表读取失败：{discoveryError}</p>}
-          </section>
-
           <p className="model-diagnostics-note">以下诊断来自已保存的连接。{editing ? "保存修改后可重新检测。" : ""}</p>
 
           <section className="settings-card model-quota-card">

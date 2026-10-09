@@ -26,6 +26,7 @@ describe("ModelConnectionManager", () => {
     const page = props();
     render(<ModelConnectionManager {...page} />);
     fireEvent.click(screen.getByRole("button", { name: "添加连接" }));
+    expect(screen.getByRole("dialog", { name: "添加连接" })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("连接 Base URL"), { target: { value: "https://new.example.test/v1" } });
     fireEvent.change(screen.getByLabelText(/^连接 API Key/), { target: { value: "test-only-new-key" } });
     fireEvent.change(screen.getByLabelText("首个模型名称"), { target: { value: "new-model" } });
@@ -57,7 +58,7 @@ describe("ModelConnectionManager", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "编辑连接" })[1]);
     fireEvent.change(screen.getByLabelText(/^连接 API Key/), { target: { value: "test-only-key" } });
     fireEvent.click(screen.getByRole("button", { name: "保存连接" }));
-    await screen.findByText(/密钥输入已清除/);
+    expect(screen.getByRole("dialog")).toContainElement(await screen.findByText(/密钥输入已清除/));
     expect(screen.getByLabelText(/^连接 API Key/)).toHaveValue("");
     fireEvent.change(screen.getByLabelText(/^连接 API Key/), { target: { value: "test-only-cancel-key" } });
     fireEvent.click(screen.getByRole("button", { name: "取消编辑" }));
