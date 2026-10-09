@@ -60,7 +60,7 @@ class AgentSettingsTest(unittest.TestCase):
                 with connect(self.db_path) as conn:
                     self.assertEqual(
                         conn.execute("SELECT display_name FROM agent_settings WHERE id = 1").fetchone()["display_name"],
-                        stored_name,
+                        expected,
                     )
 
     def test_persona_and_memory_settings_are_persisted(self) -> None:

@@ -62,7 +62,7 @@ else
 fi
 
 if [ "$EXPOSED" = "1" ]; then
-  echo "CareerLoop is reachable from other devices on this network."
+  echo "灯灯 is reachable from other devices on this network."
 else
-  echo "CareerLoop is listening on this machine only."
+  echo "灯灯 is listening on this machine only."
 fi

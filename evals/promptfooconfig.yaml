@@ -1,4 +1,4 @@
-description: CareerLoop 路由、工具面、引用校验与模型行为回归
+description: 灯灯路由、工具面、引用校验与模型行为回归
 prompts:
   - careerloop-eval
 providers:

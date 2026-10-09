@@ -1,6 +1,6 @@
 # 灯灯智能体
 
-本文是灯灯（原 CareerLoop）**智能体层的维护文档**。代码是行为的事实来源；本文记录意图、边界和同步点。改智能体行为时必须在同一变更中更新本文。
+本文是灯灯**智能体层的维护文档**。代码是行为的事实来源；本文记录意图、边界和同步点。改智能体行为时必须在同一变更中更新本文。
 
 最近校准：2026-10-02（灯灯品牌与公共产品演示；持久化运行 JSON 容错；删除退役求职实现；资料库与持久化独立；数据库版本 24）。
 
@@ -8,7 +8,7 @@
 
 灯灯是从对话开始的个人 AI 协作助手，优先理解意图、接续上下文、协助分析和生成可修改的成果。资料库是按需带入依据与复用知识的支撑能力。主入口为首页、我的知识库、AI 工作区、设置；问答、搜索、分析和内容创作统一在 AI 工作区完成。
 
-品牌于 2026-10-02 确认为“灯灯”，Logo 使用基于火字旁的四笔结构。默认助手名与系统提示中的名称同步更新；读取旧设置时，仅将旧内置名称 CareerLoop / BossCopilot 显示为灯灯，不改写原始记录或用户自定义名称。桌面应用标识、环境变量、数据库重建确认文本及历史迁移标识继续兼容；本轮未增加工具、路由或自主执行权限。品牌定义见 [brand.md](brand.md)。
+品牌为“灯灯”，Logo 使用基于火字旁的四笔结构。默认助手名与系统提示中的名称同步为灯灯；读取设置时，旧内置助手名会改写为灯灯，用户自定义名称保留。桌面应用标识和数据目录环境变量保持不变。本轮未增加工具、路由或自主执行权限。品牌定义见 [brand.md](brand.md)。
 
 产品介绍使用独立公共入口 `#/about`，由 `app/Bootstrap.tsx` 处理，在本地服务启动失败时也能展示静态介绍。登录页以账户表单为主；认证页右上角「关于灯灯」和设置首页「了解灯灯」提供介绍入口。认证页加载和连接失败状态也保留公共导航。公共页不进入业务路由或 Agent 执行，切换期间保持认证组件挂载并保留会话，返回原页面；业务路由监听器跳过公共 hash，避免将其重写为聊天入口。
 
@@ -102,7 +102,7 @@ backend/app/
 
 前端：`frontend/src/components/ChatWorkspace.tsx` 消费流式事件，并在同一个对话输入框提供联网开关、来源模式和回答内来源详情；`frontend/src/features/settings/AgentOperationsDashboard.tsx` 展示运营快照。
 
-外部感知：`agent-search/` 是独立仓库，对话里的 `search_public_web` 会调用它。它不是 CareerLoop runtime 的一部分，`scripts/dev.sh` 不负责启动它。`search_public_web` 按 `category` 走 `general` / `news` / `company` 策略；用户选择“技术来源”时，工具会在 `general` 查询中优先加入官方文档、GitHub 与 Stack Overflow；“自动来源”只在识别到技术关键词时采用该策略。使用 company 搜索策略时，配套 AgentSearch 必须支持 `/search?...&mode=company`。AgentSearch 可配置 Brave / 博查作为主检索，未配置时仍走 SearXNG；中文查询会再融合国内搜索源。部署、环境变量和健康检查步骤见根目录 `README.md`。
+外部感知：`agent-search/` 是独立仓库，对话里的 `search_public_web` 会调用它。它不是灯灯 runtime 的一部分，`scripts/dev.sh` 不负责启动它。`search_public_web` 按 `category` 走 `general` / `news` / `company` 策略；用户选择“技术来源”时，工具会在 `general` 查询中优先加入官方文档、GitHub 与 Stack Overflow；“自动来源”只在识别到技术关键词时采用该策略。使用 company 搜索策略时，配套 AgentSearch 必须支持 `/search?...&mode=company`。AgentSearch 可配置 Brave / 博查作为主检索，未配置时仍走 SearXNG；中文查询会再融合国内搜索源。部署、环境变量和健康检查步骤见根目录 `README.md`。
 
 运行边界：AgentSearch 默认地址是 `http://127.0.0.1:3939`，由 `WEB_RESEARCH_ENABLED`、`AGENT_SEARCH_BASE_URL` 和可选的 `AGENT_SEARCH_TOKEN` 控制。单个上游引擎失败可以让 `/health` 显示 `degraded`，不能仅据此判定全部搜索不可用，应以实际 `/search` 结果为准。连接失败、超时或所有查询均失败时，工具必须返回“联网服务暂不可用”的可重试结论，不能把它解释为公司名称不完整、公司不存在或招聘平台没有岗位。
 

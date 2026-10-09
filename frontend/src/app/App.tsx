@@ -537,7 +537,7 @@ export function App({
         await fetchJson("/system/database-rebuild", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ confirmation: "确认重建 CareerLoop 2.0 数据库" })
+          body: JSON.stringify({ confirmation: "确认重建灯灯数据库" })
         });
       }
       setDatabaseReady(true);
