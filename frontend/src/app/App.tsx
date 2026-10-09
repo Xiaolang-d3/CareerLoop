@@ -1127,6 +1127,7 @@ export function App({
             selectedModelProfileId={currentConversation?.model_profile_id ?? null}
             modelSelectionBusy={modelSelectionBusy}
             modelProfileUnavailable={modelProfileUnavailable}
+            modelConfigured={capabilities ? capabilities.configured !== false : undefined}
             onModelProfileChange={selectConversationModel}
             messages={visibleChatMessages}
             hiddenMessageCount={hiddenMessageCount}

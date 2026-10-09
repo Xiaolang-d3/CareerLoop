@@ -6,3 +6,14 @@
 .message-model-selection { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; color: var(--color-text-muted); font-size: 11px; }
 .message-model-selection details > summary { cursor: pointer; }
 .message-model-selection details p { margin: 4px 0; }
+
+.composer-model-picker { position: relative; display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 240px; height: 30px; padding: 0 6px 0 8px; border: 1px solid var(--color-border); border-radius: 8px; color: var(--color-text-secondary); background: var(--color-surface); font-size: 12px; }
+.composer-model-picker select { appearance: none; min-width: 0; max-width: 170px; padding: 0 14px 0 0; overflow: hidden; border: 0; color: inherit; background: transparent; font: inherit; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.composer-model-picker select:disabled { cursor: default; opacity: .6; }
+.composer-model-picker select:focus-visible, .composer-model-picker button:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+.composer-model-picker-caret { flex: none; margin-left: -16px; pointer-events: none; opacity: .6; }
+.composer-model-picker--warning { border-color: var(--color-warning, #d97706); color: var(--color-warning, #b45309); }
+.composer-model-picker-warning { flex: none; font-size: 11px; white-space: nowrap; }
+.composer-model-picker-settings { display: inline-flex; padding: 2px; border: 0; border-radius: 4px; color: inherit; background: transparent; cursor: pointer; }
+.composer-model-picker--setup { gap: 6px; border-style: dashed; border-color: var(--color-warning, #d97706); color: var(--color-warning, #b45309); cursor: pointer; }
+.composer-model-picker small { flex: none; color: var(--color-text-muted); }
