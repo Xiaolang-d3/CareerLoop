@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
-import { AppIdentityMenu, type AppIdentityMenuProps } from "./AppIdentityMenu";
 
-type AppTopBarProps = Partial<AppIdentityMenuProps> & {
+type AppTopBarProps = {
   children?: ReactNode;
   section?: string;
   title?: string;
@@ -9,9 +8,8 @@ type AppTopBarProps = Partial<AppIdentityMenuProps> & {
   titleClickLabel?: string;
 };
 
-export function AppTopBar({ children, section, title, onTitleClick, titleClickLabel, ...identity }: AppTopBarProps) {
-  const hasIdentity = Boolean(identity.onOpenProfile && identity.onLogout);
-  const actions = children ?? (hasIdentity ? <AppIdentityMenu {...(identity as AppIdentityMenuProps)} /> : null);
+export function AppTopBar({ children, section, title, onTitleClick, titleClickLabel }: AppTopBarProps) {
+  if (!title && !children) return null;
   return (
     <header className={`app-topbar${title ? "" : " is-titleless"}`}>
       {title ? (
@@ -32,7 +30,7 @@ export function AppTopBar({ children, section, title, onTitleClick, titleClickLa
           )}
         </div>
       ) : null}
-      {actions ? <div className="app-topbar-actions">{actions}</div> : null}
+      {children ? <div className="app-topbar-actions">{children}</div> : null}
     </header>
   );
 }

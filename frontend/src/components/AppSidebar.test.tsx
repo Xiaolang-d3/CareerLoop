@@ -51,7 +51,7 @@ describe("AppSidebar", () => {
     expect(collapsed.onToggle).toHaveBeenCalledOnce();
   });
 
-  it("keeps the mobile identity slot without becoming a second app top bar", () => {
+  it("keeps the shared identity slot without becoming a second app top bar", () => {
     renderSidebar(
       <button className="sidebar-identity" type="button" aria-label="账号菜单">
         <span className="sidebar-identity-avatar">O</span>

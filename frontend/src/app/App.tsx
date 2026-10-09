@@ -684,9 +684,7 @@ export function App({
         {activeView !== "dashboard" ? <AppTopBar
           section={topbarSection}
           title={topbarTitle}
-        >
-          {identityMenu}
-        </AppTopBar> : null}
+        /> : null}
 
         {errorMessage ? (
           <div className="feedback-banner error-banner global-error-toast"><TriangleAlert size={16} /><span>{errorMessage}</span><button onClick={() => setErrorMessage("")} aria-label="关闭错误提示"><X size={15} /></button></div>

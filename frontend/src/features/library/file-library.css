@@ -1166,23 +1166,6 @@
   line-height: 1.6;
 }
 
-@media (min-width: 821px) {
-  .app-shell:has(.library-content) .sidebar-identity-slot {
-    display: flex;
-    margin-top: auto;
-    padding: 14px 0;
-  }
-  .app-shell:has(.library-content) .sidebar-toggle-footer {
-    margin-top: 0;
-  }
-  .app-shell:has(.library-content) .sidebar-identity-slot .app-identity-menu {
-    top: auto;
-    bottom: calc(100% + 8px);
-    left: 0;
-    right: auto;
-  }
-}
-
 .fl-privacy-hint {
   display: flex;
   align-items: center;
