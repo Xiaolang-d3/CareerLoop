@@ -7,6 +7,7 @@ from .schemas import ConversationUpdate
 
 
 Protocol = Literal["auto", "openai", "responses", "anthropic", "gemini", "ollama"]
+ReasoningEffort = Literal["low", "medium", "high"]
 
 
 class ConnectionCreateIn(BaseModel):
@@ -36,6 +37,7 @@ class ProfileCreateIn(BaseModel):
     model_name: str = Field(min_length=1, max_length=120)
     parameters: dict[str, float | int] = Field(default_factory=dict)
     context_limit: int | None = Field(default=None, ge=1)
+    reasoning_effort: ReasoningEffort | None = None
 
 
 class ProfileUpdateIn(BaseModel):
@@ -45,6 +47,7 @@ class ProfileUpdateIn(BaseModel):
     enabled: bool | None = None
     parameters: dict[str, float | int] | None = None
     context_limit: int | None = Field(default=None, ge=1)
+    reasoning_effort: ReasoningEffort | None = None
 
 
 class DefaultProfileIn(BaseModel):

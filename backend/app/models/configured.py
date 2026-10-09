@@ -8,9 +8,10 @@ from ..domain import ModelRequest, ModelResponse, ModelStreamEvent
 
 
 class ConfiguredModelProvider:
-    def __init__(self, provider: Any, parameters: dict[str, float | int]) -> None:
+    def __init__(self, provider: Any, parameters: dict[str, float | int], reasoning_effort: str | None = None) -> None:
         self._provider = provider
         self._parameters = dict(parameters)
+        self._reasoning_effort = reasoning_effort
 
     @property
     def name(self) -> str:
@@ -21,7 +22,10 @@ class ConfiguredModelProvider:
         return self._provider.models_url
 
     def _request(self, request: ModelRequest) -> ModelRequest:
-        return request.model_copy(update={"parameters": {**self._parameters, **request.parameters}})
+        update: dict[str, Any] = {"parameters": {**self._parameters, **request.parameters}}
+        if request.reasoning_effort is None and self._reasoning_effort:
+            update["reasoning_effort"] = self._reasoning_effort
+        return request.model_copy(update=update)
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         return await self._provider.generate(self._request(request))
@@ -40,5 +44,7 @@ class ConfiguredModelProvider:
         return await self._provider.probe_vision()
 
 
-def configure_model_provider(provider: Any, parameters: dict[str, float | int]) -> Any:
-    return ConfiguredModelProvider(provider, parameters) if parameters else provider
+def configure_model_provider(provider: Any, parameters: dict[str, float | int], reasoning_effort: str | None = None) -> Any:
+    if not parameters and not reasoning_effort:
+        return provider
+    return ConfiguredModelProvider(provider, parameters, reasoning_effort)

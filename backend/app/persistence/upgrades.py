@@ -15,8 +15,8 @@ from .schema import CURRENT_SCHEMA
 _upgrade_lock = threading.RLock()
 
 
-def _backup(path: Path) -> None:
-    directory = path.parent / ".upgrade-backups" / "before-library-v23"
+def _backup(path: Path, label: str = "before-library-v23") -> None:
+    directory = path.parent / ".upgrade-backups" / label
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     directory.chmod(0o700)
     target = directory / path.name
@@ -46,10 +46,14 @@ def initialize_workspace(db_path: str | Path | None = None) -> None:
         if version > DB_SCHEMA_VERSION:
             raise ValueError("数据库来自更新版本，请升级应用后打开")
         if tables:
-            if not 1 <= version <= 26:
+            if not 1 <= version <= 27:
                 raise ValueError("未知数据库格式，未修改原文件")
             if version < 24:
                 _backup(path)
+            else:
+                # v28 only adds nullable model columns, but every schema bump
+                # keeps a coherent pre-upgrade snapshot like earlier releases.
+                _backup(path, f"before-schema-v{DB_SCHEMA_VERSION}")
             if version < 22:
                 from ..compatibility.schema_v22 import init_db as upgrade_to_v22
                 upgrade_to_v22(path)
@@ -68,6 +72,13 @@ def initialize_workspace(db_path: str | Path | None = None) -> None:
             }.items():
                 if name not in columns:
                     conn.execute(f"ALTER TABLE agent_settings ADD COLUMN {name} {definition}")
+            # v28: per-connection negotiated protocol and per-profile reasoning effort.
+            connection_columns = {row[1] for row in conn.execute("PRAGMA table_info(model_connections)")}
+            if "detected_protocol" not in connection_columns:
+                conn.execute("ALTER TABLE model_connections ADD COLUMN detected_protocol TEXT")
+            profile_columns = {row[1] for row in conn.execute("PRAGMA table_info(model_profiles)")}
+            if "reasoning_effort" not in profile_columns:
+                conn.execute("ALTER TABLE model_profiles ADD COLUMN reasoning_effort TEXT")
             conversation_columns = {row[1] for row in conn.execute("PRAGMA table_info(conversations)")}
             if "model_profile_id" not in conversation_columns:
                 conn.execute("ALTER TABLE conversations ADD COLUMN model_profile_id TEXT")

@@ -8,7 +8,7 @@ from typing import Any
 
 from ..agent.settings import get_model_connection
 from ..db import connect, row_to_dict
-from ..model_protocol import base_url_for_protocol, model_protocol_candidates
+from ..model_protocol import base_url_for_protocol, connection_protocol_label, model_protocol_candidates, normalize_detected_protocol, normalize_model_protocol
 from .model_context import current_model_call
 
 
@@ -178,6 +178,12 @@ def get_model_monitor_snapshot(
         "model_name": model_name,
         "base_url": active_base_url,
         "protocol": active_protocol,
+        "configured_protocol": normalize_model_protocol(connection["model_protocol"]),
+        "detected_protocol": _detected_protocol(connection, active_protocol if events else None),
+        "protocol_label": connection_protocol_label(
+            connection["model_protocol"], _detected_protocol(connection, active_protocol if events else None),
+            model_name, configured_base_url,
+        ),
         "api_key_configured": bool(connection["api_key"]),
         "window_hours": window_hours,
         "summary": {
@@ -219,6 +225,12 @@ def _normalize_base_url(value: str | None) -> str:
     if not value:
         return ""
     return value.rstrip("/")
+
+
+def _detected_protocol(connection: dict[str, Any], observed: str | None) -> str | None:
+    if normalize_model_protocol(connection.get("model_protocol")) != "auto":
+        return None
+    return normalize_detected_protocol(connection.get("detected_protocol")) or normalize_detected_protocol(observed)
 
 
 def _provider_base_url(value: str | None, protocol: str) -> str:
