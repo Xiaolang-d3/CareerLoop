@@ -73,6 +73,7 @@ class AnthropicMessagesProvider:
             "generate",
             started_at,
             total_tokens=result.usage.total_tokens if result.usage else 0,
+            usage=result.usage,
             response_id=result.provider_metadata.get("response_id", ""),
         )
         return result
@@ -147,7 +148,7 @@ class AnthropicMessagesProvider:
             output_tokens=output_tokens,
             total_tokens=input_tokens + output_tokens,
         )
-        self._record_event("stream", started_at, total_tokens=usage.total_tokens, response_id=response_id)
+        self._record_event("stream", started_at, total_tokens=usage.total_tokens, usage=usage, response_id=response_id)
         yield ModelStreamEvent(
             type="completed",
             response=ModelResponse(
@@ -188,6 +189,7 @@ class AnthropicMessagesProvider:
             "health_check",
             started_at,
             total_tokens=result.usage.total_tokens if result.usage else 0,
+            usage=result.usage,
             response_id=result.provider_metadata.get("response_id", ""),
         )
 
@@ -229,7 +231,7 @@ class AnthropicMessagesProvider:
             if _looks_like_vision_rejection(upstream_error_detail(exc), status_code):
                 return {"status": "unsupported", "source": "probe", "detail": "服务拒绝了图片输入，当前模型不支持多模态"}
             raise error from exc
-        self._record_event("health_check", started_at)
+        self._record_event("health_check", started_at, total_tokens=result.usage.total_tokens if result.usage else 0, usage=result.usage)
         return {"status": "supported", "source": "probe", "detail": "服务接受了图片输入，当前模型支持多模态"}
 
     async def list_models(self) -> list[str]:
@@ -434,6 +436,7 @@ class AnthropicMessagesProvider:
         *,
         error: ModelProviderError | None = None,
         total_tokens: int = 0,
+        usage: ModelUsage | None = None,
         response_id: str = "",
     ) -> None:
         try:
@@ -444,6 +447,8 @@ class AnthropicMessagesProvider:
                 error_message=str(error) if error else "",
                 latency_ms=round((perf_counter() - started_at) * 1000),
                 total_tokens=total_tokens,
+                input_tokens=usage.input_tokens if usage else 0,
+                output_tokens=usage.output_tokens if usage else 0,
                 model_name=self._model,
                 base_url=self._base_url,
                 response_id=response_id,

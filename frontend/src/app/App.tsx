@@ -1,3 +1,4 @@
+import { useModelCatalog } from "../features/settings/useModelCatalog";
 import { useModelDiscovery } from "../features/settings/useModelDiscovery";
 import { useTheme } from "../features/appearance/ThemeProvider";
 import { AppearanceSettingsPage } from "../features/settings/AppearanceSettingsPage";
@@ -89,6 +90,8 @@ const AccountSettingsPage = lazy(() => loadAccountSettingsPage().then((module) =
   default: module.AccountSettingsPage
 })));
 
+const ModelConnectionManager = lazy(() => import("../features/settings/ModelConnectionManager").then((module) => ({ default: module.ModelConnectionManager })));
+
 const ModelSettingsPage = lazy(() => import("../features/settings/ModelSettingsPage").then((module) => ({
   default: module.ModelSettingsPage
 })));
@@ -150,7 +153,7 @@ export function App({
   const [visibleMessageCount, setVisibleMessageCount] = useState(12);
   const [errorMessage, setErrorMessage] = useState("");
   const [noticeMessage, setNoticeMessage] = useState("");
-  const { conversations, setConversations, currentConversationId, setCurrentConversationId, conversationBusy, setConversationBusy, conversationDialog, setConversationDialog, refreshConversations, createNewConversation, archiveConversation, renameConversation, removeConversation } = useConversations({ fetchJson, setActiveView, setErrorMessage, setNoticeMessage });
+  const { invalidateConversationReads, conversations, setConversations, currentConversationId, setCurrentConversationId, conversationBusy, setConversationBusy, conversationDialog, setConversationDialog, refreshConversations, createNewConversation, archiveConversation, renameConversation, removeConversation } = useConversations({ fetchJson, setActiveView, setErrorMessage, setNoticeMessage });
   const { libraryEditor, librarySources, libraryFolders, organizeLibrarySource, createLibraryFolder, loadLibraryOriginal, searchLibrarySources, confirmedKnowledgeCount, sourceCount, pendingKnowledge, libraryLoaded, libraryBusy, sourceImportBusy, enhancedDocumentParse, setLibraryEditor, setEnhancedDocumentParse, refreshLibrary, saveLibraryMetadata, importLibraryFiles, createPastedSource, updateLibrarySource, downloadLibrarySource, deleteLibrarySource } = useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, setNoticeMessage });
   const [libraryAttachments, setLibraryAttachments] = useState<{ conversationId: number; attachments: ChatAttachment[] } | null>(null);
   const [homeComposerDraft, setHomeComposerDraft] = useState<ChatComposerDraft | null>(null);
@@ -165,7 +168,7 @@ export function App({
     homeAnalysisBusyRef.current = false;
     setConversationBusy(false);
   }, [fetchJson, userEmail, setConversationBusy]);
-  const { chatMessages, setChatMessages, chatBusy, setChatBusy, modelUnavailable, setModelUnavailable, retryChatDraft, setRetryChatDraft, chatAgentRef, taskCancelBusy, setTaskCancelBusy, chatAttachmentBusy, setChatAttachmentBusy, refreshChat, uploadChatAttachment, removeChatAttachment, sendChatMessage, stopChatGeneration, rewindChatToUserMessage, editChatMessage, regenerateChatMessage, cancelCurrentTask } = useChatRun({ apiBase, accessToken, fetchJson, currentConversationId, currentConversationIdRef, setErrorMessage, setNoticeMessage, refreshConversations, onLibraryChanged: refreshLibrary });
+  const { chatMessages, setChatMessages, chatBusy, setChatBusy, modelUnavailable, setModelUnavailable, retryChatDraft, setRetryChatDraft, chatAgentRef, taskCancelBusy, setTaskCancelBusy, chatAttachmentBusy, setChatAttachmentBusy, refreshChat, uploadChatAttachment, removeChatAttachment, sendChatMessage, stopChatGeneration, rewindChatToUserMessage, editChatMessage, regenerateChatMessage, cancelCurrentTask } = useChatRun({ apiBase, accessToken, fetchJson, currentConversationId, currentConversationIdRef, modelProfileId: conversations.find(item => item.id === currentConversationId)?.model_profile_id ?? null, setErrorMessage, setNoticeMessage, refreshConversations, onLibraryChanged: refreshLibrary });
   const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
   const [attachmentConfig, setAttachmentConfig] = useState<AttachmentConfig | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -176,6 +179,8 @@ export function App({
   const savedAgentSettingsRef = useRef<AgentSettings>(defaultAgentSettings);
   const [modelSettingsLoaded, setModelSettingsLoaded] = useState(false);
   const [modelSettingsLoadError, setModelSettingsLoadError] = useState("");
+  const [modelSelectionBusy, setModelSelectionBusy] = useState(false);
+  const modelSelectionRequestRef = useRef<{ id: number; controller: AbortController | null }>({ id: 0, controller: null });
   const [modelSaveUnknown, setModelSaveUnknown] = useState<string | null>(null);
   const modelSettingsScopeRef = useRef<ModelSettingsScope | null>(null);
   const modelSettingsStateScopeRef = useRef<ModelSettingsScope | null>(null);
@@ -215,7 +220,26 @@ export function App({
   const [databaseReady, setDatabaseReady] = useState(false);
   const databaseInitializationRef = useRef<Promise<void> | null>(null);
   const routeDataCacheRef = useRef(createRouteDataCache<RouteDataKey>(30_000));
+  const modelCatalog = useModelCatalog({
+    fetchJson, scope: modelSettingsScope,
+    enabled: databaseReady && (appRoute.section === "chat" || (appRoute.section === "settings" && appRoute.page === "model")),
+    refreshKey: savedAgentSettings.config_revision
+  });
   const currentConversation = conversations.find((item) => item.id === currentConversationId) ?? null;
+  const activeModelProfiles = modelCatalog.catalog.profiles.filter(profile => profile.enabled && modelCatalog.catalog.connections.some(connection => connection.id === profile.connection_id && connection.enabled));
+  const selectedModelProfile = modelCatalog.catalog.profiles.find(profile => profile.id === currentConversation?.model_profile_id);
+  const defaultModelProfile = modelCatalog.catalog.profiles.find(profile => profile.id === modelCatalog.catalog.default_profile_id);
+  const currentModelName = selectedModelProfile?.model_name || defaultModelProfile?.model_name || capabilities?.active_model_name || (modelSettingsReady ? savedAgentSettings.model_name : "尚未配置");
+  const modelProfileUnavailable = Boolean(currentConversation?.model_profile_id && selectedModelProfile && !activeModelProfiles.some(profile => profile.id === currentConversation.model_profile_id));
+  const defaultModelHasDraft = Boolean(agentSettings.api_key.trim()) || agentSettings.model_name !== savedAgentSettings.model_name
+    || agentSettings.model_base_url !== savedAgentSettings.model_base_url || agentSettings.model_protocol !== savedAgentSettings.model_protocol;
+
+  useEffect(() => {
+    modelSelectionRequestRef.current.id += 1;
+    modelSelectionRequestRef.current.controller?.abort();
+    setModelSelectionBusy(false);
+    return () => { modelSelectionRequestRef.current.id += 1; modelSelectionRequestRef.current.controller?.abort(); };
+  }, [currentConversationId, fetchJson, userEmail]);
 
   useEffect(() => {
     modelSettingsStateScopeRef.current = null;
@@ -228,6 +252,7 @@ export function App({
     setSavedAgentSettings({ ...defaultAgentSettings });
     setAgentSettingsBusy(false);
     setModelSettingsEditing(false);
+    setCapabilities(null);
     setModelMonitor(null);
     setModelMonitorBusy(false);
     setModelCapabilities(null);
@@ -693,6 +718,46 @@ export function App({
     }
   }
 
+  async function selectConversationModel(profileId: string | null) {
+    const conversationId = currentConversationId;
+    if (!conversationId || chatBusy || modelSelectionBusy) return;
+    if (profileId && !activeModelProfiles.some(profile => profile.id === profileId)) return;
+    modelSelectionRequestRef.current.controller?.abort();
+    const requestId = ++modelSelectionRequestRef.current.id;
+    const controller = new AbortController();
+    modelSelectionRequestRef.current.controller = controller;
+    const current = () => !controller.signal.aborted && modelSelectionRequestRef.current.id === requestId
+      && modelSettingsScopeRef.current === modelSettingsScope && currentConversationIdRef.current === conversationId;
+    setModelSelectionBusy(true);
+    try {
+      const updated = await fetchJson<Conversation>(`/conversations/${conversationId}`, {
+        method: "PATCH", signal: controller.signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model_profile_id: profileId })
+      });
+      if (!current()) return;
+      invalidateConversationReads?.();
+      setConversations(items => items.map(item => item.id === conversationId ? { ...item, ...updated, model_profile_id: profileId } : item));
+      setModelUnavailable(null);
+      setNoticeMessage("会话模型已更新，从下一条消息生效。");
+    } catch (reason) {
+      if (current()) setErrorMessage(reason instanceof Error ? reason.message : "切换会话模型失败，继续使用原模型。");
+    } finally { if (current()) setModelSelectionBusy(false); }
+  }
+
+  async function refreshDefaultModelSelection() {
+    invalidateModelRequests();
+    invalidateDiscovery();
+    updateModelSettingsEditing(false);
+    setModelSettingsLoaded(false);
+    setModelMonitor(null);
+    setModelCapabilities(null);
+    routeDataCacheRef.current.invalidate("agentSettings", "modelMonitor", "modelCapabilities", "capabilities");
+    try { await refreshAgentSettings(); }
+    catch { setErrorMessage("默认模型已更新，但读取最新配置失败，请重新读取配置。"); return; }
+    void refreshModelMonitor().catch(() => undefined);
+    void refreshModelCapabilities();
+    void refreshCapabilities();
+  }
+
   async function resetCurrentContext() {
     if (!currentConversationId || !window.confirm("从当前位置开始新的上下文吗？\n\n历史消息仍然可见，但 Agent 后续不会再读取此前对话。资料库内容会保留。")) return;
     setAgentSettingsBusy(true);
@@ -998,10 +1063,18 @@ export function App({
               {appRoute.page === "model" ? (
                 modelSettingsReady ? (
                   <ModelSettingsPage
+                    connectionManager={<ModelConnectionManager
+                      fetchJson={fetchJson} catalog={modelCatalog.catalog} loading={modelCatalog.loading}
+                      busy={modelCatalog.busy || agentSettingsBusy} error={modelCatalog.error}
+                      secretWritable={savedAgentSettings.secret_storage_writable}
+                      defaultLocked={defaultModelHasDraft || Boolean(modelSaveUnknown)}
+                      onReload={modelCatalog.reload} onMutate={modelCatalog.mutate}
+                      onDefaultChanged={refreshDefaultModelSelection}
+                    />}
                     settings={agentSettings}
                     savedSettings={savedAgentSettings}
                     editing={modelSettingsEditing}
-                    busy={agentSettingsBusy}
+                    busy={agentSettingsBusy || modelCatalog.busy}
                     saveUnknown={Boolean(modelSaveUnknown)}
                     onConfirmSave={() => void confirmModelSave()}
                     onResumeEditing={() => void resumeModelEditing()}
@@ -1054,6 +1127,13 @@ export function App({
             density={activeView === "chat" ? "page" : "dock"}
             focused={activeView === "chat"}
             conversationTitle={currentConversation?.title}
+            currentModelName={currentModelName}
+            defaultModelName={defaultModelProfile?.model_name || capabilities?.active_model_name}
+            modelProfiles={activeModelProfiles.map(profile => ({ id: profile.id, model_name: profile.model_name, connection_name: modelCatalog.catalog.connections.find(connection => connection.id === profile.connection_id)?.name || "模型连接" }))}
+            selectedModelProfileId={currentConversation?.model_profile_id ?? null}
+            modelSelectionBusy={modelSelectionBusy}
+            modelProfileUnavailable={modelProfileUnavailable}
+            onModelProfileChange={selectConversationModel}
             messages={visibleChatMessages}
             hiddenMessageCount={hiddenMessageCount}
             chatBusy={chatBusy}
@@ -1103,7 +1183,8 @@ export function App({
               draft.webSearchMode,
               undefined,
               draft.runId,
-              draft.rewindMessageId
+              draft.rewindMessageId,
+              draft.modelProfileId
             )}
             onStop={stopChatGeneration}
             onEdit={editChatMessage}

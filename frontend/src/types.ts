@@ -1,5 +1,6 @@
 export type Conversation = {
   id: number;
+  model_profile_id?: string | null;
   title: string;
   status: "active" | "archived";
   summary: string;
@@ -86,6 +87,31 @@ export type ViewKey =
 export type ModelProtocol = "auto" | "openai" | "responses" | "anthropic" | "gemini" | "ollama";
 
 export type ResolvedModelProtocol = Exclude<ModelProtocol, "auto">;
+
+export type ModelConnection = {
+  id: string;
+  name: string;
+  model_base_url: string;
+  model_protocol: ModelProtocol;
+  api_key_configured: boolean;
+  enabled: boolean;
+  revision: number;
+};
+export type ModelProfile = {
+  id: string;
+  connection_id: string;
+  model_name: string;
+  enabled: boolean;
+  revision: number;
+  parameters?: Record<string, unknown> | null;
+  capabilities?: Record<string, unknown> | null;
+  context_limit?: number | null;
+};
+export type ModelCatalog = {
+  connections: ModelConnection[];
+  profiles: ModelProfile[];
+  default_profile_id: string | null;
+};
 
 export type AgentSettings = {
   display_name: string;

@@ -1,0 +1,28 @@
+.model-connections-card { display: grid; gap: 14px; }
+.model-connections-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.model-connections-heading h3 { margin: 0 0 4px; font-size: 15px; }
+.model-connections-heading p,.model-connections-hint,.model-connections-notice,.model-add-profile p { margin: 0; color: var(--color-text-muted); font-size: 12px; line-height: 1.6; }
+.model-connections-card button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 30px; padding: 5px 9px; border: 1px solid var(--color-border); border-radius: 7px; color: var(--color-text-secondary); background: var(--color-surface); font-size: 12px; cursor: pointer; }
+.model-connections-card button:disabled { opacity: .5; cursor: default; }
+.model-connections-card :is(button,input,select):focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+.model-connection-list { display: grid; gap: 9px; }
+.model-connection-list > article { min-width: 0; padding: 12px; border: 1px solid var(--color-border); border-radius: 10px; }
+.model-connection-list > article.selected { border-color: var(--color-brand); background: var(--color-brand-soft); }
+.model-connections-card .model-connection-select { display: grid; justify-content: start; width: 100%; padding: 0; border: 0; background: transparent; text-align: left; }
+.model-connection-select strong { overflow-wrap: anywhere; font-size: 13px; color: var(--color-text); }
+.model-connection-select small { overflow-wrap: anywhere; color: var(--color-text-muted); font-size: 11px; }
+.model-connection-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.model-profile-list { margin-top: 10px; }
+.model-profile-list > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-block: 9px; border-top: 1px solid var(--color-border); }
+.model-profile-list > div > span { display: grid; gap: 2px; min-width: 0; }
+.model-profile-list strong { font-size: 12px; overflow-wrap: anywhere; }
+.model-profile-list small { font-size: 11px; color: var(--color-text-muted); }
+.model-profile-list > div > div { display: flex; gap: 5px; flex-shrink: 0; }
+.model-add-profile,.model-connection-editor { display: grid; gap: 9px; padding: 14px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface-subtle); }
+.model-add-profile > div:first-of-type { display: flex; gap: 8px; }
+.model-add-profile input { flex: 1; min-width: 0; }
+.model-add-profile label,.model-connection-editor h4 { margin: 0; font-size: 13px; }
+.model-connection-editor details > summary { display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
+.model-connection-editor details > select { margin-top: 7px; }
+.model-archive-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 9px; color: var(--color-warning); font-size: 12px; }
+@media (max-width: 520px) { .model-connections-heading { flex-wrap: wrap; } .model-profile-list > div { flex-wrap: wrap; } .model-add-profile > div:first-of-type { flex-wrap: wrap; } }

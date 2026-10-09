@@ -9,6 +9,7 @@ from typing import Any
 from ..agent.settings import get_model_connection
 from ..db import connect, row_to_dict
 from ..model_protocol import base_url_for_protocol, model_protocol_candidates
+from .model_context import current_model_call
 
 
 ERROR_LABELS = {
@@ -37,16 +38,21 @@ def record_model_service_event(
     total_tokens: int = 0,
     response_id: str = "",
     protocol: str = "openai",
+    input_tokens: int = 0,
+    output_tokens: int = 0,
     db_path: str | Path | None = None,
 ) -> None:
     """Persist only operational metadata; prompts and responses are never stored."""
+    identity = current_model_call()
     with connect(db_path) as conn:
         conn.execute(
             """
             INSERT INTO model_service_events (
                 request_kind, status, error_code, error_message, latency_ms,
-                total_tokens, model_name, base_url, response_id, protocol
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                total_tokens, model_name, base_url, response_id, protocol,
+                run_id, call_id, profile_id, connection_id, connection_revision,
+                profile_revision, stage, selection_reason, input_tokens, output_tokens
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 request_kind,
@@ -59,6 +65,11 @@ def record_model_service_event(
                 base_url or "",
                 response_id,
                 protocol,
+                identity.get("run_id", ""), identity.get("call_id", ""),
+                identity.get("profile_id", ""), identity.get("connection_id", ""),
+                identity.get("connection_revision", 0), identity.get("profile_revision", 0),
+                identity.get("stage", ""), identity.get("selection_reason", ""),
+                max(0, input_tokens), max(0, output_tokens),
             ),
         )
         conn.execute(
@@ -69,9 +80,10 @@ def record_model_service_event(
 def get_model_monitor_snapshot(
     hours: int = 24,
     db_path: str | Path | None = None,
+    connection: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     window_hours = min(max(hours, 1), 168)
-    connection = get_model_connection(db_path)
+    connection = connection or get_model_connection(db_path)
     cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
     cutoff_text = cutoff.strftime("%Y-%m-%d %H:%M:%S")
     model_name = connection["model_name"]
@@ -86,15 +98,25 @@ def get_model_monitor_snapshot(
     candidate_values = [value for pair in candidate_pairs for value in pair]
 
     with connect(db_path) as conn:
+        identity_clause = ""
+        identity_values: list[Any] = []
+        if connection.get("profile_id"):
+            default = conn.execute("SELECT default_model_profile_id FROM agent_settings WHERE id = 1").fetchone()
+            legacy_default = bool(default and default[0] == connection["profile_id"])
+            identity_clause = " AND ((profile_id = ? AND connection_id = ? AND profile_revision = ? AND connection_revision = ?) OR (profile_id = '' AND ?))"
+            identity_values = [connection["profile_id"], connection["connection_id"],
+                               connection["profile_revision"], connection["connection_revision"], legacy_default]
         rows = conn.execute(
             f"""
             SELECT id, request_kind, status, error_code, error_message,
-                   latency_ms, total_tokens, model_name, base_url, protocol, created_at
+                   latency_ms, total_tokens, model_name, base_url, protocol, created_at,
+                   run_id, call_id, profile_id, connection_id, connection_revision,
+                   profile_revision, stage, selection_reason, input_tokens, output_tokens
             FROM model_service_events
-            WHERE created_at >= ? AND model_name = ? AND ({candidate_clause})
+            WHERE created_at >= ? AND model_name = ? AND ({candidate_clause}){identity_clause}
             ORDER BY id DESC
             """,
-            (cutoff_text, model_name, *candidate_values),
+            (cutoff_text, model_name, *candidate_values, *identity_values),
         ).fetchall()
 
     events = [row_to_dict(row) for row in rows]
@@ -147,6 +169,9 @@ def get_model_monitor_snapshot(
     return {
         "connection_id": connection.get("connection_id", ""),
         "config_revision": int(connection.get("config_revision", 0)),
+        "profile_id": connection.get("profile_id", ""),
+        "connection_revision": connection.get("connection_revision", 0),
+        "profile_revision": connection.get("profile_revision", 0),
         "status": status,
         "status_message": status_message,
         "model_name": model_name,
@@ -164,6 +189,9 @@ def get_model_monitor_snapshot(
             "timeout_count": error_counts.get("request_timeout", 0),
             "consecutive_failures": consecutive_failures,
             "total_tokens": total_tokens,
+            "input_tokens": sum(int(event.get("input_tokens") or 0) for event in events),
+            "output_tokens": sum(int(event.get("output_tokens") or 0) for event in events),
+            "legacy_identity_events": sum(not event.get("profile_id") for event in events),
         },
         "usage": {
             "window_hours": window_hours,

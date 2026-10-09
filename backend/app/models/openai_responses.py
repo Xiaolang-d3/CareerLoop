@@ -48,6 +48,7 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
             "generate",
             started_at,
             total_tokens=result.usage.total_tokens if result.usage else 0,
+            usage=result.usage,
             response_id=result.provider_metadata.get("response_id", ""),
         )
         return result
@@ -86,6 +87,7 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
             "stream",
             started_at,
             total_tokens=result.usage.total_tokens if result.usage else 0,
+            usage=result.usage,
             response_id=result.provider_metadata.get("response_id", ""),
         )
         yield ModelStreamEvent(type="completed", response=result)
@@ -113,6 +115,7 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
             "health_check",
             started_at,
             total_tokens=int(getattr(usage, "total_tokens", 0) or 0),
+            usage=result.usage,
             response_id=str(getattr(response, "id", "") or ""),
         )
 
@@ -144,7 +147,7 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
             if _looks_like_vision_rejection(upstream_error_detail(exc), getattr(exc, "status_code", None)):
                 return {"status": "unsupported", "source": "probe", "detail": "服务拒绝了图片输入，当前模型不支持多模态"}
             raise error from exc
-        self._record_event("health_check", started_at)
+        self._record_event("health_check", started_at, total_tokens=result.usage.total_tokens if result.usage else 0, usage=result.usage)
         return {"status": "supported", "source": "probe", "detail": "服务接受了图片输入，当前模型支持多模态"}
 
     def _request_arguments(self, request: ModelRequest) -> dict[str, Any]:

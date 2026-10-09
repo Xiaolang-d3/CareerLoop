@@ -140,6 +140,13 @@ async def run_ag_ui(payload: dict[str, Any], request: Request) -> StreamingRespo
     content = _ag_ui_message_content(ag_ui_input)
     if not content:
         raise HTTPException(status_code=422, detail="messages 中缺少用户文本消息")
+    forwarded = ag_ui_input.forwarded_props or {}
+    model_selection = {}
+    if isinstance(forwarded, dict) and "modelProfileId" in forwarded:
+        selected = forwarded["modelProfileId"]
+        if selected is not None and (not isinstance(selected, str) or not selected.strip() or len(selected) > 120):
+            raise HTTPException(status_code=422, detail="modelProfileId 必须是模型档案 ID 或 null")
+        model_selection["model_profile_id"] = selected
     return await stream_chat_response(
         ChatMessageIn(
             content=content,
@@ -148,6 +155,7 @@ async def run_ag_ui(payload: dict[str, Any], request: Request) -> StreamingRespo
             vision_attachment_ids=_ag_ui_vision_attachment_ids(ag_ui_input),
             web_search=_ag_ui_web_search(ag_ui_input),
             web_search_mode=_ag_ui_web_search_mode(ag_ui_input),
+            **model_selection,
         ),
         ag_ui_input=ag_ui_input,
         accept=request.headers.get("accept"),

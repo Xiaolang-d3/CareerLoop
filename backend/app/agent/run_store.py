@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from ..db import connect
 from ..domain import AgentRunResult, AgentRunSnapshot, ToolCall, ToolError, ToolResult
 from ..tooling import ToolSpec
+from .model_binding import internal_model_selection
 
 
 TERMINAL_RUN_STATUSES = frozenset({"completed", "failed", "cancelled"})
@@ -60,16 +61,17 @@ class AgentRunStore:
         conversation_id: int | None,
         task_id: int | None,
         user_content: str,
+        model_selection: dict[str, Any] | None = None,
     ) -> dict:
         with connect(self._db_path) as conn:
             conn.execute(
                 """
                 INSERT INTO agent_execution_runs
-                    (run_id, conversation_id, task_id, user_content, status)
-                VALUES (?, ?, ?, ?, 'queued')
+                    (run_id, conversation_id, task_id, user_content, status, model_selection_json)
+                VALUES (?, ?, ?, ?, 'queued', ?)
                 ON CONFLICT(run_id) DO NOTHING
                 """,
-                (run_id, conversation_id, task_id, user_content),
+                (run_id, conversation_id, task_id, user_content, json.dumps(internal_model_selection(model_selection))),
             )
             row = conn.execute(
                 "SELECT * FROM agent_execution_runs WHERE run_id = ?",
@@ -83,6 +85,9 @@ class AgentRunStore:
                 and int(row["conversation_id"]) != conversation_id
             ):
                 raise ValueError("run_id 已属于其他对话")
+            stored_selection = _safe_row_to_dict(row).get("model_selection") or {}
+            if model_selection and stored_selection and internal_model_selection(model_selection) != stored_selection:
+                raise ValueError("run_id 已绑定其他模型配置，不能重新选择")
             if row["status"] in {"queued", "interrupted"}:
                 conn.execute(
                     """
@@ -164,6 +169,7 @@ class AgentRunStore:
         run_id: str,
         snapshot: AgentRunSnapshot,
     ) -> None:
+        snapshot = snapshot.model_copy(update={"model_selection": internal_model_selection(snapshot.model_selection)})
         with connect(self._db_path) as conn:
             conn.execute(
                 """
@@ -214,6 +220,12 @@ class AgentRunStore:
                     )
 
     def finish(self, run_id: str, result: AgentRunResult) -> None:
+        result = result.model_copy(update={
+            "model_selection": internal_model_selection(result.model_selection),
+            "snapshot": (result.snapshot.model_copy(update={
+                "model_selection": internal_model_selection(result.snapshot.model_selection),
+            }) if result.snapshot is not None else None),
+        })
         status = {
             "done": "completed",
             "failed": "failed",
@@ -449,6 +461,10 @@ class AgentRunStore:
             isinstance(raw_result, dict) and bool(raw_result) and result is None
         )
         run["cancel_requested"] = bool(run.get("cancel_requested"))
+        if not isinstance(run.get("model_selection"), dict):
+            if run.get("model_selection") is not None:
+                run["model_selection_invalid"] = True
+            run["model_selection"] = {}
         return run
 
     @staticmethod

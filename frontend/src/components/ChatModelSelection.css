@@ -1,0 +1,8 @@
+.composer-model-selection { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0 4px 8px; color: var(--color-text-muted); font-size: 11px; }
+.composer-current-model { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.composer-model-selection select,.composer-model-selection button { max-width: 100%; padding: 3px 6px; border: 1px solid var(--color-border); border-radius: 6px; color: var(--color-text-secondary); background: var(--color-surface); font: inherit; }
+.composer-model-selection :is(select,button):focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+.composer-model-selection :is(select,button):disabled { opacity: .55; }
+.message-model-selection { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; color: var(--color-text-muted); font-size: 11px; }
+.message-model-selection details > summary { cursor: pointer; }
+.message-model-selection details p { margin: 4px 0; }

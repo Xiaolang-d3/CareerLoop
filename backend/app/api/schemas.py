@@ -13,14 +13,14 @@ class LoginIn(BaseModel):
 
 class RegisterIn(BaseModel):
     email: str = Field(min_length=3, max_length=320)
-    password: str = Field(min_length=8, max_length=500)
+    password: str
 
 class AccountUpdateIn(BaseModel):
     display_name: str = Field(default="", max_length=40)
 
 class PasswordChangeIn(BaseModel):
     current_password: str = Field(min_length=1, max_length=500)
-    new_password: str = Field(min_length=8, max_length=500)
+    new_password: str
 
 
 class ConversationIn(BaseModel):

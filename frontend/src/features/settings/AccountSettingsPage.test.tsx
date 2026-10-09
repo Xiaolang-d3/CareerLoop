@@ -82,8 +82,8 @@ describe("AccountSettingsPage", () => {
     render(<AccountSettingsPage {...props()} />);
 
     fireEvent.change(screen.getByLabelText("当前密码"), { target: { value: "old-password" } });
-    fireEvent.change(screen.getByLabelText("新密码"), { target: { value: "new-password" } });
-    fireEvent.change(screen.getByLabelText("确认新密码"), { target: { value: "other-password" } });
+    fireEvent.change(screen.getByLabelText("新密码"), { target: { value: "a-new-test-password" } });
+    fireEvent.change(screen.getByLabelText("确认新密码"), { target: { value: "another-test-password" } });
 
     expect(screen.getByRole("alert")).toHaveTextContent("两次输入的新密码不一致");
     expect(screen.getByRole("button", { name: "更新密码" })).toBeDisabled();
@@ -96,17 +96,35 @@ describe("AccountSettingsPage", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe("https://app.example.com/auth/me/password");
       expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toEqual({ current_password: "old-password", new_password: "rkt9876543!" });
       return new Response(JSON.stringify({ access_token: "token-2", user: nextUser }), { status: 200 });
     }));
 
     render(<AccountSettingsPage {...props({ onPasswordChanged })} />);
     fireEvent.change(screen.getByLabelText("当前密码"), { target: { value: "old-password" } });
-    fireEvent.change(screen.getByLabelText("新密码"), { target: { value: "new-password" } });
-    fireEvent.change(screen.getByLabelText("确认新密码"), { target: { value: "new-password" } });
+    fireEvent.change(screen.getByLabelText("新密码"), { target: { value: "rkt9876543!" } });
+    fireEvent.change(screen.getByLabelText("确认新密码"), { target: { value: "rkt9876543!" } });
     fireEvent.click(screen.getByRole("button", { name: "更新密码" }));
 
     await waitFor(() => expect(onPasswordChanged).toHaveBeenCalledWith("token-2", nextUser));
     expect(await screen.findByText("密码已更新，当前登录仍然有效")).toBeInTheDocument();
+  });
+
+  it("requires the new policy at password change and leaves the old password unrestricted", () => {
+    render(<AccountSettingsPage {...props()} />);
+    fireEvent.change(screen.getByLabelText("当前密码"), { target: { value: "old" } });
+    const password = screen.getByLabelText("新密码");
+    expect(password).not.toHaveAttribute("maxlength");
+    for (const value of ["x".repeat(7), "passwordpassword", "12345678", "x".repeat(129)]) {
+      fireEvent.change(password, { target: { value } });
+      fireEvent.change(screen.getByLabelText("确认新密码"), { target: { value } });
+      expect(screen.getByRole("button", { name: "更新密码" })).toBeDisabled();
+      expect(password).toHaveAttribute("aria-invalid", "true");
+    }
+    fireEvent.change(password, { target: { value: "a long memorable phrase" } });
+    fireEvent.change(screen.getByLabelText("确认新密码"), { target: { value: "a long memorable phrase" } });
+    expect(screen.getByRole("button", { name: "更新密码" })).toBeEnabled();
+    expect(password).toHaveAttribute("aria-invalid", "false");
   });
 
   it("uploads an avatar for the current account", async () => {

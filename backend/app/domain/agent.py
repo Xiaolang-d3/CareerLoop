@@ -51,6 +51,7 @@ class ModelRequest(BaseModel):
     messages: list[AgentMessage]
     tools: list[ToolDefinition] = Field(default_factory=list)
     tool_choice: Literal["auto", "required", "none"] = "auto"
+    parameters: dict[str, float | int] = Field(default_factory=dict)
 
 
 class ModelResponse(BaseModel):
@@ -108,6 +109,8 @@ class AgentClarification(BaseModel):
 
 
 class AgentRunSnapshot(BaseModel):
+    # Internal immutable identity only. Credentials are resolved from versioned storage.
+    model_selection: dict[str, Any] = Field(default_factory=dict)
     resume_mode: Literal["waiting_user", "checkpoint"] = "waiting_user"
     route_kind: str
     needs_plan: bool
@@ -129,6 +132,7 @@ class AgentRunResult(BaseModel):
     provider: str
     platform: str
     rounds: int
+    model_selection: dict[str, Any] = Field(default_factory=dict)
     status: Literal["done", "failed", "waiting_user", "cancelled"] = "done"
     error: ToolError | None = None
     events: list[ToolEvent] = Field(default_factory=list)

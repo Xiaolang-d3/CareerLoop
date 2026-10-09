@@ -4,14 +4,25 @@ import { ApiError, createApiClient } from "../api/client";
 import { AuthSession, AuthUser, validateSession } from "../features/auth/session";
 import { useAuthSession } from "../features/auth/useAuthSession";
 import { productIntroHash } from "../app/public-routing";
+import { AuthEmailInput } from "./AuthEmailInput";
+import { PasswordGuidance } from "./PasswordGuidance";
+import { legacyPasswordMaxLength, newPasswordError } from "../features/auth/passwordPolicy";
 export type { AuthUser } from "../features/auth/session";
 import "./auth-gate.css";
 
 type AuthConfig = { enabled: boolean; setup_required: boolean; registration_open?: boolean };
 type FieldErrors = { email?: string; password?: string; passwordConfirmation?: string };
-type LoginIssue = { kind: "credentials" | "network" | "throttled" | "exists" | "generic"; message: string; field?: keyof FieldErrors; retryAfterSeconds?: number };
+type LoginIssue = { kind: "credentials" | "unregistered" | "network" | "throttled" | "exists" | "generic"; message: string; field?: keyof FieldErrors; retryAfterSeconds?: number };
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function validateEmail(email: string, registering: boolean): string | undefined {
+  const normalized = email.trim();
+  if (!normalized) return "请输入邮箱";
+  if (normalized.length > 320) return "邮箱不能超过 320 个字符";
+  if (registering && !emailPattern.test(normalized)) return "请输入有效的邮箱地址";
+  return undefined;
+}
 
 function classifyLoginError(reason: unknown, registering: boolean): LoginIssue {
   const message = reason instanceof Error ? reason.message : "登录失败，请稍后重试";
@@ -23,11 +34,14 @@ function classifyLoginError(reason: unknown, registering: boolean): LoginIssue {
   if (status === 429 || message.includes("次数过多") || message.includes(`${endpoint} 请求失败（429）`)) {
     return { kind: "throttled", message: message.includes("请在") ? message : "登录失败次数过多，请稍后再试。", retryAfterSeconds: reason instanceof ApiError ? reason.retryAfterSeconds : 0 };
   }
+  if (!registering && status === 404 && message === "该邮箱尚未注册") {
+    return { kind: "unregistered", message, field: "email" };
+  }
   if ((registering && status === 409) || message.includes("已注册") || message.includes(`${endpoint} 请求失败（409）`)) {
     return { kind: "exists", message: "该邮箱已注册，请直接登录。", field: "email" };
   }
   if (status === 401 || message.includes("邮箱或密码") || message.includes(`${endpoint} 请求失败（401）`)) {
-    return { kind: "credentials", message: "邮箱或密码不正确，请核对后重试。", field: "password" };
+    return { kind: "credentials", message: message === "密码不正确" ? "密码不正确，请重新输入。" : "邮箱或密码不正确，请核对后重试。", field: "password" };
   }
   return { kind: "generic", message };
 }
@@ -37,17 +51,18 @@ function validateLoginFields(input: {
   password: string;
   passwordConfirmation: string;
   registering: boolean;
+  confirmPassword?: boolean;
 }): FieldErrors {
   const next: FieldErrors = {};
-  if (!input.email.trim()) next.email = "请输入邮箱";
-  else if (input.email.trim().length > 320) next.email = "邮箱不能超过 320 个字符";
-  else if (input.registering && !emailPattern.test(input.email.trim())) next.email = "请输入有效的邮箱地址";
+  const emailError = validateEmail(input.email, input.registering);
+  if (emailError) next.email = emailError;
   if (!input.password) next.password = "请输入密码";
-  else if (input.registering && input.password.length < 8) next.password = "密码至少 8 位";
-  else if (input.password.length > 500) next.password = "密码不能超过 500 位";
-  if (input.registering) {
+  else if (input.registering) next.password = newPasswordError(input.password, input.email);
+  else if (Array.from(input.password).length > legacyPasswordMaxLength) next.password = "密码不能超过 500 个字符";
+  if (!next.password) delete next.password;
+  if (input.registering && input.confirmPassword !== false) {
     if (!input.passwordConfirmation) next.passwordConfirmation = "请再次输入密码";
-    else if (input.password !== input.passwordConfirmation) next.passwordConfirmation = "两次输入的密码不一致";
+    else if (input.password.normalize("NFC") !== input.passwordConfirmation.normalize("NFC")) next.passwordConfirmation = "两次输入的密码不一致";
   }
   return next;
 }
@@ -58,6 +73,8 @@ export function AuthGate({ apiBase, children, publicPage }: { apiBase: string; c
   const session = useAuthSession(apiBase);
   const { token, authenticated, restoreError, notice, logoutBusy, logoutError, retryRestore, logout, updateSession } = session;
   const [registering, setRegistering] = useState(false);
+  const [pendingCreation, setPendingCreation] = useState(false);
+  const creating = registering || pendingCreation;
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
@@ -115,6 +132,7 @@ export function AuthGate({ apiBase, children, publicPage }: { apiBase: string; c
     setPassword("");
     setPasswordConfirmation("");
     setPasswordVisible(false);
+    setPendingCreation(false);
     setFieldErrors({});
     setError("");
     setErrorKind("");
@@ -123,6 +141,7 @@ export function AuthGate({ apiBase, children, publicPage }: { apiBase: string; c
 
   useEffect(() => {
     setBusy(false);
+    setPendingCreation(false);
     return () => { submitController.current?.abort(); submitController.current = null; };
   }, [apiBase, token]);
 
@@ -140,10 +159,11 @@ export function AuthGate({ apiBase, children, publicPage }: { apiBase: string; c
   function switchMode(next: boolean) {
     chosenMode.current = true;
     setRegistering(next);
+    setPendingCreation(false);
     setPassword("");
     setPasswordConfirmation("");
     setPasswordVisible(false);
-    setFieldErrors({});
+    setFieldErrors(next && email ? { email: validateEmail(email, true) } : {});
     setError("");
     setErrorKind("");
   }
@@ -161,7 +181,8 @@ export function AuthGate({ apiBase, children, publicPage }: { apiBase: string; c
       email,
       password,
       passwordConfirmation,
-      registering
+      registering: creating,
+      confirmPassword: registering
     });
     setFieldErrors(nextFields);
     if (Object.keys(nextFields).length) {
@@ -175,7 +196,7 @@ export function AuthGate({ apiBase, children, publicPage }: { apiBase: string; c
     setError("");
     setErrorKind("");
     try {
-      const payload = await createApiClient(apiBase)<AuthSession>(registering ? "/auth/register" : "/auth/login", {
+      const payload = await createApiClient(apiBase)<AuthSession>(creating ? "/auth/register" : "/auth/login", {
         method: "POST",
         signal: controller.signal,
         headers: { "Content-Type": "application/json" },
@@ -188,10 +209,18 @@ export function AuthGate({ apiBase, children, publicPage }: { apiBase: string; c
       setPasswordVisible(false);
       chosenMode.current = true;
       setRegistering(false);
+      setPendingCreation(false);
       session.acceptSession(next, remember);
     } catch (reason) {
       if (controller.signal.aborted) return;
-      const issue = classifyLoginError(reason, registering);
+      const issue = classifyLoginError(reason, creating);
+      if (issue.kind === "unregistered" && config?.registration_open !== false) {
+        setPendingCreation(true);
+        setFieldErrors({ email: validateEmail(email, true) });
+        focusAfterSubmit.current = "password";
+        return;
+      }
+      if (issue.kind === "exists" && pendingCreation) setPendingCreation(false);
       setError(issue.message);
       setErrorKind(issue.kind);
       if (issue.retryAfterSeconds) setCooldownUntil(Date.now() + issue.retryAfterSeconds * 1000);
@@ -224,7 +253,8 @@ export function AuthGate({ apiBase, children, publicPage }: { apiBase: string; c
     return <AuthStatus message={error} alert onRetry={() => { setError(""); setBootNonce((value) => value + 1); }} />;
   }
   if (!config) return <AuthStatus message="正在连接登录服务…" />;
-  const confirmMismatch = Boolean(registering && passwordConfirmation && password !== passwordConfirmation);
+  const confirmMismatch = Boolean(registering && passwordConfirmation && password.normalize("NFC") !== passwordConfirmation.normalize("NFC"));
+  const livePasswordError = creating && password ? newPasswordError(password, email) : undefined;
   return (
     <AuthGateShell>
       <div className="auth-shell">
@@ -233,30 +263,28 @@ export function AuthGate({ apiBase, children, publicPage }: { apiBase: string; c
             <img className="auth-logo" src="/dengdeng-icon-v1.png" alt="" draggable={false} />
             <h1 className="auth-eyebrow">灯灯</h1>
           </div>
-          <h2 className="auth-form-title">{registering ? "创建本地账户" : "登录本地账户"}</h2>
+          <h2 className="auth-form-title">{creating ? "创建本地账户" : "登录本地账户"}</h2>
           {notice ? <p className="auth-notice" role="status">{notice}</p> : null}
+          {pendingCreation ? <p className="auth-create-notice" role="status">该邮箱尚未注册。确认邮箱无误后，点击「创建并登录」将使用当前邮箱和密码创建本地账户，并自动登录。</p> : null}
           <div className="auth-fields">
             <div className="auth-field">
               <label htmlFor="auth-email">邮箱</label>
-              <input
-                id="auth-email"
-                ref={emailInputRef}
-                type={registering ? "email" : "text"}
-                maxLength={320}
-                autoCapitalize="none"
-                spellCheck={false}
-                inputMode="email"
-                name="username"
-                autoComplete="username"
-                autoFocus
-                placeholder="name@example.com"
+              <AuthEmailInput
+                inputRef={emailInputRef}
+                registering={creating}
                 value={email}
                 disabled={busy}
-                aria-invalid={Boolean(fieldErrors.email)}
-                aria-describedby={fieldErrors.email ? "auth-email-error" : undefined}
-                onChange={(event) => {
-                  setEmail(event.target.value);
-                  if (fieldErrors.email) setFieldErrors((current) => ({ ...current, email: undefined }));
+                error={fieldErrors.email}
+                onChange={(nextEmail) => {
+                  setEmail(nextEmail);
+                  if (pendingCreation) {
+                    setPendingCreation(false);
+                    setError("");
+                    setErrorKind("");
+                    setFieldErrors({ email: validateEmail(nextEmail, registering) });
+                  } else {
+                    setFieldErrors((current) => ({ ...current, email: validateEmail(nextEmail, registering) }));
+                  }
                 }}
               />
               {fieldErrors.email ? <small id="auth-email-error" className="auth-field-error">{fieldErrors.email}</small> : null}
@@ -269,14 +297,12 @@ export function AuthGate({ apiBase, children, publicPage }: { apiBase: string; c
                   ref={passwordInputRef}
                   type={passwordVisible ? "text" : "password"}
                   name="password"
-                  minLength={registering ? 8 : 1}
-                  maxLength={500}
-                  autoComplete={registering ? "new-password" : "current-password"}
-                  placeholder={registering ? "8–500 位" : "输入账户密码"}
+                  autoComplete={creating ? "new-password" : "current-password"}
+                  placeholder={creating ? "设置登录密码" : "输入登录密码"}
                   value={password}
                   disabled={busy}
-                  aria-invalid={Boolean(fieldErrors.password)}
-                  aria-describedby={fieldErrors.password ? "auth-password-error" : undefined}
+                  aria-invalid={Boolean(fieldErrors.password || livePasswordError)}
+                  aria-describedby={[creating ? "auth-password-guidance" : "", fieldErrors.password ? "auth-password-error" : ""].filter(Boolean).join(" ") || undefined}
                   onChange={(event) => {
                     setPassword(event.target.value);
                     if (fieldErrors.password) setFieldErrors((current) => ({ ...current, password: undefined }));
@@ -294,6 +320,7 @@ export function AuthGate({ apiBase, children, publicPage }: { apiBase: string; c
                   {passwordVisible ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
                 </button>
               </span>
+              {creating ? <PasswordGuidance password={password} email={email} id="auth-password-guidance" /> : null}
               {fieldErrors.password ? <small id="auth-password-error" className="auth-field-error" role="alert">{fieldErrors.password}</small> : null}
             </div>
             {registering ? (
@@ -304,8 +331,6 @@ export function AuthGate({ apiBase, children, publicPage }: { apiBase: string; c
                     id="auth-password-confirm"
                     ref={passwordConfirmationRef}
                     type={passwordVisible ? "text" : "password"}
-                    minLength={8}
-                    maxLength={500}
                     autoComplete="new-password"
                     placeholder="再次输入密码"
                     value={passwordConfirmation}
@@ -331,9 +356,11 @@ export function AuthGate({ apiBase, children, publicPage }: { apiBase: string; c
               {errorKind === "network" ? <button type="button" className="auth-error-action" onClick={() => { setError(""); setErrorKind(""); setBootNonce((value) => value + 1); }}>重新连接</button> : null}
             </p>
           ) : null}
-          <button className="auth-submit" type="submit" disabled={busy || cooldown > 0} aria-busy={busy}>{cooldown ? `${cooldown} 秒后重试` : busy ? (registering ? "正在创建…" : "正在登录…") : registering ? "创建账号" : "登录"}</button>
+          <button className="auth-submit" type="submit" disabled={busy || cooldown > 0} aria-busy={busy}>{cooldown ? `${cooldown} 秒后重试` : busy ? (creating ? "正在创建…" : "正在登录…") : pendingCreation ? "创建并登录" : registering ? "创建账号" : "登录"}</button>
           <p className="auth-mode-switch">
-            {registering ? (
+            {pendingCreation ? (
+              <button type="button" onClick={() => switchMode(false)} disabled={busy}>返回登录</button>
+            ) : registering ? (
               <button type="button" onClick={() => switchMode(false)} disabled={busy}>已有账号？去登录</button>
             ) : config.registration_open !== false ? (
               <button type="button" onClick={() => switchMode(true)} disabled={busy}>没有账号？创建账号</button>

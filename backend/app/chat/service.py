@@ -10,6 +10,7 @@ from ..attachments.service import get_attachment, prepare_attachment_vision_url
 from .conversations import create_conversation, list_conversations
 from ..db import connect, json_dump, row_to_dict
 from ..domain import AgentMessage, AgentRunResult, ToolEvent
+from ..observability.model_context import public_model_selection
 
 
 def save_chat_message(
@@ -188,9 +189,11 @@ def save_stream_result(conversation_id: int, task_id: int, user_message: dict[st
         save_run_snapshot(conversation_id, result.snapshot)
     else:
         clear_run_snapshot(conversation_id)
+    public_result = result.model_dump(mode="json", exclude={"snapshot"})
+    public_result["model_selection"] = public_model_selection(result.model_selection)
     assistant_message = save_chat_message(
         "assistant", result.content,
-        {"agent": result.model_dump(mode="json", exclude={"snapshot"})},
+        {"agent": public_result},
         conversation_id, task_id,
     )
     refresh_conversation_summary(conversation_id)

@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS conversations (
                 status TEXT NOT NULL DEFAULT 'active',
                 summary TEXT NOT NULL DEFAULT '',
                 context_cutoff_message_id INTEGER NOT NULL DEFAULT 0,
+                model_profile_id TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -86,6 +87,7 @@ CREATE TABLE IF NOT EXISTS agent_settings (
                 last_save_request_id TEXT NOT NULL DEFAULT '',
                 model_secret_ref TEXT NOT NULL DEFAULT '',
                 model_config_initialized INTEGER NOT NULL DEFAULT 0,
+                default_model_profile_id TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -108,8 +110,73 @@ CREATE TABLE IF NOT EXISTS model_service_events (
                 base_url TEXT NOT NULL DEFAULT '',
                 protocol TEXT NOT NULL DEFAULT 'openai',
                 response_id TEXT NOT NULL DEFAULT '',
+                run_id TEXT NOT NULL DEFAULT '',
+                call_id TEXT NOT NULL DEFAULT '',
+                profile_id TEXT NOT NULL DEFAULT '',
+                connection_id TEXT NOT NULL DEFAULT '',
+                connection_revision INTEGER NOT NULL DEFAULT 0,
+                profile_revision INTEGER NOT NULL DEFAULT 0,
+                stage TEXT NOT NULL DEFAULT '',
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                selection_reason TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+
+CREATE TABLE IF NOT EXISTS model_connections (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    base_url TEXT NOT NULL DEFAULT '',
+    effective_base_url TEXT NOT NULL,
+    protocol TEXT NOT NULL DEFAULT 'auto',
+    secret_ref TEXT NOT NULL DEFAULT 'none',
+    data_boundary TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    revision INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS model_profiles (
+    id TEXT PRIMARY KEY,
+    connection_id TEXT NOT NULL REFERENCES model_connections(id),
+    model_name TEXT NOT NULL,
+    name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    revision INTEGER NOT NULL DEFAULT 1,
+    parameters_json TEXT NOT NULL DEFAULT '{}',
+    capabilities_json TEXT NOT NULL DEFAULT '{}',
+    context_limit INTEGER,
+    price_per_million_input REAL,
+    price_per_million_output REAL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS model_connection_versions (
+    connection_id TEXT NOT NULL REFERENCES model_connections(id),
+    revision INTEGER NOT NULL,
+    payload_json TEXT NOT NULL,
+    PRIMARY KEY (connection_id, revision)
+);
+
+CREATE TABLE IF NOT EXISTS model_profile_versions (
+    profile_id TEXT NOT NULL REFERENCES model_profiles(id),
+    revision INTEGER NOT NULL,
+    payload_json TEXT NOT NULL,
+    PRIMARY KEY (profile_id, revision)
+);
+
+CREATE TABLE IF NOT EXISTS model_credential_aliases (
+    reference TEXT PRIMARY KEY,
+    secret_ref TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS model_routing_policy (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    version INTEGER NOT NULL DEFAULT 1,
+    payload_json TEXT NOT NULL DEFAULT '{}'
+);
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
                 version INTEGER PRIMARY KEY,
@@ -140,6 +207,7 @@ CREATE TABLE IF NOT EXISTS agent_execution_runs (
     route_kind TEXT NOT NULL DEFAULT '',
     round_number INTEGER NOT NULL DEFAULT 0,
     checkpoint_json TEXT NOT NULL DEFAULT '',
+    model_selection_json TEXT NOT NULL DEFAULT '{}',
     result_json TEXT NOT NULL DEFAULT '',
     stop_reason TEXT NOT NULL DEFAULT '',
     cancel_requested INTEGER NOT NULL DEFAULT 0,

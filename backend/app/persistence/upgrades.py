@@ -46,7 +46,7 @@ def initialize_workspace(db_path: str | Path | None = None) -> None:
         if version > DB_SCHEMA_VERSION:
             raise ValueError("数据库来自更新版本，请升级应用后打开")
         if tables:
-            if not 1 <= version <= 25:
+            if not 1 <= version <= 26:
                 raise ValueError("未知数据库格式，未修改原文件")
             if version < 24:
                 _backup(path)
@@ -64,9 +64,26 @@ def initialize_workspace(db_path: str | Path | None = None) -> None:
                 "last_save_request_id": "TEXT NOT NULL DEFAULT ''",
                 "model_secret_ref": "TEXT NOT NULL DEFAULT ''",
                 "model_config_initialized": "INTEGER NOT NULL DEFAULT 0",
+                "default_model_profile_id": "TEXT NOT NULL DEFAULT ''",
             }.items():
                 if name not in columns:
                     conn.execute(f"ALTER TABLE agent_settings ADD COLUMN {name} {definition}")
+            conversation_columns = {row[1] for row in conn.execute("PRAGMA table_info(conversations)")}
+            if "model_profile_id" not in conversation_columns:
+                conn.execute("ALTER TABLE conversations ADD COLUMN model_profile_id TEXT")
+            run_columns = {row[1] for row in conn.execute("PRAGMA table_info(agent_execution_runs)")}
+            if "model_selection_json" not in run_columns:
+                conn.execute("ALTER TABLE agent_execution_runs ADD COLUMN model_selection_json TEXT NOT NULL DEFAULT '{}'")
+            event_columns = {row[1] for row in conn.execute("PRAGMA table_info(model_service_events)")}
+            for name, definition in {
+                "run_id": "TEXT NOT NULL DEFAULT ''", "call_id": "TEXT NOT NULL DEFAULT ''",
+                "profile_id": "TEXT NOT NULL DEFAULT ''", "connection_id": "TEXT NOT NULL DEFAULT ''",
+                "connection_revision": "INTEGER NOT NULL DEFAULT 0", "profile_revision": "INTEGER NOT NULL DEFAULT 0",
+                "stage": "TEXT NOT NULL DEFAULT ''", "input_tokens": "INTEGER NOT NULL DEFAULT 0",
+                "output_tokens": "INTEGER NOT NULL DEFAULT 0", "selection_reason": "TEXT NOT NULL DEFAULT ''",
+            }.items():
+                if name not in event_columns:
+                    conn.execute(f"ALTER TABLE model_service_events ADD COLUMN {name} {definition}")
             conn.execute("UPDATE attachments SET kind = CASE kind WHEN 'resume' THEN 'document' WHEN 'job_screenshot' THEN 'image' ELSE kind END")
             for row in conn.execute("SELECT id, payload_json FROM chat_messages WHERE payload_json LIKE '%attachments%'").fetchall():
                 payload = json.loads(row["payload_json"] or "{}")

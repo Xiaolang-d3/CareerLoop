@@ -5,6 +5,7 @@ import type { AgentSettings, ModelCapabilityFlag, ModelCapabilityReport, ModelSe
 import "./model-settings.css";
 
 type Props = {
+  connectionManager?: ReactNode;
   settings: AgentSettings;
   savedSettings: AgentSettings;
   editing: boolean;
@@ -133,6 +134,7 @@ function CapabilityRow({
 }
 
 export function ModelSettingsPage({
+  connectionManager,
   settings,
   savedSettings,
   editing,
@@ -241,6 +243,7 @@ export function ModelSettingsPage({
         </div>
         <p className="model-save-note">{monitorBusy && !busy ? "配置已保存，连接检测中；可以继续编辑。" : "保存后从下一次对话生效。"}</p>
       </section>
+      {connectionManager}
       <details className="model-advanced-settings">
         <summary><strong>高级设置</strong><span>接口协议与连接诊断</span><ChevronDown size={16} /></summary>
         <div className="model-settings-panels">

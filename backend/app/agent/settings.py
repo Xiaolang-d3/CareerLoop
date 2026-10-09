@@ -245,12 +245,13 @@ def _settings_fallback(config: Any) -> dict[str, Any]:
 
 
 def get_agent_settings(db_path: str | Path | None = None) -> dict[str, Any]:
+    from .model_catalog import public_default_agent_settings
+
     with _settings_lock(db_path):
         try:
-            row = _initialize_connection(db_path)
-        except Exception:
+            return public_default_agent_settings(db_path)
+        except (ValueError, OSError):
             return _settings_fallback(get_settings())
-        return _public_settings(row, db_path)
 
 
 def _request_fingerprint(values: dict[str, Any]) -> str:
@@ -261,104 +262,15 @@ def _request_fingerprint(values: dict[str, Any]) -> str:
 
 
 def save_agent_settings(values: dict[str, Any], db_path: str | Path | None = None) -> dict[str, Any]:
-    from ..model_connection import resolve_model_connection
+    from .model_catalog import save_default_agent_settings
 
-    with _settings_lock(db_path):
-        _initialize_connection(db_path)
-        submitted_key = str(values.get("api_key") or "").strip()
-        request_id = str(values.get("request_id") or "").strip()
-        fingerprint = _request_fingerprint(values)
-        candidate = ""
-        try:
-            with connect(db_path) as conn:
-                conn.execute("BEGIN IMMEDIATE")
-                current = dict(conn.execute("SELECT * FROM agent_settings WHERE id = 1").fetchone())
-                if request_id:
-                    previous = conn.execute(
-                        "SELECT payload_fingerprint FROM model_settings_requests WHERE request_id = ?", (request_id,),
-                    ).fetchone()
-                    if previous is not None:
-                        if not hmac.compare_digest(previous["payload_fingerprint"], fingerprint):
-                            raise AgentSettingsConflict("同一保存请求已用于不同内容，请重新保存")
-                        raise _ReplayedSave(current)
-                expected = values.get("expected_revision")
-                if expected is not None and int(expected) != int(current["config_revision"]):
-                    raise AgentSettingsConflict("设置已在其他页面更新，请重新读取后保存")
-                merged = {field: values.get(field, current[field]) for field in _SAVE_FIELDS}
-                merged["model_name"] = str(merged["model_name"]).strip()
-                if not merged["model_name"]:
-                    raise ValueError("模型名称不能为空")
-                merged["model_base_url"] = str(merged["model_base_url"] or "").strip()
-                merged["model_protocol"] = normalize_model_protocol(merged["model_protocol"])
-                # A new explicit credential needs no old read/migration, which
-                # also allows repair when the old secure store is unavailable.
-                if submitted_key:
-                    saved_key = ""
-                else:
-                    reference = str(current.get("model_secret_ref") or "")
-                    if reference == _NO_CREDENTIAL_REF:
-                        saved_key = ""
-                    elif reference == _ENVIRONMENT_REF:
-                        saved_key, warning = _environment_credential(current)
-                        if not saved_key:
-                            raise SecretStoreUnavailable(warning)
-                    elif reference:
-                        saved_key = get_secret(reference, db_path)
-                        if not saved_key:
-                            raise SecretStoreUnavailable("已保存的安全凭证暂不可读取，原配置已保留")
-                    else:
-                        saved_key = str(current.get("model_api_key") or "")
-                        if not saved_key and secret_backend_name() in {"memory", "keyring"}:
-                            saved_key = get_model_api_key(db_path)
-                saved_connection = _connection(current, saved_key)
-                resolved = resolve_model_connection({**merged, "api_key": submitted_key}, saved=saved_connection)
-                merged["model_base_url"] = resolved.get("configured_model_base_url", merged["model_base_url"])
-                secret_ref = str(current.get("model_secret_ref") or "")
-                legacy_to_keep = str(current.get("model_api_key") or "")
-                if submitted_key and resolved["api_key"]:
-                    candidate = create_model_api_key(submitted_key, current["connection_id"], db_path)
-                    if not hmac.compare_digest(get_secret(candidate, db_path), submitted_key):
-                        raise SecretStoreUnavailable("新凭证写入校验失败，原配置已保留")
-                    secret_ref, legacy_to_keep = candidate, ""
-                elif not resolved["api_key"]:
-                    # An explicitly uncredentialed target must not later
-                    # rediscover an old slot or inherit an environment key.
-                    secret_ref = _NO_CREDENTIAL_REF
-                elif not secret_ref and saved_key and secret_storage_writable():
-                    candidate = create_model_api_key(saved_key, current["connection_id"], db_path)
-                    if not hmac.compare_digest(get_secret(candidate, db_path), saved_key):
-                        raise SecretStoreUnavailable("迁移后的凭证校验失败")
-                    secret_ref, legacy_to_keep = candidate, ""
-                revision = int(current["config_revision"]) + 1
-                assignments = ", ".join(f"{field} = ?" for field in _SAVE_FIELDS)
-                parameters = [int(merged[field]) if field in _MEMORY_FIELDS else merged[field] for field in _SAVE_FIELDS]
-                conn.execute(
-                    f"""UPDATE agent_settings SET {assignments}, model_secret_ref = ?, model_api_key = ?,
-                        config_revision = ?, last_save_request_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1""",
-                    (*parameters, secret_ref, legacy_to_keep, revision, request_id),
-                )
-                if request_id:
-                    conn.execute(
-                        "INSERT INTO model_settings_requests (request_id, payload_fingerprint, saved_revision) VALUES (?, ?, ?)",
-                        (request_id, fingerprint, revision),
-                    )
-        except _ReplayedSave as replay:
-            return _public_settings(replay.row, db_path)
-        except Exception:
-            if candidate:
-                _discard_candidate(candidate, db_path)
-            raise
-        return _public_settings(_row(db_path), db_path)
+    return save_default_agent_settings(values, db_path)
 
 
 def get_model_connection(db_path: str | Path | None = None) -> dict[str, Any]:
-    with _settings_lock(db_path):
-        row = _initialize_connection(db_path)
-        api_key, source, warning = _credential(row, db_path)
-        result = _connection(row, api_key)
-        result["api_key_source"] = source if result["api_key"] else "none"
-        result["secret_migration_warning"] = warning
-        return result
+    from .model_catalog import get_profile_connection
+
+    return get_profile_connection(db_path=db_path)
 
 
 def persona_prompt(settings: dict[str, Any]) -> str:

@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultAgentSettings } from "../constants";
 import { ThemeProvider } from "../features/appearance/ThemeProvider";
-import type { AgentSettings, ModelCapabilityReport, ModelServiceMonitor } from "../types";
+import type { AgentSettings, ModelCapabilityReport, ModelServiceMonitor, ModelCatalog } from "../types";
 import { App } from "./App";
 
 const api = vi.hoisted(() => ({ fetchJson: vi.fn<(path: string, options?: RequestInit) => Promise<unknown>>() }));
@@ -91,6 +91,7 @@ function mockApi(settingsResult: Promise<AgentSettings> = Promise.resolve(savedS
     if (path === "/agent/model-monitor/check") return { ...monitor, available: true };
     if (path.startsWith("/agent/models/capabilities")) return capabilities;
     if (path === "/agent/models/discover") return { models: [], count: 0 };
+    if (path === "/agent/model-connections") return { connections: [], profiles: [], default_profile_id: null };
     if (path === "/agent/capabilities" || path === "/attachments/config") return {};
     throw new Error(`Unexpected mocked request: ${path}`);
   });
@@ -491,6 +492,36 @@ describe("App model settings", () => {
     const body = JSON.parse(String(api.fetchJson.mock.calls.filter(([path, options]) => path === "/agent/settings" && options?.method === "PUT")[1][1]?.body));
     expect(body.expected_revision).toBe(2);
     expect(body.model_name).toBe("pending-draft");
+  });
+
+
+  it("refreshes the default three-field form only after explicitly applying another profile", async () => {
+    mockApi();
+    const catalog: ModelCatalog = {
+      connections: [
+        { id: "c1", name: "主连接", model_base_url: savedSettings.model_base_url, model_protocol: "responses", api_key_configured: true, enabled: true, revision: 1 },
+        { id: "c2", name: "备用连接", model_base_url: "https://second.example.test/v1", model_protocol: "openai", api_key_configured: true, enabled: true, revision: 1 }
+      ],
+      profiles: [
+        { id: "p1", connection_id: "c1", model_name: savedSettings.model_name, enabled: true, revision: 1 },
+        { id: "p2", connection_id: "c2", model_name: "second-model", enabled: true, revision: 1 }
+      ], default_profile_id: "p1"
+    };
+    let changed = false;
+    replaceApi((path, options) => {
+      if (path === "/agent/model-connections") return Promise.resolve({ ...catalog, default_profile_id: changed ? "p2" : "p1" });
+      if (path === "/agent/model-default") { changed = true; return Promise.resolve({ ...catalog, default_profile_id: "p2" }); }
+      if (path === "/agent/settings" && options?.method !== "PUT" && changed) return Promise.resolve({ ...savedSettings, model_name: "second-model", model_base_url: "https://second.example.test/v1", config_revision: 2 });
+      return undefined;
+    });
+    renderApp();
+    await screen.findByRole("heading", { name: "连接与模型" });
+    expect(screen.getByLabelText("模型名称")).toHaveValue(savedSettings.model_name);
+    fireEvent.click(screen.getAllByRole("button", { name: "设为默认" })[1]);
+    await waitFor(() => expect(screen.getByLabelText("模型名称")).toHaveValue("second-model"));
+    expect(screen.getByLabelText("Base URL")).toHaveValue("https://second.example.test/v1");
+    expect(screen.getByLabelText("API Key")).toHaveValue("");
+    expect(api.fetchJson.mock.calls.some(([path, options]) => path === "/agent/settings" && options?.method === "PUT")).toBe(false);
   });
 
 });
