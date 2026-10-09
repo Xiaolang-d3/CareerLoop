@@ -19,6 +19,18 @@ from ..documents.service import parse_document_upload
 SOURCE_TYPE = "library_source"
 
 
+
+# The system MIME table differs between macOS, Linux and packaged runtimes; pin the
+# text formats the library accepts so previews do not depend on the host.
+_KNOWN_MIME_TYPES = {".md": "text/markdown", ".markdown": "text/markdown", ".txt": "text/plain"}
+
+
+def _guess_mime_type(filename: str) -> str:
+    suffix = Path(filename).suffix.lower()
+    if suffix in _KNOWN_MIME_TYPES:
+        return _KNOWN_MIME_TYPES[suffix]
+    return mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
 def _clean_title(value: str, fallback: str = "未命名资料") -> str:
     return " ".join(value.split())[:255] or fallback
 
@@ -201,7 +213,7 @@ def import_file_source(
         parsed = {"warnings": ["文字提取失败，原文件已保存，可预览或下载。"]}
         extracted = ""
     redacted = str(parsed.get("redacted_text") or scan_and_redact(extracted)[1])
-    mime_type = mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
+    mime_type = _guess_mime_type(safe_name)
     digest = sha256(content_bytes).hexdigest()
     metadata = {
         "parser": parsed.get("parser") or "unknown",
