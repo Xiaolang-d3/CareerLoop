@@ -63,6 +63,7 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
   retryDraft?: ChatRetryDraft | null;
   modelChecking?: boolean;
   modelUnavailable?: string;
+  modelConfigured?: boolean;
   libraryAttachments?: { conversationId: number; attachments: ChatAttachment[] };
   onLibraryAttachmentsConsumed?: () => void;
   composerDraft?: ChatComposerDraft;
@@ -76,6 +77,7 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
     density: extras.density,
     modelChecking: extras.modelChecking,
     modelUnavailable: extras.modelUnavailable,
+    modelConfigured: extras.modelConfigured,
     onOpenModelSettings: vi.fn(),
     conversationTitle: conversation.title,
     messages,
@@ -116,6 +118,14 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
 }
 
 describe("ChatWorkspace", () => {
+  it("puts the model picker in the composer toolbar and reminds the user to configure a model", () => {
+    const props = renderChat([message], { modelConfigured: false });
+    const toolbar = screen.getByLabelText("添加资料");
+    fireEvent.click(within(toolbar).getByRole("button", { name: "未配置模型，去设置" }));
+    expect(props.onOpenModelSettings).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: /切换模型/ })).not.toBeInTheDocument();
+  });
+
   it("reports message copy success and clipboard failure", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });

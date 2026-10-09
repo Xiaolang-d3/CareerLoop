@@ -126,6 +126,8 @@ export type ChatWorkspaceProps = {
   defaultModelName?: string;
   modelSelectionBusy?: boolean;
   modelProfileUnavailable?: boolean;
+  /** false 表示没有任何可用模型连接，输入框会提示去设置。 */
+  modelConfigured?: boolean;
   onModelProfileChange?: (profileId: string | null) => Promise<void>;
   modelChecking?: boolean;
   modelUnavailable?: string | null;

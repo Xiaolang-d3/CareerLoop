@@ -1,5 +1,6 @@
 import { useConversationScroll } from "../features/chat/useConversationScroll";
 import { RunStatus } from "../features/chat/RunStatus";
+import { ComposerModelPicker } from "../features/chat/ComposerModelPicker";
 import { textFromAppendMessage, WebSource, webSourcesFromAgent, ResearchPanelActionsContext, EditMessageComposer, thinkingHeaderCopy, ComposerClarification, StarterPromptList, ChatContextChips, ResearchPanel, ChatTurn } from "../features/chat/MessagePresentation";
 
 import type { AgentRunResult, ChatMessage, ChatAttachment, WebSearchMode, ChatClarificationOption, ChatClarification, ChatWorkspaceProps } from "../features/chat/types";
@@ -463,15 +464,6 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                 ))}
               </div>
             ) : null}
-            <div className="composer-model-selection">
-              <span className="composer-current-model">模型：{props.currentModelName || "尚未配置"}{props.modelProfileUnavailable ? "（已停用）" : ""}</span>
-              {(props.modelProfiles?.length ?? 0) > 1 ? <select aria-label="会话模型" value={props.selectedModelProfileId ?? ""} disabled={props.chatBusy || props.modelSelectionBusy || !props.currentConversationId} onChange={event => void props.onModelProfileChange?.(event.target.value || null)}>
-                <option value="">跟随默认{props.defaultModelName ? `（${props.defaultModelName}）` : ""}</option>
-                {props.modelProfileUnavailable && props.selectedModelProfileId ? <option value={props.selectedModelProfileId} disabled>{props.currentModelName}（已停用）</option> : null}
-                {props.modelProfiles?.map(profile => <option key={profile.id} value={profile.id}>{profile.connection_name} / {profile.model_name}</option>)}
-              </select> : props.modelProfileUnavailable ? <button type="button" disabled={props.chatBusy || props.modelSelectionBusy} onClick={() => void props.onModelProfileChange?.(null)}>恢复默认模型</button> : null}
-              {props.modelSelectionBusy ? <small role="status">正在保存模型选择…</small> : null}
-            </div>
             <ComposerPrimitive.Root className="composer-input composer-input--enhanced" onSubmit={(event) => { if (props.attachmentBusy || props.modelSelectionBusy || props.modelProfileUnavailable) event.preventDefault(); }}>
               <ComposerPrimitive.Input
                 ref={props.chatInputRef}
@@ -486,6 +478,19 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
               />
               <div className="composer-bottom-row">
               <div className="composer-shortcuts" aria-label="添加资料">
+                  <ComposerModelPicker
+                    configured={props.modelConfigured !== false}
+                    currentModelName={props.currentModelName}
+                    defaultModelName={props.defaultModelName}
+                    profiles={props.modelProfiles ?? []}
+                    selectedProfileId={props.selectedModelProfileId ?? null}
+                    profileDisabled={Boolean(props.modelProfileUnavailable)}
+                    serviceUnavailable={Boolean(props.modelUnavailable)}
+                    busy={Boolean(props.modelSelectionBusy)}
+                    canSelect={!props.chatBusy && Boolean(props.currentConversationId)}
+                    onChange={(profileId) => props.onModelProfileChange?.(profileId)}
+                    onOpenSettings={props.onOpenModelSettings}
+                  />
                   <button type="button" onClick={() => attachmentInputRef.current?.click()} disabled={props.attachmentBusy} title="上传图片或文档，也可直接粘贴图片">
                     {props.attachmentBusy ? <LoaderCircle className="spinning" size={15} /> : <ImagePlus size={15} />}
                     <span>{props.attachmentBusy ? "处理中…" : "资料"}</span>
@@ -522,7 +527,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                     <Square size={14} fill="currentColor" /><span>停止</span>
                   </ComposerPrimitive.Cancel>
                 ) : (
-                  <ComposerPrimitive.Send className="send-button" aria-label="发送" disabled={props.attachmentBusy || props.modelSelectionBusy || props.modelProfileUnavailable} title={props.attachmentBusy ? "资料处理完成后即可发送" : props.modelSelectionBusy ? "模型选择保存后即可发送" : "发送消息"}>
+                  <ComposerPrimitive.Send className="send-button" aria-label="发送" disabled={props.attachmentBusy || props.modelSelectionBusy || props.modelProfileUnavailable} title={props.attachmentBusy ? "资料处理完成后即可发送" : props.modelSelectionBusy ? "模型选择保存后即可发送" : props.modelProfileUnavailable ? "当前模型已停用，请切换模型" : "发送消息"}>
                     <Send size={16} /><span>发送</span>
                   </ComposerPrimitive.Send>
                 )}
