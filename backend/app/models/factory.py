@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from .anthropic_messages import AnthropicMessagesProvider
 from .auto_negotiating import AutoNegotiatingModelProvider, protocol_cache_key
 from .gemini_generate_content import GeminiGenerateContentProvider
@@ -16,7 +18,10 @@ def build_model_provider(
     base_url: str | None = None,
     timeout_seconds: float = 60,
     protocol: str = "auto",
+    detected_protocol: str | None = None,
+    on_protocol_detected: Callable[[str], None] | None = None,
 ):
+    """Build a provider; auto mode may start from a previously detected protocol."""
     provider_classes = {
         "openai": OpenAICompatibleProvider,
         "responses": OpenAIResponsesProvider,
@@ -46,4 +51,6 @@ def build_model_provider(
     return AutoNegotiatingModelProvider(
         providers,
         protocol_cache_key(base_url, model, api_key),
+        preferred=detected_protocol,
+        on_protocol_detected=on_protocol_detected,
     )

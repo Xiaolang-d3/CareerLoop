@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from hashlib import sha256
 from typing import Any
 
@@ -9,7 +9,7 @@ from ..model_protocol import normalize_model_protocol, resolve_model_protocol
 from .base import ModelProviderError
 
 
-FALLBACK_ERROR_CODES = frozenset({"route_not_found", "invalid_provider_response"})
+FALLBACK_ERROR_CODES = frozenset({"route_not_found", "invalid_provider_response", "protocol_unsupported"})
 _SUCCESSFUL_PROTOCOLS: dict[str, str] = {}
 
 
@@ -47,15 +47,29 @@ def get_negotiated_model_protocol(
 class AutoNegotiatingModelProvider:
     """Try a native protocol first and fall back only for proven route mismatches."""
 
-    def __init__(self, providers: list[tuple[str, Any]], cache_key: str) -> None:
+    def __init__(
+        self,
+        providers: list[tuple[str, Any]],
+        cache_key: str,
+        *,
+        preferred: str | None = None,
+        on_protocol_detected: Callable[[str], None] | None = None,
+    ) -> None:
         if not providers:
             raise ValueError("自动协议匹配至少需要一个 Provider")
+        names = {name for name, _ in providers}
+        # A durable detection (persisted per connection) seeds the in-memory
+        # cache so a restarted backend starts on the protocol that worked.
+        if preferred in names and cache_key not in _SUCCESSFUL_PROTOCOLS:
+            _SUCCESSFUL_PROTOCOLS[cache_key] = str(preferred)
         cached = _SUCCESSFUL_PROTOCOLS.get(cache_key)
         if cached:
             providers.sort(key=lambda item: item[0] != cached)
         self._providers = providers
         self._cache_key = cache_key
         self._active_index = 0
+        self._persisted = preferred if preferred in names else None
+        self._on_protocol_detected = on_protocol_detected
 
     @property
     def name(self) -> str:
@@ -71,7 +85,15 @@ class AutoNegotiatingModelProvider:
 
     def _remember(self, index: int) -> None:
         self._active_index = index
-        _SUCCESSFUL_PROTOCOLS[self._cache_key] = self._providers[index][0]
+        protocol = str(self._providers[index][0])
+        _SUCCESSFUL_PROTOCOLS[self._cache_key] = protocol
+        if self._on_protocol_detected is not None and protocol != self._persisted:
+            try:
+                self._on_protocol_detected(protocol)
+                self._persisted = protocol
+            except Exception:
+                # Persisting the detection is an optimization; never fail a call.
+                pass
 
     def _candidate_indexes(self) -> list[int]:
         return [self._active_index, *[index for index in range(len(self._providers)) if index != self._active_index]]

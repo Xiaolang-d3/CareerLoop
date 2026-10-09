@@ -5,8 +5,8 @@ import type { ModelCatalog } from "../../types";
 type Client = ReturnType<typeof createApiClient>;
 function publicCatalog(catalog: ModelCatalog): ModelCatalog {
   return {
-    connections: catalog.connections.map(({ id, name, model_base_url, model_protocol, api_key_configured, enabled, revision }) => ({ id, name, model_base_url, model_protocol, api_key_configured, enabled, revision })),
-    profiles: catalog.profiles.map(({ id, connection_id, model_name, enabled, revision, parameters, capabilities, context_limit }) => ({ id, connection_id, model_name, enabled, revision, parameters, capabilities, context_limit })),
+    connections: catalog.connections.map(({ id, name, model_base_url, model_protocol, detected_protocol, protocol_label, api_key_configured, enabled, revision }) => ({ id, name, model_base_url, model_protocol, detected_protocol, protocol_label, api_key_configured, enabled, revision })),
+    profiles: catalog.profiles.map(({ id, connection_id, model_name, enabled, revision, parameters, capabilities, context_limit, reasoning_effort }) => ({ id, connection_id, model_name, enabled, revision, parameters, capabilities, context_limit, reasoning_effort })),
     default_profile_id: catalog.default_profile_id
   };
 }

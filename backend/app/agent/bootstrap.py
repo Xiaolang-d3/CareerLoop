@@ -102,6 +102,7 @@ def _build_unconfigured_capabilities(model_connection: dict[str, Any]) -> dict[s
 
 def _build_components(model_connection: dict[str, Any]) -> tuple[AgentRuntime, dict[str, Any]]:
     from ..models.configured import configure_model_provider
+    from .model_catalog import detected_protocol_recorder
 
     settings = get_settings()
 
@@ -115,8 +116,12 @@ def _build_components(model_connection: dict[str, Any]) -> tuple[AgentRuntime, d
         base_url=model_connection["model_base_url"] or None,
         timeout_seconds=settings.model_timeout_seconds,
         protocol=model_connection.get("model_protocol", "auto"),
+        detected_protocol=model_connection.get("detected_protocol"),
+        on_protocol_detected=detected_protocol_recorder(model_connection),
     )
-    model = configure_model_provider(model, model_connection.get("parameters", {}))
+    model = configure_model_provider(
+        model, model_connection.get("parameters", {}), model_connection.get("reasoning_effort"),
+    )
     model_alias = str(model_connection.get("profile_id") or model.name)
     models.register(model_alias, model)
 

@@ -129,6 +129,7 @@ CREATE TABLE IF NOT EXISTS model_connections (
     base_url TEXT NOT NULL DEFAULT '',
     effective_base_url TEXT NOT NULL,
     protocol TEXT NOT NULL DEFAULT 'auto',
+    detected_protocol TEXT,
     secret_ref TEXT NOT NULL DEFAULT 'none',
     data_boundary TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1,
@@ -149,6 +150,7 @@ CREATE TABLE IF NOT EXISTS model_profiles (
     context_limit INTEGER,
     price_per_million_input REAL,
     price_per_million_output REAL,
+    reasoning_effort TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

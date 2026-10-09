@@ -350,4 +350,15 @@ describe("ModelSettingsPage", () => {
     expect(onResumeEditing).toHaveBeenCalledOnce();
   });
 
+  it("labels the protocol auto mode actually uses in the protocol and monitor cards", () => {
+    const detectedSettings: AgentSettings = { ...settings, model_name: "grok-4.7", detected_model_protocol: "responses", resolved_model_protocol: "responses" };
+    render(<ModelSettingsPage {...props({
+      settings: detectedSettings,
+      savedSettings: detectedSettings,
+      monitor: { ...monitor, model_name: "grok-4.7", protocol: "responses", detected_protocol: "responses", protocol_label: "自动 · 实际使用 OpenAI Responses API" }
+    })} />);
+    openAdvancedSettings();
+    expect(screen.getByText("自动 · 实际使用 OpenAI Responses API", { selector: ".model-detected-protocol" })).toBeInTheDocument();
+    expect(screen.getByText(/^自动 · 实际使用 OpenAI Responses API · /)).toBeInTheDocument();
+  });
 });

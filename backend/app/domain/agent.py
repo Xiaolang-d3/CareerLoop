@@ -52,6 +52,8 @@ class ModelRequest(BaseModel):
     tools: list[ToolDefinition] = Field(default_factory=list)
     tool_choice: Literal["auto", "required", "none"] = "auto"
     parameters: dict[str, float | int] = Field(default_factory=dict)
+    # Optional per-profile reasoning effort for providers that support it.
+    reasoning_effort: Literal["low", "medium", "high"] | None = None
 
 
 class ModelResponse(BaseModel):
@@ -62,7 +64,7 @@ class ModelResponse(BaseModel):
 
 
 class ModelStreamEvent(BaseModel):
-    type: Literal["text_delta", "completed"]
+    type: Literal["text_delta", "reasoning_delta", "completed"]
     delta: str = ""
     response: ModelResponse | None = None
 
@@ -163,6 +165,7 @@ class AgentStreamEvent(BaseModel):
         "run_started",
         "text_reset",
         "text_delta",
+        "reasoning_delta",
         "agent_event",
         "waiting_user",
         "completed",

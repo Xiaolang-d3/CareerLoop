@@ -359,6 +359,9 @@ async def stream_chat_response(
                 if stream_event.type == "text_delta":
                     partial_content += stream_event.delta
                     await queue.put(("text_delta", {"delta": stream_event.delta}))
+                elif stream_event.type == "reasoning_delta":
+                    if stream_event.delta:
+                        await queue.put(("reasoning_delta", {"delta": stream_event.delta}))
                 elif stream_event.type == "text_reset":
                     partial_content = ""
                     await queue.put(("text_reset", {}))

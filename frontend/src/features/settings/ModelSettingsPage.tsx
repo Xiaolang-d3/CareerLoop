@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { Activity, ChevronDown, Cpu, Gauge, Image, LoaderCircle, RefreshCw, Save, ScanSearch, Wrench } from "lucide-react";
 import { ActionButton } from "../../components/ui/ActionButton";
 import type { AgentSettings, ModelCapabilityFlag, ModelCapabilityReport, ModelServiceMonitor } from "../../types";
+import { connectionProtocolLabel } from "./protocolLabels";
 import "./model-settings.css";
 
 type Props = {
@@ -259,6 +260,7 @@ export function ModelSettingsPage({
                 <option value="ollama">Ollama Chat API</option>
               </select>
               <small>默认自动匹配，服务商有明确要求时再更改。</small>
+              {!editing && savedSettings.model_protocol === "auto" && savedSettings.detected_model_protocol ? <small className="model-detected-protocol">{connectionProtocolLabel("auto", savedSettings.detected_model_protocol)}</small> : null}
               <small>{protocolBaseUrlHelp(effectiveProtocol)}</small>
             </label>
             {discoveryError && <p className="model-capability-error" role="alert">模型列表读取失败：{discoveryError}</p>}
@@ -330,7 +332,7 @@ export function ModelSettingsPage({
               <article><span>成功率 · 24h</span><strong>{monitor?.summary.success_rate == null ? "—" : `${monitor.summary.success_rate}%`}</strong><small>{monitor ? `${monitor.summary.successful_requests} / ${monitor.summary.total_requests} 次成功` : "等待数据"}</small></article>
               <article><span>P95 响应耗时</span><strong>{formatLatency(monitor?.summary.p95_latency_ms ?? null)}</strong><small>平均 {formatLatency(monitor?.summary.average_latency_ms ?? null)}</small></article>
               <article><span>超时次数</span><strong>{monitor?.summary.timeout_count ?? "—"}</strong><small>{monitor?.summary.consecutive_failures ? `当前连续失败 ${monitor.summary.consecutive_failures} 次` : "当前无连续失败"}</small></article>
-              <article><span>当前服务</span><strong className="model-monitor-name">{monitor?.model_name || savedSettings.model_name || "—"}</strong><small>{protocolLabel(monitor?.protocol || resolvedProtocol(savedSettings.model_name, savedSettings.model_protocol, savedSettings.model_base_url))} · {monitor?.base_url || "官方默认地址"}</small></article>
+              <article><span>当前服务</span><strong className="model-monitor-name">{monitor?.model_name || savedSettings.model_name || "—"}</strong><small>{monitor?.protocol_label || protocolLabel(monitor?.protocol || resolvedProtocol(savedSettings.model_name, savedSettings.model_protocol, savedSettings.model_base_url))} · {monitor?.base_url || "官方默认地址"}</small></article>
             </div>
             {monitor?.error_breakdown.length ? <div className="model-monitor-errors"><span>近 24 小时异常</span><div>{monitor.error_breakdown.map((item) => <em key={item.code}>{item.label} {item.count}</em>)}</div></div> : null}
             <div className="model-monitor-events">

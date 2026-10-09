@@ -16,12 +16,40 @@ from ..db import connect
 from ..observability.model_monitor import get_model_monitor_snapshot, record_model_service_event
 from ..observability.model_context import model_call_scope
 from ..models import ModelProviderError, OpenAICompatibleProvider, build_model_provider
-from ..model_protocol import protocol_requires_api_key
+from ..model_protocol import connection_protocol_label, normalize_model_protocol, protocol_requires_api_key
 from .schemas import AgentSettingsIn, ModelCapabilitiesIn, ModelDiscoveryIn
 from .model_contracts import ConnectionCreateIn, ConnectionUpdateIn, DefaultProfileIn, ProfileCreateIn, ProfileUpdateIn
 
 
 router = APIRouter()
+
+
+def _suggested_protocol(connection: dict[str, Any], error_code: str | None) -> str | None:
+    """Machine-readable hint: an explicit Chat Completions connection was rejected."""
+    if error_code == "protocol_unsupported" and normalize_model_protocol(connection.get("model_protocol")) == "openai":
+        return "responses"
+    return None
+
+
+def _same_saved_connection(connection: dict[str, Any], saved: dict[str, Any]) -> bool:
+    """A draft only reuses/records detection when it targets the saved wire identity."""
+    return all(connection.get(key) == saved.get(key) for key in ("model_base_url", "model_protocol", "api_key"))
+
+
+def _provider_for(connection: dict[str, Any], timeout_seconds: float, *, remember: bool = True):
+    from ..agent.model_catalog import detected_protocol_recorder
+
+    if not remember:
+        connection = {**connection, "detected_protocol": None, "connection_id": ""}
+    return build_model_provider(
+        api_key=connection["api_key"],
+        model=connection["model_name"],
+        base_url=connection["model_base_url"] or None,
+        timeout_seconds=timeout_seconds,
+        protocol=connection.get("model_protocol", "auto"),
+        detected_protocol=connection.get("detected_protocol"),
+        on_protocol_detected=detected_protocol_recorder(connection),
+    )
 
 
 def _diagnostic_timeout() -> float:
@@ -164,16 +192,15 @@ async def model_connection_check(connection_id: str) -> dict[str, Any]:
 
 @router.post("/agent/models/discover")
 async def discover_models(payload: ModelDiscoveryIn) -> dict[str, Any]:
+    saved = get_model_connection()
     try:
-        connection = resolve_model_connection(
-            payload.model_dump(exclude_unset=True), saved=get_model_connection()
-        )
+        connection = resolve_model_connection(payload.model_dump(exclude_unset=True), saved=saved)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return await _discover_connection(connection)
+    return await _discover_connection(connection, remember=_same_saved_connection(connection, saved))
 
 
-async def _discover_connection(connection: dict[str, Any]) -> dict[str, Any]:
+async def _discover_connection(connection: dict[str, Any], *, remember: bool = True) -> dict[str, Any]:
     api_key = connection["api_key"]
     base_url = connection["model_base_url"]
     model_name = connection["model_name"]
@@ -182,13 +209,7 @@ async def _discover_connection(connection: dict[str, Any]) -> dict[str, Any]:
     if protocol_requires_api_key(resolved_protocol) and not api_key:
         raise HTTPException(status_code=400, detail="请先填写或保存 API Key")
 
-    provider = build_model_provider(
-        api_key=api_key,
-        model=model_name,
-        base_url=base_url or None,
-        timeout_seconds=min(get_settings().model_timeout_seconds, 20),
-        protocol=model_protocol,
-    )
+    provider = _provider_for(connection, min(get_settings().model_timeout_seconds, 20), remember=remember)
     try:
         with model_call_scope(connection, stage="discover"):
             async with asyncio.timeout(_diagnostic_timeout()):
@@ -196,9 +217,10 @@ async def _discover_connection(connection: dict[str, Any]) -> dict[str, Any]:
     except TimeoutError as exc:
         raise HTTPException(status_code=504, detail="读取模型列表超时，请重试或手动填写模型名称") from exc
     except ModelProviderError as exc:
+        suggested = _suggested_protocol(connection, exc.code)
         raise HTTPException(
             status_code=503 if exc.retryable else 400,
-            detail=str(exc),
+            detail={"message": str(exc), "code": exc.code, "suggested_protocol": suggested} if suggested else str(exc),
         ) from exc
     except Exception as exc:
         # 识别模型是配置类操作，未预期异常也要给出可读原因，不能冒泡成 500。
@@ -246,7 +268,10 @@ def model_capabilities_get(model_name: str = "") -> dict[str, Any]:
             model_name.strip() or connection["model_name"],
             connection.get("model_protocol", "auto"),
             connection["model_base_url"], connection["api_key"],
-        ),
+        ) or (connection.get("detected_protocol") if not model_name.strip() or model_name.strip() == connection["model_name"] else None),
+    )
+    report["protocol_label"] = connection_protocol_label(
+        connection.get("model_protocol", "auto"), report.get("actual_protocol"), report["model_name"], connection["model_base_url"],
     )
     return {**report, "connection_id": connection.get("connection_id", ""),
             "config_revision": connection.get("config_revision", 0)}
@@ -254,12 +279,12 @@ def model_capabilities_get(model_name: str = "") -> dict[str, Any]:
 
 @router.post("/agent/models/capabilities")
 async def model_capabilities_probe(payload: ModelCapabilitiesIn) -> dict[str, Any]:
+    saved = get_model_connection()
     try:
-        connection = resolve_model_connection(
-            payload.model_dump(exclude_unset=True), saved=get_model_connection()
-        )
+        connection = resolve_model_connection(payload.model_dump(exclude_unset=True), saved=saved)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    remember = _same_saved_connection(connection, saved)
     settings = get_settings()
     model_name = connection["model_name"]
     base_url = connection["model_base_url"]
@@ -281,18 +306,13 @@ async def model_capabilities_probe(payload: ModelCapabilitiesIn) -> dict[str, An
         report["probe_error"] = "请先填写或保存 API Key"
         return report
 
-    provider = build_model_provider(
-        api_key=api_key,
-        model=model_name,
-        base_url=base_url or None,
-        timeout_seconds=min(settings.model_timeout_seconds, 20),
-        protocol=model_protocol,
-    )
+    provider = _provider_for(connection, min(settings.model_timeout_seconds, 20), remember=remember)
     try:
         with model_call_scope(connection, stage="vision_probe"):
             async with asyncio.timeout(_diagnostic_timeout()):
                 report["vision"] = await provider.probe_vision()
         apply_actual_protocol(report, provider.name, base_url)
+        report["protocol_label"] = connection_protocol_label(model_protocol, provider.name, model_name, base_url)
         report["probed"] = True
         report["probe_error"] = None
     except TimeoutError:
@@ -362,13 +382,7 @@ async def _check_scoped_connection(connection: dict[str, Any]) -> dict[str, Any]
             "check_error_message": error_message,
         }
 
-    provider = build_model_provider(
-        api_key=connection["api_key"],
-        model=connection["model_name"],
-        base_url=connection["model_base_url"] or None,
-        timeout_seconds=get_settings().model_timeout_seconds,
-        protocol=connection.get("model_protocol", "auto"),
-    )
+    provider = _provider_for(connection, get_settings().model_timeout_seconds)
     available = False
     check_error_code: str | None = None
     check_error_message: str | None = None
@@ -409,4 +423,5 @@ async def _check_scoped_connection(connection: dict[str, Any]) -> dict[str, Any]
         "config_revision": connection.get("config_revision", 0),
         "check_error_code": check_error_code,
         "check_error_message": check_error_message,
+        "suggested_protocol": _suggested_protocol(connection, check_error_code),
     }
