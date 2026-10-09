@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import sqlite3
 import threading
 from pathlib import Path
 from typing import Any
@@ -250,7 +251,8 @@ def get_agent_settings(db_path: str | Path | None = None) -> dict[str, Any]:
     with _settings_lock(db_path):
         try:
             return public_default_agent_settings(db_path)
-        except (ValueError, OSError):
+        except (ValueError, OSError, sqlite3.Error):
+            # Uninitialised or unreadable workspace: fall back to environment config.
             return _settings_fallback(get_settings())
 
 

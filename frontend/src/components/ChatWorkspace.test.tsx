@@ -165,9 +165,9 @@ describe("ChatWorkspace", () => {
     expect(screen.getByRole("button", { name: "收起代码" })).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(screen.getByRole("button", { name: "复制" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(`${code}\n`));
-    expect(screen.getByRole("button", { name: "已复制" })).toBeInTheDocument();
+    const copied = await screen.findByRole("button", { name: "已复制" });
     writeText.mockRejectedValueOnce(new Error("clipboard denied"));
-    fireEvent.click(screen.getByRole("button", { name: "已复制" }));
+    fireEvent.click(copied);
     await waitFor(() => expect(screen.getByRole("button", { name: "复制失败，请重试" })).toBeInTheDocument());
   });
 
