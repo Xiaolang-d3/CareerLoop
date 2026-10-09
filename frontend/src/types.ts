@@ -93,10 +93,14 @@ export type ModelConnection = {
   name: string;
   model_base_url: string;
   model_protocol: ModelProtocol;
+  /** Protocol that auto negotiation actually settled on for this connection. */
+  detected_protocol?: ResolvedModelProtocol | null;
+  protocol_label?: string;
   api_key_configured: boolean;
   enabled: boolean;
   revision: number;
 };
+export type ReasoningEffort = "low" | "medium" | "high";
 export type ModelProfile = {
   id: string;
   connection_id: string;
@@ -106,6 +110,7 @@ export type ModelProfile = {
   parameters?: Record<string, unknown> | null;
   capabilities?: Record<string, unknown> | null;
   context_limit?: number | null;
+  reasoning_effort?: ReasoningEffort | null;
 };
 export type ModelCatalog = {
   connections: ModelConnection[];
@@ -127,6 +132,8 @@ export type AgentSettings = {
   model_base_url: string;
   model_protocol: ModelProtocol;
   resolved_model_protocol?: ResolvedModelProtocol;
+  detected_model_protocol?: ResolvedModelProtocol | null;
+  model_protocol_label?: string;
   api_key: string;
   api_key_configured: boolean;
   connection_id?: string;
@@ -184,6 +191,9 @@ export type ModelServiceMonitor = {
   model_name: string;
   base_url: string;
   protocol: ResolvedModelProtocol;
+  configured_protocol?: ModelProtocol;
+  detected_protocol?: ResolvedModelProtocol | null;
+  protocol_label?: string;
   api_key_configured: boolean;
   window_hours: number;
   summary: {
@@ -218,6 +228,8 @@ export type ModelServiceCheck = ModelServiceMonitor & {
   available: boolean;
   check_error_code: string | null;
   check_error_message: string | null;
+  /** Machine-readable hint, e.g. "responses" when Chat Completions was rejected. */
+  suggested_protocol?: ResolvedModelProtocol | null;
 };
 
 export type AgentOperationsSnapshot = {

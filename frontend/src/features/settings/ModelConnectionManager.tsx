@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Plus, RefreshCw } from "lucide-react";
-import type { createApiClient } from "../../api/client";
-import type { ModelCatalog, ModelConnection, ModelProtocol } from "../../types";
+import { ApiError, type createApiClient } from "../../api/client";
+import type { ModelCatalog, ModelConnection, ModelProtocol, ModelServiceCheck, ReasoningEffort } from "../../types";
+import { connectionProtocolLabel, REASONING_EFFORT_OPTIONS } from "./protocolLabels";
 import "./model-connections.css";
 
 type Draft = { name: string; model_base_url: string; model_protocol: ModelProtocol; api_key: string; model_name: string };
@@ -26,6 +27,9 @@ export function ModelConnectionManager({ catalog, loading, busy, error, defaultL
   const [diagnosticMessage, setDiagnosticMessage] = useState("");
   const [notice, setNotice] = useState("");
   const [archiveCandidate, setArchiveCandidate] = useState<string | null>(null);
+  // Set when a check/discovery says this model rejects Chat Completions.
+  const [protocolSuggestion, setProtocolSuggestion] = useState<string | null>(null);
+  const [recheckConnectionId, setRecheckConnectionId] = useState<string | null>(null);
   const diagnosticRef = useRef<{ id: number; controller: AbortController | null }>({ id: 0, controller: null });
   const currentConnection = catalog.connections.find(item => item.id === selectedId && item.enabled) ?? null;
   const defaultProfile = catalog.profiles.find(item => item.id === catalog.default_profile_id);
@@ -34,9 +38,15 @@ export function ModelConnectionManager({ catalog, loading, busy, error, defaultL
   useEffect(() => {
     diagnosticRef.current.id += 1;
     diagnosticRef.current.controller?.abort();
-    setCatalogModels([]); setDiagnosticMessage(""); setDiagnosticBusy(false);
+    setCatalogModels([]); setDiagnosticMessage(""); setDiagnosticBusy(false); setProtocolSuggestion(null);
     return () => { diagnosticRef.current.id += 1; diagnosticRef.current.controller?.abort(); };
   }, [selectedId, currentConnection?.revision, fetchJson]);
+  useEffect(() => {
+    // Re-run the check once the switched connection revision has arrived.
+    if (!recheckConnectionId || busy || currentConnection?.id !== recheckConnectionId || currentConnection.model_protocol !== "responses") return;
+    setRecheckConnectionId(null);
+    void diagnose("check");
+  }, [recheckConnectionId, busy, currentConnection?.id, currentConnection?.revision, currentConnection?.model_protocol]);
 
   function closeEditor() { setEditor(null); setDraft({ ...blankDraft }); }
   function editConnection(connection?: ModelConnection) {
@@ -70,23 +80,47 @@ export function ModelConnectionManager({ catalog, loading, busy, error, defaultL
       setModelName(""); setNotice("模型已添加，可以设为默认或在对话中选择。");
     }
   }
+  async function setReasoningEffort(profileId: string, revision: number, value: string) {
+    if (busy) return;
+    const effort = (value || null) as ReasoningEffort | null;
+    if (await onMutate(`/agent/model-profiles/${encodeURIComponent(profileId)}`, "PATCH", { reasoning_effort: effort, expected_revision: revision })) {
+      setNotice("推理强度已保存，从下一次对话生效。");
+    }
+  }
+  async function switchToResponses() {
+    if (!currentConnection || busy) return;
+    const connectionId = currentConnection.id;
+    if (await onMutate(`/agent/model-connections/${encodeURIComponent(connectionId)}`, "PATCH", { model_protocol: "responses", expected_revision: currentConnection.revision })) {
+      setProtocolSuggestion(null);
+      setNotice("已改用 OpenAI Responses API，正在重新检测此连接…");
+      setRecheckConnectionId(connectionId);
+    }
+  }
   async function diagnose(kind: "discover" | "check") {
     if (!currentConnection || busy || diagnosticBusy) return;
     diagnosticRef.current.controller?.abort();
     const id = ++diagnosticRef.current.id;
     const controller = new AbortController(); diagnosticRef.current.controller = controller;
     const connectionId = currentConnection.id;
-    setDiagnosticBusy(true); setDiagnosticMessage("");
+    setDiagnosticBusy(true); setDiagnosticMessage(""); setProtocolSuggestion(null);
     const current = () => diagnosticRef.current.id === id && !controller.signal.aborted;
     try {
       if (kind === "discover") {
         const result = await fetchJson<{ models: string[] }>(`/agent/model-connections/${encodeURIComponent(connectionId)}/discover`, { method: "POST", signal: controller.signal });
         if (current()) { setCatalogModels(Array.from(new Set(result.models))); setDiagnosticMessage(`已读取 ${result.models.length} 个模型，是否可用以实际调用为准。`); }
       } else {
-        const result = await fetchJson<{ available: boolean; check_error_message?: string | null }>(`/agent/model-connections/${encodeURIComponent(connectionId)}/check`, { method: "POST", signal: controller.signal });
-        if (current()) setDiagnosticMessage(result.available ? "连接检测成功。" : result.check_error_message || "连接检测未通过。");
+        const result = await fetchJson<Pick<ModelServiceCheck, "available" | "check_error_message" | "suggested_protocol">>(`/agent/model-connections/${encodeURIComponent(connectionId)}/check`, { method: "POST", signal: controller.signal });
+        if (current()) {
+          setDiagnosticMessage(result.available ? "连接检测成功。" : result.check_error_message || "连接检测未通过。");
+          if (!result.available && result.suggested_protocol === "responses") setProtocolSuggestion(connectionId);
+        }
       }
-    } catch (reason) { if (current()) setDiagnosticMessage(reason instanceof Error ? reason.message : "读取连接诊断失败，可手动添加模型。"); }
+    } catch (reason) {
+      if (current()) {
+        setDiagnosticMessage(reason instanceof Error ? reason.message : "读取连接诊断失败，可手动添加模型。");
+        if (reason instanceof ApiError && reason.details?.suggested_protocol === "responses") setProtocolSuggestion(connectionId);
+      }
+    }
     finally { if (current()) setDiagnosticBusy(false); }
   }
   const existingEditor = catalog.connections.find(item => item.id === editor?.id);
@@ -100,12 +134,12 @@ export function ModelConnectionManager({ catalog, loading, busy, error, defaultL
     {loading && !catalog.connections.length ? <p role="status">正在读取连接…</p> : null}
     {!loading && !catalog.connections.some(item => item.enabled) ? <p className="model-connections-hint">还没有可管理的连接，添加服务地址、密钥和首个模型即可。</p> : null}
     <div className="model-connection-list">{catalog.connections.filter(item => item.enabled).map(connection => <article key={connection.id} className={selectedId === connection.id ? "selected" : ""}>
-      <button className="model-connection-select" type="button" aria-pressed={selectedId === connection.id} onClick={() => { setSelectedId(connection.id); setModelName(""); setArchiveCandidate(null); }}><strong>{connection.name || connection.model_base_url || "默认服务"}</strong><small>{connection.model_base_url || "官方默认地址"} · {connection.api_key_configured ? "密钥已配置" : "未配置密钥"}{defaultConnectionId === connection.id ? " · 默认连接" : ""}</small></button>
+      <button className="model-connection-select" type="button" aria-pressed={selectedId === connection.id} onClick={() => { setSelectedId(connection.id); setModelName(""); setArchiveCandidate(null); }}><strong>{connection.name || connection.model_base_url || "默认服务"}</strong><small>{connection.model_base_url || "官方默认地址"} · {connection.api_key_configured ? "密钥已配置" : "未配置密钥"}{defaultConnectionId === connection.id ? " · 默认连接" : ""}</small><small className="model-connection-protocol">接口协议：{connectionProtocolLabel(connection.model_protocol, connection.detected_protocol)}</small></button>
       <div className="model-connection-actions"><button type="button" disabled={busy} onClick={() => editConnection(connection)}>编辑连接</button><button type="button" disabled={busy || connection.id === defaultConnectionId} onClick={() => setArchiveCandidate(connection.id)}>停用连接</button></div>
       {archiveCandidate === connection.id ? <div className="model-archive-confirm"><span>停用后，该连接的模型将无法用于新对话。</span><button type="button" disabled={busy} onClick={async () => { if (await onMutate(`/agent/model-connections/${encodeURIComponent(connection.id)}`, "DELETE")) { setArchiveCandidate(null); if (selectedId === connection.id) setSelectedId(null); } }}>确认停用</button><button type="button" disabled={busy} onClick={() => setArchiveCandidate(null)}>取消</button></div> : null}
-      <div className="model-profile-list">{catalog.profiles.filter(profile => profile.connection_id === connection.id).map(profile => <div key={profile.id}><span><strong>{profile.model_name}</strong><small>{profile.id === catalog.default_profile_id ? "默认模型" : profile.enabled ? "可选择" : "已停用"}</small></span><div><button type="button" disabled={busy || defaultLocked || !profile.enabled || profile.id === catalog.default_profile_id} onClick={() => void setDefault(profile.id)}>设为默认</button><button type="button" disabled={busy || profile.id === catalog.default_profile_id} onClick={() => void onMutate(`/agent/model-profiles/${encodeURIComponent(profile.id)}`, "PATCH", { enabled: !profile.enabled, expected_revision: profile.revision })}>{profile.enabled ? "停用模型" : "启用模型"}</button></div></div>)}</div>
+      <div className="model-profile-list">{catalog.profiles.filter(profile => profile.connection_id === connection.id).map(profile => <div key={profile.id}><span><strong>{profile.model_name}</strong><small>{profile.id === catalog.default_profile_id ? "默认模型" : profile.enabled ? "可选择" : "已停用"}</small></span><div><label className="model-profile-effort"><span>推理强度</span><select aria-label={`${profile.model_name} 推理强度`} title="仅支持推理的模型生效（OpenAI Responses API）" value={profile.reasoning_effort ?? ""} disabled={busy || !profile.enabled} onChange={event => void setReasoningEffort(profile.id, profile.revision, event.target.value)}>{REASONING_EFFORT_OPTIONS.map(option => <option key={option.value || "default"} value={option.value}>{option.label}</option>)}</select></label><button type="button" disabled={busy || defaultLocked || !profile.enabled || profile.id === catalog.default_profile_id} onClick={() => void setDefault(profile.id)}>设为默认</button><button type="button" disabled={busy || profile.id === catalog.default_profile_id} onClick={() => void onMutate(`/agent/model-profiles/${encodeURIComponent(profile.id)}`, "PATCH", { enabled: !profile.enabled, expected_revision: profile.revision })}>{profile.enabled ? "停用模型" : "启用模型"}</button></div></div>)}</div>
     </article>)}</div>
-    {currentConnection ? <div className="model-add-profile"><label htmlFor="additional-model-name">为 {currentConnection.name || "此连接"} 添加模型</label><div><input id="additional-model-name" list="connection-model-suggestions" placeholder="输入模型名称" value={modelName} disabled={busy} onChange={event => setModelName(event.target.value)} /><datalist id="connection-model-suggestions">{catalogModels.map(model => <option key={model} value={model} />)}</datalist><button type="button" disabled={busy || !modelName.trim()} onClick={() => void addModel()}>添加模型</button></div><div className="model-connection-actions"><button type="button" disabled={busy || diagnosticBusy} onClick={() => void diagnose("discover")}><RefreshCw size={13} />读取模型列表</button><button type="button" disabled={busy || diagnosticBusy} onClick={() => void diagnose("check")}>检测此连接</button></div>{diagnosticMessage ? <p role="status">{diagnosticMessage}</p> : null}</div> : null}
+    {currentConnection ? <div className="model-add-profile"><label htmlFor="additional-model-name">为 {currentConnection.name || "此连接"} 添加模型</label><div><input id="additional-model-name" list="connection-model-suggestions" placeholder="输入模型名称" value={modelName} disabled={busy} onChange={event => setModelName(event.target.value)} /><datalist id="connection-model-suggestions">{catalogModels.map(model => <option key={model} value={model} />)}</datalist><button type="button" disabled={busy || !modelName.trim()} onClick={() => void addModel()}>添加模型</button></div><div className="model-connection-actions"><button type="button" disabled={busy || diagnosticBusy} onClick={() => void diagnose("discover")}><RefreshCw size={13} />读取模型列表</button><button type="button" disabled={busy || diagnosticBusy} onClick={() => void diagnose("check")}>检测此连接</button></div>{diagnosticMessage ? <p role="status">{diagnosticMessage}</p> : null}{protocolSuggestion === currentConnection.id ? <div className="model-protocol-suggestion" role="alert"><span>该模型不支持 Chat Completions，改用 OpenAI Responses API</span><button type="button" disabled={busy || diagnosticBusy} onClick={() => void switchToResponses()}>改用 Responses 并重新检测</button></div> : null}</div> : null}
     {editor ? <form className="model-connection-editor" onSubmit={event => { event.preventDefault(); void saveConnection(); }}>
       <h4>{editor.id ? "编辑连接" : "添加连接"}</h4>
       <label>连接名称（可选）<input value={draft.name} disabled={busy} onChange={event => setDraft({ ...draft, name: event.target.value })} placeholder="如工作模型、本地模型" /></label>
