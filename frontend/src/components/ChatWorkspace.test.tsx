@@ -123,7 +123,7 @@ describe("ChatWorkspace", () => {
     const toolbar = screen.getByLabelText("添加资料");
     fireEvent.click(within(toolbar).getByRole("button", { name: "未配置模型，去设置" }));
     expect(props.onOpenModelSettings).toHaveBeenCalledOnce();
-    expect(screen.queryByRole("combobox", { name: "切换模型" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /切换模型/ })).not.toBeInTheDocument();
   });
 
   it("reports message copy success and clipboard failure", async () => {
