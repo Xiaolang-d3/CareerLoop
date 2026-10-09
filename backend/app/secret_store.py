@@ -35,9 +35,9 @@ def _backend() -> str:
     override = (os.getenv("CAREERLOOP_SECRET_BACKEND") or "").strip().lower()
     if override:
         return override
-    host = (os.getenv("BIND_HOST") or "127.0.0.1").strip().strip("[]")
     hosted = (os.getenv("CAREERLOOP_DEPLOYMENT_MODE") or "local").strip().lower() == "hosted"
-    if sys.platform == "darwin" and not hosted and host in {"127.0.0.1", "localhost", "::1"}:
+    # Listening on a LAN interface does not change where local credentials live.
+    if sys.platform == "darwin" and not hosted:
         return "keyring"
     return "environment"
 

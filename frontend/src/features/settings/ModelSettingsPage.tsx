@@ -191,7 +191,7 @@ export function ModelSettingsPage({
   return (
     <section className="model-settings-page">
       {savedSettings.secret_migration_warning ? <p className="model-settings-warning" role="alert">{savedSettings.secret_migration_warning}。旧密钥仍保留在本地数据库中，修复钥匙串后再次保存即可迁移。</p> : null}
-      {storageReadOnly ? <p className="model-settings-warning" role="status">{managedKey ? "当前密钥由服务部署环境提供，页面无法修改；请由服务部署配置更新密钥。" : "本机密钥存储暂不可写。已保存密钥仍可使用；更换密钥前请修复系统钥匙串。"}</p> : null}
+      {storageReadOnly ? <p className="model-settings-warning" role="status">{managedKey ? "当前使用只读环境变量密钥，页面无法更换；本地 macOS 可使用系统钥匙串保存个人密钥。" : "本机密钥存储暂不可写。已保存密钥仍可使用；更换密钥前请修复系统钥匙串。"}</p> : null}
       {saveUnknown ? <p className="model-settings-warning" role="status">保存结果待确认，请重新读取服务端状态；不会自动重复提交。</p> : null}
       <section className="settings-card model-settings-card model-connection-card">
         <div className="settings-card-heading model-connection-heading">
@@ -206,7 +206,7 @@ export function ModelSettingsPage({
         <label>
           <span id="model-api-key-label">API Key</span>
           <input aria-labelledby="model-api-key-label" aria-describedby="model-api-key-help" type="password" autoComplete="new-password" value={settings.api_key} disabled={fieldsBusy || storageReadOnly} placeholder={effectiveProtocol === "ollama" ? "本地 Ollama 可留空" : canReuseStoredKey ? "已配置，留空则继续使用" : "请输入 API Key"} onChange={(event) => changeSettings({ ...settings, api_key: event.target.value })} onBlur={discoverOnBlur} />
-          <small id="model-api-key-help">{effectiveProtocol === "ollama" ? "本地 Ollama 可不填写密钥。" : addressChanged ? "服务地址已更改，请填写该服务的密钥；不会复用旧地址的密钥。" : canReuseStoredKey ? managedKey ? "使用部署环境提供的密钥，页面不显示原文。" : "已保存密钥；留空继续使用，不显示原文。" : "填写服务商提供的密钥。"}</small>
+          <small id="model-api-key-help">{effectiveProtocol === "ollama" ? "本地 Ollama 可不填写密钥。" : addressChanged ? "服务地址已更改，请填写该服务的密钥；不会复用旧地址的密钥。" : canReuseStoredKey ? managedKey ? "当前使用环境变量中的密钥，页面不显示原文。" : "已保存密钥；留空继续使用，不显示原文。" : "填写服务商提供的密钥。"}</small>
         </label>
         <div className="model-name-setting">
           <div className="model-field-heading">

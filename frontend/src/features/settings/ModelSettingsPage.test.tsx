@@ -323,10 +323,16 @@ describe("ModelSettingsPage", () => {
 
   it("explains a managed read-only credential without asking to repair a keychain", () => {
     render(<ModelSettingsPage {...props({ savedSettings: { ...settings, secret_storage_writable: false, api_key_source: "environment" } })} />);
-    expect(screen.getByText("当前密钥由服务部署环境提供，页面无法修改；请由服务部署配置更新密钥。")).toBeInTheDocument();
+    expect(screen.getByText("当前使用只读环境变量密钥，页面无法更换；本地 macOS 可使用系统钥匙串保存个人密钥。")).toBeInTheDocument();
     expect(screen.getByLabelText("API Key")).toBeDisabled();
     expect(screen.getByLabelText("模型名称")).toBeEnabled();
     expect(screen.queryByText(/修复系统钥匙串/)).not.toBeInTheDocument();
+  });
+
+  it("allows replacing an environment key when local keychain storage is writable", () => {
+    render(<ModelSettingsPage {...props({ editing: true, savedSettings: { ...settings, secret_storage: "keyring", secret_storage_writable: true, api_key_source: "environment" } })} />);
+    expect(screen.getByLabelText("API Key")).toBeEnabled();
+    expect(screen.queryByText(/当前使用只读环境变量密钥/)).not.toBeInTheDocument();
   });
 
   it("shows the negotiated protocol for the saved connection and a prediction for a draft", () => {

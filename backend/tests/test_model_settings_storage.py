@@ -258,14 +258,15 @@ def test_secret_references_are_isolated_across_workspaces_with_same_user_id(work
         assert settings.get_agent_settings(path)["connection_id"] == first["connection_id"]
 
 
-def test_local_macos_web_uses_mock_keyring_for_save_and_reread(workspace, monkeypatch):
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1", "0.0.0.0", "::"])
+def test_local_macos_web_uses_mock_keyring_for_save_and_reread(workspace, monkeypatch, host):
     path, _ = workspace
     credentials = {}
     keyring = SimpleNamespace(get_password=lambda service, account: credentials.get((service, account)), set_password=lambda service, account, value: credentials.__setitem__((service, account), value), delete_password=lambda service, account: credentials.pop((service, account), None))
     monkeypatch.setitem(sys.modules, "keyring", keyring)
     monkeypatch.setattr(secret_store.sys, "platform", "darwin")
     monkeypatch.delenv("CAREERLOOP_SECRET_BACKEND")
-    monkeypatch.setenv("BIND_HOST", "127.0.0.1")
+    monkeypatch.setenv("BIND_HOST", host)
     monkeypatch.setenv("CAREERLOOP_DEPLOYMENT_MODE", "local")
     monkeypatch.setenv("CAREERLOOP_DESKTOP", "false")
     assert secret_store._backend() == "keyring"
@@ -274,8 +275,8 @@ def test_local_macos_web_uses_mock_keyring_for_save_and_reread(workspace, monkey
     assert settings.get_model_connection(path)["api_key"] == "audit-fake-old-credential" and len(credentials) == 1
 
 
-@pytest.mark.parametrize("host,mode,platform", [("0.0.0.0", "local", "darwin"), ("127.0.0.1", "hosted", "darwin"), ("127.0.0.1", "local", "linux")])
-def test_hosted_or_nonloopback_default_is_readonly(workspace, monkeypatch, host, mode, platform):
+@pytest.mark.parametrize("host,mode,platform", [("0.0.0.0", "hosted", "darwin"), ("127.0.0.1", "hosted", "darwin"), ("127.0.0.1", "local", "linux")])
+def test_hosted_or_unsupported_platform_default_is_readonly(workspace, monkeypatch, host, mode, platform):
     path, _ = workspace
     monkeypatch.delenv("CAREERLOOP_SECRET_BACKEND")
     monkeypatch.setattr(secret_store.sys, "platform", platform)
