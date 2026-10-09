@@ -128,15 +128,11 @@ test("AI workspace keeps one reading axis and switches history rail by breakpoin
   }
 });
 
-test("retired career routes resolve only to the current product surfaces", async ({ page }) => {
-  for (const [legacyRoute, expectedRoute] of [
-    ["/#/opportunities", /#\/chat(?:\/\d+)?$/],
-    ["/#/interview-prep", /#\/chat(?:\/\d+)?$/],
-    ["/#/projects", /#\/library$/],
-    ["/#/knowledge", /#\/library$/]
-  ] as const) {
+test("retired career routes are not recognized and open home", async ({ page }) => {
+  for (const legacyRoute of ["/#/opportunities", "/#/interview-prep", "/#/projects", "/#/knowledge"]) {
     await page.goto(legacyRoute);
-    await expect(page).toHaveURL(expectedRoute);
+    await expect(page).toHaveURL(/#\/home$/);
+    await expect(page.getByRole("heading", { name: /读者/ })).toBeVisible();
   }
   await expect(page.getByText("职位机会", { exact: true })).toHaveCount(0);
 });

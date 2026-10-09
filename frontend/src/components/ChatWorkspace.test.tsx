@@ -307,7 +307,7 @@ describe("ChatWorkspace", () => {
     expect(screen.getByRole("button", { name: "重命名对话" })).toHaveTextContent("围绕一个项目追问我");
     expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();
     expect(screen.queryByText("准备中")).not.toBeInTheDocument();
-    expect(screen.queryByText("CareerLoop · 面试准备")).not.toBeInTheDocument();
+    expect(screen.queryByText("灯灯 · 面试准备")).not.toBeInTheDocument();
   });
 
   it("continues an interrupted durable run through the retry callback", () => {

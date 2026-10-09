@@ -1,4 +1,4 @@
-/* CareerLoop visual language: confident midnight, soft lilac, and warm paper.
+/* 灯灯 visual language: confident midnight, soft lilac, and warm paper.
    Chat empty welcome and composer belong in ChatWorkspace.css. */
 :root {
   --color-bg: #f7f6fb;
@@ -711,7 +711,7 @@ html:has(.content.chat-content) { scrollbar-gutter: auto; }
 
 /* Empty-state drafts and composer height live in ChatWorkspace.css */
 
-/* Remap leftover CareerLoop green surfaces to CareerLoop tokens. */
+/* Remap leftover green surfaces to 灯灯 tokens. */
 :root {
   --green: var(--color-brand);
   --green-strong: var(--color-brand-strong);

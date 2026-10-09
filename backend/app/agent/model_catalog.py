@@ -398,6 +398,11 @@ def public_default_agent_settings(db_path: str | Path | None = None) -> dict[str
     result = {name: value for name, value in row.items() if name not in {"model_api_key", "model_secret_ref", "model_config_initialized"}}
     if result.get("display_name") in {"CareerLoop", "BossCopilot"}:
         result["display_name"] = settings.DEFAULT_AGENT_SETTINGS["display_name"]
+        with connect(db_path) as conn:
+            conn.execute(
+                "UPDATE agent_settings SET display_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1",
+                (result["display_name"],),
+            )
     for field in settings._MEMORY_FIELDS:
         result[field] = bool(result[field])
     result.update(model_name=profile["model_name"], model_base_url=connection["base_url"], configured_model_base_url=connection["base_url"], model_protocol=connection["protocol"],

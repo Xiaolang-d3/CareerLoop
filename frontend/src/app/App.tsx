@@ -144,10 +144,7 @@ export function App({
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [avatarEpoch, setAvatarEpoch] = useState(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readPreference("careerloop-sidebar", userEmail) === "collapsed");
-  const [appRoute, setAppRoute] = useState<AppRoute>(() => initialAppRoute(
-    window.location.hash,
-    readPreference("careerloop-view", userEmail)
-  ));
+  const [appRoute, setAppRoute] = useState<AppRoute>(() => initialAppRoute(window.location.hash));
   const activeView: ViewKey = appRoute.section;
   const currentConversationIdRef = useRef<number | null>(null);
   const [visibleMessageCount, setVisibleMessageCount] = useState(12);
@@ -317,16 +314,13 @@ export function App({
   }
 
   useEffect(() => {
-    const canonicalHash = appRouteHash(initialAppRoute(
-      window.location.hash,
-      readPreference("careerloop-view", userEmail)
-    ));
+    const canonicalHash = appRouteHash(initialAppRoute(window.location.hash));
     if (window.location.hash !== canonicalHash) {
       window.history.replaceState(null, "", canonicalHash);
     }
     function syncRoute() {
       if (isProductIntroHash(window.location.hash)) return;
-      const next = parseAppHash(window.location.hash) ?? { section: "chat" as const };
+      const next = initialAppRoute(window.location.hash);
       const canonicalHash = appRouteHash(next);
       if (window.location.hash !== canonicalHash) {
         window.history.replaceState(null, "", canonicalHash);
@@ -801,7 +795,7 @@ export function App({
         await fetchJson("/system/database-rebuild", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ confirmation: "确认重建 CareerLoop 2.0 数据库" })
+          body: JSON.stringify({ confirmation: "确认重建灯灯数据库" })
         });
       }
       setDatabaseReady(true);

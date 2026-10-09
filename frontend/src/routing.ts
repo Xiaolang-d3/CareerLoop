@@ -15,23 +15,8 @@ export function parseAppHash(hash: string): AppRoute | null {
   const value = hash.replace(/^#/, "");
   const [rawPath] = value.split("?", 2);
   const path = rawPath.replace(/^\//, "").replace(/\/$/, "");
-  if (path === "search") return { section: "chat" };
-  if (path === "library") return { section: "settings", page: "library" };
-  if (path === "workspace") return { section: "chat" };
-  if (path === "opportunities" || path.startsWith("opportunities/")) return { section: "chat" };
-  if (path === "workbench" || path.startsWith("workbench/")) return { section: "chat" };
-  if (path === "project") return { section: "settings", page: "library" };
-  const projectLabMatch = path.match(/^project\/([^/]+)(?:\/(architecture|materials|interview))?$/);
-  if (projectLabMatch) return { section: "settings", page: "library" };
-  if (path === "interview-prep") return { section: "chat" };
-  if (path === "projects") return { section: "settings", page: "library" };
-  const projectRoute = path.match(/^projects\/([^/]+)(?:\/(questions|knowledge|gaps)(?:\/([^/]+))?)?$/);
-  if (projectRoute) return { section: "settings", page: "library" };
-  if (path === "knowledge") return { section: "settings", page: "library" };
-  const knowledgeRoute = path.match(/^knowledge\/([^/]+)(?:\/([^/]+))?$/);
-  if (knowledgeRoute) return { section: "settings", page: "library" };
-  if (path === "interview-records") return { section: "chat" };
   if (path === "home" || path === "dashboard") return { section: "dashboard" };
+  if (path === "library") return { section: "settings", page: "library" };
   if (path === "chat") return { section: "chat" };
   const chatRoute = path.match(/^chat\/(\d+)$/);
   if (chatRoute) return { section: "chat", conversationId: Number(chatRoute[1]) };
@@ -42,14 +27,11 @@ export function parseAppHash(hash: string): AppRoute | null {
   if (path === "settings/appearance") return { section: "settings", page: "appearance" };
   if (path === "settings/agent") return { section: "settings", page: "agent" };
   if (path === "settings/account") return { section: "settings", page: "account" };
-  if (path === "settings/profile" || path === "evidence") return { section: "settings", page: "library" };
   return null;
 }
 
-export function initialAppRoute(hash: string, _legacyView: string | null): AppRoute {
-  const parsed = parseAppHash(hash);
-  if (parsed) return parsed;
-  return { section: "dashboard" };
+export function initialAppRoute(hash: string): AppRoute {
+  return parseAppHash(hash) ?? { section: "dashboard" };
 }
 
 export function appRouteHash(route: AppRoute): string {

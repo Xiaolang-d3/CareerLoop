@@ -26,7 +26,7 @@ async def lifespan(_: FastAPI):
     yield
 
 app = FastAPI(
-    title="CareerLoop API",
+    title="灯灯 API",
     version=APP_VERSION,
     docs_url="/docs" if _settings.api_docs_enabled else None,
     redoc_url="/redoc" if _settings.api_docs_enabled else None,

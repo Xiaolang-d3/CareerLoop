@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for CareerLoop's main window",
+  "description": "Capability for 灯灯 main window",
   "windows": [
     "main"
   ],

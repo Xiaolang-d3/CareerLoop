@@ -49,7 +49,7 @@ static int runtime_path(char *destination, size_t size) {
 int main(int argc, char **argv) {
     char runtime[PATH_MAX];
     if (runtime_path(runtime, sizeof(runtime)) != 0) {
-        perror("CareerLoop desktop runtime was not found");
+        perror("灯灯 desktop runtime was not found");
         return 127;
     }
 
@@ -65,7 +65,7 @@ int main(int argc, char **argv) {
     child_argv[argc] = NULL;
 
     execv(runtime, child_argv);
-    perror("Unable to start CareerLoop desktop runtime");
+    perror("Unable to start 灯灯 desktop runtime");
     free(child_argv);
     return 126;
 }
