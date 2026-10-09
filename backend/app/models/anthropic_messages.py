@@ -11,6 +11,7 @@ from ..agent.settings import get_agent_settings, persona_prompt
 from ..domain import ModelRequest, ModelResponse, ModelStreamEvent, ModelUsage, ToolCall
 from ..observability.model_monitor import record_model_service_event
 from .base import ModelProviderError
+from .validation import upstream_error_detail, validate_diagnostic_response
 from .openai_compatible import (
     SYSTEM_PROMPT,
     _ACCOUNT_POOL_MARKERS,
@@ -175,6 +176,7 @@ class AnthropicMessagesProvider:
             self._raise_for_status(response)
             payload = response.json()
             result = self._response_from_payload(payload)
+            validate_diagnostic_response(result, payload, self.name)
         except ModelProviderError as error:
             self._record_event("health_check", started_at, error=error)
             raise
@@ -214,11 +216,17 @@ class AnthropicMessagesProvider:
         try:
             response = await self._client.post(self.messages_url, json=body)
             self._raise_for_status(response)
+            payload = response.json()
+            result = self._response_from_payload(payload)
+            validate_diagnostic_response(result, payload, self.name)
+        except ModelProviderError as error:
+            self._record_event("health_check", started_at, error=error)
+            raise
         except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError, ValueError) as exc:
             error = self._provider_error(exc)
             self._record_event("health_check", started_at, error=error)
             status_code = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
-            if _looks_like_vision_rejection(str(exc).lower(), status_code):
+            if _looks_like_vision_rejection(upstream_error_detail(exc), status_code):
                 return {"status": "unsupported", "source": "probe", "detail": "服务拒绝了图片输入，当前模型不支持多模态"}
             raise error from exc
         self._record_event("health_check", started_at)

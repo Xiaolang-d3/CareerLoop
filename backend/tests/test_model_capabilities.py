@@ -24,7 +24,7 @@ class ModelCapabilityInferenceTest(unittest.TestCase):
         self.assertEqual(infer_vision("gpt-3.5-turbo")["status"], "unsupported")
         self.assertEqual(infer_vision("custom-hosted-model")["status"], "unknown")
         self.assertEqual(infer_tools("text-embedding-3-small")["status"], "unsupported")
-        self.assertEqual(infer_tools("gpt-5.5")["status"], "supported")
+        self.assertEqual(infer_tools("gpt-5.5")["status"], "unknown")
 
     def test_model_list_marks_the_configured_default(self) -> None:
         items = build_model_list(
@@ -53,6 +53,8 @@ class ModelCapabilityInferenceTest(unittest.TestCase):
         report = infer_model_capabilities("gpt-4o", provider="openai")
         self.assertEqual(report["vision"]["status"], "supported")
         self.assertEqual(report["streaming"]["source"], "client")
+        self.assertEqual(report["streaming"]["status"], "unknown")
+        self.assertEqual(report["tools"]["status"], "unknown")
         self.assertFalse(report["probed"])
         self.assertNotIn("score", report)
         self.assertNotIn("87", str(report))

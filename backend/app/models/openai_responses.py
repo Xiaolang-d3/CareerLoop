@@ -10,6 +10,7 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError, Authenti
 from ..agent.settings import get_agent_settings, persona_prompt
 from ..domain import ModelRequest, ModelResponse, ModelStreamEvent, ModelUsage, ToolCall
 from .base import ModelProviderError
+from .validation import upstream_error_detail, validate_diagnostic_response
 from .openai_compatible import OpenAICompatibleProvider, SYSTEM_PROMPT, _TINY_PNG_DATA_URL, _looks_like_vision_rejection
 
 
@@ -36,6 +37,9 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
             error = self._provider_error(exc)
             self._record_event("generate", started_at, error=error)
             raise error from exc
+        except ModelProviderError as error:
+            self._record_event("generate", started_at, error=error)
+            raise
         except (ValueError, TypeError, AttributeError, json.JSONDecodeError) as exc:
             error = ModelProviderError("provider_error", "模型服务返回了无法解析的 Responses API 响应")
             self._record_event("generate", started_at, error=error)
@@ -95,6 +99,11 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
                 max_output_tokens=16,
                 store=False,
             )
+            result = self._response_from_response(response)
+            validate_diagnostic_response(result, response, self.name)
+        except ModelProviderError as error:
+            self._record_event("health_check", started_at, error=error)
+            raise
         except _OPENAI_ERRORS as exc:
             error = self._provider_error(exc)
             self._record_event("health_check", started_at, error=error)
@@ -110,7 +119,7 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
     async def probe_vision(self) -> dict[str, str]:
         started_at = perf_counter()
         try:
-            await self._client.responses.create(
+            response = await self._client.responses.create(
                 model=self._model,
                 input=[
                     {
@@ -124,10 +133,15 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
                 max_output_tokens=16,
                 store=False,
             )
+            result = self._response_from_response(response)
+            validate_diagnostic_response(result, response, self.name)
+        except ModelProviderError as error:
+            self._record_event("health_check", started_at, error=error)
+            raise
         except _OPENAI_ERRORS as exc:
             error = self._provider_error(exc)
             self._record_event("health_check", started_at, error=error)
-            if _looks_like_vision_rejection(str(exc).lower(), getattr(exc, "status_code", None)):
+            if _looks_like_vision_rejection(upstream_error_detail(exc), getattr(exc, "status_code", None)):
                 return {"status": "unsupported", "source": "probe", "detail": "服务拒绝了图片输入，当前模型不支持多模态"}
             raise error from exc
         self._record_event("health_check", started_at)
@@ -204,8 +218,12 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
         return [{"role": "assistant" if message.role == "assistant" else "user", "content": message.content}]
 
     def _response_from_response(self, response: Any) -> ModelResponse:
+        output = getattr(response, "output", None)
+        status = getattr(response, "status", None)
+        if not isinstance(output, list) or status not in {"completed", "incomplete"}:
+            raise ModelProviderError("invalid_provider_response", "模型服务返回了无法解析的 Responses API 响应")
         tool_calls: list[ToolCall] = []
-        for item in getattr(response, "output", None) or []:
+        for item in output:
             if getattr(item, "type", "") != "function_call":
                 continue
             try:

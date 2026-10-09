@@ -81,7 +81,19 @@ CREATE TABLE IF NOT EXISTS agent_settings (
                 model_base_url TEXT NOT NULL DEFAULT '',
                 model_protocol TEXT NOT NULL DEFAULT 'auto',
                 model_api_key TEXT NOT NULL DEFAULT '',
+                connection_id TEXT NOT NULL DEFAULT '',
+                config_revision INTEGER NOT NULL DEFAULT 0,
+                last_save_request_id TEXT NOT NULL DEFAULT '',
+                model_secret_ref TEXT NOT NULL DEFAULT '',
+                model_config_initialized INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+CREATE TABLE IF NOT EXISTS model_settings_requests (
+                request_id TEXT PRIMARY KEY,
+                payload_fingerprint TEXT NOT NULL,
+                saved_revision INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
 CREATE TABLE IF NOT EXISTS model_service_events (

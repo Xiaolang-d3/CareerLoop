@@ -145,6 +145,8 @@ def get_model_monitor_snapshot(
         None,
     )
     return {
+        "connection_id": connection.get("connection_id", ""),
+        "config_revision": int(connection.get("config_revision", 0)),
         "status": status,
         "status_message": status_message,
         "model_name": model_name,
@@ -192,9 +194,16 @@ def _normalize_base_url(value: str | None) -> str:
 
 def _provider_base_url(value: str | None, protocol: str) -> str:
     normalized = _normalize_base_url(value)
+    if protocol == "gemini":
+        # Import lazily: providers also import the event-recording function.
+        from ..models.gemini_generate_content import GeminiGenerateContentProvider
+
+        return GeminiGenerateContentProvider._normalize_base_url(normalized or None)
     if normalized:
         return normalized
     return {
+        "openai": "https://api.openai.com/v1",
+        "responses": "https://api.openai.com/v1",
         "anthropic": "https://api.anthropic.com",
         "gemini": "https://generativelanguage.googleapis.com/v1beta",
         "ollama": "http://127.0.0.1:11434",
@@ -207,7 +216,7 @@ def _monitor_candidate_pairs(
     base_url: str | None,
 ) -> list[tuple[str, str]]:
     protocols = model_protocol_candidates(model_name, configured_protocol, base_url or "")
-    return [
+    pairs = [
         (
             _provider_base_url(
                 base_url_for_protocol(base_url, candidate, fallback=index > 0),
@@ -217,6 +226,11 @@ def _monitor_candidate_pairs(
         )
         for index, candidate in enumerate(protocols)
     ]
+    # Older OpenAI SDK adapters stored an empty string for the official default.
+    for actual_base, candidate in list(pairs):
+        if candidate in {"openai", "responses"} and actual_base == "https://api.openai.com/v1":
+            pairs.append(("", candidate))
+    return pairs
 
 
 def _service_status(

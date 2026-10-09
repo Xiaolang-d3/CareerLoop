@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from ..config import get_settings
-from ..model_protocol import model_protocol_label, resolve_model_protocol
+from ..model_protocol import PROTOCOL_LABELS, normalize_model_protocol, resolve_model_protocol
 
 CapabilityStatus = Literal["supported", "unsupported", "unknown"]
 CapabilitySource = Literal["model_id", "probe", "client"]
@@ -99,7 +99,7 @@ def infer_vision(model_name: str) -> dict[str, str]:
 
 def infer_streaming(model_name: str, protocol: str = "openai") -> dict[str, str]:
     if _contains(model_name, _NON_CHAT):
-        return _flag("unsupported", "model_id", "该模型 ID 不是对话模型，客户端不会对其发起流式请求")
+        return _flag("unsupported", "model_id", "该模型 ID 通常不是对话模型，不支持对话流式响应")
     if model_name.strip():
         label = {
             "anthropic": "Anthropic Messages",
@@ -107,15 +107,15 @@ def infer_streaming(model_name: str, protocol: str = "openai") -> dict[str, str]
             "ollama": "Ollama Chat",
             "responses": "OpenAI Responses",
         }.get(protocol, "OpenAI 兼容 Chat Completions")
-        return _flag("supported", "client", f"当前 {label} 客户端会对该对话模型发起流式请求")
+        return _flag("unknown", "client", f"当前 {label} 客户端已启用流式请求；服务是否支持尚未验证")
     return _flag("unknown", "client", "尚未填写模型名称")
 
 
 def infer_tools(model_name: str) -> dict[str, str]:
     if _contains(model_name, _NON_CHAT):
-        return _flag("unsupported", "model_id", "该模型 ID 不是对话模型，不会发送 function calling")
+        return _flag("unsupported", "model_id", "该模型 ID 通常不是对话模型，不支持工具调用")
     if model_name.strip():
-        return _flag("supported", "client", "当前客户端会向该对话模型发送工具 / function calling")
+        return _flag("unknown", "client", "当前客户端已启用工具 / function calling；服务是否支持尚未验证")
     return _flag("unknown", "client", "尚未填写模型名称")
 
 
@@ -125,15 +125,21 @@ def infer_model_capabilities(
     provider: str = "openai",
     base_url: str = "",
     protocol: str = "auto",
+    actual_protocol: str | None = None,
 ) -> dict[str, Any]:
     name = model_name.strip()
-    resolved_protocol = resolve_model_protocol(name, protocol, base_url)
+    resolved_protocol = actual_protocol or resolve_model_protocol(name, protocol, base_url)
+    configured_protocol = normalize_model_protocol(protocol)
     return {
         "model_name": name,
-        "provider": provider,
-        "provider_label": provider_label(provider, base_url),
+        "provider": actual_protocol or provider,
+        "provider_label": provider_label(actual_protocol or provider, base_url),
         "protocol": resolved_protocol,
-        "protocol_label": model_protocol_label(name, protocol, base_url),
+        "protocol_label": PROTOCOL_LABELS[resolved_protocol],
+        "configured_protocol": configured_protocol,
+        "predicted_protocol": resolve_model_protocol(name, "auto", base_url),
+        "actual_protocol": actual_protocol,
+        "protocol_source": "negotiated" if actual_protocol else "configured" if configured_protocol != "auto" else "predicted",
         "vision": infer_vision(name),
         "streaming": infer_streaming(name, resolved_protocol),
         "tools": infer_tools(name),
@@ -141,6 +147,23 @@ def infer_model_capabilities(
         "probe_error": None,
         "attachment_vision_enabled": get_settings().attachment_vision_enabled,
     }
+
+
+def apply_actual_protocol(
+    report: dict[str, Any],
+    provider_or_protocol: Any,
+    base_url: str = "",
+) -> dict[str, Any]:
+    """Update the report after a successful operation negotiated its wire format."""
+    protocol = str(getattr(provider_or_protocol, "name", provider_or_protocol))
+    report["provider"] = protocol
+    report["provider_label"] = provider_label(protocol, base_url)
+    report["protocol"] = protocol
+    report["protocol_label"] = PROTOCOL_LABELS[protocol]
+    report["actual_protocol"] = protocol
+    report["protocol_source"] = "negotiated"
+    report["streaming"] = infer_streaming(str(report.get("model_name") or ""), protocol)
+    return report
 
 
 def build_model_list(

@@ -46,7 +46,7 @@ def initialize_workspace(db_path: str | Path | None = None) -> None:
         if version > DB_SCHEMA_VERSION:
             raise ValueError("数据库来自更新版本，请升级应用后打开")
         if tables:
-            if not 1 <= version <= 24:
+            if not 1 <= version <= 25:
                 raise ValueError("未知数据库格式，未修改原文件")
             if version < 24:
                 _backup(path)
@@ -58,6 +58,15 @@ def initialize_workspace(db_path: str | Path | None = None) -> None:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(agent_settings)")}
             if "profile_memory_enabled" in columns:
                 conn.execute("ALTER TABLE agent_settings RENAME COLUMN profile_memory_enabled TO library_memory_enabled")
+            for name, definition in {
+                "connection_id": "TEXT NOT NULL DEFAULT ''",
+                "config_revision": "INTEGER NOT NULL DEFAULT 0",
+                "last_save_request_id": "TEXT NOT NULL DEFAULT ''",
+                "model_secret_ref": "TEXT NOT NULL DEFAULT ''",
+                "model_config_initialized": "INTEGER NOT NULL DEFAULT 0",
+            }.items():
+                if name not in columns:
+                    conn.execute(f"ALTER TABLE agent_settings ADD COLUMN {name} {definition}")
             conn.execute("UPDATE attachments SET kind = CASE kind WHEN 'resume' THEN 'document' WHEN 'job_screenshot' THEN 'image' ELSE kind END")
             for row in conn.execute("SELECT id, payload_json FROM chat_messages WHERE payload_json LIKE '%attachments%'").fetchall():
                 payload = json.loads(row["payload_json"] or "{}")

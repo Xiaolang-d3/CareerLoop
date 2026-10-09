@@ -44,6 +44,8 @@ class AgentSettingsIn(BaseModel):
     model_base_url: str = Field(default="", max_length=500)
     model_protocol: Literal["auto", "openai", "responses", "anthropic", "gemini", "ollama"] = "auto"
     api_key: str = Field(default="", max_length=500)
+    expected_revision: int | None = Field(default=None, ge=0)
+    request_id: str | None = Field(default=None, max_length=120)
 
 class ModelDiscoveryIn(BaseModel):
     model_base_url: str = Field(default="", max_length=500)

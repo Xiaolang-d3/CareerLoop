@@ -5,6 +5,7 @@ from hashlib import sha256
 from typing import Any
 
 from ..domain import ModelRequest, ModelResponse, ModelStreamEvent
+from ..model_protocol import normalize_model_protocol, resolve_model_protocol
 from .base import ModelProviderError
 
 
@@ -19,6 +20,28 @@ def protocol_cache_key(base_url: str | None, model: str, api_key: str) -> str:
 
 def clear_protocol_cache() -> None:
     _SUCCESSFUL_PROTOCOLS.clear()
+
+
+def get_effective_model_protocol(
+    model_name: str,
+    configured: str = "auto",
+    base_url: str = "",
+    api_key: str = "",
+) -> str:
+    """Return a negotiated protocol, or the prediction before negotiation."""
+    return get_negotiated_model_protocol(model_name, configured, base_url, api_key) or resolve_model_protocol(model_name, configured, base_url)
+
+
+def get_negotiated_model_protocol(
+    model_name: str,
+    configured: str = "auto",
+    base_url: str = "",
+    api_key: str = "",
+) -> str | None:
+    """Return only a previously successful auto negotiation, without prediction."""
+    if normalize_model_protocol(configured) != "auto":
+        return None
+    return _SUCCESSFUL_PROTOCOLS.get(protocol_cache_key(base_url, model_name, api_key))
 
 
 class AutoNegotiatingModelProvider:
