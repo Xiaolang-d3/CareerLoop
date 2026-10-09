@@ -61,7 +61,7 @@ async function desktopFormFields(form: FormData): Promise<DesktopFormField[]> {
   return fields;
 }
 
-async function tauriAwareFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+async function tauriAwareFetch(input: RequestInfo | URL, init?: RequestInit, timeoutMs = DEFAULT_API_TIMEOUT_MS): Promise<Response> {
   // Desktop WebView is https://tauri.localhost; browser fetch to http://127.0.0.1
   // is mixed-content blocked. Prefer the Rust sidecar proxy (known apiBase),
   // and fall back to the Tauri HTTP plugin for non-loopback URLs.
@@ -76,16 +76,31 @@ async function tauriAwareFetch(input: RequestInfo | URL, init?: RequestInit): Pr
       const method = (init?.method ?? "GET").toUpperCase();
       const body = typeof init?.body === "string" ? init.body : undefined;
       const formFields = init?.body instanceof FormData ? await desktopFormFields(init.body) : undefined;
+      const requestId = crypto.randomUUID();
+      let onAbort: (() => void) | undefined;
       try {
-        const result = await invoke<DesktopApiResponse>("desktop_api_request", {
+        if (init?.signal?.aborted) throw init.signal.reason ?? new DOMException("Aborted", "AbortError");
+        const pending = invoke<DesktopApiResponse>("desktop_api_request", {
           request: {
             path: `${url.pathname}${url.search}`,
             method,
             body,
             formFields,
             authorization: headers.get("Authorization"),
+            requestId,
+            timeoutMs,
           },
         });
+        const cancelled = new Promise<never>((_resolve, reject) => {
+          onAbort = () => {
+            void invoke("desktop_cancel_api_request", { requestId }).catch(() => undefined);
+            reject(init?.signal?.reason ?? new DOMException("Aborted", "AbortError"));
+          };
+          init?.signal?.addEventListener("abort", onAbort, { once: true });
+          if (init?.signal?.aborted) onAbort();
+        });
+        const result = await Promise.race([pending, cancelled]);
+        if (init?.signal?.aborted) throw init.signal.reason ?? new DOMException("Aborted", "AbortError");
         const responseHeaders = new Headers();
         if (result.contentType) responseHeaders.set("Content-Type", result.contentType);
         if (result.retryAfter) responseHeaders.set("Retry-After", result.retryAfter);
@@ -94,8 +109,11 @@ async function tauriAwareFetch(input: RequestInfo | URL, init?: RequestInit): Pr
           headers: responseHeaders,
         });
       } catch (reason) {
+        if (init?.signal?.aborted) throw init.signal.reason ?? new DOMException("Aborted", "AbortError");
         const detail = reason instanceof Error ? reason.message : String(reason);
         throw new Error(`无法连接本地服务（${url.origin}${url.pathname}）：${detail}`);
+      } finally {
+        if (onAbort) init?.signal?.removeEventListener("abort", onAbort);
       }
     }
     const { fetch: tauriFetch } = await import("@tauri-apps/plugin-http");
@@ -122,7 +140,8 @@ export async function fetchWithTimeout(
   }, timeoutMs);
 
   try {
-    const response = await tauriAwareFetch(input, { ...options, signal: controller.signal });
+    const response = await tauriAwareFetch(input, { ...options, signal: controller.signal }, timeoutMs);
+    if (controller.signal.aborted) throw controller.signal.reason ?? new DOMException("Aborted", "AbortError");
     const authorization = new Headers(options.headers).get("Authorization");
     if (response.status === 401 && authorization?.startsWith("Bearer ")) {
       window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT, { detail: { token: authorization.slice(7) } }));

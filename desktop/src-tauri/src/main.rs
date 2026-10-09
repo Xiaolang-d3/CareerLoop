@@ -1,11 +1,12 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     io::{Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     sync::Mutex,
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::Manager;
 
@@ -251,6 +252,49 @@ fn encode_multipart(fields: Vec<DesktopFormField>) -> Result<(String, Vec<u8>), 
     Ok((boundary, body))
 }
 
+enum ApiTask {
+    Running(Box<dyn FnOnce() + Send>),
+    Cancelled(Instant),
+}
+
+#[derive(Default)]
+struct ApiTasks(Mutex<HashMap<String, ApiTask>>);
+
+impl ApiTasks {
+    fn register(&self, id: String, abort: Box<dyn FnOnce() + Send>) -> bool {
+        let mut tasks = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        tasks.retain(|_, task| !matches!(task, ApiTask::Cancelled(at) if at.elapsed() > Duration::from_secs(60)));
+        if tasks.contains_key(&id) {
+            abort();
+            return false;
+        }
+        tasks.insert(id, ApiTask::Running(abort));
+        true
+    }
+
+    fn cancel(&self, id: String) {
+        let mut tasks = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        match tasks.remove(&id) {
+            Some(ApiTask::Running(abort)) => abort(),
+            _ => {
+                // IPC cancellation can arrive before the request registers.
+                if tasks.len() < 1024 {
+                    tasks.insert(id, ApiTask::Cancelled(Instant::now()));
+                }
+            }
+        }
+    }
+
+    fn finish(&self, id: &str) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
+    }
+}
+
+#[tauri::command]
+fn desktop_cancel_api_request(state: tauri::State<'_, ApiTasks>, request_id: String) {
+    state.cancel(request_id);
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DesktopApiRequest {
@@ -259,11 +303,14 @@ struct DesktopApiRequest {
     body: Option<String>,
     form_fields: Option<Vec<DesktopFormField>>,
     authorization: Option<String>,
+    request_id: Option<String>,
+    timeout_ms: Option<u64>,
 }
 
 #[tauri::command]
 async fn desktop_api_request(
     state: tauri::State<'_, RuntimeConfig>,
+    tasks: tauri::State<'_, ApiTasks>,
     request: DesktopApiRequest,
 ) -> Result<DesktopApiResponse, String> {
     let base = match &state.api_base {
@@ -275,6 +322,21 @@ async fn desktop_api_request(
                 .unwrap_or_else(|| "本地服务地址不可用".to_string()))
         }
     };
+    let id = request.request_id.clone().unwrap_or_else(new_instance_id);
+    let handle = tauri::async_runtime::spawn(perform_api_request(base, request));
+    let abort = handle.inner().abort_handle();
+    if !tasks.register(id.clone(), Box::new(move || abort.abort())) {
+        return Err("请求已取消或请求标识重复".to_string());
+    }
+    let result = handle.await.map_err(|_| "本地请求已取消".to_string());
+    tasks.finish(&id);
+    result?
+}
+
+async fn perform_api_request(
+    base: String,
+    request: DesktopApiRequest,
+) -> Result<DesktopApiResponse, String> {
     if !request.path.starts_with('/') {
         return Err("请求路径必须以 / 开头".to_string());
     }
@@ -288,6 +350,10 @@ async fn desktop_api_request(
     // never route local API traffic through a proxy.
     let client = reqwest::Client::builder()
         .no_proxy()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_millis(
+            request.timeout_ms.unwrap_or(30_000).clamp(1, 300_000),
+        ))
         .build()
         .map_err(|error| format!("创建本地请求客户端失败：{error}"))?;
     let mut builder = match method.as_str() {
@@ -364,7 +430,8 @@ fn main() {
         .plugin(tauri_plugin_http::init())
         .invoke_handler(tauri::generate_handler![
             desktop_runtime_config,
-            desktop_api_request
+            desktop_api_request,
+            desktop_cancel_api_request
         ])
         .setup(|app| {
             let port = reserve_loopback_port()?;
@@ -387,6 +454,7 @@ fn main() {
                 startup_error,
             });
             app.manage(SidecarState(Mutex::new(child)));
+            app.manage(ApiTasks::default());
             app.get_webview_window("main")
                 .ok_or("missing main window")?
                 .show()?;
@@ -409,7 +477,38 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{encode_multipart, health_response_matches, DesktopFormField};
+    use super::{encode_multipart, health_response_matches, ApiTasks, DesktopFormField};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+
+    #[test]
+    fn request_cancellation_aborts_running_and_early_requests() {
+        let tasks = ApiTasks::default();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let flag = cancelled.clone();
+        assert!(tasks.register(
+            "active".into(),
+            Box::new(move || {
+                flag.store(true, Ordering::SeqCst);
+            })
+        ));
+        tasks.cancel("active".into());
+        assert!(cancelled.load(Ordering::SeqCst));
+        tasks.cancel("early".into());
+        let flag = cancelled.clone();
+        cancelled.store(false, Ordering::SeqCst);
+        assert!(!tasks.register(
+            "early".into(),
+            Box::new(move || {
+                flag.store(true, Ordering::SeqCst);
+            })
+        ));
+        assert!(cancelled.load(Ordering::SeqCst));
+        tasks.finish("early");
+        assert!(tasks.0.lock().unwrap().is_empty());
+    }
 
     #[test]
     fn health_requires_matching_service_version_and_instance() {

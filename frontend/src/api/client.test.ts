@@ -71,6 +71,46 @@ describe("fetchWithTimeout", () => {
       delete (window as Window & { __TAURI__?: unknown }).__TAURI__;
     }
   });
+
+  it("times out the desktop bridge and ignores a late unauthorized response", async () => {
+    vi.useFakeTimers();
+    let finish!: (response: unknown) => void;
+    const invoke = vi.fn((command: string) => command === "desktop_cancel_api_request"
+      ? Promise.resolve()
+      : new Promise((resolve) => { finish = resolve; }));
+    const expired = vi.fn();
+    window.addEventListener("careerloop:session-expired", expired);
+    Object.assign(window, { __TAURI__: { core: { invoke } } });
+    try {
+      const result = fetchWithTimeout("http://127.0.0.1:8000/agent/settings", { headers: { Authorization: "Bearer synthetic-token" } }, 10);
+      const assertion = expect(result).rejects.toThrow("请求超时");
+      await vi.advanceTimersByTimeAsync(10);
+      await assertion;
+      const requestId = invoke.mock.calls[0][0] === "desktop_api_request"
+        ? (invoke.mock.calls[0] as unknown as [string, { request: { requestId: string } }])[1].request.requestId : "";
+      expect(invoke).toHaveBeenCalledWith("desktop_cancel_api_request", { requestId });
+      finish({ status: 401, body: "{}", contentType: "application/json" });
+      await Promise.resolve();
+      expect(expired).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener("careerloop:session-expired", expired);
+      delete (window as Window & { __TAURI__?: unknown }).__TAURI__;
+    }
+  });
+
+  it("cancels an active desktop request without treating it as a timeout", async () => {
+    const invoke = vi.fn((command: string) => command === "desktop_cancel_api_request" ? Promise.resolve() : new Promise(() => undefined));
+    Object.assign(window, { __TAURI__: { core: { invoke } } });
+    try {
+      const controller = new AbortController();
+      const result = fetchWithTimeout("http://127.0.0.1:8000/agent/settings", { signal: controller.signal });
+      controller.abort();
+      await expect(result).rejects.toMatchObject({ name: "AbortError" });
+      expect(invoke.mock.calls.some(([command]) => command === "desktop_cancel_api_request")).toBe(true);
+    } finally {
+      delete (window as Window & { __TAURI__?: unknown }).__TAURI__;
+    }
+  });
 });
 
 describe("fetchJson", () => {
