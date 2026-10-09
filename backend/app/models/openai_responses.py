@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+
 from collections.abc import AsyncIterator
 from time import perf_counter
 from typing import Any
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AuthenticationError, RateLimitError
 
+from .parameters import request_parameters
 from ..agent.settings import get_agent_settings, persona_prompt
 from ..domain import ModelRequest, ModelResponse, ModelStreamEvent, ModelUsage, ToolCall
 from .base import ModelProviderError
@@ -169,6 +171,7 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
             "input": input_items,
             "store": False,
         }
+        arguments.update(request_parameters(request.parameters, "max_output_tokens"))
         if request.tools:
             arguments["tools"] = [
                 {

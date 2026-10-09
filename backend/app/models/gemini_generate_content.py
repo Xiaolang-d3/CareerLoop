@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+
 from collections.abc import AsyncIterator
 from time import perf_counter
 from typing import Any
@@ -8,6 +9,7 @@ from urllib.parse import quote
 
 import httpx
 
+from .parameters import request_parameters
 from ..agent.settings import get_agent_settings, persona_prompt
 from ..domain import ModelRequest, ModelResponse, ModelStreamEvent, ModelUsage, ToolCall
 from ..observability.model_monitor import record_model_service_event
@@ -228,6 +230,9 @@ class GeminiGenerateContentProvider:
             "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT + persona_prompt(settings)}]},
             "contents": [self._convert_message(message) for message in request.messages if message.role != "system"],
         }
+        parameters = request_parameters(request.parameters, "maxOutputTokens")
+        if parameters:
+            body["generationConfig"] = parameters
         if request.tools:
             body["tools"] = [
                 {

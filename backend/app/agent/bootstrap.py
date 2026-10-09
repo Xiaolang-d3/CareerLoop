@@ -30,6 +30,7 @@ def _runtime_cache_key(connection: dict[str, Any]) -> tuple[Any, ...]:
         current_user_id(), connection.get("profile_id"), connection.get("profile_revision"),
         connection.get("connection_id"), connection.get("connection_revision"),
         connection["model_name"], connection["model_base_url"], connection.get("model_protocol", "auto"),
+        connection.get("credential_fingerprint"),
     )
 
 

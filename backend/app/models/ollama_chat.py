@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+
 from collections.abc import AsyncIterator
 from time import perf_counter
 from typing import Any
 
 import httpx
 
+from .parameters import request_parameters
 from ..agent.settings import get_agent_settings, persona_prompt
 from ..domain import ModelRequest, ModelResponse, ModelStreamEvent, ModelUsage, ToolCall
 from ..observability.model_monitor import record_model_service_event
@@ -187,6 +189,9 @@ class OllamaChatProvider:
         messages = [{"role": "system", "content": SYSTEM_PROMPT + persona_prompt(settings)}]
         messages.extend(self._convert_message(message) for message in request.messages)
         body: dict[str, Any] = {"model": self._model, "messages": messages}
+        parameters = request_parameters(request.parameters, "num_predict")
+        if parameters:
+            body["options"] = parameters
         if request.tools and request.tool_choice != "none":
             body["tools"] = [
                 {

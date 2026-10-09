@@ -174,6 +174,10 @@ def _credential(row: dict[str, Any], db_path: str | Path | None) -> tuple[str, s
             )
             if updated.rowcount != 1:
                 raise AgentSettingsConflict("设置已更新，请重新读取")
+            conn.execute(
+                "INSERT OR IGNORE INTO model_credential_aliases (reference, secret_ref) VALUES (?, ?)",
+                (f"legacy:{row['connection_id']}", candidate),
+            )
     except Exception:
         if candidate:
             _discard_candidate(candidate, db_path)

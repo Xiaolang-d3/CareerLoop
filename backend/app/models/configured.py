@@ -21,7 +21,12 @@ class ConfiguredModelProvider:
         return self._provider.models_url
 
     def _request(self, request: ModelRequest) -> ModelRequest:
-        return request.model_copy(update={"parameters": {**self._parameters, **request.parameters}})
+        parameters = {**self._parameters, **request.parameters}
+        if "max_output_tokens" in self._parameters and "max_output_tokens" in request.parameters:
+            parameters["max_output_tokens"] = min(
+                self._parameters["max_output_tokens"], request.parameters["max_output_tokens"],
+            )
+        return request.model_copy(update={"parameters": parameters})
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         return await self._provider.generate(self._request(request))

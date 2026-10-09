@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+
 from collections.abc import AsyncIterator
 from time import perf_counter
 from typing import Any
 
 import httpx
 
+from .parameters import request_parameters
 from ..agent.settings import get_agent_settings, persona_prompt
 from ..domain import ModelRequest, ModelResponse, ModelStreamEvent, ModelUsage, ToolCall
 from ..observability.model_monitor import record_model_service_event
@@ -273,6 +275,7 @@ class AnthropicMessagesProvider:
                 if message.role != "system"
             ],
         }
+        body.update(request_parameters(request.parameters, "max_tokens"))
         if request.tools and request.tool_choice != "none":
             body["tools"] = [
                 {

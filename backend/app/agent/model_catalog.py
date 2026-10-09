@@ -78,7 +78,17 @@ def _secret(connection: dict[str, Any], model_name: str, db_path) -> tuple[str, 
     if reference.startswith("legacy:"):
         # Only the existing v26 field may contain a pending old plaintext key;
         # no new connection/profile/version table copies that credential.
-        value = str(settings._row(db_path).get("model_api_key") or "")
+        with connect(db_path) as conn:
+            alias = conn.execute("SELECT secret_ref FROM model_credential_aliases WHERE reference = ?", (reference,)).fetchone()
+        if alias:
+            value = settings.get_secret(alias[0], db_path)
+            if not value:
+                raise SecretStoreUnavailable("历史模型凭证暂不可读取，无法恢复原配置")
+            return value, alias[0].partition(":")[0], ""
+        row = settings._row(db_path)
+        if row["connection_id"] != connection["id"] or row.get("model_secret_ref"):
+            raise SecretStoreUnavailable("历史模型凭证尚未迁移，无法恢复原配置")
+        value = str(row.get("model_api_key") or "")
         return value, "legacy" if value else "none", "旧密钥尚未迁入安全存储，原字段已保留"
     value = settings.get_secret(reference, db_path)
     if not value:
@@ -101,6 +111,8 @@ def _ensure_catalog(db_path) -> None:
         row = settings._initialize_connection(db_path)
         with connect(db_path) as conn:
             if row.get("default_model_profile_id") and conn.execute("SELECT 1 FROM model_profiles WHERE id = ?", (row["default_model_profile_id"],)).fetchone():
+                if row.get("model_api_key") and not row.get("model_secret_ref"):
+                    settings._credential(row, db_path)
                 return
         key, _, _ = settings._credential(row, db_path)
         row = settings._row(db_path)
@@ -161,8 +173,11 @@ def get_profile_connection(profile_id: str | None = None, db_path: str | Path | 
             raise ValueError("运行快照中的模型连接不匹配")
         config_revision = conn.execute("SELECT config_revision FROM agent_settings WHERE id = 1").fetchone()[0]
     api_key, source, warning = _secret(connection, profile["model_name"], db_path)
+    credential_fingerprint = hashlib.sha256(api_key.encode()).hexdigest()
+    if requested.get("credential_fingerprint") and not hmac.compare_digest(requested["credential_fingerprint"], credential_fingerprint):
+        raise SecretStoreUnavailable("运行绑定的模型凭证已改变，无法恢复原配置；请新建任务")
     resolved = resolve_model_connection({"model_name": profile["model_name"], "model_base_url": connection["effective_base_url"], "model_protocol": connection["protocol"], "api_key": api_key})
-    resolved.update(profile_id=profile["id"], connection_id=connection["id"], profile_revision=profile["revision"], connection_revision=connection["revision"], secret_ref=connection["secret_ref"], data_boundary=connection["data_boundary"], parameters=profile["parameters"], capabilities=profile["capabilities"], context_limit=profile["context_limit"], price_per_million_input=profile["price_per_million_input"], price_per_million_output=profile["price_per_million_output"], config_revision=config_revision, connection_configured_base_url=connection["base_url"], api_key_source=source if resolved["api_key"] else "none", secret_migration_warning=warning)
+    resolved.update(profile_id=profile["id"], connection_id=connection["id"], profile_revision=profile["revision"], connection_revision=connection["revision"], secret_ref=connection["secret_ref"], credential_fingerprint=credential_fingerprint, data_boundary=connection["data_boundary"], parameters=profile["parameters"], capabilities=profile["capabilities"], context_limit=profile["context_limit"], price_per_million_input=profile["price_per_million_input"], price_per_million_output=profile["price_per_million_output"], config_revision=config_revision, connection_configured_base_url=connection["base_url"], api_key_source=source if resolved["api_key"] else "none", secret_migration_warning=warning)
     return resolved
 
 
@@ -179,11 +194,19 @@ def _check_revision(record: dict[str, Any], values: dict[str, Any]) -> None:
         raise settings.AgentSettingsConflict("配置已在其他页面更新，请重新读取后保存")
 
 
-def _bridge(conn) -> None:
+def _bridge(conn, db_path, candidates: list[str]) -> None:
     row = dict(conn.execute("SELECT * FROM agent_settings WHERE id = 1").fetchone())
     profile = _profile(conn, row["default_model_profile_id"])
     connection = _connection(conn, profile["connection_id"])
     reference = connection["secret_ref"]
+    legacy_reference = f"legacy:{row['connection_id']}"
+    if row.get("model_api_key") and not row.get("model_secret_ref") and reference != legacy_reference:
+        # Switching defaults or replacing a pending key must preserve the old
+        # version first. Never point its legacy reference at the new credential.
+        if not conn.execute("SELECT 1 FROM model_credential_aliases WHERE reference = ?", (legacy_reference,)).fetchone():
+            preserved = _candidate(row["model_api_key"], row["connection_id"], db_path, candidates)
+            conn.execute("INSERT INTO model_credential_aliases (reference, secret_ref) VALUES (?, ?)", (legacy_reference, preserved))
+        conn.execute("UPDATE agent_settings SET model_api_key = '' WHERE id = 1")
     # Keep a pending old key until its safe migration has actually completed.
     if reference.startswith("legacy:"):
         reference = ""
@@ -210,7 +233,7 @@ def _mutate(action: str, values: dict[str, Any], db_path, operation: Callable) -
                         replay = True
                 if not replay:
                     result = operation(conn, candidates)
-                    _bridge(conn)
+                    _bridge(conn, db_path, candidates)
                     revision = conn.execute("SELECT config_revision FROM agent_settings WHERE id = 1").fetchone()[0]
                     conn.execute("UPDATE agent_settings SET last_save_request_id = ? WHERE id = 1", (request_id,))
                     if request_id:

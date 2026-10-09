@@ -159,7 +159,11 @@ class AgentRuntime:
     def _validate_model_binding(self, selection: dict[str, Any]) -> None:
         if not is_bound_selection(selection) and not is_legacy_selection(selection):
             raise ModelProviderError("model_selection_unavailable", "运行的模型绑定信息不完整，无法恢复")
-        if is_bound_selection(selection) and selection_identity(selection) != selection_identity(self._model_selection):
+        if is_bound_selection(selection) and (
+            selection_identity(selection) != selection_identity(self._model_selection)
+            or (selection.get("credential_fingerprint") and
+                selection["credential_fingerprint"] != self._model_selection.get("credential_fingerprint"))
+        ):
             raise ModelProviderError(
                 "model_selection_unavailable", "运行绑定的模型版本与当前执行器不一致，请使用原配置版本恢复",
             )

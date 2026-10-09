@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+
 from collections.abc import AsyncIterator
 from time import perf_counter
 from typing import Any
@@ -15,6 +16,7 @@ from openai import (
     RateLimitError,
 )
 
+from .parameters import request_parameters
 from ..domain import ModelRequest, ModelResponse, ModelStreamEvent, ModelUsage, ToolCall
 from ..agent.settings import get_agent_settings, persona_prompt
 from ..observability.model_monitor import record_model_service_event
@@ -466,6 +468,7 @@ class OpenAICompatibleProvider:
             "model": self._model,
             "messages": messages,
         }
+        arguments.update(request_parameters(request.parameters, "max_tokens"))
         if tools:
             arguments["tools"] = tools
             arguments["tool_choice"] = request.tool_choice
