@@ -289,7 +289,7 @@ describe("ModelSettingsPage", () => {
     })} />);
     openAdvancedSettings();
 
-    const protocol = screen.getByDisplayValue("自动匹配（当前：Anthropic Messages API）");
+    const protocol = screen.getByDisplayValue("自动匹配（优先：Anthropic Messages API）");
     expect(protocol).not.toBeDisabled();
     fireEvent.change(protocol, { target: { value: "openai" } });
     expect(onSettingsChange).toHaveBeenCalledWith(expect.objectContaining({ model_protocol: "openai" }));
@@ -302,7 +302,7 @@ describe("ModelSettingsPage", () => {
     })} />);
     openAdvancedSettings();
 
-    expect(screen.getByDisplayValue("自动匹配（当前：Anthropic Messages API）")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("自动匹配（优先：Anthropic Messages API）")).toBeInTheDocument();
   });
 
   it("offers the common native protocols and recognizes Ollama without requiring a key", () => {
@@ -313,11 +313,41 @@ describe("ModelSettingsPage", () => {
     })} />);
     openAdvancedSettings();
 
-    const protocol = screen.getByDisplayValue("自动匹配（当前：Ollama Chat API）");
+    const protocol = screen.getByDisplayValue("自动匹配（优先：Ollama Chat API）");
     expect(protocol).toContainHTML('<option value="responses">OpenAI Responses API</option>');
     expect(protocol).toContainHTML('<option value="gemini">Google Gemini generateContent</option>');
     expect(protocol).toContainHTML('<option value="ollama">Ollama Chat API</option>');
     expect(screen.getByPlaceholderText("本地 Ollama 可留空")).toBeInTheDocument();
     expect(screen.getByText("本地 Ollama 可不填写密钥。")).toBeInTheDocument();
   });
+
+  it("explains a managed read-only credential without asking to repair a keychain", () => {
+    render(<ModelSettingsPage {...props({ savedSettings: { ...settings, secret_storage_writable: false, api_key_source: "environment" } })} />);
+    expect(screen.getByText("当前密钥由服务部署环境提供，页面无法修改；请由服务部署配置更新密钥。")).toBeInTheDocument();
+    expect(screen.getByLabelText("API Key")).toBeDisabled();
+    expect(screen.getByLabelText("模型名称")).toBeEnabled();
+    expect(screen.queryByText(/修复系统钥匙串/)).not.toBeInTheDocument();
+  });
+
+  it("shows the negotiated protocol for the saved connection and a prediction for a draft", () => {
+    const page = props({ settings: { ...settings, model_name: "claude-test" }, savedSettings: { ...settings, model_name: "claude-test" }, monitor: { ...monitor, model_name: "claude-test", protocol: "openai" } });
+    const { rerender } = render(<ModelSettingsPage {...page} />);
+    openAdvancedSettings();
+    expect(screen.getByDisplayValue("自动匹配（当前：OpenAI 兼容 Chat Completions）")).toBeInTheDocument();
+    rerender(<ModelSettingsPage {...page} editing />);
+    expect(screen.getByDisplayValue("自动匹配（优先：Anthropic Messages API）")).toBeInTheDocument();
+  });
+
+  it("offers reconciliation and a version-checked recovery path for an uncertain save", () => {
+    const onConfirmSave = vi.fn();
+    const onResumeEditing = vi.fn();
+    render(<ModelSettingsPage {...props({ editing: true, saveUnknown: true, onConfirmSave, onResumeEditing })} />);
+    expect(screen.getByLabelText("API Key")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "保存并应用" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重新确认保存结果" }));
+    fireEvent.click(screen.getByRole("button", { name: "读取最新配置并继续编辑" }));
+    expect(onConfirmSave).toHaveBeenCalledOnce();
+    expect(onResumeEditing).toHaveBeenCalledOnce();
+  });
+
 });

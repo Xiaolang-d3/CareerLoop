@@ -27,6 +27,30 @@ import { CheckCircle2, TriangleAlert, X } from "lucide-react";
 import "../styles/foundations.css";
 import "../AppStyles";
 
+type ModelSaveReceipt = { committed: boolean; saved_revision: number | null; settings: AgentSettings };
+function matchesModelConfiguration(result: { connection_id?: string; config_revision?: number }, saved: AgentSettings) {
+  return (result.connection_id === undefined || saved.connection_id === undefined || result.connection_id === saved.connection_id)
+    && (result.config_revision === undefined || saved.config_revision === undefined || result.config_revision === saved.config_revision);
+}
+
+type ModelRequestKind = "read" | "monitor" | "capabilities" | "check" | "save" | "serviceCapabilities";
+type ModelSettingsScope = {
+  client: ReturnType<typeof createApiClient>;
+  account: string;
+  active: boolean;
+  epoch: number;
+  requests: Record<ModelRequestKind, number>;
+  controllers: Set<AbortController>;
+};
+
+function modelKeyOptional(settings: AgentSettings) {
+  return settings.model_protocol === "ollama" || (settings.model_protocol === "auto" && /ollama|:11434(?:\/|$)/i.test(settings.model_base_url));
+}
+
+function normalizedModelAddress(value: string) {
+  return value.trim().replace(/\/+$/, "");
+}
+
 const loadChatWorkspace = () => import("../components/ChatWorkspace");
 
 const loadHomePage = () => import("../features/home/HomePage");
@@ -149,7 +173,26 @@ export function App({
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const [agentSettings, setAgentSettings] = useState<AgentSettings>(defaultAgentSettings);
   const [savedAgentSettings, setSavedAgentSettings] = useState<AgentSettings>(defaultAgentSettings);
+  const savedAgentSettingsRef = useRef<AgentSettings>(defaultAgentSettings);
   const [modelSettingsLoaded, setModelSettingsLoaded] = useState(false);
+  const [modelSettingsLoadError, setModelSettingsLoadError] = useState("");
+  const [modelSaveUnknown, setModelSaveUnknown] = useState<string | null>(null);
+  const modelSettingsScopeRef = useRef<ModelSettingsScope | null>(null);
+  const modelSettingsStateScopeRef = useRef<ModelSettingsScope | null>(null);
+  if (!modelSettingsScopeRef.current || modelSettingsScopeRef.current.client !== fetchJson || modelSettingsScopeRef.current.account !== userEmail) {
+    const previous = modelSettingsScopeRef.current;
+    if (previous) {
+      previous.active = false;
+      for (const controller of previous.controllers) controller.abort();
+    }
+    modelSettingsScopeRef.current = {
+      client: fetchJson, account: userEmail, active: true, epoch: 0,
+      requests: { read: 0, monitor: 0, capabilities: 0, check: 0, save: 0, serviceCapabilities: 0 },
+      controllers: new Set()
+    };
+  }
+  const modelSettingsScope = modelSettingsScopeRef.current;
+  const modelSettingsReady = modelSettingsLoaded && modelSettingsStateScopeRef.current === modelSettingsScope;
   const [agentSettingsBusy, setAgentSettingsBusy] = useState(false);
   const [modelSettingsEditing, setModelSettingsEditing] = useState(false);
   const modelSettingsEditingRef = useRef(false);
@@ -160,7 +203,11 @@ export function App({
   const [agentOperationsBusy, setAgentOperationsBusy] = useState(false);
   const { availableModels, discoveryBusy: modelDiscoveryBusy, discoveryError: modelDiscoveryError, discoverModels, invalidateDiscovery } = useModelDiscovery({
     fetchJson,
-    onModelSuggested: (modelName) => setAgentSettings((current) => current.model_name.trim() ? current : { ...current, model_name: modelName }),
+    onModelSuggested: (modelName) => {
+      if (modelSettingsScopeRef.current !== modelSettingsScope || !modelSettingsScope.active) return;
+      updateModelSettingsEditing(true);
+      setAgentSettings((current) => current.model_name.trim() ? current : { ...current, model_name: modelName });
+    },
     onNotice: setNoticeMessage
   });
   const [modelCapabilities, setModelCapabilities] = useState<ModelCapabilityReport | null>(null);
@@ -169,6 +216,65 @@ export function App({
   const databaseInitializationRef = useRef<Promise<void> | null>(null);
   const routeDataCacheRef = useRef(createRouteDataCache<RouteDataKey>(30_000));
   const currentConversation = conversations.find((item) => item.id === currentConversationId) ?? null;
+
+  useEffect(() => {
+    modelSettingsStateScopeRef.current = null;
+    modelSettingsEditingRef.current = false;
+    setModelSettingsLoaded(false);
+    setModelSettingsLoadError("");
+    setModelSaveUnknown(null);
+    setAgentSettings({ ...defaultAgentSettings });
+    savedAgentSettingsRef.current = { ...defaultAgentSettings };
+    setSavedAgentSettings({ ...defaultAgentSettings });
+    setAgentSettingsBusy(false);
+    setModelSettingsEditing(false);
+    setModelMonitor(null);
+    setModelMonitorBusy(false);
+    setModelCapabilities(null);
+    setModelCapabilitiesBusy(false);
+    invalidateDiscovery();
+    routeDataCacheRef.current = createRouteDataCache<RouteDataKey>(30_000);
+    return () => {
+      for (const controller of modelSettingsScope.controllers) controller.abort();
+      modelSettingsScope.controllers.clear();
+    };
+  }, [modelSettingsScope]);
+
+  function beginModelRequest(kind: ModelRequestKind) {
+    const epoch = modelSettingsScope.epoch;
+    const requestId = ++modelSettingsScope.requests[kind];
+    const controller = new AbortController();
+    modelSettingsScope.controllers.add(controller);
+    return {
+      signal: controller.signal,
+      current: () => modelSettingsScope.active && modelSettingsScopeRef.current === modelSettingsScope
+        && modelSettingsScope.epoch === epoch && modelSettingsScope.requests[kind] === requestId && !controller.signal.aborted,
+      finish: () => modelSettingsScope.controllers.delete(controller)
+    };
+  }
+
+  function invalidateModelRequests() {
+    modelSettingsScope.epoch += 1;
+    for (const controller of modelSettingsScope.controllers) controller.abort();
+    modelSettingsScope.controllers.clear();
+    setModelMonitorBusy(false);
+    setModelCapabilitiesBusy(false);
+  }
+
+  function canDiscoverModels(settings: AgentSettings) {
+    if (modelKeyOptional(settings)) return true;
+    if (settings.api_key.trim()) return true;
+    return settings.api_key_configured && normalizedModelAddress(settings.model_base_url) === normalizedModelAddress(savedAgentSettings.model_base_url);
+  }
+
+  function discoverCurrentModels(force = false) {
+    if (!modelSettingsReady || agentSettingsBusy || modelSaveUnknown) return;
+    if (!canDiscoverModels(agentSettings)) {
+      if (force) setErrorMessage("服务地址已更改，请先填写该服务的 API Key；模型名称也可手动填写。");
+      return;
+    }
+    void discoverModels(agentSettings, { force, silent: !force });
+  }
 
   function navigateRoute(route: AppRoute, replace = false) {
     const nextHash = appRouteHash(route);
@@ -305,15 +411,18 @@ export function App({
   const waitingForUser = latestAgent?.status === "waiting_user";
 
   async function refreshCapabilities() {
+    const request = beginModelRequest("serviceCapabilities");
     try {
-      const next = await fetchJson<AgentCapabilities>("/agent/capabilities");
-      setCapabilities(next);
+      const next = await fetchJson<AgentCapabilities>("/agent/capabilities", { signal: request.signal });
+      if (request.current()) setCapabilities(next);
       return next;
     } catch (error) {
-      setCapabilities(null);
-      setErrorMessage(error instanceof Error ? `无法读取服务能力：${error.message}` : "无法读取服务能力");
+      if (request.current()) {
+        setCapabilities(null);
+        setErrorMessage(error instanceof Error ? `无法读取服务能力：${error.message}` : "无法读取服务能力");
+      }
       return null;
-    }
+    } finally { request.finish(); }
   }
 
   async function refreshAttachmentConfig() {
@@ -326,53 +435,71 @@ export function App({
     setModelSettingsEditing(next);
   }
 
-  async function refreshAgentSettings() {
-    const next = await fetchJson<AgentSettings>("/agent/settings");
+  function applySavedModelSettings(next: AgentSettings, preserveDraft = false) {
     const clean = { ...next, api_key: "" };
+    savedAgentSettingsRef.current = clean;
     setSavedAgentSettings(clean);
+    modelSettingsStateScopeRef.current = modelSettingsScope;
     setModelSettingsLoaded(true);
-    if (modelSettingsEditingRef.current) {
-      return;
-    }
+    setModelSettingsLoadError("");
+    if (preserveDraft || modelSettingsEditingRef.current) return clean;
     setAgentSettings(clean);
-    const keyOptional = next.resolved_model_protocol === "ollama";
+    const keyOptional = modelKeyOptional(next);
     updateModelSettingsEditing(!next.api_key_configured && !keyOptional);
-    if (next.api_key_configured || keyOptional) {
-      void discoverModels(clean, { silent: true });
-    }
+    if (next.api_key_configured || keyOptional) void discoverModels(clean, { silent: true });
+    return clean;
+  }
+
+  async function refreshAgentSettings(options: { preserveDraft?: boolean } = {}) {
+    const request = beginModelRequest("read");
+    try {
+      const next = await fetchJson<AgentSettings>("/agent/settings", { signal: request.signal });
+      if (request.current()) applySavedModelSettings(next, options.preserveDraft);
+      return next;
+    } catch (error) {
+      if (!request.current()) return null;
+      setModelSettingsLoadError(error instanceof Error ? error.message : "读取模型配置失败");
+      throw error;
+    } finally { request.finish(); }
   }
 
   async function refreshModelMonitor() {
-    const next = await fetchJson<ModelServiceMonitor>("/agent/model-monitor?hours=24");
-    setModelMonitor(next);
-    return next;
+    const request = beginModelRequest("monitor");
+    try {
+      const next = await fetchJson<ModelServiceMonitor>("/agent/model-monitor?hours=24", { signal: request.signal });
+      if (request.current() && matchesModelConfiguration(next, savedAgentSettingsRef.current)) setModelMonitor(next);
+      return next;
+    } catch (error) {
+      if (request.current()) throw error;
+      return null;
+    } finally { request.finish(); }
   }
 
   async function refreshModelCapabilities(probe = false) {
+    const request = beginModelRequest("capabilities");
     setModelCapabilitiesBusy(true);
     try {
       const next = probe
         ? await fetchJson<ModelCapabilityReport>("/agent/models/capabilities", {
-          method: "POST",
+          method: "POST", signal: request.signal,
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            model_name: savedAgentSettings.model_name,
-            model_base_url: savedAgentSettings.model_base_url,
-            model_protocol: savedAgentSettings.model_protocol,
-            api_key: "",
-            probe: true
+            model_name: savedAgentSettings.model_name, model_base_url: savedAgentSettings.model_base_url,
+            model_protocol: savedAgentSettings.model_protocol, api_key: "", probe: true
           })
         })
-        : await fetchJson<ModelCapabilityReport>("/agent/models/capabilities");
+        : await fetchJson<ModelCapabilityReport>("/agent/models/capabilities", { signal: request.signal });
+      if (!request.current() || !matchesModelConfiguration(next, savedAgentSettingsRef.current)) return null;
       setModelCapabilities(next);
-      if (probe && next.probe_error) {
-        setErrorMessage(next.probe_error);
-      } else if (probe) {
-        setNoticeMessage(next.vision.source === "probe" ? "已完成能力检测" : "已读取模型能力");
-      }
+      if (probe && next.probe_error) setErrorMessage(next.probe_error);
+      else if (probe) setNoticeMessage(next.vision.source === "probe" ? "已完成能力检测" : "已读取模型能力");
       return next;
+    } catch (error) {
+      if (request.current()) setErrorMessage(error instanceof Error ? `模型能力检测失败：${error.message}` : "模型能力检测失败");
+      return null;
     } finally {
-      setModelCapabilitiesBusy(false);
+      if (request.current()) setModelCapabilitiesBusy(false);
+      request.finish();
     }
   }
 
@@ -394,32 +521,34 @@ export function App({
     });
   }
 
-  async function checkModelService() {
+  async function checkModelService(afterSave = false) {
+    const request = beginModelRequest("check");
+    // An older polling response must not overwrite the active check result.
+    modelSettingsScope.requests.monitor += 1;
     setModelMonitorBusy(true);
-    setErrorMessage("");
+    if (!afterSave) setErrorMessage("");
     try {
-      const next = await fetchJson<ModelServiceCheck>("/agent/model-monitor/check", {
-        method: "POST"
-      });
+      const next = await fetchJson<ModelServiceCheck>("/agent/model-monitor/check", { method: "POST", signal: request.signal });
+      if (!request.current() || !matchesModelConfiguration(next, savedAgentSettingsRef.current)) return;
+      modelSettingsScope.requests.monitor += 1;
       setModelMonitor(next);
       if (next.available) {
         setModelUnavailable(null);
-        setNoticeMessage("连接检测成功");
-      } else {
-        setErrorMessage(next.check_error_message || "模型连接检测失败");
-      }
+        setNoticeMessage(afterSave ? "设置已保存，连接检测成功" : "连接检测成功");
+      } else setErrorMessage(`${afterSave ? "配置已保存，但连接检测失败：" : ""}${next.check_error_message || "模型连接检测失败"}`);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "模型服务检测失败");
+      if (request.current()) setErrorMessage(`${afterSave ? "配置已保存，但连接检测失败：" : ""}${error instanceof Error ? error.message : "模型服务检测失败"}`);
     } finally {
-      setModelMonitorBusy(false);
+      if (request.current()) setModelMonitorBusy(false);
+      request.finish();
     }
   }
 
   function changeModelSettings(next: AgentSettings) {
-    if (!modelSettingsLoaded || agentSettingsBusy) return;
+    if (!modelSettingsReady || agentSettingsBusy || modelSaveUnknown) return;
+    if (normalizedModelAddress(next.model_base_url) !== normalizedModelAddress(agentSettings.model_base_url)) next = { ...next, api_key: "" };
     const connectionChanged = next.model_base_url !== agentSettings.model_base_url
-      || next.api_key !== agentSettings.api_key
-      || next.model_protocol !== agentSettings.model_protocol;
+      || next.api_key !== agentSettings.api_key || next.model_protocol !== agentSettings.model_protocol;
     if (connectionChanged) invalidateDiscovery();
     else if (next.model_name !== agentSettings.model_name) invalidateDiscovery({ keepModels: true });
     updateModelSettingsEditing(true);
@@ -427,57 +556,140 @@ export function App({
   }
 
   function beginModelSettingsEdit() {
-    updateModelSettingsEditing(true);
+    if (modelSettingsReady && !agentSettingsBusy && !modelSaveUnknown) updateModelSettingsEditing(true);
   }
 
   function cancelModelSettingsEdit() {
     setAgentSettings({ ...savedAgentSettings, api_key: "" });
+    setModelSaveUnknown(null);
     updateModelSettingsEditing(false);
     invalidateDiscovery();
-    void discoverModels(savedAgentSettings, { silent: true });
+    if (savedAgentSettings.api_key_configured || modelKeyOptional(savedAgentSettings)) {
+      void discoverModels(savedAgentSettings, { silent: true });
+    }
+  }
+
+  function completeModelSave(saved: AgentSettings) {
+    invalidateModelRequests();
+    const clean = { ...saved, api_key: "" };
+    setAgentSettings(clean);
+    savedAgentSettingsRef.current = clean;
+    setSavedAgentSettings(clean);
+    modelSettingsStateScopeRef.current = modelSettingsScope;
+    setModelSettingsLoaded(true);
+    setModelSaveUnknown(null);
+    updateModelSettingsEditing(false);
+    setAgentSettingsBusy(false);
+    setModelMonitor(null);
+    setModelCapabilities(null);
+    invalidateDiscovery();
+    routeDataCacheRef.current.invalidate("agentSettings", "modelMonitor", "modelCapabilities", "capabilities");
+    setNoticeMessage("设置已保存，正在检测连接");
+    void checkModelService(true);
+    void refreshCapabilities();
+    void refreshModelCapabilities();
+    if (clean.api_key_configured || modelKeyOptional(clean)) {
+      void discoverModels(clean, { silent: true, force: true });
+    }
+  }
+
+  async function reconcileModelSave(requestId: string, request: ReturnType<typeof beginModelRequest>) {
+    const current = await fetchJson<AgentSettings>("/agent/settings", { signal: request.signal });
+    if (!request.current()) return;
+    if (current.last_save_request_id === requestId) {
+      completeModelSave(current);
+      return;
+    }
+    const receipt = await fetchJson<ModelSaveReceipt>(`/agent/settings/requests/${encodeURIComponent(requestId)}`, { signal: request.signal });
+    if (!request.current()) return;
+    if (receipt.committed) {
+      const superseded = receipt.saved_revision !== null && (receipt.settings.config_revision ?? 0) > receipt.saved_revision;
+      completeModelSave(receipt.settings);
+      if (superseded) setErrorMessage("此前保存已提交，当前配置已由后续更新覆盖。当前显示服务端最新配置。");
+    } else {
+      applySavedModelSettings(receipt.settings, true);
+      setErrorMessage("暂无法确认上次保存结果，请稍后重新确认；也可读取最新配置后继续编辑。");
+    }
+  }
+
+  async function confirmModelSave(requestId = modelSaveUnknown) {
+    if (!requestId || agentSettingsBusy) return;
+    const request = beginModelRequest("save");
+    setAgentSettingsBusy(true);
+    try { await reconcileModelSave(requestId, request); }
+    catch {
+      if (request.current()) setErrorMessage("暂无法确认上次保存结果，请检查连接后重新确认。");
+    } finally {
+      if (request.current()) setAgentSettingsBusy(false);
+      request.finish();
+    }
+  }
+
+  async function resumeModelEditing() {
+    if (!modelSaveUnknown || agentSettingsBusy) return;
+    const request = beginModelRequest("save");
+    setAgentSettingsBusy(true);
+    try {
+      const latest = await fetchJson<AgentSettings>("/agent/settings", { signal: request.signal });
+      if (!request.current()) return;
+      applySavedModelSettings(latest, true);
+      setModelSaveUnknown(null);
+      updateModelSettingsEditing(true);
+      invalidateDiscovery();
+      setErrorMessage("");
+      setNoticeMessage("已读取最新配置，可以继续编辑；再次保存会检查版本冲突，上次提交仍可能稍后完成。");
+    } catch {
+      if (request.current()) setErrorMessage("读取最新配置失败，暂时保留待确认状态。");
+    } finally {
+      if (request.current()) setAgentSettingsBusy(false);
+      request.finish();
+    }
   }
 
   async function saveAgentPreferences() {
-    if (!modelSettingsLoaded || agentSettingsBusy || !agentSettings.model_name.trim()) return;
+    if (!modelSettingsReady || agentSettingsBusy || modelSaveUnknown || !agentSettings.model_name.trim()) return;
+    if (!canDiscoverModels(agentSettings) && normalizedModelAddress(agentSettings.model_base_url) !== normalizedModelAddress(savedAgentSettings.model_base_url)) {
+      setErrorMessage("服务地址已更改，请填写该服务的 API Key 后再保存。");
+      return;
+    }
+    if (agentSettings.api_key.trim() && savedAgentSettings.secret_storage_writable === false) {
+      setErrorMessage(savedAgentSettings.secret_storage === "environment"
+        ? "当前部署使用只读环境密钥，请由服务部署配置更新凭证。"
+        : "本机密钥存储暂不可写，请修复系统钥匙串后再保存密钥。");
+      return;
+    }
+    invalidateModelRequests();
+    invalidateDiscovery();
+    const request = beginModelRequest("save");
+    const requestId = crypto.randomUUID();
     setAgentSettingsBusy(true);
     setErrorMessage("");
     try {
       const saved = await fetchJson<AgentSettings>("/agent/settings", {
-        method: "PUT",
+        method: "PUT", signal: request.signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(agentSettings)
+        body: JSON.stringify({
+          ...savedAgentSettings, model_name: agentSettings.model_name, model_base_url: agentSettings.model_base_url,
+          model_protocol: agentSettings.model_protocol, api_key: agentSettings.api_key,
+          expected_revision: savedAgentSettings.config_revision, request_id: requestId
+        })
       });
-      const clean = { ...saved, api_key: "" };
-      setAgentSettings(clean);
-      setSavedAgentSettings(clean);
-      updateModelSettingsEditing(false);
-      invalidateDiscovery();
-      let connectionCheck: ModelServiceCheck | null = null;
-      let connectionCheckFailure = "";
-      try {
-        connectionCheck = await fetchJson<ModelServiceCheck>("/agent/model-monitor/check", {
-          method: "POST"
-        });
-        setModelMonitor(connectionCheck);
-      } catch (checkError) {
-        connectionCheckFailure = checkError instanceof Error
-          ? checkError.message
-          : "无法完成模型连接检测";
-      }
-      await Promise.allSettled([refreshCapabilities(), refreshModelCapabilities()]);
-      void discoverModels(clean, { silent: true, force: true });
-      if (connectionCheck?.available) {
-        setModelUnavailable(null);
-        setNoticeMessage("设置已保存，连接检测成功");
-      } else {
-        const reason = connectionCheck?.check_error_message || connectionCheckFailure || "模型服务暂不可用";
-        setNoticeMessage("设置已保存");
-        setErrorMessage(`配置已保存，但连接检测失败：${reason}`);
-      }
+      if (request.current()) completeModelSave(saved);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "保存 Agent 设置失败");
+      if (!request.current()) return;
+      const status = typeof error === "object" && error !== null && "status" in error ? Number(error.status) : null;
+      if (status === 409) {
+        setErrorMessage("配置已在其他页面更新。已读取最新版本，当前修改保留，请检查后重新保存。");
+        await refreshAgentSettings({ preserveDraft: true }).catch(() => undefined);
+      } else if (status === null || status >= 500 || status === 408) {
+        setModelSaveUnknown(requestId);
+        setErrorMessage("保存结果暂未确认，正在读取服务端状态；不会自动重复提交。");
+        try { await reconcileModelSave(requestId, request); }
+        catch { /* Keep the request receipt pending until the user can reconnect. */ }
+      } else setErrorMessage(error instanceof Error ? error.message : "保存模型设置失败");
     } finally {
-      setAgentSettingsBusy(false);
+      if (request.current()) setAgentSettingsBusy(false);
+      request.finish();
     }
   }
 
@@ -557,7 +769,7 @@ export function App({
     ))).catch((error: unknown) => {
       setErrorMessage(error instanceof Error ? error.message : "读取页面数据失败");
     });
-  }, [appRoute, databaseReady]);
+  }, [appRoute, databaseReady, fetchJson, userEmail]);
 
   useAsyncPolling({
     enabled: databaseReady && appRoute.section === "settings" && ["model", "agent"].includes(appRoute.page),
@@ -784,12 +996,15 @@ export function App({
                 />
               ) : null}
               {appRoute.page === "model" ? (
-                modelSettingsLoaded ? (
+                modelSettingsReady ? (
                   <ModelSettingsPage
                     settings={agentSettings}
                     savedSettings={savedAgentSettings}
                     editing={modelSettingsEditing}
                     busy={agentSettingsBusy}
+                    saveUnknown={Boolean(modelSaveUnknown)}
+                    onConfirmSave={() => void confirmModelSave()}
+                    onResumeEditing={() => void resumeModelEditing()}
                     monitor={modelMonitor}
                     monitorBusy={modelMonitorBusy}
                     availableModels={availableModels}
@@ -798,13 +1013,22 @@ export function App({
                     capabilities={modelCapabilities}
                     capabilitiesBusy={modelCapabilitiesBusy}
                     onSettingsChange={changeModelSettings}
-                    onDiscoverModels={(force) => void discoverModels(agentSettings, { force, silent: !force })}
+                    onDiscoverModels={discoverCurrentModels}
                     onCheckService={() => void checkModelService()}
                     onProbeCapabilities={() => void refreshModelCapabilities(true)}
                     onBeginEdit={beginModelSettingsEdit}
                     onCancelEdit={cancelModelSettingsEdit}
                     onSave={() => void saveAgentPreferences()}
                   />
+                ) : modelSettingsLoadError ? (
+                  <section className="settings-card model-settings-card" role="alert">
+                    <h3>无法读取模型配置</h3><p>请检查本地服务后重试。读取成功前不会提交默认配置。</p>
+                    <button type="button" onClick={() => {
+                      setModelSettingsLoadError("");
+                      routeDataCacheRef.current.invalidate("agentSettings");
+                      void refreshAgentSettings().catch(() => undefined);
+                    }}>重新读取</button>
+                  </section>
                 ) : <PageLoading label="正在读取模型配置…" />
               ) : null}
               {appRoute.page === "agent" ? (

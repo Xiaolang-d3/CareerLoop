@@ -9,6 +9,9 @@ type Props = {
   savedSettings: AgentSettings;
   editing: boolean;
   busy: boolean;
+  saveUnknown?: boolean;
+  onConfirmSave?: () => void;
+  onResumeEditing?: () => void;
   monitor: ModelServiceMonitor | null;
   monitorBusy: boolean;
   availableModels: string[];
@@ -134,6 +137,9 @@ export function ModelSettingsPage({
   savedSettings,
   editing,
   busy,
+  saveUnknown = false,
+  onConfirmSave,
+  onResumeEditing,
   monitor,
   monitorBusy,
   availableModels,
@@ -151,7 +157,20 @@ export function ModelSettingsPage({
 }: Props) {
   const [manualModel, setManualModel] = useState(false);
   const effectiveProtocol = resolvedProtocol(settings.model_name, settings.model_protocol, settings.model_base_url);
-  const effectiveProtocolLabel = protocolLabel(effectiveProtocol);
+  const savedConnectionUnchanged = settings.model_name === savedSettings.model_name && settings.model_base_url === savedSettings.model_base_url && settings.model_protocol === savedSettings.model_protocol;
+  const actualProtocol = !editing && savedConnectionUnchanged
+    ? (monitor?.model_name === savedSettings.model_name ? monitor.protocol : undefined)
+      ?? (capabilities?.model_name === savedSettings.model_name ? capabilities.protocol : undefined)
+      ?? savedSettings.resolved_model_protocol
+    : undefined;
+  const effectiveProtocolLabel = protocolLabel(actualProtocol ?? effectiveProtocol);
+  const automaticProtocolLabel = `${actualProtocol ? "当前" : "优先"}：${effectiveProtocolLabel}`;
+  const addressChanged = settings.model_base_url.trim().replace(/\/+$/, "") !== savedSettings.model_base_url.trim().replace(/\/+$/, "");
+  const canReuseStoredKey = savedSettings.api_key_configured && !addressChanged;
+  const keyRequired = effectiveProtocol !== "ollama" && !settings.api_key.trim() && !canReuseStoredKey;
+  const storageReadOnly = savedSettings.secret_storage_writable === false;
+  const managedKey = savedSettings.api_key_source === "environment" || savedSettings.secret_storage === "environment";
+  const fieldsBusy = busy || saveUnknown;
   const catalog = Array.from(new Set(availableModels.map((name) => name.trim()).filter(Boolean)));
   const remainingQuota = monitor?.usage?.remaining_quota ?? null;
   const quotaAvailable = Boolean(monitor?.usage?.quota_available && remainingQuota != null);
@@ -162,12 +181,14 @@ export function ModelSettingsPage({
     onSettingsChange(next);
   }
   function discoverOnBlur() {
-    if (editing && !busy && (effectiveProtocol === "ollama" || settings.api_key || settings.api_key_configured)) onDiscoverModels();
+    if (editing && !fieldsBusy && (effectiveProtocol === "ollama" || settings.api_key.trim() || canReuseStoredKey)) onDiscoverModels();
   }
 
   return (
     <section className="model-settings-page">
       {savedSettings.secret_migration_warning ? <p className="model-settings-warning" role="alert">{savedSettings.secret_migration_warning}。旧密钥仍保留在本地数据库中，修复钥匙串后再次保存即可迁移。</p> : null}
+      {storageReadOnly ? <p className="model-settings-warning" role="status">{managedKey ? "当前密钥由服务部署环境提供，页面无法修改；请由服务部署配置更新密钥。" : "本机密钥存储暂不可写。已保存密钥仍可使用；更换密钥前请修复系统钥匙串。"}</p> : null}
+      {saveUnknown ? <p className="model-settings-warning" role="status">保存结果待确认，请重新读取服务端状态；不会自动重复提交。</p> : null}
       <section className="settings-card model-settings-card model-connection-card">
         <div className="settings-card-heading model-connection-heading">
           <span><Cpu size={18} /></span>
@@ -175,31 +196,31 @@ export function ModelSettingsPage({
         </div>
         <label>
           <span id="model-base-url-label">Base URL</span>
-          <input aria-labelledby="model-base-url-label" aria-describedby="model-base-url-help" type="url" autoComplete="off" spellCheck={false} value={settings.model_base_url} disabled={busy} placeholder={protocolBaseUrl(effectiveProtocol)} onChange={(event) => changeSettings({ ...settings, model_base_url: event.target.value })} onBlur={discoverOnBlur} />
+          <input aria-labelledby="model-base-url-label" aria-describedby="model-base-url-help" type="url" autoComplete="off" spellCheck={false} value={settings.model_base_url} disabled={fieldsBusy} placeholder={protocolBaseUrl(effectiveProtocol)} onChange={(event) => changeSettings({ ...settings, model_base_url: event.target.value })} onBlur={discoverOnBlur} />
           <small id="model-base-url-help">填写服务商提供的 API 地址，包含其要求的 /v1 等路径。</small>
         </label>
         <label>
           <span id="model-api-key-label">API Key</span>
-          <input aria-labelledby="model-api-key-label" aria-describedby="model-api-key-help" type="password" autoComplete="new-password" value={settings.api_key} disabled={busy} placeholder={effectiveProtocol === "ollama" ? "本地 Ollama 可留空" : settings.api_key_configured ? "已配置，留空则继续使用" : "请输入 API Key"} onChange={(event) => changeSettings({ ...settings, api_key: event.target.value })} onBlur={discoverOnBlur} />
-          <small id="model-api-key-help">{effectiveProtocol === "ollama" ? "本地 Ollama 可不填写密钥。" : settings.api_key_configured ? "已保存密钥；留空继续使用，不显示原文。" : "填写服务商提供的密钥。"}</small>
+          <input aria-labelledby="model-api-key-label" aria-describedby="model-api-key-help" type="password" autoComplete="new-password" value={settings.api_key} disabled={fieldsBusy || storageReadOnly} placeholder={effectiveProtocol === "ollama" ? "本地 Ollama 可留空" : canReuseStoredKey ? "已配置，留空则继续使用" : "请输入 API Key"} onChange={(event) => changeSettings({ ...settings, api_key: event.target.value })} onBlur={discoverOnBlur} />
+          <small id="model-api-key-help">{effectiveProtocol === "ollama" ? "本地 Ollama 可不填写密钥。" : addressChanged ? "服务地址已更改，请填写该服务的密钥；不会复用旧地址的密钥。" : canReuseStoredKey ? managedKey ? "使用部署环境提供的密钥，页面不显示原文。" : "已保存密钥；留空继续使用，不显示原文。" : "填写服务商提供的密钥。"}</small>
         </label>
         <div className="model-name-setting">
           <div className="model-field-heading">
             <label htmlFor="model-name-input">模型名称</label>
-            <button type="button" className="model-discovery-button" disabled={busy || discoveryBusy} onClick={() => onDiscoverModels(true)}>
+            <button type="button" className="model-discovery-button" disabled={fieldsBusy || discoveryBusy || keyRequired} onClick={() => onDiscoverModels(true)}>
               <RefreshCw className={discoveryBusy ? "spinning" : ""} size={13} />
               {discoveryBusy ? "读取中…" : "刷新列表"}
             </button>
           </div>
           {catalog.length > 0 && !manualModel ? (
-            <select id="model-name-input" value={settings.model_name} disabled={busy} onChange={(event) => changeSettings({ ...settings, model_name: event.target.value })}>
+            <select id="model-name-input" value={settings.model_name} disabled={fieldsBusy} onChange={(event) => changeSettings({ ...settings, model_name: event.target.value })}>
               {!settings.model_name && <option value="">选择模型</option>}
               {Array.from(new Set([settings.model_name, ...catalog].filter(Boolean))).map((model) => <option key={model} value={model}>{model}</option>)}
             </select>
           ) : (
-            <input id="model-name-input" value={settings.model_name} disabled={busy} placeholder="输入模型名称" onChange={(event) => changeSettings({ ...settings, model_name: event.target.value })} />
+            <input id="model-name-input" value={settings.model_name} disabled={fieldsBusy} placeholder="输入模型名称" onChange={(event) => changeSettings({ ...settings, model_name: event.target.value })} />
           )}
-          {catalog.length > 0 && <button className="model-manual-button" type="button" disabled={busy} onClick={() => setManualModel(!manualModel)}>{manualModel ? "从列表选择" : "手动填写"}</button>}
+          {catalog.length > 0 && <button className="model-manual-button" type="button" disabled={fieldsBusy} onClick={() => setManualModel(!manualModel)}>{manualModel ? "从列表选择" : "手动填写"}</button>}
           <small className={discoveryError ? "model-discovery-error" : ""}>
             {discoveryBusy
               ? "正在读取模型列表…"
@@ -211,13 +232,14 @@ export function ModelSettingsPage({
           </small>
         </div>
         <div className="model-settings-actions">
-          <p role="status">{editing ? "有未保存的修改" : `当前模型：${savedSettings.model_name || "尚未配置"}`}</p>
-          {editing && <ActionButton variant="secondary" disabled={busy} onClick={onCancelEdit}>取消</ActionButton>}
-          <ActionButton variant="primary" disabled={busy || !editing || !settings.model_name.trim()} onClick={onSave}>
+          <p role="status">{saveUnknown ? "保存结果待确认" : editing ? "有未保存的修改" : `当前模型：${savedSettings.model_name || "尚未配置"}`}</p>
+          {saveUnknown && <ActionButton variant="secondary" disabled={busy} onClick={onResumeEditing}>读取最新配置并继续编辑</ActionButton>}
+          {editing && !saveUnknown && <ActionButton variant="secondary" disabled={fieldsBusy} onClick={onCancelEdit}>取消</ActionButton>}
+          {saveUnknown ? <ActionButton variant="primary" disabled={busy} onClick={onConfirmSave}>{busy ? "确认中…" : "重新确认保存结果"}</ActionButton> : <ActionButton variant="primary" disabled={busy || !editing || !settings.model_name.trim() || keyRequired || (storageReadOnly && Boolean(settings.api_key.trim()))} onClick={onSave}>
             {busy ? <LoaderCircle className="spinning" size={16} /> : <Save size={16} />}{busy ? "保存中…" : "保存并应用"}
-          </ActionButton>
+          </ActionButton>}
         </div>
-        <p className="model-save-note">保存后从下一次对话生效。</p>
+        <p className="model-save-note">{monitorBusy && !busy ? "配置已保存，连接检测中；可以继续编辑。" : "保存后从下一次对话生效。"}</p>
       </section>
       <details className="model-advanced-settings">
         <summary><strong>高级设置</strong><span>接口协议与连接诊断</span><ChevronDown size={16} /></summary>
@@ -225,8 +247,8 @@ export function ModelSettingsPage({
           <section className="settings-card model-settings-card model-protocol-card">
             <label>
               <span id="model-protocol-label">接口协议</span>
-              <select aria-labelledby="model-protocol-label" value={settings.model_protocol} disabled={busy} onChange={(event) => changeSettings({ ...settings, model_protocol: event.target.value as AgentSettings["model_protocol"] })}>
-                <option value="auto">自动匹配（当前：{effectiveProtocolLabel}）</option>
+              <select aria-labelledby="model-protocol-label" value={settings.model_protocol} disabled={fieldsBusy} onChange={(event) => changeSettings({ ...settings, model_protocol: event.target.value as AgentSettings["model_protocol"] })}>
+                <option value="auto">自动匹配（{automaticProtocolLabel}）</option>
                 <option value="openai">OpenAI 兼容 Chat Completions</option>
                 <option value="responses">OpenAI Responses API</option>
                 <option value="anthropic">Anthropic Messages API</option>

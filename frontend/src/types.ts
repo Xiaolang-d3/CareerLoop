@@ -103,6 +103,11 @@ export type AgentSettings = {
   resolved_model_protocol?: ResolvedModelProtocol;
   api_key: string;
   api_key_configured: boolean;
+  connection_id?: string;
+  config_revision?: number;
+  secret_storage_writable?: boolean;
+  api_key_source?: string;
+  last_save_request_id?: string | null;
   secret_storage?: "keyring" | "environment" | "memory";
   secret_migration_warning?: string;
 };
@@ -130,6 +135,8 @@ export type ModelCapabilityFlag = {
 };
 
 export type ModelCapabilityReport = {
+  connection_id?: string;
+  config_revision?: number;
   model_name: string;
   provider: string;
   provider_label: string;
@@ -144,6 +151,8 @@ export type ModelCapabilityReport = {
 };
 
 export type ModelServiceMonitor = {
+  connection_id?: string;
+  config_revision?: number;
   status: "healthy" | "degraded" | "unavailable" | "unknown";
   status_message: string;
   model_name: string;
