@@ -20,6 +20,7 @@ ERROR_LABELS = {
     "provider_error": "服务异常",
     "invalid_provider_response": "响应格式异常",
     "route_not_found": "协议路由不存在",
+    "protocol_unsupported": "模型不支持当前协议",
     "model_unavailable": "模型不可用",
     "account_pool_exhausted": "上游账户耗尽",
     "not_configured": "未完成配置",

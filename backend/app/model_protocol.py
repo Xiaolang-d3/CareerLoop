@@ -60,6 +60,15 @@ def model_protocol_candidates(
     if protocol != "auto":
         return (primary,)
     normalized_url = base_url.strip().lower()
+    if any(
+        marker in normalized_url
+        for marker in ("anthropic.com", "generativelanguage.googleapis.com", "ollama", ":11434")
+    ):
+        return (primary,)
+    if primary == "openai":
+        # Some newer models are served only over the Responses API; auto mode
+        # retries there when Chat Completions is explicitly rejected.
+        return ("openai", "responses")
     if not normalized_url:
         return (primary,)
     if any(
