@@ -88,3 +88,13 @@ ChatRuntime ─► ConfiguredModelProvider (档案参数 / 推理强度)
 ## 回滚
 
 设置环境变量 `DENGDENG_MODEL_BACKEND=native` 即回到原生适配器（OpenAI SDK / httpx 实现，代码保留未删除）。原生模式下备用模型设置会保存但不生效（设置页提示），能力报告不使用 LiteLLM 数据，其余功能（协商、探测、推理回传、监控）不变。未安装 litellm 时自动使用原生模式并打印一次警告；`DENGDENG_MODEL_BACKEND` 取 `litellm`、`native` 以外的值时打印一次警告并按默认 `litellm` 处理。数据库 v29 的新增列与表对原生模式无影响。
+
+### 降级到旧版本应用
+
+上面的环境变量只切换模型实现，不涉及数据库。**v29 没有自动降级路径**：旧版本应用（v28 及以前）打开 v29 数据库时会提示「数据库来自更新版本，请升级应用后打开」并拒绝打开，不会修改文件。确需回到旧版本时：
+
+1. 完全退出灯灯（确保后端进程已结束）。
+2. 用数据目录下 `.upgrade-backups/before-schema-v29/careerloop.db` 覆盖数据目录中的 `careerloop.db`，并删除同目录的 `careerloop.db-wal`、`careerloop.db-shm`（如存在）。
+3. 再启动旧版本应用。
+
+**升级到 v29 之后写入的对话、资料、模型设置与调用记录都会丢失**，恢复前可先另存一份当前的 `careerloop.db`。该备份只在第一次升级到 v29 时写入，之后不会覆盖（`upgrades.py` 的 `_backup` 发现目标已存在即跳过）；如果恢复后又重新升级，目录里仍是最早那份备份，需要新备份时先把旧目录移走。
