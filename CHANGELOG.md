@@ -97,6 +97,8 @@
 
 - 后端全部依赖（运行、开发与 LiteLLM）改为从唯一的哈希锁定文件 `backend/requirements-lock.txt` 安装（仅 wheel、`--require-hashes --no-deps`，每个包都校验哈希）；已有 venv 通过 `backend/scripts/install_deps.sh` 在锁文件变化时强制重装。安装后立即以 `python -I -S` 扫描可执行 `.pth` 与 `sitecustomize`（扫描本身不会触发它们），按内容哈希放行并与包 RECORD 比对；CI 的后端测试、e2e 与桌面构建都执行。桌面 sidecar 打包 LiteLLM 及其数据文件，安装包增大约 31 MB；冒烟测试对打包结果逐一检查五种协议的真实调用。
 
+- `.pth` 扫描补齐三处绕过：不属于任何包 RECORD 的 `.pth` 一律失败（包括与 setuptools 放行文件逐字节相同的副本）；`.pth` 加入 `sys.path` 的目录也检查 `sitecustomize` / `usercustomize`；按 UTF-8 BOM 解码，BOM 后的 `import` 行不再被当成路径；放行的可执行 `.pth` 还要求属于 setuptools 且该包 RECORD 全部文件校验通过。
+
 - 首页公开源适配器与 Agent 循环分离，账号工作区使用 JSON 快照缓存；后台合并刷新、来源失败保留旧内容，不调用模型生成资讯。数据库版本仍为 25，没有新增迁移。
 
 - 数据库 v25 新增文件夹表，组织信息与解析元数据并存；从 v24 升级保留原件、稳定 ID 和启用状态。
