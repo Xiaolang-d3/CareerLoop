@@ -26,6 +26,7 @@ class OllamaChatProvider:
         timeout_seconds: float = 60,
     ) -> None:
         self._model = model
+        self._secret = api_key  # masked in error messages
         self._base_url = (base_url or "http://127.0.0.1:11434").rstrip("/")
         headers = {"content-type": "application/json"}
         if api_key:
@@ -292,8 +293,12 @@ class OllamaChatProvider:
             total_tokens=input_tokens + output_tokens,
         )
 
+    def _provider_error(self, exc: Exception) -> ModelProviderError:
+        # Gateways may echo the key back in error bodies; never surface or store it.
+        return self._map_provider_error(exc).redact(self._secret)
+
     @staticmethod
-    def _provider_error(exc: Exception) -> ModelProviderError:
+    def _map_provider_error(exc: Exception) -> ModelProviderError:
         if isinstance(exc, httpx.TimeoutException):
             return ModelProviderError("request_timeout", "模型服务响应超时，请稍后重试", retryable=True)
         if isinstance(exc, httpx.RequestError):

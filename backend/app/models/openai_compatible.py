@@ -91,6 +91,7 @@ class OpenAICompatibleProvider:
         if not api_key:
             raise ValueError("启用 OpenAI Provider 时必须配置 OPENAI_API_KEY")
         self._model = model
+        self._secret = api_key  # masked in error messages
         self._base_url = self._normalize_base_url(base_url)
         self._client = AsyncOpenAI(
             api_key=api_key,
@@ -362,8 +363,12 @@ class OpenAICompatibleProvider:
         """The model catalog address actually requested, after base URL normalization."""
         return f"{str(self._client.base_url).rstrip('/')}/models"
 
+    def _provider_error(self, exc: Exception) -> ModelProviderError:
+        # Gateways may echo the key back in error bodies; never surface or store it.
+        return self._map_provider_error(exc).redact(self._secret)
+
     @staticmethod
-    def _provider_error(exc: Exception) -> ModelProviderError:
+    def _map_provider_error(exc: Exception) -> ModelProviderError:
         if isinstance(exc, AuthenticationError):
             return ModelProviderError(
                 "authentication_failed",

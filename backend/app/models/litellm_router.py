@@ -186,6 +186,11 @@ class RoutedModelProvider:
         arguments.pop("extra_body", None)
         return arguments
 
+    def _secrets(self, primary: RouteTarget) -> tuple[str | None, ...]:
+        """Keys of every deployment that may have produced the error."""
+        targets = [primary, *(target for group in self._fallbacks.values() for target in group)]
+        return tuple(getattr(target.provider, "_api_key", None) for target in targets)
+
     async def generate(self, request: ModelRequest) -> ModelResponse:
         primary = self._primary_target()
         if primary is None:
@@ -196,7 +201,7 @@ class RoutedModelProvider:
             target = self._target_for(str((getattr(raw, "_hidden_params", None) or {}).get("model_id") or ""), primary)
             result = target.provider.response_from_completion(raw)
         except Exception as exc:
-            error = map_litellm_error(exc, primary.provider.name) if not isinstance(exc, ModelProviderError) else exc
+            error = map_litellm_error(exc, primary.provider.name, self._secrets(primary))
             self._record(primary, "generate", started_at, error=error)
             raise error from exc
         return self._finish(primary, target, "generate", started_at, result)
@@ -221,7 +226,7 @@ class RoutedModelProvider:
                 else:
                     yield event
         except Exception as exc:
-            error = map_litellm_error(exc, primary.provider.name) if not isinstance(exc, ModelProviderError) else exc
+            error = map_litellm_error(exc, primary.provider.name, self._secrets(primary))
             self._record(target, "stream", started_at, error=error)
             raise error from exc
         if result is None:

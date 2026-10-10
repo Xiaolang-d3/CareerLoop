@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from .base import ModelProviderError
+from ..redaction import redact_secrets
 from .litellm_core import get_litellm
 from .openai_compatible import _ACCOUNT_POOL_MARKERS, _MODEL_UNAVAILABLE_MARKERS, _rejects_chat_completions
 
@@ -135,11 +136,16 @@ def is_litellm_exception(exc: BaseException) -> bool:
     return type(exc).__module__.startswith("litellm")
 
 
-def map_litellm_error(exc: BaseException, protocol: str = "openai") -> ModelProviderError:
+def map_litellm_error(exc: BaseException, protocol: str = "openai", secrets: tuple[str | None, ...] = ()) -> ModelProviderError:
+    """Map a LiteLLM exception; ``secrets`` (the connection's API keys) are masked in the message."""
     if isinstance(exc, ModelProviderError):
-        return exc
+        return exc.redact(*secrets)
+    return _map_litellm_error(exc, protocol, secrets).redact(*secrets)
+
+
+def _map_litellm_error(exc: BaseException, protocol: str, secrets: tuple[str | None, ...]) -> ModelProviderError:
     litellm = get_litellm()
-    detail = litellm_error_detail(exc)
+    detail = redact_secrets(litellm_error_detail(exc), secrets)
     lowered = detail.lower()
     status = getattr(exc, "status_code", None)
     route = _ROUTE_LABELS.get(protocol, "模型")

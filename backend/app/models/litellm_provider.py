@@ -403,10 +403,11 @@ class LiteLLMProvider:
         )
 
     def _error(self, exc: BaseException) -> ModelProviderError:
+        secrets = (self._api_key,)
         if isinstance(exc, ModelProviderError):
-            return exc
+            return exc.redact(*secrets)
         if is_litellm_exception(exc) or hasattr(exc, "status_code"):
-            return map_litellm_error(exc, self._protocol)
+            return map_litellm_error(exc, self._protocol, secrets)
         if isinstance(exc, (ValueError, TypeError, AttributeError, KeyError, json.JSONDecodeError)):
             logger.warning("LiteLLM response could not be parsed (%s)", type(exc).__name__, exc_info=exc)
             return ModelProviderError("invalid_provider_response", "模型服务返回了无法解析的响应")
@@ -569,7 +570,9 @@ class LiteLLMProvider:
                     completed = _field(event, "response")
                 elif kind in {"response.failed", "error"}:
                     detail = str(_field(_field(_field(event, "response"), "error"), "message", "") or _field(event, "message", "") or "")
-                    raise ModelProviderError("provider_error", f"Responses API 流式调用失败{('：' + detail[:200]) if detail else ''}")
+                    raise ModelProviderError(
+                        "provider_error", f"Responses API 流式调用失败{('：' + detail[:200]) if detail else ''}",
+                    ).redact(self._api_key)
         finally:
             close = getattr(stream, "aclose", None)
             if callable(close):

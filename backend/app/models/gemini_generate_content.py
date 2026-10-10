@@ -35,6 +35,7 @@ class GeminiGenerateContentProvider:
         if not api_key:
             raise ValueError("启用 Gemini generateContent Provider 时必须配置 API Key")
         self._model = model.removeprefix("models/")
+        self._secret = api_key  # masked in error messages
         self._base_url = self._normalize_base_url(base_url)
         self._client = httpx.AsyncClient(
             headers={
@@ -351,8 +352,12 @@ class GeminiGenerateContentProvider:
             total_tokens=int(usage.get("totalTokenCount") or 0),
         )
 
+    def _provider_error(self, exc: Exception) -> ModelProviderError:
+        # Gateways may echo the key back in error bodies; never surface or store it.
+        return self._map_provider_error(exc).redact(self._secret)
+
     @staticmethod
-    def _provider_error(exc: Exception) -> ModelProviderError:
+    def _map_provider_error(exc: Exception) -> ModelProviderError:
         if isinstance(exc, httpx.TimeoutException):
             return ModelProviderError("request_timeout", "模型服务响应超时，请稍后重试", retryable=True)
         if isinstance(exc, httpx.RequestError):

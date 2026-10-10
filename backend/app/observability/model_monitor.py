@@ -8,6 +8,7 @@ from typing import Any
 
 from ..agent.settings import get_model_connection
 from ..db import connect, row_to_dict
+from ..redaction import redact_secrets
 from ..model_protocol import base_url_for_protocol, connection_protocol_label, model_protocol_candidates, normalize_detected_protocol, normalize_model_protocol
 from .model_context import current_model_call
 
@@ -72,7 +73,7 @@ def record_model_service_event(
                 request_kind,
                 status,
                 error_code,
-                error_message[:300],
+                redact_secrets(error_message)[:300],
                 max(0, round(latency_ms)),
                 max(0, total_tokens),
                 model_name,
