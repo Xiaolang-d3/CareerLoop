@@ -99,6 +99,8 @@
 
 - `.pth` 扫描补齐三处绕过：不属于任何包 RECORD 的 `.pth` 一律失败（包括与 setuptools 放行文件逐字节相同的副本）；`.pth` 加入 `sys.path` 的目录也检查 `sitecustomize` / `usercustomize`；按 UTF-8 BOM 解码，BOM 后的 `import` 行不再被当成路径；放行的可执行 `.pth` 还要求属于 setuptools 且该包 RECORD 全部文件校验通过。
 
+- `install_deps.sh`（`dev.sh`、`start-remote.sh` 调用）每次启动都重新扫描 `.pth`，不再只在锁文件变化时扫描；扫描失败会删除安装标记，下次强制按哈希重装。
+
 - 首页公开源适配器与 Agent 循环分离，账号工作区使用 JSON 快照缓存；后台合并刷新、来源失败保留旧内容，不调用模型生成资讯。数据库版本仍为 25，没有新增迁移。
 
 - 数据库 v25 新增文件夹表，组织信息与解析元数据并存；从 v24 升级保留原件、稳定 ID 和启用状态。
