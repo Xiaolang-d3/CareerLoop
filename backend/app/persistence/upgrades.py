@@ -46,7 +46,7 @@ def initialize_workspace(db_path: str | Path | None = None) -> None:
         if version > DB_SCHEMA_VERSION:
             raise ValueError("数据库来自更新版本，请升级应用后打开")
         if tables:
-            if not 1 <= version <= 26:
+            if not 1 <= version < DB_SCHEMA_VERSION:
                 raise ValueError("未知数据库格式，未修改原文件")
             if version < 24:
                 _backup(path)
@@ -106,7 +106,9 @@ def initialize_workspace(db_path: str | Path | None = None) -> None:
         # Indexing is a recoverable phase. The completion version is written
         # only after it succeeds; data imports use persisted IDs and markers.
         from ..library.sources import _index_source, enabled_source_details
-        for source in enabled_source_details(path):
-            _index_source(source, path)
+        # v28 only adds model metadata; existing v27 library indexes remain valid.
+        if version < 27:
+            for source in enabled_source_details(path):
+                _index_source(source, path)
         with connect(path) as conn:
             conn.execute("INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (?, 'independent_library')", (DB_SCHEMA_VERSION,))
