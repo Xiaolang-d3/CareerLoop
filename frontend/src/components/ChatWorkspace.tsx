@@ -1,7 +1,7 @@
 import { useConversationScroll } from "../features/chat/useConversationScroll";
 import { RunStatus } from "../features/chat/RunStatus";
 import { ComposerModelPicker } from "../features/chat/ComposerModelPicker";
-import { textFromAppendMessage, WebSource, webSourcesFromAgent, ResearchPanelActionsContext, EditMessageComposer, thinkingHeaderCopy, ComposerClarification, StarterPromptList, ChatContextChips, ResearchPanel, ChatTurn } from "../features/chat/MessagePresentation";
+import { textFromAppendMessage, WebSource, webSourcesFromAgent, hasResearchDetails, ResearchPanelActionsContext, EditMessageComposer, thinkingHeaderCopy, ComposerClarification, StarterPromptList, ChatContextChips, ResearchPanel, ChatTurn } from "../features/chat/MessagePresentation";
 
 import type { AgentRunResult, ChatMessage, ChatAttachment, WebSearchMode, ChatClarificationOption, ChatClarification, ChatWorkspaceProps } from "../features/chat/types";
 
@@ -284,7 +284,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             )}
           </div>
           <div className="chat-session-tools" role="toolbar" aria-label="对话操作">
-            {props.messages.length || props.chatBusy ? (
+            {researchPanelOpen || hasResearchDetails(defaultResearchAgent) ? (
               <button
                 ref={researchToggleRef}
                 className={`chat-session-tool chat-research-toggle${researchPanelOpen ? " is-open" : ""}`}

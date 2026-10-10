@@ -3,9 +3,9 @@
 .composer-model-selection select,.composer-model-selection button { max-width: 100%; padding: 3px 6px; border: 1px solid var(--color-border); border-radius: 6px; color: var(--color-text-secondary); background: var(--color-surface); font: inherit; }
 .composer-model-selection :is(select,button):focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
 .composer-model-selection :is(select,button):disabled { opacity: .55; }
-.message-model-selection { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; color: var(--color-text-muted); font-size: 11px; }
-.message-model-selection details > summary { cursor: pointer; }
-.message-model-selection details p { margin: 4px 0; }
+.message-details-disclosure { display: contents; }
+.chat-workspace .message-model-details { display: flex; flex-direction: column; flex-basis: 100%; gap: 6px; box-sizing: border-box; width: 360px; max-width: 100%; min-width: 0; margin-top: 4px; padding: 12px; border: 1px solid var(--color-border); border-radius: 10px; color: var(--color-text-secondary); background: var(--color-surface); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.message-model-details > strong { color: var(--color-text); font-size: 12px; }
 
 .model-picker { position: relative; display: inline-flex; min-width: 0; }
 .model-pill { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 220px; height: 30px; padding: 0 10px 0 5px; border: 0; border-radius: 999px; color: var(--color-text-secondary); background: color-mix(in srgb, var(--color-text-muted) 10%, transparent); font: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer; transition: background .15s ease, color .15s ease; }

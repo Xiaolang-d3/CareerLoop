@@ -9,7 +9,7 @@ const STARTER_PROMPTS: Array<{
     { draft: "帮我查找并核对这个主题的公开信息：", title: "查找公开信息", enableWebSearch: true },
     { draft: "根据我的要求起草一份内容。用途、读者和要点是：", title: "起草一份内容" }
   ];
-import type { AgentRunResult, ChatClarification, ChatMessage, ChatSessionContext } from "./types";
+import type { AgentRunResult, ChatClarification, ChatMessage, ChatSessionContext, ModelSelection } from "./types";
 import { Children, createContext, isValidElement, useContext, useEffect, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import { ChatWorkspaceMermaid } from "../../components/ChatWorkspaceMermaid";
 import { ChatWorkspaceMindmap } from "../../components/ChatWorkspaceMindmap";
@@ -17,7 +17,7 @@ import { isMermaidMindmap } from "../../components/mindmap-source";
 import { ActionBarPrimitive, ComposerPrimitive, MessagePrimitive, type AppendMessage, type MessageState } from "@assistant-ui/react";
 import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ArrowUpRight, Check, CheckCircle2, ChevronDown, CircleHelp, Copy, FileText, ImagePlus, LoaderCircle, PanelRight, Pencil, RefreshCw, Search, TriangleAlert, X } from "lucide-react";
+import { ArrowUpRight, Check, CheckCircle2, ChevronDown, CircleHelp, Copy, FileText, ImagePlus, Info, LoaderCircle, PanelRight, Pencil, RefreshCw, Search, TriangleAlert, X } from "lucide-react";
 
 const modelStageLabels: Record<string, string> = { classify: "意图识别", plan: "任务规划", execute: "执行回答" };
 const modelSelectionReasons: Record<string, string> = {
@@ -46,21 +46,20 @@ export function textFromAppendMessage(message: AppendMessage): string {
     .trim();
 }
 
-function AgentResultNote({ run }: { run?: AgentRunResult }) {
+function AgentResultNote({ run, content }: { run?: AgentRunResult; content: string }) {
   if (!run?.events.length) return null;
   const failed = run.status === "failed" || run.events.some((event) => event.status === "failed");
   const cancelled = run.status === "cancelled";
   if (!failed && !cancelled) return null;
-  const failureHint = run.error?.retryable === false
-      ? "请先检查设置或输入后再继续。"
-      : "可以修改输入或直接点击下方重试。";
+  const errorMessage = run.error?.message?.trim();
+  const errorAlreadyShown = errorMessage && content.replace(/\s+/g, " ").includes(errorMessage.replace(/\s+/g, " "));
   return (
     <div className={`agent-result-note ${cancelled ? "cancelled" : "failed"}`}>
       {failed ? <TriangleAlert size={14} /> : <CheckCircle2 size={14} />}
       <span>
         <strong>{cancelled ? "任务已结束" : "执行已终止"}</strong>
-        {run.error?.message ? <small>{run.error.message}</small> : null}
-        {failed ? <small>{failureHint}</small> : null}
+        {errorMessage && !errorAlreadyShown ? <small>{errorMessage}</small> : null}
+        {failed && run.error?.retryable === false ? <small>请先检查设置或输入后再继续。</small> : null}
       </span>
     </div>
   );
@@ -469,6 +468,11 @@ function thoughtProcessContent(agent?: AgentRunResult): {
   return { thoughts, steps, sources: thoughtSources(events) };
 }
 
+export function hasResearchDetails(agent?: AgentRunResult): boolean {
+  const { steps, sources } = thoughtProcessContent(agent);
+  return steps.length > 0 || sources.length > 0;
+}
+
 export function thinkingHeaderCopy(agent: AgentRunResult | undefined, streaming: boolean): { title: string; currentTask?: string } {
   if (!streaming) return { title: "思考过程" };
 
@@ -542,8 +546,7 @@ function ThoughtProcess({
   onOpen?: () => void;
 }) {
   const title = "思考过程";
-  const { thoughts, steps, sources } = thoughtProcessContent(agent);
-  const hasBody = thoughts.length + steps.length + sources.length > 0;
+  const hasBody = hasResearchDetails(agent);
   if (!hasBody) return null;
   const headerCopy = (
     <>
@@ -897,7 +900,48 @@ function MessageCopyButton({ content, label }: { content: string; label: string 
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => setFeedback(""), 3000);
   }
-  return <><button type="button" aria-label={label} onClick={() => void copy()} disabled={!content}>{feedback === "已复制" ? <Check size={12} /> : <Copy size={12} />}{feedback || "复制"}</button><span className="message-copy-feedback" role="status">{feedback}</span></>;
+  return <><button type="button" className="message-icon-action" aria-label={label} title={feedback || label} onClick={() => void copy()} disabled={!content}>{feedback === "已复制" ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}</button><span className="message-copy-feedback" role="status">{feedback}</span></>;
+}
+
+function MessageModelDetails({ selection, messageId }: { selection: ModelSelection; messageId: number }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLSpanElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    function outsideClick(event: PointerEvent) {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false);
+    }
+    function escape(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(false);
+      buttonRef.current?.focus({ preventScroll: true });
+    }
+    document.addEventListener("pointerdown", outsideClick);
+    document.addEventListener("keydown", escape, true);
+    return () => {
+      document.removeEventListener("pointerdown", outsideClick);
+      document.removeEventListener("keydown", escape, true);
+    };
+  }, [open]);
+  return (
+    <span ref={rootRef} className="message-details-disclosure">
+      <button ref={buttonRef} type="button" className="message-icon-action" aria-label="回答详情" title="回答详情" aria-expanded={open} aria-controls={`message-details-${messageId}`} onClick={() => setOpen((value) => !value)}>
+        <Info size={14} aria-hidden="true" />
+      </button>
+      {open ? <span id={`message-details-${messageId}`} className="message-model-details" role="region" aria-label="回答详情">
+        <strong>生成模型：{selection.model_name}</strong>
+        <span>模型版本 {selection.profile_revision} · 连接版本 {selection.connection_revision}
+          {selection.policy_version ? ` · 路由版本 ${selection.policy_version}` : ""}</span>
+        {selection.stage_selections ? Object.entries(selection.stage_selections).map(([stage, stageSelection]) => (
+          <span key={stage}>{modelStageLabels[stage] || stage}：{stageSelection.model_name || "未记录"} · {modelSelectionReasons[stageSelection.selection_reason || ""] || "原任务配置"}
+            {stageSelection.capability_status === "unverified" ? " · 所需能力未验证" : stageSelection.capability_status ? "" : " · 本轮未调用"}</span>
+        )) : null}
+      </span> : null}
+    </span>
+  );
 }
 
 export function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: boolean }) {
@@ -924,29 +968,16 @@ export function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: b
             <ThoughtProcess streaming={isActiveAssistant} agent={source.payload?.agent} onOpen={() => openResearch()} />
             <section className="message-result message-dialog" aria-label="输出结果">
               <MarkdownContent sources={webSources} streaming={isActiveAssistant} onOpenSource={openResearch}>{resultContent}</MarkdownContent>
-              <AgentResultNote run={source.payload?.agent} />
+              <AgentResultNote run={source.payload?.agent} content={resultContent} />
             </section>
-            {modelSelection?.model_name ? (
-              <div className="message-model-selection">
-                <span>生成模型：{modelSelection.model_name}</span>
-                <details>
-                  <summary>模型详情</summary>
-                  <p>模型版本 {modelSelection.profile_revision} · 连接版本 {modelSelection.connection_revision}
-                    {modelSelection.policy_version ? ` · 路由版本 ${modelSelection.policy_version}` : ""}</p>
-                  {modelSelection.stage_selections ? Object.entries(modelSelection.stage_selections).map(([stage, selection]) => (
-                    <p key={stage}>{modelStageLabels[stage] || stage}：{selection.model_name || "未记录"} · {modelSelectionReasons[selection.selection_reason || ""] || "原任务配置"}
-                      {selection.capability_status === "unverified" ? " · 所需能力未验证" : selection.capability_status ? "" : " · 本轮未调用"}</p>
-                  )) : null}
-                </details>
-              </div>
-            ) : null}
             <ActionBarPrimitive.Root className="message-actions" hideWhenRunning>
               <MessageCopyButton content={resultContent} label="复制回答" />
-              <ActionBarPrimitive.Reload aria-label={failed ? "重试回答" : "重新生成回答"} title="从本轮开始重新生成，后续消息将被替换" aria-describedby={`regenerate-impact-${source.id}`}>
-                <RefreshCw size={12} />{failed ? "重试" : "重新生成"}
+              <ActionBarPrimitive.Reload className="message-icon-action" aria-label={failed ? "重试回答" : "重新生成回答"} title={failed ? "重试回答，将替换本轮及后续消息" : "重新生成，将替换本轮及后续消息"} aria-describedby={`regenerate-impact-${source.id}`}>
+                <RefreshCw size={14} aria-hidden="true" />
               </ActionBarPrimitive.Reload>
+              {modelSelection?.model_name ? <MessageModelDetails key={source.id} selection={modelSelection} messageId={source.id} /> : null}
             </ActionBarPrimitive.Root>
-            {!chatBusy ? <small className="message-action-hint" id={`regenerate-impact-${source.id}`}>重新生成将替换本轮及后续消息</small> : null}
+            <span className="message-action-hint sr-only" id={`regenerate-impact-${source.id}`}>重新生成将替换本轮及后续消息</span>
             <WebSourcesPanel sources={webSources} onOpen={() => openResearch()} />
           </>
         ) : (
@@ -965,7 +996,7 @@ export function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: b
             ) : null}
             <ActionBarPrimitive.Root className="message-actions user-message-actions" hideWhenRunning>
               <MessageCopyButton content={source.content} label="复制消息" />
-              <ActionBarPrimitive.Edit aria-label="编辑消息" title="编辑后重发会替换本条及后续消息"><Pencil size={12} />编辑</ActionBarPrimitive.Edit>
+              <ActionBarPrimitive.Edit className="message-icon-action" aria-label="编辑消息" title="编辑消息"><Pencil size={14} aria-hidden="true" /></ActionBarPrimitive.Edit>
             </ActionBarPrimitive.Root>
           </>
         )}
