@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .base import ModelProviderError
@@ -91,3 +92,17 @@ def validate_diagnostic_response(result: Any, raw: Any, protocol: str) -> None:
             "invalid_provider_response",
             f"模型服务的 {protocol} 响应缺少有效完成状态或内容，无法确认连接或图片输入可用",
         )
+
+
+def is_protocol_rejection(message: str, status_code: int | None) -> bool:
+    """Recognize explicit protocol rejection, never arbitrary bad requests."""
+    if status_code not in {400, 404, 405, 422}:
+        return False
+    protocol = r"(?:chat[ _/-]?completions?|responses)(?:\s+(?:api|protocol|endpoint)|协议|接口)?"
+    patterns = (
+        rf"(?:不支持|不兼容)\s*{protocol}",
+        rf"(?:does not support|doesn't support|not supported on|not compatible with)\s+(?:the\s+)?{protocol}",
+        rf"{protocol}\s*(?:协议|接口)?\s*(?:is\s+)?(?:not supported|unsupported|不支持)",
+        rf"unsupported\s+(?:protocol\s*:\s*)?{protocol}",
+    )
+    return any(re.search(pattern, message, re.IGNORECASE) for pattern in patterns)

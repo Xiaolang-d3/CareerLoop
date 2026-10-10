@@ -9,7 +9,7 @@ from ..model_protocol import normalize_model_protocol, resolve_model_protocol
 from .base import ModelProviderError
 
 
-FALLBACK_ERROR_CODES = frozenset({"route_not_found", "invalid_provider_response"})
+FALLBACK_ERROR_CODES = frozenset({"route_not_found", "invalid_provider_response", "protocol_unsupported"})
 _SUCCESSFUL_PROTOCOLS: dict[str, str] = {}
 
 

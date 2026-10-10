@@ -69,7 +69,7 @@ def model_protocol_candidates(
         return (primary,)
     if primary in {"anthropic", "gemini"}:
         return (primary, "openai")
-    return (primary,)
+    return (primary, "responses") if primary == "openai" else (primary,)
 
 
 def base_url_for_protocol(

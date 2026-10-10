@@ -21,7 +21,7 @@ from ..domain import ModelRequest, ModelResponse, ModelStreamEvent, ModelUsage, 
 from ..agent.settings import get_agent_settings, persona_prompt
 from ..observability.model_monitor import record_model_service_event
 from .base import ModelProviderError
-from .validation import is_vision_rejection, upstream_error_detail, validate_diagnostic_response
+from .validation import is_protocol_rejection, is_vision_rejection, upstream_error_detail, validate_diagnostic_response
 
 
 _TINY_PNG_DATA_URL = (
@@ -397,6 +397,11 @@ class OpenAICompatibleProvider:
                     "account_pool_exhausted",
                     "模型网关没有可调度的上游账户，请联系服务商检查账户状态、额度或并发限制",
                     retryable=True,
+                )
+            if is_protocol_rejection(detail, exc.status_code):
+                return ModelProviderError(
+                    "protocol_unsupported",
+                    f"当前模型不支持所选接口协议：{detail}",
                 )
             if exc.status_code == 404 and any(
                 marker in normalized_detail for marker in _MODEL_UNAVAILABLE_MARKERS

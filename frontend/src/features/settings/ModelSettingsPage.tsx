@@ -280,7 +280,7 @@ export function ModelSettingsPage({
                   <option value="gemini">Google Gemini generateContent</option>
                   <option value="ollama">Ollama Chat API</option>
                 </select>
-                <small>默认自动匹配，服务商有明确要求时再更改。</small>
+                <small>默认自动匹配；服务明确拒绝协议时会尝试兼容接口，成功后记住选择。</small>
                 <small>{protocolBaseUrlHelp(effectiveProtocol)}</small>
               </label>
               {discoveryError && <p className="model-capability-error" role="alert">模型列表读取失败：{discoveryError}</p>}
