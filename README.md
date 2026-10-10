@@ -41,7 +41,7 @@ CareerLoop/
 │   ├── .env.example
 │   ├── requirements-dev.txt
 │   ├── requirements.txt
-│   ├── requirements-lock.txt # 全部后端依赖的哈希锁定文件（由 requirements-lock.in 生成，见 docs/model-layer.md）
+│   ├── requirements-lock.txt # 运行时依赖的哈希锁定文件；开发用 requirements-dev-lock.txt，桌面构建加 requirements-build-lock.txt（见 docs/model-layer.md）
 │   └── requirements-optional.txt # 增强解析、语义向量与 OCR
 ├── frontend/
 │   ├── src/
@@ -102,7 +102,7 @@ loopback sidecar 运行；每次启动使用动态端口，并在显示窗口前
 ```bash
 cd desktop
 npm install
-../backend/scripts/install_deps.sh   # 全部依赖从 requirements-lock.txt 按哈希安装
+../backend/scripts/install_deps.sh ../backend/.venv dev   # 运行时 + 测试依赖，按哈希安装
 npm run package-sidecar
 ../backend/.venv/bin/python scripts/smoke-sidecar.py
 npm run build
@@ -159,7 +159,7 @@ WEB_RESEARCH_ENABLED=true
 
 ```bash
 cd backend
-scripts/install_deps.sh   # 全部依赖从 requirements-lock.txt 按哈希安装（含开发依赖）
+scripts/install_deps.sh .venv dev   # 运行时 + 测试依赖，按哈希安装（部署用 runtime，只装运行时锁）
 ```
 
 ```bash

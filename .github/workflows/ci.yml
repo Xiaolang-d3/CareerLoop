@@ -42,12 +42,12 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: |
-            backend/requirements-lock.txt
+            backend/requirements-dev-lock.txt
       - name: Install backend dependencies
         working-directory: backend
         run: |
-          # One full lock, every package hash-verified (docs/model-layer.md).
-          python -m pip install --require-hashes --no-deps --only-binary :all: -r requirements-lock.txt
+          # Runtime + test lock, every package hash-verified (docs/model-layer.md).
+          python -m pip install --require-hashes --no-deps --only-binary :all: -r requirements-dev-lock.txt
       - name: Scan for executable .pth files
         # -I -S: no site processing, so no .pth runs before it is scanned.
         run: python -I -S backend/scripts/scan_pth.py --python python
@@ -116,6 +116,7 @@ jobs:
             backend/requirements-lock.txt
       - name: Install integration backend
         run: |
+          # Runtime lock only, as deployed.
           python -m pip install --require-hashes --no-deps --only-binary :all: -r backend/requirements-lock.txt
       - name: Scan for executable .pth files
         # -I -S: no site processing, so no .pth runs before it is scanned.

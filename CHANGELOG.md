@@ -101,6 +101,8 @@
 
 - `install_deps.sh`（`dev.sh`、`start-remote.sh` 调用）每次启动都重新扫描 `.pth`，不再只在锁文件变化时扫描；扫描失败会删除安装标记，下次强制按哈希重装。
 
+- 后端依赖锁拆成运行时锁 `requirements-lock.txt`（部署与桌面 sidecar 使用，不含 pytest、PyInstaller）、开发锁 `requirements-dev-lock.txt`（`dev.sh`、CI 测试）和只含 PyInstaller 的构建锁；桌面打包在单独的 `backend/.venv-build`（运行时锁 + 构建锁）中进行，检测到开发包会拒绝打包。`install_deps.sh` 增加 `runtime|dev|build` 模式，模式或锁文件变化时重建 venv。
+
 - 首页公开源适配器与 Agent 循环分离，账号工作区使用 JSON 快照缓存；后台合并刷新、来源失败保留旧内容，不调用模型生成资讯。数据库版本仍为 25，没有新增迁移。
 
 - 数据库 v25 新增文件夹表，组织信息与解析元数据并存；从 v24 升级保留原件、稳定 ID 和启用状态。

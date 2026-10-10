@@ -77,6 +77,21 @@ def build_python(pyinstaller: str) -> str:
     return str(sibling) if sibling.is_file() else sys.executable
 
 
+DEV_ONLY_MODULES = ("pytest", "_pytest", "pluggy", "iniconfig", "pygments")
+
+
+def assert_runtime_only(python: str) -> None:
+    """Refuse to bundle from an environment that has development packages."""
+    present = subprocess.run(
+        [python, "-I", "-c", "import importlib.util as u, sys; "
+                             "print(' '.join(m for m in sys.argv[1:] if u.find_spec(m)))", *DEV_ONLY_MODULES],
+        capture_output=True, text=True, check=True,
+    ).stdout.split()
+    if present:
+        raise SystemExit(f"Build environment has development packages ({', '.join(present)}); "
+                         "use backend/.venv-build (runtime + build locks).")
+
+
 def litellm_arguments(python: str) -> list[str]:
     # Ask the build interpreter, not the one running this script: `npm run
     # package-sidecar` uses the system python3 while PyInstaller bundles the
@@ -104,11 +119,12 @@ def litellm_arguments(python: str) -> list[str]:
 def main() -> None:
     if platform.system() != "Darwin" or platform.machine().lower() not in {"arm64", "aarch64"}:
         raise SystemExit("The current internal desktop package supports macOS ARM64 only.")
-    executable_name = "pyinstaller.exe" if platform.system() == "Windows" else "pyinstaller"
-    venv_pyinstaller = BACKEND / ".venv" / ("Scripts" if platform.system() == "Windows" else "bin") / executable_name
-    pyinstaller = str(venv_pyinstaller) if venv_pyinstaller.is_file() else shutil.which("pyinstaller")
-    if pyinstaller is None:
-        raise SystemExit("Install PyInstaller in the backend build environment first.")
+    # Build venv = runtime lock + PyInstaller (requirements-build-lock.txt),
+    # hash-installed and .pth-scanned by install_deps.sh on every build.
+    build_venv = BACKEND / ".venv-build"
+    subprocess.run([str(BACKEND / "scripts" / "install_deps.sh"), str(build_venv), "build"], check=True)
+    pyinstaller = str(build_venv / "bin" / "pyinstaller")
+    assert_runtime_only(build_python(pyinstaller))
     dist = RUNTIME_RESOURCES
     work = ROOT / "desktop" / ".sidecar-build"
     build_env = dict(os.environ)

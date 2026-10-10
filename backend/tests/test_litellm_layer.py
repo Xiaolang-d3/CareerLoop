@@ -78,20 +78,33 @@ def _pins(text: str) -> dict[str, str]:
     return {re.sub(r"[-_.]+", "-", name).lower(): version for name, version in found}
 
 
-def test_requirements_are_hash_pinned():
-    """One full lock covers runtime, dev and LiteLLM; every entry carries hashes."""
-    lock = (BACKEND / "requirements-lock.txt").read_text(encoding="utf-8")
-    assert re.search(r"^litellm==\d+\.\d+\.\d+ ", lock, re.MULTILINE)
+def _lock(name: str) -> dict[str, str]:
+    lock = (BACKEND / name).read_text(encoding="utf-8")
     entries = re.split(r"\n(?=[A-Za-z0-9])", lock)
     requirement_entries = [entry for entry in entries if re.match(r"^[A-Za-z0-9_.\-]+==", entry)]
-    assert len(requirement_entries) > 50
+    assert requirement_entries, name
     for entry in requirement_entries:
-        assert "--hash=sha256:" in entry, entry.splitlines()[0]
-    # Every direct pin in the human-edited inputs is locked at the same version.
-    pins = _pins(lock)
-    for source in ("requirements.txt", "requirements-dev.txt", "requirements-litellm.in"):
-        for name, version in _pins((BACKEND / source).read_text(encoding="utf-8")).items():
-            assert pins.get(name) == version, (source, name, version, pins.get(name))
+        assert "--hash=sha256:" in entry, (name, entry.splitlines()[0])
+    return _pins(lock)
+
+
+def test_requirements_are_hash_pinned():
+    """Runtime, dev and build locks: every entry hashed, shared packages at one version."""
+    runtime, dev, build = (_lock(name) for name in
+                           ("requirements-lock.txt", "requirements-dev-lock.txt", "requirements-build-lock.txt"))
+    assert re.match(r"\d+\.\d+\.\d+$", runtime["litellm"]) and len(runtime) > 50
+    for name, version in _pins((BACKEND / "requirements.txt").read_text(encoding="utf-8")).items():
+        assert runtime.get(name) == version, ("requirements.txt", name, version, runtime.get(name))
+    for name, version in _pins((BACKEND / "requirements-litellm.in").read_text(encoding="utf-8")).items():
+        assert runtime.get(name) == version, ("requirements-litellm.in", name, version)
+    for name, version in _pins((BACKEND / "requirements-dev.txt").read_text(encoding="utf-8")).items():
+        assert dev.get(name) == version, ("requirements-dev.txt", name, version, dev.get(name))
+    # Deployments never get development tools; dev and build agree with runtime.
+    for tool in ("pytest", "pyinstaller", "pluggy", "iniconfig"):
+        assert tool not in runtime, tool
+    assert "pytest" not in build and build["pyinstaller"] == dev["pyinstaller"]
+    for name, version in {**runtime, **build}.items():
+        assert dev.get(name) == version, name
     assert not (BACKEND / "requirements-litellm.txt").exists()
 
 # ---------------------------------------------------------- backend flag
