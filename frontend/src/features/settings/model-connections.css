@@ -30,3 +30,34 @@
 .model-protocol-suggestion { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 9px 10px; border: 1px solid var(--color-warning); border-radius: 8px; color: var(--color-warning); font-size: 12px; }
 .model-archive-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 9px; color: var(--color-warning); font-size: 12px; }
 @media (max-width: 520px) { .model-connections-heading { flex-wrap: wrap; } .model-profile-list > div { flex-wrap: wrap; } .model-add-profile > div:first-of-type { flex-wrap: wrap; } }
+.model-profile-capability-panel { display: grid; gap: 8px; padding: 2px 0 10px; }
+.model-profile-capabilities { display: grid; gap: 8px; }
+.model-profile-capabilities p { margin: 0; color: var(--color-text-muted); font-size: 11px; line-height: 1.6; }
+.model-capability-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.model-capability-tag { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface); color: var(--color-text-secondary); font-size: 11px; }
+.model-capability-tag em { font-style: normal; color: var(--color-text-muted); }
+.model-capability-tag.supported { border-color: var(--color-success, var(--color-brand)); }
+.model-capability-tag.supported > span { color: var(--color-success, var(--color-brand)); font-weight: 650; }
+.model-capability-tag.unsupported > span { color: var(--color-text-muted); text-decoration: line-through; }
+.model-capability-tag.unknown { border-style: dashed; }
+.model-capability-tag.context { background: var(--color-surface-subtle); }
+.model-capability-overrides > summary { font-size: 12px; color: var(--color-text-secondary); cursor: pointer; }
+.model-capability-overrides > div { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; margin: 8px 0; }
+.model-capability-overrides label { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 11px; color: var(--color-text-muted); }
+.model-capability-overrides select { min-height: 28px; padding: 3px 6px; border: 1px solid var(--color-border); border-radius: 7px; background: var(--color-surface); color: var(--color-text-secondary); font-size: 12px; }
+.model-fallback-card h3 { display: inline-flex; align-items: center; gap: 6px; }
+.model-fallback-switch { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: 12px; color: var(--color-text-secondary); }
+.model-fallback-list,.model-fallback-retry { display: grid; gap: 8px; min-width: 0; margin: 0; padding: 12px; border: 1px solid var(--color-border); border-radius: 10px; }
+.model-fallback-list:disabled,.model-fallback-retry:disabled { opacity: .6; }
+.model-fallback-list legend,.model-fallback-retry legend { display: grid; gap: 2px; padding: 0 4px; font-size: 13px; font-weight: 650; }
+.model-fallback-list legend small,.model-fallback-retry legend small { color: var(--color-text-muted); font-size: 11px; font-weight: 400; }
+.model-fallback-list > div { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px; }
+.model-fallback-list label { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 7px 9px; border: 1px solid var(--color-border); border-radius: 8px; font-size: 12px; cursor: pointer; }
+.model-fallback-list label.selected { border-color: var(--color-brand); background: var(--color-brand-soft); }
+.model-fallback-list label b { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--color-brand); color: var(--color-surface); font-size: 10px; }
+.model-fallback-list label span { display: grid; min-width: 0; overflow-wrap: anywhere; }
+.model-fallback-list label small { color: var(--color-text-muted); font-size: 11px; }
+.model-fallback-retry > div { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.model-fallback-retry label { display: grid; gap: 4px; font-size: 11px; color: var(--color-text-muted); }
+.model-fallback-retry input { min-height: 30px; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: 7px; background: var(--color-surface); color: var(--color-text); font-size: 12px; }
+@media (max-width: 520px) { .model-fallback-switch { width: 100%; } }

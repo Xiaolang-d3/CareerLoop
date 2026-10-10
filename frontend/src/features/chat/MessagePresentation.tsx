@@ -921,7 +921,7 @@ export function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: b
               <MarkdownContent sources={webSources} streaming={isActiveAssistant} onOpenSource={openResearch}>{resultContent}</MarkdownContent>
               <AgentResultNote run={source.payload?.agent} />
             </section>
-            {modelSelection?.model_name ? <div className="message-model-selection"><span>生成模型：{modelSelection.model_name}</span><details><summary>模型详情</summary><p>模型版本 {modelSelection.profile_revision} · 连接版本 {modelSelection.connection_revision}</p>{modelSelection.stage_selections ? Object.entries(modelSelection.stage_selections).map(([stage, selection]) => <p key={stage}>{stage}：{selection.model_name || "未记录"}</p>) : null}</details></div> : null}
+            {modelSelection?.model_name ? <div className="message-model-selection"><span>生成模型：{modelSelection.model_name}{modelSelection.fallback_used && modelSelection.answered_model_name ? ` · 主模型出错，由备用模型 ${modelSelection.answered_model_name} 回答` : ""}</span><details><summary>模型详情</summary><p>模型版本 {modelSelection.profile_revision} · 连接版本 {modelSelection.connection_revision}</p>{modelSelection.stage_selections ? Object.entries(modelSelection.stage_selections).map(([stage, selection]) => <p key={stage}>{stage}：{selection.model_name || "未记录"}</p>) : null}</details></div> : null}
             <ActionBarPrimitive.Root className="message-actions" hideWhenRunning>
               <MessageCopyButton content={resultContent} label="复制回答" />
               <ActionBarPrimitive.Reload aria-label={failed ? "重试回答" : "重新生成回答"} title="从本轮开始重新生成，后续消息将被替换" aria-describedby={`regenerate-impact-${source.id}`}>

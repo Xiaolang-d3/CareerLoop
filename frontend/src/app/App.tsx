@@ -91,6 +91,7 @@ const AccountSettingsPage = lazy(() => loadAccountSettingsPage().then((module) =
 })));
 
 const ModelConnectionManager = lazy(() => import("../features/settings/ModelConnectionManager").then((module) => ({ default: module.ModelConnectionManager })));
+const ModelFallbackSettings = lazy(() => import("../features/settings/ModelFallbackSettings").then((module) => ({ default: module.ModelFallbackSettings })));
 
 const ModelSettingsPage = lazy(() => import("../features/settings/ModelSettingsPage").then((module) => ({
   default: module.ModelSettingsPage
@@ -1057,14 +1058,14 @@ export function App({
               {appRoute.page === "model" ? (
                 modelSettingsReady ? (
                   <ModelSettingsPage
-                    connectionManager={<ModelConnectionManager
+                    connectionManager={<><ModelConnectionManager
                       fetchJson={fetchJson} catalog={modelCatalog.catalog} loading={modelCatalog.loading}
                       busy={modelCatalog.busy || agentSettingsBusy} error={modelCatalog.error}
                       secretWritable={savedAgentSettings.secret_storage_writable}
                       defaultLocked={defaultModelHasDraft || Boolean(modelSaveUnknown)}
                       onReload={modelCatalog.reload} onMutate={modelCatalog.mutate}
                       onDefaultChanged={refreshDefaultModelSelection}
-                    />}
+                    /><ModelFallbackSettings fetchJson={fetchJson} catalog={modelCatalog.catalog} busy={modelCatalog.busy || agentSettingsBusy} /></>}
                     settings={agentSettings}
                     savedSettings={savedAgentSettings}
                     editing={modelSettingsEditing}

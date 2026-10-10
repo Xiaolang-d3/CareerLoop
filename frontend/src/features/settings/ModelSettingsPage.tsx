@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { Activity, ChevronDown, Cpu, Gauge, Image, LoaderCircle, RefreshCw, Save, ScanSearch, Wrench } from "lucide-react";
 import { ActionButton } from "../../components/ui/ActionButton";
 import type { AgentSettings, ModelCapabilityFlag, ModelCapabilityReport, ModelServiceMonitor } from "../../types";
+import { CAPABILITY_SOURCE_LABELS, formatContextTokens, formatUsd } from "./modelCapabilities";
 import { connectionProtocolLabel } from "./protocolLabels";
 import "./model-settings.css";
 
@@ -179,6 +180,10 @@ export function ModelSettingsPage({
   const quotaAvailable = Boolean(monitor?.usage?.quota_available && remainingQuota != null);
   const usedTokens = monitor?.usage?.total_tokens ?? monitor?.summary.total_tokens ?? 0;
   const windowHours = monitor?.usage?.window_hours ?? monitor?.window_hours ?? 24;
+  const estimatedCost = monitor?.summary.estimated_cost_usd ?? null;
+  const pricedRequests = monitor?.summary.priced_requests ?? 0;
+  const unpricedRequests = monitor?.summary.unpriced_requests ?? 0;
+  const merged = capabilities?.merged;
   function changeSettings(next: AgentSettings) {
     if (!editing) onBeginEdit();
     onSettingsChange(next);
@@ -295,6 +300,11 @@ export function ModelSettingsPage({
                 <strong>{monitor ? formatTokens(monitor.summary.total_requests) : "—"}</strong>
                 <small>{monitor ? `${monitor.summary.successful_requests} 次成功` : "等待监控数据"}</small>
               </article>
+              <article>
+                <span>近 {windowHours}h 估算费用</span>
+                <strong>{pricedRequests ? formatUsd(estimatedCost) : "—"}</strong>
+                <small>{pricedRequests ? `${pricedRequests} 次有价格数据${unpricedRequests ? `，${unpricedRequests} 次未计价` : ""}` : "按 LiteLLM 价格表或模型自定义价格估算"}</small>
+              </article>
             </div>
           </section>
 
@@ -310,6 +320,7 @@ export function ModelSettingsPage({
             <CapabilityRow icon={<Image size={16} />} label="是否支持多模态" flag={capabilities?.vision} />
             <CapabilityRow icon={<Activity size={16} />} label="流式输出" flag={capabilities?.streaming} />
             <CapabilityRow icon={<Wrench size={16} />} label="工具 / Function calling" flag={capabilities?.tools} />
+            {merged ? <p className="model-capability-note">上下文长度 {formatContextTokens(merged.context_window.tokens)}{merged.max_output_tokens.tokens ? ` · 最大输出 ${formatContextTokens(merged.max_output_tokens.tokens)}` : ""} · 推理 {merged.capabilities.reasoning.status === "supported" ? "支持" : merged.capabilities.reasoning.status === "unsupported" ? "不支持" : "未知"}（{CAPABILITY_SOURCE_LABELS[merged.capabilities.reasoning.source]}）</p> : null}
             {capabilities?.probe_error ? <p className="model-capability-error">{capabilities.probe_error}</p> : null}
             {capabilities?.attachment_vision_enabled === false && capabilities.vision.status === "supported" ? (
               <p className="model-capability-note">模型侧通常支持看图，但应用看图开关 ATTACHMENT_VISION_ENABLED 尚未开启。</p>
@@ -339,7 +350,7 @@ export function ModelSettingsPage({
               <div className="model-monitor-section-title"><strong>最近调用</strong><span>仅记录类型、状态、耗时和错误分类</span></div>
               {monitor?.recent_events.length ? (
                 <div className="model-monitor-event-list">
-                  {monitor.recent_events.slice(0, 6).map((event) => <div className={event.status} key={event.id}><i /><strong>{requestKindLabels[event.request_kind] || event.request_kind}</strong><span>{event.status === "success" ? formatLatency(event.latency_ms) : event.error_message || "调用失败"}</span><time>{formatTime(event.created_at)}</time></div>)}
+                  {monitor.recent_events.slice(0, 6).map((event) => <div className={event.status} key={event.id}><i /><strong>{requestKindLabels[event.request_kind] || event.request_kind}{event.fallback_from_profile_id ? <em className="model-monitor-fallback">备用</em> : null}</strong><span>{event.status === "success" ? `${formatLatency(event.latency_ms)}${event.cost_usd != null ? ` · ${formatUsd(event.cost_usd)}` : ""}` : event.error_message || "调用失败"}</span><time>{formatTime(event.created_at)}</time></div>)}
                 </div>
               ) : <div className="model-monitor-empty"><Activity size={20} /><span>还没有调用记录，点击“立即检测”生成第一条状态数据。</span></div>}
             </div>

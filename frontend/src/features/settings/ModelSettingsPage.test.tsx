@@ -361,4 +361,27 @@ describe("ModelSettingsPage", () => {
     expect(screen.getByText("自动 · 实际使用 OpenAI Responses API", { selector: ".model-detected-protocol" })).toBeInTheDocument();
     expect(screen.getByText(/^自动 · 实际使用 OpenAI Responses API · /)).toBeInTheDocument();
   });
+
+  it("shows estimated cost, per-call cost and fallback answers in the monitor", () => {
+    render(<ModelSettingsPage {...props({
+      monitor: {
+        ...monitor,
+        summary: { ...monitor.summary, estimated_cost_usd: 0.0123, priced_requests: 8, unpriced_requests: 2, fallback_requests: 1 },
+        recent_events: [{ id: 1, request_kind: "stream", status: "success", error_code: "", error_message: "", latency_ms: 420, total_tokens: 30, model_name: "claude-sonnet-4-5", base_url: "", protocol: "anthropic", created_at: "2026-08-14T04:00:00Z", cost_usd: 0.00042, backend: "litellm", fallback_from_profile_id: "p1" }]
+      },
+      capabilities: { ...capabilities, merged: {
+        profile_id: "p1", model_name: "gpt-5.5", protocol: "openai",
+        capabilities: { reasoning: { status: "supported", source: "litellm", detail: "", label: "推理", overridden: false, probe_status: null, litellm_status: "supported" } } as never,
+        context_window: { tokens: 400000, source: "litellm" }, max_output_tokens: { tokens: 128000, source: "litellm" },
+        litellm_known: true, pricing: { input_per_million_usd: null, output_per_million_usd: null }
+      } }
+    })} />);
+    openAdvancedSettings();
+    expect(screen.getByText("近 24h 估算费用")).toBeInTheDocument();
+    expect(screen.getByText("$0.01")).toBeInTheDocument();
+    expect(screen.getByText("8 次有价格数据，2 次未计价")).toBeInTheDocument();
+    expect(screen.getByText("420 ms · $0.0004")).toBeInTheDocument();
+    expect(screen.getByText("备用")).toBeInTheDocument();
+    expect(screen.getByText(/上下文长度 400K · 最大输出 128K · 推理 支持（LiteLLM）/)).toBeInTheDocument();
+  });
 });
