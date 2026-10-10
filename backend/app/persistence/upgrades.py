@@ -14,6 +14,17 @@ from .schema import CURRENT_SCHEMA
 
 _upgrade_lock = threading.RLock()
 
+# schema_migrations.name per version. Versions up to 27 were all recorded as
+# 'independent_library' (the v23 library rewrite and its follow-ups).
+_MIGRATION_NAMES = {
+    28: "model_protocol_and_reasoning",
+    29: "litellm_model_layer",
+}
+
+
+def migration_name(version: int) -> str:
+    return _MIGRATION_NAMES.get(version, "independent_library")
+
 
 def _backup(path: Path, label: str = "before-library-v23") -> None:
     directory = path.parent / ".upgrade-backups" / label
@@ -123,4 +134,7 @@ def initialize_workspace(db_path: str | Path | None = None) -> None:
         for source in enabled_source_details(path):
             _index_source(source, path)
         with connect(path) as conn:
-            conn.execute("INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (?, 'independent_library')", (DB_SCHEMA_VERSION,))
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (?, ?)",
+                (DB_SCHEMA_VERSION, migration_name(DB_SCHEMA_VERSION)),
+            )

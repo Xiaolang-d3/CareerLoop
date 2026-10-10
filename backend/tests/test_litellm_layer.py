@@ -165,25 +165,7 @@ def test_cost_estimation_rules():
 
 
 # ---------------------------------------------------------- migration
-def test_v28_database_gains_monitor_columns_and_routing_tables(tmp_path):
-    path = tmp_path / "careerloop.db"
-    init_db(path)
-    with sqlite3.connect(path) as conn:
-        for column in ("cost_usd", "backend", "fallback_from_profile_id"):
-            conn.execute(f"ALTER TABLE model_service_events DROP COLUMN {column}")
-        conn.execute("DROP TABLE model_fallback_policy")
-        conn.execute("DROP TABLE model_capability_records")
-        conn.execute("DELETE FROM schema_migrations")
-        conn.execute("INSERT INTO schema_migrations (version, name) VALUES (28, 'previous')")
-    init_db(path)
-    with sqlite3.connect(path) as conn:
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(model_service_events)")}
-        assert {"cost_usd", "backend", "fallback_from_profile_id"} <= columns
-        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        assert {"model_fallback_policy", "model_capability_records"} <= tables
-        assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == DB_SCHEMA_VERSION == 29
-    assert (tmp_path / ".upgrade-backups" / "before-schema-v29" / "careerloop.db").exists()
-
+# Real v27/v28 workspaces are upgraded in test_schema_fixtures.py.
 
 # ---------------------------------------------------------- API
 @pytest.fixture
