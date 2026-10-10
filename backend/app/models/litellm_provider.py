@@ -16,6 +16,7 @@ equivalent for arbitrary gateways.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncIterator
 from time import perf_counter
 from typing import Any
@@ -37,6 +38,8 @@ from .openai_responses import (
     _rejected_option,
 )
 from .validation import validate_diagnostic_response
+
+logger = logging.getLogger(__name__)
 
 
 _NATIVE_CLASSES = {
@@ -405,7 +408,10 @@ class LiteLLMProvider:
         if is_litellm_exception(exc) or hasattr(exc, "status_code"):
             return map_litellm_error(exc, self._protocol)
         if isinstance(exc, (ValueError, TypeError, AttributeError, KeyError, json.JSONDecodeError)):
+            logger.warning("LiteLLM response could not be parsed (%s)", type(exc).__name__, exc_info=exc)
             return ModelProviderError("invalid_provider_response", "模型服务返回了无法解析的响应")
+        # Unclassified failures (e.g. a module missing from a packaged build) must stay diagnosable.
+        logger.warning("Unexpected LiteLLM failure (%s)", type(exc).__name__, exc_info=exc)
         return ModelProviderError("provider_error", "模型服务发生未知异常")
 
     # ------------------------------------------------------------------
