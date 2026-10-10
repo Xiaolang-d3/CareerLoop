@@ -1,0 +1,23 @@
+#!/bin/sh
+# Install backend dependencies only from the hash-locked file
+# (requirements-lock.txt; see docs/model-layer.md).
+#
+# --force-reinstall matters: pip skips packages that are already installed at
+# the pinned version *without* checking their hashes, so an existing venv
+# would otherwise keep whatever it had. The reinstall runs only when the lock
+# changes (stamp file in the venv).
+set -eu
+BACKEND_DIR=$(cd "$(dirname "$0")/.." && pwd)
+VENV="${1:-$BACKEND_DIR/.venv}"
+LOCK="$BACKEND_DIR/requirements-lock.txt"
+STAMP="$VENV/.requirements-lock.sha256"
+
+if [ ! -x "$VENV/bin/python" ]; then
+  python3 -m venv "$VENV"
+fi
+SUM=$( (shasum -a 256 "$LOCK" 2>/dev/null || sha256sum "$LOCK") | cut -d ' ' -f 1)
+if [ "$(cat "$STAMP" 2>/dev/null || true)" != "$SUM" ]; then
+  env -u PYTHONPATH -u VIRTUAL_ENV -u PYTHONHOME "$VENV/bin/python" -m pip install -q \
+    --require-hashes --no-deps --only-binary :all: --force-reinstall -r "$LOCK"
+  echo "$SUM" > "$STAMP"
+fi

@@ -65,7 +65,7 @@ ChatRuntime ─► ConfiguredModelProvider (档案参数 / 推理强度)
 - **只在 `litellm_core.py` 导入 litellm**（测试 `test_only_litellm_core_imports_litellm` 守护）。导入前设置：`LITELLM_LOCAL_MODEL_COST_MAP`、`LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS`、`LITELLM_LOCAL_AUTOROUTER_PRESETS`、`LITELLM_LOCAL_BLOG_POSTS`、`LITELLM_LOCAL_POLICY_TEMPLATES` 为 `True`，`LITELLM_MODE=PRODUCTION`（不加载 `.env`），`LITELLM_TELEMETRY=False`，`LITELLM_RUST=False`。配置后清空 `callbacks` / `success_callback` / `failure_callback`，`turn_off_message_logging=True`，`num_retries=0`（重试只由 Router 策略决定）。
 - 测试 `test_litellm_imports_offline_without_network_attempts` 在禁用 socket 的子进程中导入并读取价格表，断言没有任何网络尝试。
 - 懒加载：构建 provider 不导入 litellm，第一次模型调用时才导入（源码环境约 1.5–2 秒、打包 sidecar 约 0.65 秒，见 `GET /agent/model-layer` 的 `litellm_import_seconds`）。
-- 依赖锁定：`backend/requirements-litellm.in` → `pip-compile --generate-hashes` → `backend/requirements-litellm.txt`（精确版本 + 所有发行文件哈希）。安装只用 `pip install --require-hashes -r requirements-litellm.txt`。CI 与桌面构建运行 `backend/scripts/scan_pth.py`，出现非白名单的可执行 `.pth` 即失败（1.82.7/1.82.8 投毒即通过 `.pth` 执行）。
+- 依赖锁定：`requirements.txt`、`requirements-dev.txt`、`requirements-litellm.in` 只写直接依赖；`requirements-lock.in` 汇总它们，用 `uv pip compile --universal --generate-hashes --only-binary :all:` 生成唯一的安装文件 `backend/requirements-lock.txt`（全部约 100 个包的精确版本 + 仅 wheel 哈希，跨 Linux/macOS/Windows 与 Python 3.11–3.13）。安装只用 `pip install --require-hashes --no-deps --only-binary :all: -r requirements-lock.txt`，且只装这一次：先装未加哈希的文件会让 pip 跳过已安装包的哈希校验。已有 venv 用 `backend/scripts/install_deps.sh`（锁文件变化时 `--force-reinstall`）。
 - 桌面 sidecar 打包 litellm 包内全部运行时数据文件（`proxy/`、`rust_bridge/`、文档与类型存根除外，约 12 MB；手工列清单曾漏掉 `containers/endpoints.json`），排除 Proxy 服务器、管理界面、企业插件、boto3 与可选 Rust 扩展。`package-sidecar.py` 向 PyInstaller 所在的后端 venv 解释器查询 litellm 位置（`npm run package-sidecar` 本身由系统 python3 运行）。
 - 桌面冒烟测试 `desktop/scripts/smoke-sidecar.py` 对打包后的 sidecar 用本地假服务各做一次真实调用（OpenAI 兼容、Responses、Anthropic、Gemini、Ollama），打包缺模块或数据文件会在这里失败；未分类异常会以 `Unexpected LiteLLM failure` 写入运行日志。
 - 实测（Apple Silicon，2026-10-10）：`灯灯.app` 148 MB（当前安装版 117 MB，+31 MB；sidecar 125 MB vs 95 MB）；sidecar 冷启动到 `/health` 0.53 s（与安装版相同），首次模型调用 0.76 s（其中导入 litellm 0.64 s）。新构建首次启动受 macOS 扫描影响可达约 20 s。
@@ -73,14 +73,14 @@ ChatRuntime ─► ConfiguredModelProvider (档案参数 / 推理强度)
 ## 安全升级流程
 
 1. 查看 [安全公告](https://github.com/BerriAI/litellm/security/advisories) 与发布说明；只选正式版（非 dev/rc），发布至少约一周且没有未修复公告。
-2. 修改 `requirements-litellm.in` 中的版本，执行：
+2. 修改 `requirements-litellm.in` 中的版本（其他直接依赖改 `requirements.txt` / `requirements-dev.txt`），执行：
    ```bash
    cd backend
-   .venv/bin/pip-compile --generate-hashes --allow-unsafe --strip-extras --no-emit-index-url \
-     -o requirements-litellm.txt requirements-litellm.in
+   uv pip compile requirements-lock.in --universal --python-version 3.11 --generate-hashes \
+     --only-binary :all: -o requirements-lock.txt
    ```
-   核对 `litellm==` 的哈希与 PyPI 页面一致，审阅新增/变化的依赖。
-3. `pip install --require-hashes -r requirements-litellm.txt`，运行 `python scripts/scan_pth.py`。
+   已有的锁文件作为输出文件时，uv 会尽量保留其中的版本，只改动需要变化的包。核对 `litellm==` 的哈希与 PyPI 页面一致，审阅新增/变化的依赖及其发布时间。
+3. 在全新 venv 中 `pip install --require-hashes --no-deps --only-binary :all: -r requirements-lock.txt`，再 `pip check`，并运行 `.pth` 扫描。
 4. 跑全部后端测试（含离线导入、协议映射、Router 测试）、前端测试与桌面冒烟测试 `desktop/scripts/smoke-sidecar.py`。
 
 ## 回滚

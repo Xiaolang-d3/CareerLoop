@@ -41,7 +41,7 @@ CareerLoop/
 │   ├── .env.example
 │   ├── requirements-dev.txt
 │   ├── requirements.txt
-│   ├── requirements-litellm.txt # LiteLLM 模型层（精确版本 + 哈希，见 docs/model-layer.md）
+│   ├── requirements-lock.txt # 全部后端依赖的哈希锁定文件（由 requirements-lock.in 生成，见 docs/model-layer.md）
 │   └── requirements-optional.txt # 增强解析、语义向量与 OCR
 ├── frontend/
 │   ├── src/
@@ -102,8 +102,7 @@ loopback sidecar 运行；每次启动使用动态端口，并在显示窗口前
 ```bash
 cd desktop
 npm install
-../backend/.venv/bin/pip install -r ../backend/requirements-dev.txt
-../backend/.venv/bin/pip install --require-hashes -r ../backend/requirements-litellm.txt
+../backend/scripts/install_deps.sh   # 全部依赖从 requirements-lock.txt 按哈希安装
 npm run package-sidecar
 ../backend/.venv/bin/python scripts/smoke-sidecar.py
 npm run build
@@ -160,8 +159,7 @@ WEB_RESEARCH_ENABLED=true
 
 ```bash
 cd backend
-.venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m pip install --require-hashes -r requirements-litellm.txt
+scripts/install_deps.sh   # 全部依赖从 requirements-lock.txt 按哈希安装（含开发依赖）
 ```
 
 ```bash

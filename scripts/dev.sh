@@ -42,11 +42,8 @@ else
   if [ ! -d "$BACKEND_DIR/.venv" ]; then
     python3 -m venv "$BACKEND_DIR/.venv"
   fi
-  env -u PYTHONPATH -u VIRTUAL_ENV -u PYTHONHOME \
-    "$BACKEND_DIR/.venv/bin/pip" install -q -r "$BACKEND_DIR/requirements.txt"
-  # LiteLLM model layer is installed only from the hash-locked file.
-  env -u PYTHONPATH -u VIRTUAL_ENV -u PYTHONHOME \
-    "$BACKEND_DIR/.venv/bin/pip" install -q --require-hashes -r "$BACKEND_DIR/requirements-litellm.txt"
+  # Every backend dependency comes from the hash-locked file.
+  "$BACKEND_DIR/scripts/install_deps.sh" "$BACKEND_DIR/.venv"
   # env -u clears any inherited PYTHONPATH/VIRTUAL_ENV that would shadow .venv.
   screen -dmS careerloop-backend zsh -lc \
     "cd '$BACKEND_DIR' && env -u PYTHONPATH -u VIRTUAL_ENV -u PYTHONHOME .venv/bin/uvicorn app.main:app --host '$BIND_HOST' --port 8000 > '$LOG_DIR/backend.log' 2>&1"

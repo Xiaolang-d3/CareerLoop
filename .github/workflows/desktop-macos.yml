@@ -36,8 +36,7 @@ jobs:
       - name: Install Python dependencies
         working-directory: backend
         run: |
-          python -m pip install -r requirements-dev.txt
-          python -m pip install --require-hashes -r requirements-litellm.txt
+          python -m pip install --require-hashes --no-deps --only-binary :all: -r requirements-lock.txt
           python scripts/scan_pth.py
       - name: Verify SQLite vector extension
         run: |

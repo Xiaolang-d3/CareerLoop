@@ -73,13 +73,26 @@ def test_only_litellm_core_imports_litellm():
     assert importers == ["app/models/litellm_core.py"]
 
 
-def test_requirements_are_hash_pinned():
-    lock = (BACKEND / "requirements-litellm.txt").read_text(encoding="utf-8")
-    assert re.search(r"^litellm==\d+\.\d+\.\d+ \\$", lock, re.MULTILINE)
-    assert "--hash=sha256:" in lock
-    requirement_lines = [line for line in lock.splitlines() if re.match(r"^[A-Za-z0-9_.\-]+==", line)]
-    assert requirement_lines and all(line.rstrip().endswith("\\") for line in requirement_lines)
+def _pins(text: str) -> dict[str, str]:
+    found = re.findall(r"^([A-Za-z0-9_.\-]+)(?:\[[^\]]*\])?==([^\s;\\]+)", text, re.MULTILINE)
+    return {re.sub(r"[-_.]+", "-", name).lower(): version for name, version in found}
 
+
+def test_requirements_are_hash_pinned():
+    """One full lock covers runtime, dev and LiteLLM; every entry carries hashes."""
+    lock = (BACKEND / "requirements-lock.txt").read_text(encoding="utf-8")
+    assert re.search(r"^litellm==\d+\.\d+\.\d+ ", lock, re.MULTILINE)
+    entries = re.split(r"\n(?=[A-Za-z0-9])", lock)
+    requirement_entries = [entry for entry in entries if re.match(r"^[A-Za-z0-9_.\-]+==", entry)]
+    assert len(requirement_entries) > 50
+    for entry in requirement_entries:
+        assert "--hash=sha256:" in entry, entry.splitlines()[0]
+    # Every direct pin in the human-edited inputs is locked at the same version.
+    pins = _pins(lock)
+    for source in ("requirements.txt", "requirements-dev.txt", "requirements-litellm.in"):
+        for name, version in _pins((BACKEND / source).read_text(encoding="utf-8")).items():
+            assert pins.get(name) == version, (source, name, version, pins.get(name))
+    assert not (BACKEND / "requirements-litellm.txt").exists()
 
 # ---------------------------------------------------------- backend flag
 def test_backend_flag_selects_native_or_litellm(monkeypatch):
