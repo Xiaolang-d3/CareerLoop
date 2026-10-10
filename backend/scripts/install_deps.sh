@@ -19,5 +19,10 @@ SUM=$( (shasum -a 256 "$LOCK" 2>/dev/null || sha256sum "$LOCK") | cut -d ' ' -f 
 if [ "$(cat "$STAMP" 2>/dev/null || true)" != "$SUM" ]; then
   env -u PYTHONPATH -u VIRTUAL_ENV -u PYTHONHOME "$VENV/bin/python" -m pip install -q \
     --require-hashes --no-deps --only-binary :all: --force-reinstall -r "$LOCK"
+  # Scan before anything starts this venv normally: -I -S processes no .pth.
+  if ! "$VENV/bin/python" -I -S "$BACKEND_DIR/scripts/scan_pth.py" --python "$VENV/bin/python"; then
+    echo "Unexpected startup code in $VENV; do not use it. Remove the venv and investigate." >&2
+    exit 1
+  fi
   echo "$SUM" > "$STAMP"
 fi

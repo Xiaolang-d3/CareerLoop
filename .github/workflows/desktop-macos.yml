@@ -37,7 +37,8 @@ jobs:
         working-directory: backend
         run: |
           python -m pip install --require-hashes --no-deps --only-binary :all: -r requirements-lock.txt
-          python scripts/scan_pth.py
+          # -I -S: no site processing, so no .pth runs before it is scanned.
+          python -I -S scripts/scan_pth.py --python python
       - name: Verify SQLite vector extension
         run: |
           python - <<'PY'

@@ -58,7 +58,8 @@ jobs:
           # One full lock, every package hash-verified (docs/model-layer.md).
           python -m pip install --require-hashes --no-deps --only-binary :all: -r requirements-lock.txt
       - name: Scan for executable .pth files
-        run: python backend/scripts/scan_pth.py
+        # -I -S: no site processing, so no .pth runs before it is scanned.
+        run: python -I -S backend/scripts/scan_pth.py --python python
       - name: Run backend tests
         working-directory: backend
         env:
@@ -125,6 +126,9 @@ jobs:
       - name: Install integration backend
         run: |
           python -m pip install --require-hashes --no-deps --only-binary :all: -r backend/requirements-lock.txt
+      - name: Scan for executable .pth files
+        # -I -S: no site processing, so no .pth runs before it is scanned.
+        run: python -I -S backend/scripts/scan_pth.py --python python
       - name: Restore frontend dist
         uses: actions/download-artifact@v4
         with:
