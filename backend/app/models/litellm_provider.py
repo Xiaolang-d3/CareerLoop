@@ -21,6 +21,7 @@ from collections.abc import AsyncIterator
 from time import perf_counter
 from typing import Any
 
+from ..redaction import remember_secret
 from ..agent.settings import get_agent_settings, persona_prompt
 from ..domain import ModelRequest, ModelResponse, ModelStreamEvent, ModelUsage, ToolCall
 from ..observability.model_monitor import record_model_service_event
@@ -167,6 +168,7 @@ class LiteLLMProvider:
         self._protocol = protocol
         self._model = model
         self._api_key = api_key
+        remember_secret(api_key)  # masked verbatim in logs
         self._configured_base_url = (base_url or "").rstrip("/") or None
         self._timeout = timeout_seconds
         self._prices = (price_per_million_input, price_per_million_output)

@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 
+from ..redaction import remember_secret
 from ..agent.settings import get_agent_settings, persona_prompt
 from ..domain import ModelRequest, ModelResponse, ModelStreamEvent, ModelUsage, ToolCall
 from ..observability.model_monitor import record_model_service_event
@@ -35,6 +36,7 @@ class AnthropicMessagesProvider:
             raise ValueError("启用 Anthropic Messages Provider 时必须配置 API Key")
         self._model = model
         self._secret = api_key  # masked in error messages
+        remember_secret(api_key)  # masked verbatim in logs
         self._base_url = (base_url or "https://api.anthropic.com").rstrip("/")
         self._client = httpx.AsyncClient(
             headers={

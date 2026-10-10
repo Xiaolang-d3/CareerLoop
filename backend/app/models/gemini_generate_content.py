@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 import httpx
 
+from ..redaction import remember_secret
 from ..agent.settings import get_agent_settings, persona_prompt
 from ..domain import ModelRequest, ModelResponse, ModelStreamEvent, ModelUsage, ToolCall
 from ..observability.model_monitor import record_model_service_event
@@ -36,6 +37,7 @@ class GeminiGenerateContentProvider:
             raise ValueError("启用 Gemini generateContent Provider 时必须配置 API Key")
         self._model = model.removeprefix("models/")
         self._secret = api_key  # masked in error messages
+        remember_secret(api_key)  # masked verbatim in logs
         self._base_url = self._normalize_base_url(base_url)
         self._client = httpx.AsyncClient(
             headers={

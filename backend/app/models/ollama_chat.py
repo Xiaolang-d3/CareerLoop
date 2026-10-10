@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 
+from ..redaction import remember_secret
 from ..agent.settings import get_agent_settings, persona_prompt
 from ..domain import ModelRequest, ModelResponse, ModelStreamEvent, ModelUsage, ToolCall
 from ..observability.model_monitor import record_model_service_event
@@ -27,6 +28,7 @@ class OllamaChatProvider:
     ) -> None:
         self._model = model
         self._secret = api_key  # masked in error messages
+        remember_secret(api_key)  # masked verbatim in logs
         self._base_url = (base_url or "http://127.0.0.1:11434").rstrip("/")
         headers = {"content-type": "application/json"}
         if api_key:

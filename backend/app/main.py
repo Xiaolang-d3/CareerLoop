@@ -12,6 +12,10 @@ from .workspace import ensure_workspace, use_workspace
 from .version import APP_VERSION
 from .api import router as api_router
 from .api.system import startup
+from .redaction import install_log_redaction
+
+# Before anything logs: exception chains can carry upstream text that echoes keys.
+install_log_redaction()
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]

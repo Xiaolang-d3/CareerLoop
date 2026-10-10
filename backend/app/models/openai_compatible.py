@@ -15,6 +15,7 @@ from openai import (
     RateLimitError,
 )
 
+from ..redaction import remember_secret
 from ..domain import ModelRequest, ModelResponse, ModelStreamEvent, ModelUsage, ToolCall
 from ..agent.settings import get_agent_settings, persona_prompt
 from ..observability.model_monitor import record_model_service_event
@@ -92,6 +93,7 @@ class OpenAICompatibleProvider:
             raise ValueError("启用 OpenAI Provider 时必须配置 OPENAI_API_KEY")
         self._model = model
         self._secret = api_key  # masked in error messages
+        remember_secret(api_key)  # masked verbatim in logs
         self._base_url = self._normalize_base_url(base_url)
         self._client = AsyncOpenAI(
             api_key=api_key,
