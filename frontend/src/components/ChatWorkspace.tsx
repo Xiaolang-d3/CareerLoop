@@ -350,7 +350,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
 
         <div className="chat-composer">
           {scrolling.away ? <button type="button" className="chat-jump-latest" onClick={scrolling.jumpToLatest}>{scrolling.unread ? "有新内容 · 回到最新 ↓" : "回到最新 ↓"}</button> : null}
-          {props.chatBusy ? <RunStatus key={props.currentConversationId} title={generatingReply ? "正在生成回复" : placeholderThinking.title} task={placeholderThinking.currentTask} /> : null}
+          {props.chatBusy ? <RunStatus key={props.currentConversationId} title={props.taskCancelBusy ? "正在停止生成" : generatingReply ? "正在生成回复" : placeholderThinking.title} task={props.taskCancelBusy ? undefined : placeholderThinking.currentTask} /> : null}
           {props.messages.length === 0 && props.density !== "dock" ? (
             <div className="chat-welcome">
               <h2>你想完成什么？</h2>
@@ -501,36 +501,38 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                   <button className="composer-tool composer-attachment-tool" type="button" aria-label={props.attachmentBusy ? "附件处理中" : "添加附件"} onClick={() => attachmentInputRef.current?.click()} disabled={props.attachmentBusy} title={props.attachmentBusy ? "正在处理附件" : "添加图片或文档，也可粘贴图片或拖入文件"}>
                     {props.attachmentBusy ? <LoaderCircle className="spinning" size={16} aria-hidden="true" /> : <Paperclip size={17} aria-hidden="true" />}
                   </button>
-                  <button
-                    type="button"
-                    className={`composer-tool web-search-toggle ${props.webSearchSelected ? "active" : ""} ${!props.webSearchAvailable ? "unavailable" : ""}`.trim()}
-                    onClick={props.onToggleWebSearch}
-                    disabled={props.chatBusy}
-                    aria-pressed={props.webSearchSelected}
-                    aria-label="联网搜索"
-                    title={props.webSearchAvailable ? "为下一条消息补充公开信息" : "可以选中；发送后会提示配置 AgentSearch"}
-                  >
-                    <Globe size={16} aria-hidden="true" />
-                    <span>联网</span>
-                  </button>
-                  {props.webSearchSelected ? (
-                    <select
-                      className="web-search-mode"
-                      aria-label="联网搜索模式"
-                      value={props.webSearchMode}
+                  <div className={`composer-web-search${props.webSearchSelected ? " is-active" : ""}`}>
+                    <button
+                      type="button"
+                      className={`composer-tool web-search-toggle ${props.webSearchSelected ? "active" : ""} ${!props.webSearchAvailable ? "unavailable" : ""}`.trim()}
+                      onClick={props.onToggleWebSearch}
                       disabled={props.chatBusy}
-                      onChange={(event) => props.onWebSearchModeChange(event.target.value as WebSearchMode)}
+                      aria-pressed={props.webSearchSelected}
+                      aria-label="联网搜索"
+                      title={props.webSearchAvailable ? "为下一条消息补充公开信息" : "可以选中；发送后会提示配置 AgentSearch"}
                     >
-                      <option value="auto">自动来源</option>
-                      <option value="technical">技术来源</option>
-                      <option value="general">通用来源</option>
-                    </select>
-                  ) : null}
+                      <Globe size={16} aria-hidden="true" />
+                      <span>联网</span>
+                    </button>
+                    {props.webSearchSelected ? (
+                      <select
+                        className="web-search-mode"
+                        aria-label="联网搜索模式"
+                        value={props.webSearchMode}
+                        disabled={props.chatBusy}
+                        onChange={(event) => props.onWebSearchModeChange(event.target.value as WebSearchMode)}
+                      >
+                        <option value="auto">自动</option>
+                        <option value="technical">技术</option>
+                        <option value="general">通用</option>
+                      </select>
+                    ) : null}
+                  </div>
                   <ChatContextChips context={props.sessionContext} onOpenLibrary={props.onOpenLibrary} />
                 </div>
                 {props.chatBusy ? (
-                  <ComposerPrimitive.Cancel className="send-button stop-button" disabled={props.taskCancelBusy} aria-label="停止">
-                    <Square size={14} fill="currentColor" /><span>停止</span>
+                  <ComposerPrimitive.Cancel className="send-button stop-button" disabled={props.taskCancelBusy} aria-label={props.taskCancelBusy ? "正在停止生成" : "停止生成"} title={props.taskCancelBusy ? "正在停止生成" : "停止生成"}>
+                    <Square size={12} fill="currentColor" aria-hidden="true" /><span>停止</span>
                   </ComposerPrimitive.Cancel>
                 ) : (
                   <ComposerPrimitive.Send className="send-button" aria-label="发送" disabled={props.attachmentBusy || props.modelSelectionBusy || props.modelProfileUnavailable} title={props.attachmentBusy ? "资料处理完成后即可发送" : props.modelSelectionBusy ? "模型选择保存后即可发送" : props.modelProfileUnavailable ? "当前模型已停用，请切换模型" : "发送消息"}>

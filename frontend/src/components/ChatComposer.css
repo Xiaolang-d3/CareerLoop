@@ -38,10 +38,19 @@
 .chat-workspace .chat-composer .composer-input.composer-input--enhanced .composer-attachment-tool { width: 32px; padding: 0; }
 .chat-workspace .composer-tool:focus-visible,
 .chat-workspace .composer-input.composer-input--enhanced .send-button:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
-.chat-workspace .composer-input.composer-input--enhanced .model-picker { max-width: 100%; }
-.chat-workspace .composer-input.composer-input--enhanced .model-pill { max-width: min(220px, 100%); }
-.chat-workspace .composer-input.composer-input--enhanced .model-pill-name { font-weight: 500; }
-.chat-workspace .composer-input.composer-input--enhanced .web-search-mode { min-width: 0; max-width: 100%; border-radius: 8px; font-weight: 400; }
+.chat-workspace .composer-input.composer-input--enhanced .model-picker { max-width: 100%; flex: 0 1 auto; }
+.chat-workspace .composer-input.composer-input--enhanced .model-pill { max-width: min(220px, 100%); min-width: 100px; padding: 0 8px; border-radius: 8px; background: transparent; }
+.chat-workspace .composer-input.composer-input--enhanced .model-pill-name { display: inline; font-weight: 500; }
+.chat-workspace .composer-input.composer-input--enhanced .model-pill .model-icon { display: inline-grid; }
+.chat-workspace .composer-input.composer-input--enhanced .model-pill:disabled { opacity: .8; cursor: default; }
+.chat-workspace .composer-input.composer-input--enhanced .composer-web-search { display: inline-flex; flex: none; align-items: center; min-height: 32px; border-radius: 8px; }
+.chat-workspace .composer-input.composer-input--enhanced .composer-web-search.is-active { background: var(--color-brand-soft); }
+.chat-workspace .composer-input.composer-input--enhanced .composer-web-search .web-search-toggle { flex: none; background: transparent; border-radius: 8px; }
+.chat-workspace .composer-input.composer-input--enhanced .composer-web-search .web-search-toggle > span { display: inline; font-weight: 500; }
+.chat-workspace .composer-input.composer-input--enhanced .composer-web-search .web-search-toggle.active { color: var(--color-brand-strong); }
+.chat-workspace .composer-input.composer-input--enhanced .web-search-mode { min-width: 0; width: 62px; min-height: 26px; margin-right: 4px; padding: 0 2px 0 5px; border: 0; border-left: 1px solid color-mix(in srgb, var(--color-brand) 18%, transparent); border-radius: 0; color: var(--color-brand-strong); background: transparent; font-weight: 400; }
+.chat-workspace .chat-composer .composer-input.composer-input--enhanced .send-button.stop-button { border: 1px solid var(--color-border); color: var(--color-text-secondary); background: var(--color-surface-subtle); }
+.chat-workspace .chat-composer .composer-input.composer-input--enhanced .send-button.stop-button:hover:not(:disabled) { color: var(--color-text); background: var(--color-border); }
 .composer-input-hint { display: flex; align-items: center; justify-content: flex-end; gap: 12px; min-height: 18px; padding: 6px 4px 0; color: var(--color-text-muted); font-size: 10px; line-height: 16px; opacity: 0; visibility: hidden; transition: opacity .15s ease; }
 .composer-input-hint.is-active { opacity: 1; visibility: visible; }
 .composer-input-hint .composer-keyboard-hint { display: inline-flex; align-items: center; gap: 5px; }
@@ -54,6 +63,7 @@
   .composer-touch-hint { display: inline-flex; align-items: center; gap: 3px; }
   .chat-workspace .chat-composer .composer-input.composer-input--enhanced .composer-tool { min-height: 40px; }
   .chat-workspace .chat-composer .composer-input.composer-input--enhanced .composer-attachment-tool { width: 40px; }
+  .chat-workspace .composer-input.composer-input--enhanced .web-search-mode { min-height: 40px; }
   .chat-workspace .chat-composer .composer-input.composer-input--enhanced { --composer-action-size: 40px; }
 }
 @media (max-width: 600px) {

@@ -17,7 +17,7 @@ import { isMermaidMindmap } from "../../components/mindmap-source";
 import { ActionBarPrimitive, ComposerPrimitive, MessagePrimitive, type AppendMessage, type MessageState } from "@assistant-ui/react";
 import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ArrowUpRight, Check, CheckCircle2, ChevronDown, CircleHelp, Copy, FileText, ImagePlus, Info, LoaderCircle, PanelRight, Pencil, RefreshCw, Search, TriangleAlert, X } from "lucide-react";
+import { ArrowUpRight, Check, CheckCircle2, ChevronDown, CircleHelp, Copy, FileText, ImagePlus, Info, LoaderCircle, PanelRight, Pencil, RefreshCw, Search, Square, TriangleAlert, X } from "lucide-react";
 
 const modelStageLabels: Record<string, string> = { classify: "意图识别", plan: "任务规划", execute: "执行回答" };
 const modelSelectionReasons: Record<string, string> = {
@@ -47,17 +47,17 @@ export function textFromAppendMessage(message: AppendMessage): string {
 }
 
 function AgentResultNote({ run, content }: { run?: AgentRunResult; content: string }) {
-  if (!run?.events.length) return null;
-  const failed = run.status === "failed" || run.events.some((event) => event.status === "failed");
+  if (!run) return null;
+  const failed = run.status === "failed";
   const cancelled = run.status === "cancelled";
   if (!failed && !cancelled) return null;
   const errorMessage = run.error?.message?.trim();
   const errorAlreadyShown = errorMessage && content.replace(/\s+/g, " ").includes(errorMessage.replace(/\s+/g, " "));
   return (
-    <div className={`agent-result-note ${cancelled ? "cancelled" : "failed"}`}>
-      {failed ? <TriangleAlert size={14} /> : <CheckCircle2 size={14} />}
+    <div className={`message-run-result ${cancelled ? "cancelled" : "failed"}`}>
+      {failed ? <TriangleAlert size={14} aria-hidden="true" /> : <Square size={12} aria-hidden="true" />}
       <span>
-        <strong>{cancelled ? "任务已结束" : "执行已终止"}</strong>
+        <strong>{cancelled ? "已停止" : "生成失败"}</strong>
         {errorMessage && !errorAlreadyShown ? <small>{errorMessage}</small> : null}
         {failed && run.error?.retryable === false ? <small>请先检查设置或输入后再继续。</small> : null}
       </span>
@@ -536,44 +536,18 @@ function ThinkingSourceChip({ host, url, title }: { host: string; url?: string; 
   return <span className="thinking-source-chip">{inner}</span>;
 }
 
-function ThoughtProcess({
-  streaming,
+function ProcessDetailsLink({
   agent,
   onOpen
 }: {
-  streaming: boolean;
   agent?: AgentRunResult;
   onOpen?: () => void;
 }) {
-  const title = "思考过程";
-  const hasBody = hasResearchDetails(agent);
-  if (!hasBody) return null;
-  const headerCopy = (
-    <>
-      <span className="thinking-process-icon"><ThinkingMark /></span>
-      <span className="thinking-process-copy">
-        <strong><span className="thinking-process-title">{title}</span></strong>
-      </span>
-    </>
-  );
+  if (!hasResearchDetails(agent) || !onOpen) return null;
   return (
-    <section className={`thinking-process ${streaming ? "streaming" : "complete"} ${hasBody ? "has-body" : "is-status"}`} aria-label="研究过程">
-      {hasBody && onOpen ? (
-        <button
-          type="button"
-          className="thinking-process-header"
-          onClick={onOpen}
-          aria-label={`${title}，打开研究详情`}
-        >
-          {headerCopy}
-          <PanelRight className="thinking-process-chevron" size={14} />
-        </button>
-      ) : (
-        <div className="thinking-process-header is-static">
-          {headerCopy}
-        </div>
-      )}
-    </section>
+    <button type="button" className="message-process-link" onClick={onOpen} aria-label="查看过程，打开研究详情">
+      <PanelRight size={14} aria-hidden="true" /><span>查看过程</span>
+    </button>
   );
 }
 
@@ -965,11 +939,13 @@ export function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: b
       <div className="message-content">
         {source.role === "assistant" ? (
           <>
-            <ThoughtProcess streaming={isActiveAssistant} agent={source.payload?.agent} onOpen={() => openResearch()} />
             <section className="message-result message-dialog" aria-label="输出结果">
               <MarkdownContent sources={webSources} streaming={isActiveAssistant} onOpenSource={openResearch}>{resultContent}</MarkdownContent>
-              <AgentResultNote run={source.payload?.agent} content={resultContent} />
             </section>
+            <div className="message-run-meta">
+              <AgentResultNote run={source.payload?.agent} content={resultContent} />
+              <ProcessDetailsLink agent={source.payload?.agent} onOpen={() => openResearch()} />
+            </div>
             <ActionBarPrimitive.Root className="message-actions" hideWhenRunning>
               <MessageCopyButton content={resultContent} label="复制回答" />
               <ActionBarPrimitive.Reload className="message-icon-action" aria-label={failed ? "重试回答" : "重新生成回答"} title={failed ? "重试回答，将替换本轮及后续消息" : "重新生成，将替换本轮及后续消息"} aria-describedby={`regenerate-impact-${source.id}`}>
