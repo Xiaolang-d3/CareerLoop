@@ -244,6 +244,8 @@ Responses 适配器保持 `store=False`，默认请求 `include=["reasoning.encr
 
 Base URL 视为对应协议的 API 根地址：显式 OpenAI 兼容客户端不自动追加 `/v1`，Responses 请求 `/responses`，Anthropic 请求 `/v1/messages`，Gemini 请求 `/models/{model}:generateContent`，Ollama 请求 `/api/chat`。OpenAI 兼容调用还会验证响应中存在 `choices`，流式调用至少返回响应 ID、用量、结束原因、正文或工具调用之一；网页回退或空响应即使 HTTP 状态为 200 也会记为 `invalid_provider_response`，不得标记为健康。模型目录只证明名称可见，不证明当前账户可实际调用；设置页提示是否可用以连接检测为准，诊断区展示已保存连接的调用结果。本地 Ollama 可不配置 API Key；其他协议要求密钥。`GET /agent/capabilities` 在缺少密钥时返回 200 与 `configured: false`（可先配置再对话），真正运行 Agent 仍要求已配置密钥。runtime、模型发现、能力检测与健康监控使用同一协议解析结果。runtime 的 system 消息必须保持协议级 system 语义：Anthropic 合并到顶层 `system`，不能降级成 `user` 消息。系统提示在 `backend/app/models/openai_compatible.py`：中文、不编造经历与来源、只使用本轮实际提供的工具、不点名具体工具名、过程叙述交给界面。本轮工具清单由 runtime 注入。缺少关键信息或指代有歧义时必须调用 `ask_user`，不要猜测，也不要只在正文里提问。用户明确要求思维导图时可输出 Mermaid `mindmap` 代码块，界面渲染为可展开、缩放的交互导图；普通回答不主动生成图。
 
+**模型层（schema v29）**：默认通过 LiteLLM Python SDK 调用模型（`DENGDENG_MODEL_BACKEND=litellm`，`native` 回滚到上文的原生适配器）。`build_model_provider` 为每个候选协议构建 `LiteLLMProvider`，协商、`detected_protocol` 持久化、图片探测与监控不变；只有 `models/litellm_core.py` 导入 litellm（离线环境变量、懒加载、关闭遥测与回调）。Chat Completions 适配器在 LiteLLM 模式下也发送推理强度（`drop_params` 兜底）；Anthropic 带签名的 `thinking_blocks` 与 Responses 加密推理条目一样写入助手消息 payload 并在下一轮回传。配置了备用模型时，`bootstrap._with_fallbacks` 用 `RoutedModelProvider` 包装主模型（`litellm.Router`：通用/超长上下文/内容被拒回退、按错误类型重试、`allowed_fails` + `cooldown_time` 冷却），运行时缓存键包含策略版本；回答模型写入 `model_selection.fallback_used / answered_model_name`。能力报告按「手动 > 实测 > LiteLLM > 推测」合并，费用写入 `model_service_events.cost_usd`。完整说明、离线与依赖锁定、升级和回滚见 [model-layer.md](model-layer.md)。
+
 用户可配置人设（名称、角色、详略、补充指令）不能覆盖事实要求、工具权限和人工确认规则。模型名、Base URL 和协议保存在 `agent_settings`。新 API Key 不写 SQLite：macOS 单机网页和桌面使用 Keychain，其他环境根据可写凭证服务能力处理；环境密钥只绑定环境提供的连接，不能用于用户修改后的任意地址。密钥采用不可变版本引用，数据库事务一次切换连接配置和引用，失败保留完整旧连接。发现历史明文密钥时仅在成功迁移后清空原字段；不同环境 Key 不代表迁移完成，失败保留旧值并告警。
 
 模型设置主界面仅显示 Base URL、API Key 与模型名称，支持目录选择及手动填写，字段无需先解锁；首次读取完整配置后才展示表单。修改为草稿，单次点击“保存并应用”才保存，并从下一次模型调用生效。保存期间禁用字段及取消操作，空密钥继续沿用已保存密钥；配置保存成功与连接检测失败分别反馈。接口协议、额度、能力探测及调用监控保留在默认折叠的高级设置，已有显式协议不被自动重置，能力读取/探测仅使用已保存连接。`features/settings/useModelDiscovery.ts` 取消旧请求并用序号屏蔽迟到结果；更改地址、密钥或协议清空目录，更改模型名称保留已加载目录并使旧请求失效。目录失败可重试，具体错误只在高级设置展示。详情见 [model-settings-qa.md](model-settings-qa.md)。
@@ -255,7 +257,7 @@ Base URL 视为对应协议的 API 根地址：显式 OpenAI 兼容客户端不�
 | 信号 | 位置 | 注意 |
 | --- | --- | --- |
 | 工具审计 | `observability/tool_call_audit.py` | 只记元数据（名称、状态、延迟、错误码），不存参数和结果；保留 30 天 |
-| 模型监控 | `observability/model_monitor.py` | 调用成败与用量 |
+| 模型监控 | `observability/model_monitor.py` | 调用成败、用量、估算费用（`cost_usd`）、模型层（`backend`）与备用回答（`fallback_from_profile_id`） |
 | 运营快照 | `agent/operations.py` + 设置页看板 | 路由分布、工具成功率、延迟 |
 | 运行事件 | `agent_execution_runs` / `agent_run_steps` | 任务、计划步骤与工具完成 |
 
@@ -282,7 +284,7 @@ Base URL 视为对应协议的 API 根地址：显式 OpenAI 兼容客户端不�
 cd backend && .venv/bin/python -m pytest tests -q
 ```
 
-路由、工具面、引用校验、模型重试、写工具不重放与 `ask_user` 均使用模拟模型和网络结果，不调用真实模型。离线评测保留退役请求作为负向契约，确保不会恢复旧工具；当前路由、计划、事实和 ask_user 契约纳入后端测试。可选仍可用 Promptfoo 做人工对比：
+路由、工具面、引用校验、模型重试、写工具不重放与 `ask_user` 均使用模拟模型和网络结果，不调用真实模型。旧测试固定 `DENGDENG_MODEL_BACKEND=native`（`tests/conftest.py`）；LiteLLM 层测试（`test_litellm_*.py`）用 `tests/fake_llm_server.py` 在 127.0.0.1 上模拟五种协议的真实报文。离线评测保留退役请求作为负向契约，确保不会恢复旧工具；当前路由、计划、事实和 ask_user 契约纳入后端测试。可选仍可用 Promptfoo 做人工对比：
 
 ```bash
 cd evals && PROMPTFOO_PYTHON=../backend/.venv/bin/python npx --yes promptfoo@0.118.0 eval --no-cache

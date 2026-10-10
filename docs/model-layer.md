@@ -1,0 +1,88 @@
+# 模型层：LiteLLM SDK
+
+灯灯通过 [LiteLLM](https://github.com/BerriAI/litellm) **Python SDK**（不是 LiteLLM Proxy 服务器）调用模型。灯灯自己的部分仍由灯灯负责：连接与模型档案（SQLite）、「自动」协议协商并持久化 `detected_protocol`、真实图片探测、推理内容回传、调用监控与成功率、按对话选择模型、按档案设置推理强度。LiteLLM 负责各厂商的请求格式、流式解析、参数适配、错误分类、备用模型路由、重试冷却、模型能力和价格数据。
+
+## 架构
+
+```
+ChatRuntime ─► ConfiguredModelProvider (档案参数 / 推理强度)
+                 └► RoutedModelProvider        ← 仅当配置了备用模型
+                      ├► AutoNegotiatingModelProvider (协议协商 + detected_protocol)
+                      │     └► LiteLLMProvider × 候选协议
+                      └► litellm.Router (主模型 + 备用模型 deployments)
+```
+
+| 模块 | 作用 |
+| --- | --- |
+| `backend/app/models/litellm_core.py` | **唯一** `import litellm` 的模块。导入前写入离线环境变量，懒加载并记录导入耗时，统一配置 `drop_params`、关闭回调、遥测与消息日志。 |
+| `backend/app/models/litellm_provider.py` | `LiteLLMProvider`：实现 `generate` / `stream` / `check_connection` / `list_models` / `probe_vision` / `name` / `models_url`，事件语义、错误码与监控 `_record_event` 与原生适配器一致。 |
+| `backend/app/models/litellm_errors.py` | LiteLLM 异常 → `ModelProviderError` 现有错误码（中文提示），保留 `protocol_unsupported`，新增 `context_window_exceeded`、`content_policy`。 |
+| `backend/app/models/litellm_router.py` | `RoutedModelProvider` + `build_router`：把启用的模型档案组成 `litellm.Router`，记录实际回答的模型与是否发生回退。 |
+| `backend/app/agent/model_routing.py` | 备用模型策略与能力记录（SQLite），能力合并优先级。 |
+| `backend/app/models/factory.py` | `DENGDENG_MODEL_BACKEND=litellm|native` 选择实现，默认 `litellm`；未安装 LiteLLM 时自动退回 `native`。 |
+
+### 协议映射
+
+| 灯灯协议 | LiteLLM 调用 | 说明 |
+| --- | --- | --- |
+| `openai` | `acompletion(model="openai/<model>")` | 自定义 Base URL 原样作为 `api_base` |
+| `responses` | `aresponses(model="openai/<model>")` | `store=False`，`include=["reasoning.encrypted_content"]`；Router 中使用 `openai/responses/<model>` 桥接 |
+| `anthropic` | `acompletion(model="anthropic/<model>")` | Base URL 末尾的 `/v1` 会去掉（LiteLLM 自己拼 `/v1/messages`）；系统提示标记 `cache_control` 以启用提示缓存 |
+| `gemini` | `acompletion(model="gemini/<model>")` | |
+| `ollama` | `acompletion(model="ollama_chat/<model>")` | Base URL 末尾的 `/api` 会去掉；`tool_choice=required` 改为系统提示约束；费用记 0 |
+
+每个协议都使用连接自己的 Base URL 与 API Key，不读取 `OPENAI_API_KEY` 等环境变量。
+
+### 推理
+
+- `reasoning_effort` 对所有协议传入（Responses 为 `{effort, summary: "auto"}`），由 LiteLLM 映射为各家参数（Anthropic thinking、Gemini thinkingConfig 等）；不支持时 `drop_params` 丢弃，上游仍以 400/422 拒绝时去掉后重试一次并记住。
+- Anthropic 的带签名 `thinking_blocks` 写入 `provider_metadata["thinking_blocks"]`，runtime 存到带工具调用的助手消息 `payload["thinking_blocks"]`，下一轮原样回传，保证工具轮之间的扩展思考不中断。
+- Responses 的加密推理条目沿用 `responses_reasoning_items` 回传（直连用 `aresponses`，Router 中用 LiteLLM 的 `reasoning_items`）。
+- 流式事件：正文 `text_delta`、推理 `reasoning_delta`、工具调用在 `completed` 事件中汇总，带用量。
+
+### 备用模型（Router）
+
+设置页「备用模型」保存在 `model_fallback_policy`（schema v29）：
+
+- 备用模型（最多 5 个，按顺序）→ `fallbacks`
+- 超长上下文时换用（最多 2 个）→ `context_window_fallbacks`
+- 内容被拒时换用（最多 2 个）→ `content_policy_fallbacks`
+- 重试：超时 / 限流 / 服务错误各 0–3 次（`RetryPolicy`；请求错误、认证失败、内容拒绝不重试）
+- 冷却：允许失败次数 `allowed_fails`、冷却时间 `cooldown_time`
+
+每个档案是一个 deployment，各自携带自己的 Key、Base URL、推理强度、温度与最大输出，备用模型不会继承主模型参数。自动协议尚未协商完成的主模型先直连协商，协商后才进入 Router。回退发生时：监控记录主模型一条 `fallback_used`，回答模型一条成功（`fallback_from_profile_id`）；回答的 `model_selection` 带 `fallback_used`、`answered_model_name`，消息下方显示「由备用模型 … 回答」。
+
+### 能力与费用
+
+能力合并优先级：**手动设置 > 真实探测 > LiteLLM 内置数据 > 模型 ID 推测**。`GET /agent/model-profiles/{id}/capabilities` 返回视觉、推理、工具、结构化输出、PDF、缓存及上下文长度、最大输出、参考价格；`PUT` 写入/清除手动设置；`POST …/capabilities/probe` 做一次真实图片探测并记住结果（`model_capability_records`）。
+
+每次调用估算费用写入 `model_service_events.cost_usd`：档案自定义价格优先，其次 LiteLLM 计算的 `response_cost`，再按用量 × 价格表；Ollama 记 0；未知模型留空。监控摘要返回 `estimated_cost_usd`、`priced_requests`、`unpriced_requests`、`fallback_requests`。只用服务商返回的 token 数，不调用分词器。
+
+`response_format`（结构化输出）与提示缓存（Anthropic `cache_control`）经 `ModelRequest.response_format` / `prompt_cache` 透传。
+
+## 离线与安全
+
+- **只在 `litellm_core.py` 导入 litellm**（测试 `test_only_litellm_core_imports_litellm` 守护）。导入前设置：`LITELLM_LOCAL_MODEL_COST_MAP`、`LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS`、`LITELLM_LOCAL_AUTOROUTER_PRESETS`、`LITELLM_LOCAL_BLOG_POSTS`、`LITELLM_LOCAL_POLICY_TEMPLATES` 为 `True`，`LITELLM_MODE=PRODUCTION`（不加载 `.env`），`LITELLM_TELEMETRY=False`，`LITELLM_RUST=False`。配置后清空 `callbacks` / `success_callback` / `failure_callback`，`turn_off_message_logging=True`，`num_retries=0`（重试只由 Router 策略决定）。
+- 测试 `test_litellm_imports_offline_without_network_attempts` 在禁用 socket 的子进程中导入并读取价格表，断言没有任何网络尝试。
+- 懒加载：构建 provider 不导入 litellm，第一次模型调用时才导入（源码环境约 1.5–2 秒、打包 sidecar 约 0.65 秒，见 `GET /agent/model-layer` 的 `litellm_import_seconds`）。
+- 依赖锁定：`backend/requirements-litellm.in` → `pip-compile --generate-hashes` → `backend/requirements-litellm.txt`（精确版本 + 所有发行文件哈希）。安装只用 `pip install --require-hashes -r requirements-litellm.txt`。CI 与桌面构建运行 `backend/scripts/scan_pth.py`，出现非白名单的可执行 `.pth` 即失败（1.82.7/1.82.8 投毒即通过 `.pth` 执行）。
+- 桌面 sidecar 打包 litellm 包内全部运行时数据文件（`proxy/`、`rust_bridge/`、文档与类型存根除外，约 12 MB；手工列清单曾漏掉 `containers/endpoints.json`），排除 Proxy 服务器、管理界面、企业插件、boto3 与可选 Rust 扩展。`package-sidecar.py` 向 PyInstaller 所在的后端 venv 解释器查询 litellm 位置（`npm run package-sidecar` 本身由系统 python3 运行）。
+- 桌面冒烟测试 `desktop/scripts/smoke-sidecar.py` 对打包后的 sidecar 用本地假服务各做一次真实调用（OpenAI 兼容、Responses、Anthropic、Gemini、Ollama），打包缺模块或数据文件会在这里失败；未分类异常会以 `Unexpected LiteLLM failure` 写入运行日志。
+- 实测（Apple Silicon，2026-10-10）：`灯灯.app` 148 MB（当前安装版 117 MB，+31 MB；sidecar 125 MB vs 95 MB）；sidecar 冷启动到 `/health` 0.53 s（与安装版相同），首次模型调用 0.76 s（其中导入 litellm 0.64 s）。新构建首次启动受 macOS 扫描影响可达约 20 s。
+
+## 安全升级流程
+
+1. 查看 [安全公告](https://github.com/BerriAI/litellm/security/advisories) 与发布说明；只选正式版（非 dev/rc），发布至少约一周且没有未修复公告。
+2. 修改 `requirements-litellm.in` 中的版本，执行：
+   ```bash
+   cd backend
+   .venv/bin/pip-compile --generate-hashes --allow-unsafe --strip-extras --no-emit-index-url \
+     -o requirements-litellm.txt requirements-litellm.in
+   ```
+   核对 `litellm==` 的哈希与 PyPI 页面一致，审阅新增/变化的依赖。
+3. `pip install --require-hashes -r requirements-litellm.txt`，运行 `python scripts/scan_pth.py`。
+4. 跑全部后端测试（含离线导入、协议映射、Router 测试）、前端测试与桌面冒烟测试 `desktop/scripts/smoke-sidecar.py`。
+
+## 回滚
+
+设置环境变量 `DENGDENG_MODEL_BACKEND=native` 即回到原生适配器（OpenAI SDK / httpx 实现，代码保留未删除）。原生模式下备用模型设置会保存但不生效（设置页提示），能力报告不使用 LiteLLM 数据，其余功能（协商、探测、推理回传、监控）不变。未安装 litellm 时自动使用原生模式并打印警告。数据库 v29 的新增列与表对原生模式无影响。
