@@ -277,6 +277,63 @@ def test_unsupported_reasoning_effort_is_retried_without_it(server):
     server.errors = original
 
 
+# ---------------------------------------------- connection and parse failures
+PROTOCOL_BASES = {"openai": "/v1", "responses": "/v1", "anthropic": "", "gemini": "", "ollama": ""}
+PROTOCOL_PATHS = {"openai": "/chat/completions", "responses": "/responses", "anthropic": "/messages",
+                  "gemini": "generateContent", "ollama": "/api/chat"}
+
+
+def _unused_port() -> int:
+    import socket
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+@pytest.mark.parametrize("protocol", list(PROTOCOL_BASES))
+@pytest.mark.parametrize("streaming", [False, True])
+def test_connection_refused_maps_to_service_unavailable(protocol, streaming):
+    # LiteLLM reports refused connections as a status-500 InternalServerError /
+    # APIConnectionError; the httpx.ConnectError underneath decides.
+    base = f"http://127.0.0.1:{_unused_port()}{PROTOCOL_BASES[protocol]}"
+    provider = LiteLLMProvider("sk-test", "gpt-4o", base, 5, protocol=protocol)
+    with pytest.raises(ModelProviderError) as caught:
+        run(collect(provider, request()) if streaming else provider.generate(request()))
+    assert caught.value.code == "service_unavailable"
+    assert caught.value.retryable is True
+    assert str(caught.value) == "无法连接模型服务，请检查网关地址或网络状态"
+
+
+@pytest.mark.parametrize("protocol", list(PROTOCOL_BASES))
+def test_malformed_json_maps_to_invalid_response_without_traceback(server, protocol):
+    server.raw[PROTOCOL_PATHS[protocol]] = (200, b"{not json")
+    provider = LiteLLMProvider("sk-test", "gpt-4o", f"{server.url}{PROTOCOL_BASES[protocol]}", 5, protocol=protocol)
+    with pytest.raises(ModelProviderError) as caught:
+        run(provider.generate(request()))
+    assert caught.value.code == "invalid_provider_response"
+    with db.connect() as conn:
+        stored = [row[0] for row in conn.execute("SELECT error_message FROM model_service_events")]
+    assert stored == ["模型服务返回了无法解析的响应"]
+
+
+def test_error_detail_strips_litellm_wrappers():
+    from app.models.litellm_core import get_litellm
+    from app.models.litellm_errors import litellm_error_detail
+
+    litellm = get_litellm()
+    cases = {
+        "InternalServerError: OpenAIException - upstream exploded": "upstream exploded",
+        "upstream exploded. Handle with `litellm.InternalServerError`.": "upstream exploded",
+        'GeminiException BadRequestError - {"error": {"message": "bad input"}}': "bad input",
+        "Expecting value\nTraceback (most recent call last):\n  File \"x.py\", line 1": "Expecting value",
+        "Unable to get json response - boom, Original Response: {not json": "Unable to get json response - boom",
+    }
+    for raw, expected in cases.items():
+        exc = litellm.APIError(status_code=500, message=raw, llm_provider="openai", model="m")
+        assert litellm_error_detail(exc) == expected, raw
+
+
 # --------------------------------------------------------- monitor and cost
 def test_monitor_records_backend_and_cost(server):
     provider = LiteLLMProvider("sk-ant", "claude-sonnet-4-5", server.url, 10, protocol="anthropic")

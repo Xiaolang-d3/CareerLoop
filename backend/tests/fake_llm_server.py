@@ -149,11 +149,13 @@ def responses_sse() -> bytes:
 
 
 class FakeLLMServer:
-    """Serve canned replies; ``errors`` maps a path substring to (status, body)."""
+    """Serve canned replies; ``errors`` maps a path substring to (status, body),
+    ``raw`` maps a path substring to (status, raw bytes) for malformed replies."""
 
     def __init__(self) -> None:
         self.requests: list[dict[str, Any]] = []
         self.errors: dict[str, tuple[int, dict[str, Any]]] = {}
+        self.raw: dict[str, tuple[int, bytes]] = {}
         self.tool = False
         server = self
 
@@ -169,6 +171,10 @@ class FakeLLMServer:
                 except ValueError:
                     body = {}
                 server.requests.append({"path": self.path, "headers": {k.lower(): v for k, v in self.headers.items()}, "body": body})
+                for marker, (status, data) in server.raw.items():
+                    if marker in self.path:
+                        self._send(status, data, "application/json")
+                        return
                 for marker, (status, payload) in server.errors.items():
                     if marker in self.path:
                         self._send(status, json.dumps(payload).encode(), "application/json")

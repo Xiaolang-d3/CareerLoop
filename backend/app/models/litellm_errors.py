@@ -23,7 +23,72 @@ _CONTEXT_MARKERS = (
 )
 _CONTENT_POLICY_MARKERS = ("content_policy", "content policy", "content management policy", "content_filter")
 _PREFIX = re.compile(r"^(?:litellm\.)?[A-Za-z]+Error:\s*", re.IGNORECASE)
-_PROVIDER_PREFIX = re.compile(r"^[A-Za-z_]+Exception\s*-\s*", re.IGNORECASE)
+# "OpenAIException - ", "GeminiException BadRequestError - "
+_PROVIDER_PREFIX = re.compile(r"^[A-Za-z_]+Exception(?:\s+[A-Za-z]+Error)?\s*-\s*", re.IGNORECASE)
+# LiteLLM's own hints, never useful to a user.
+_NOISE_SUFFIXES = (
+    re.compile(r"\.?\s*Handle with `litellm\.[A-Za-z]+`\.?", re.IGNORECASE),
+    re.compile(r"\.?\s*File an issue if.*$", re.IGNORECASE | re.DOTALL),
+    re.compile(r",?\s*Original Response:.*$", re.IGNORECASE | re.DOTALL),
+    re.compile(r"\s*Traceback \(most recent call last\):.*$", re.DOTALL),
+)
+
+
+def _strip_wrappers(text: str) -> str:
+    text = text.strip()
+    previous = None
+    while previous != text:
+        previous = text
+        text = _PROVIDER_PREFIX.sub("", _PREFIX.sub("", text)).strip()
+    for pattern in _NOISE_SUFFIXES:
+        text = pattern.sub("", text).strip()
+    return text
+
+
+def _exception_chain(exc: BaseException) -> list[BaseException]:
+    """exc, then its __cause__/__context__ ancestry (LiteLLM keeps the httpx error there)."""
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and len(chain) < 12 and all(current is not seen for seen in chain):
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return chain
+
+
+def _has_http_status(chain: list[BaseException]) -> bool:
+    """A real upstream HTTP response (not LiteLLM's synthetic 500) is in the chain."""
+    import httpx
+    import openai
+
+    return any(isinstance(item, (openai.APIStatusError, httpx.HTTPStatusError)) for item in chain)
+
+
+def failure_kind(exc: BaseException) -> str | None:
+    """'timeout' / 'connection' / 'invalid_response' from the underlying error, else None.
+
+    LiteLLM reports connection failures as InternalServerError/APIConnectionError
+    with status_code=500, so the status code cannot tell them apart.
+    """
+    import httpx
+    import openai
+
+    # LiteLLM's own exception classes subclass openai's (APIStatusError,
+    # APIConnectionError), so only the underlying client errors count.
+    chain = [item for item in _exception_chain(exc) if not is_litellm_exception(item)]
+    if _has_http_status(chain):
+        return None
+    for item in chain:
+        if isinstance(item, (httpx.TimeoutException, openai.APITimeoutError, TimeoutError)):
+            return "timeout"
+    for item in chain:
+        if isinstance(item, (httpx.ConnectError, openai.APIConnectionError, ConnectionError)) or (
+            isinstance(item, OSError) and type(item).__name__ == "gaierror"
+        ):
+            return "connection"
+    for item in chain:
+        if isinstance(item, json.JSONDecodeError):
+            return "invalid_response"
+    return None
 
 
 def litellm_error_detail(exc: BaseException) -> str:
@@ -48,17 +113,17 @@ def litellm_error_detail(exc: BaseException) -> str:
     elif isinstance(payload, str):
         text = payload
     if not text:
-        message = str(getattr(exc, "message", "") or str(exc) or "")
-        message = _PROVIDER_PREFIX.sub("", _PREFIX.sub("", message.strip())).strip()
+        text = str(getattr(exc, "message", "") or str(exc) or "")
+    text = _strip_wrappers(text)
+    if text.startswith("{"):
         try:
-            decoded = json.loads(message)
+            decoded = json.loads(text)
         except ValueError:
             decoded = None
         if isinstance(decoded, dict):
             error = decoded.get("error", decoded)
-            message = str(error.get("message") if isinstance(error, dict) else error or message)
-        text = message
-    text = text.strip()
+            text = str((error.get("message") or error.get("detail")) if isinstance(error, dict) else error or text)
+            text = _strip_wrappers(text)
     if text.startswith("<") or "<html" in text[:80].lower():
         return ""
     # LiteLLM appends a retry hint and model-group metadata to router errors.
@@ -78,9 +143,16 @@ def map_litellm_error(exc: BaseException, protocol: str = "openai") -> ModelProv
     lowered = detail.lower()
     status = getattr(exc, "status_code", None)
     route = _ROUTE_LABELS.get(protocol, "模型")
+    kind = failure_kind(exc)
 
-    if isinstance(exc, litellm.Timeout):
+    if isinstance(exc, litellm.Timeout) or kind == "timeout":
         return ModelProviderError("request_timeout", "模型服务响应超时，请稍后重试", retryable=True)
+    if kind == "connection":
+        return ModelProviderError(
+            "service_unavailable", "无法连接模型服务，请检查网关地址或网络状态", retryable=True,
+        )
+    if kind == "invalid_response":
+        return ModelProviderError("invalid_provider_response", "模型服务返回了无法解析的响应")
     if any(marker in lowered for marker in _ACCOUNT_POOL_MARKERS):
         return ModelProviderError(
             "account_pool_exhausted",
@@ -124,10 +196,6 @@ def map_litellm_error(exc: BaseException, protocol: str = "openai") -> ModelProv
             "service_unavailable",
             f"模型服务暂时不可用（{status or 503}）{('：' + detail[:160]) if detail else ''}，请稍后重试",
             retryable=True,
-        )
-    if isinstance(exc, litellm.APIConnectionError) and not status:
-        return ModelProviderError(
-            "service_unavailable", "无法连接模型服务，请检查网关地址或网络状态", retryable=True,
         )
     if isinstance(exc, (litellm.BadRequestError, litellm.UnprocessableEntityError)):
         message = f"模型服务返回异常状态（{status or 400}）"
