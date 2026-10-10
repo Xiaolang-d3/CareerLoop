@@ -38,6 +38,9 @@ if [ ! -d "$BACKEND_DIR/.venv" ]; then
 fi
 env -u PYTHONPATH -u VIRTUAL_ENV -u PYTHONHOME \
   "$BACKEND_DIR/.venv/bin/pip" install -q -r "$BACKEND_DIR/requirements.txt"
+# LiteLLM model layer is installed only from the hash-locked file.
+env -u PYTHONPATH -u VIRTUAL_ENV -u PYTHONHOME \
+  "$BACKEND_DIR/.venv/bin/pip" install -q --require-hashes -r "$BACKEND_DIR/requirements-litellm.txt"
 
 : > "$LOG_DIR/remote-backend.log"
 : > "$REMOTE_LOG"

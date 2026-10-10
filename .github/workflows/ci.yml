@@ -53,9 +53,15 @@ jobs:
           cache-dependency-path: |
             backend/requirements.txt
             backend/requirements-dev.txt
+            backend/requirements-litellm.txt
       - name: Install backend dependencies
         working-directory: backend
-        run: python -m pip install -r requirements-dev.txt
+        run: |
+          python -m pip install -r requirements-dev.txt
+          # LiteLLM model layer: exact version + hashes (docs/model-layer.md).
+          python -m pip install --require-hashes -r requirements-litellm.txt
+      - name: Scan for executable .pth files
+        run: python backend/scripts/scan_pth.py
       - name: Run backend tests
         working-directory: backend
         env:
@@ -117,9 +123,13 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-litellm.txt
       - name: Install integration backend
-        run: python -m pip install -r backend/requirements.txt
+        run: |
+          python -m pip install -r backend/requirements.txt
+          python -m pip install --require-hashes -r backend/requirements-litellm.txt
       - name: Restore frontend dist
         uses: actions/download-artifact@v4
         with:
