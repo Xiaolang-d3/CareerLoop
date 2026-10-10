@@ -93,6 +93,8 @@
 
 ### 工程
 
+- 文档同步检查改为 `scripts/check-docs-sync.sh`：使用三点 diff（只看 PR 自身的改动），模型层、监控、数据库、迁移与协议代码变更也要求更新 `docs/agent.md`；LiteLLM 模型层或后端依赖变更要求更新 `docs/model-layer.md`。
+
 - 后端全部依赖（运行、开发与 LiteLLM）改为从唯一的哈希锁定文件 `backend/requirements-lock.txt` 安装（仅 wheel、`--require-hashes --no-deps`，每个包都校验哈希）；已有 venv 通过 `backend/scripts/install_deps.sh` 在锁文件变化时强制重装。安装后立即以 `python -I -S` 扫描可执行 `.pth` 与 `sitecustomize`（扫描本身不会触发它们），按内容哈希放行并与包 RECORD 比对；CI 的后端测试、e2e 与桌面构建都执行。桌面 sidecar 打包 LiteLLM 及其数据文件，安装包增大约 31 MB；冒烟测试对打包结果逐一检查五种协议的真实调用。
 
 - 首页公开源适配器与 Agent 循环分离，账号工作区使用 JSON 快照缓存；后台合并刷新、来源失败保留旧内容，不调用模型生成资讯。数据库版本仍为 25，没有新增迁移。

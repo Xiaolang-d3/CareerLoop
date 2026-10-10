@@ -25,20 +25,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - name: Require agent docs when agent code changes
+      - name: Require docs when documented code changes
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          CHANGED="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
-          echo "$CHANGED"
-          if echo "$CHANGED" | grep -Eq '^backend/app/(agent|tools|chat|api|library|documents|persistence|compatibility)/'; then
-            if ! echo "$CHANGED" | grep -qx 'docs/agent.md'; then
-              echo "::error::智能体、聊天、资料库、解析、API 或迁移代码有变更时，同一 PR 必须更新 docs/agent.md"
-              exit 1
-            fi
-          fi
+        run: scripts/check-docs-sync.sh "$BASE_SHA" "$HEAD_SHA"
 
   backend-tests:
     name: backend-tests
