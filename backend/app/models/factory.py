@@ -25,15 +25,33 @@ _NATIVE_CLASSES = {
 }
 
 
+_BACKENDS = ("litellm", "native")
+_warned: set[str] = set()
+
+
+def _warn_once(key: str, message: str, *args: object) -> None:
+    # model_backend() runs on every provider cache lookup; log each problem once.
+    if key not in _warned:
+        _warned.add(key)
+        logger.warning(message, *args)
+
+
 def model_backend() -> str:
     """``litellm`` (default) or ``native``; the native adapters stay for one release as a rollback."""
-    requested = (os.getenv(MODEL_BACKEND_ENV) or "litellm").strip().lower()
+    raw = os.getenv(MODEL_BACKEND_ENV) or ""
+    requested = raw.strip().lower() or "litellm"
+    if requested not in _BACKENDS:
+        _warn_once(
+            f"unknown:{requested}",
+            "Unknown %s=%r (expected 'litellm' or 'native'); using litellm", MODEL_BACKEND_ENV, raw,
+        )
+        requested = "litellm"
     if requested == "native":
         return "native"
     from .litellm_core import litellm_available
 
     if not litellm_available():
-        logger.warning("LiteLLM is not installed; falling back to the native model adapters")
+        _warn_once("missing", "LiteLLM is not installed; falling back to the native model adapters")
         return "native"
     return "litellm"
 

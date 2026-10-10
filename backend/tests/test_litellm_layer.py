@@ -114,6 +114,33 @@ def test_backend_flag_selects_native_or_litellm(monkeypatch):
     monkeypatch.setenv("DENGDENG_MODEL_BACKEND", "something-else")
     assert model_backend() == "litellm"
 
+def test_unknown_backend_value_warns_once_and_uses_litellm(monkeypatch, caplog):
+    from app.models import factory
+
+    monkeypatch.setattr(factory, "_warned", set())
+    monkeypatch.setenv("DENGDENG_MODEL_BACKEND", "LiteLLM-v2")
+    with caplog.at_level("WARNING", logger="app.models.factory"):
+        assert model_backend() == "litellm"
+        assert model_backend() == "litellm"
+    warnings = [record.getMessage() for record in caplog.records if "Unknown DENGDENG_MODEL_BACKEND" in record.getMessage()]
+    assert len(warnings) == 1 and "'LiteLLM-v2'" in warnings[0]
+    monkeypatch.setenv("DENGDENG_MODEL_BACKEND", " Native ")
+    assert model_backend() == "native"
+
+
+def test_missing_litellm_falls_back_to_native(monkeypatch, caplog):
+    from app.models import factory, litellm_core
+    from app.models.openai_compatible import OpenAICompatibleProvider
+
+    monkeypatch.setattr(factory, "_warned", set())
+    monkeypatch.setattr(litellm_core, "litellm_available", lambda: False)
+    monkeypatch.setenv("DENGDENG_MODEL_BACKEND", "litellm")
+    with caplog.at_level("WARNING", logger="app.models.factory"):
+        assert model_backend() == "native"
+        provider = build_model_provider(api_key="k", model="m", base_url="https://x.example.test/v1", timeout_seconds=5, protocol="openai")
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert sum("LiteLLM is not installed" in record.getMessage() for record in caplog.records) == 1
+
 
 def test_building_a_provider_does_not_import_litellm():
     script = (
