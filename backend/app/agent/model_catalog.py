@@ -344,6 +344,29 @@ def add_model_profile(values: dict[str, Any], db_path: str | Path | None = None)
     return _mutate("add_profile", values, db_path, operation)
 
 
+def ensure_service_model_profile(connection_id: str, values: dict[str, Any], db_path: str | Path | None = None) -> dict[str, Any]:
+    """Reuse a saved model or materialize a service model without changing defaults."""
+    def operation(conn, _candidates):
+        connection = _connection(conn, connection_id)
+        _check_revision(connection, values)
+        if not connection["enabled"]:
+            raise ValueError("连接已停用")
+        model_name = _validated_profile(values)["model_name"]
+        matches = [_decode_profile(row) for row in conn.execute(
+            "SELECT * FROM model_profiles WHERE connection_id = ? AND model_name = ? ORDER BY created_at, id",
+            (connection_id, model_name),
+        )]
+        existing = next((profile for profile in matches if profile["enabled"]), None)
+        if existing:
+            return existing
+        if matches:
+            raise ValueError("此模型已停用，请在模型设置中启用")
+        record = {"id": str(uuid4()), "connection_id": connection_id, "revision": 1, **_validated_profile({"model_name": model_name})}
+        _write_profile(conn, record)
+        return _profile(conn, record["id"])
+    return _mutate(f"ensure_service_profile:{connection_id}", values, db_path, operation)
+
+
 def update_model_profile(profile_id: str, values: dict[str, Any], db_path: str | Path | None = None) -> dict[str, Any]:
     def operation(conn, _candidates):
         current = _profile(conn, profile_id)

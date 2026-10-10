@@ -1,4 +1,5 @@
 import { useModelCatalog } from "../features/settings/useModelCatalog";
+import { useComposerModelDiscovery } from "../features/chat/useComposerModelDiscovery";
 import { useModelDiscovery } from "../features/settings/useModelDiscovery";
 import { useTheme } from "../features/appearance/ThemeProvider";
 import { AppearanceSettingsPage } from "../features/settings/AppearanceSettingsPage";
@@ -229,6 +230,9 @@ export function App({
   const defaultModelProfile = modelCatalog.catalog.profiles.find(profile => profile.id === (modelCatalog.catalog.effective_execution_profile_id || modelCatalog.catalog.default_profile_id));
   const currentModelName = selectedModelProfile?.model_name || defaultModelProfile?.model_name || capabilities?.active_model_name || (modelSettingsReady ? savedAgentSettings.model_name : "尚未配置");
   const modelProfileUnavailable = Boolean(currentConversation?.model_profile_id && selectedModelProfile && !activeModelProfiles.some(profile => profile.id === currentConversation.model_profile_id));
+  const composerConnection = modelCatalog.catalog.connections.find(connection => connection.id === (selectedModelProfile || defaultModelProfile)?.connection_id && connection.enabled);
+  const composerDiscovery = useComposerModelDiscovery({ fetchJson, scope: modelSettingsScope, connection: composerConnection });
+  const disabledServiceModels = new Set(modelCatalog.catalog.profiles.filter(profile => profile.connection_id === composerConnection?.id && !profile.enabled && !activeModelProfiles.some(active => active.connection_id === profile.connection_id && active.model_name === profile.model_name)).map(profile => profile.model_name));
   const defaultModelHasDraft = Boolean(agentSettings.api_key.trim()) || agentSettings.model_name !== savedAgentSettings.model_name
     || agentSettings.model_base_url !== savedAgentSettings.model_base_url || agentSettings.model_protocol !== savedAgentSettings.model_protocol;
 
@@ -713,10 +717,10 @@ export function App({
     }
   }
 
-  async function selectConversationModel(profileId: string | null) {
+  async function selectConversationModel(profileId: string | null, serviceModel?: { connectionId: string; modelName: string; revision: number }) {
     const conversationId = currentConversationId;
     if (!conversationId || chatBusy || modelSelectionBusy) return;
-    if (profileId && !activeModelProfiles.some(profile => profile.id === profileId)) return;
+    if (modelCatalog.busy || (profileId && !activeModelProfiles.some(profile => profile.id === profileId))) return;
     modelSelectionRequestRef.current.controller?.abort();
     const requestId = ++modelSelectionRequestRef.current.id;
     const controller = new AbortController();
@@ -725,6 +729,11 @@ export function App({
       && modelSettingsScopeRef.current === modelSettingsScope && currentConversationIdRef.current === conversationId;
     setModelSelectionBusy(true);
     try {
+      if (serviceModel) {
+        profileId = await modelCatalog.ensureProfile(serviceModel.connectionId, serviceModel.modelName, serviceModel.revision);
+        if (!current()) return;
+        if (!profileId) throw new Error("模型未确认保存，继续使用原模型；请重新打开列表或检查模型设置。");
+      }
       const updated = await fetchJson<Conversation>(`/conversations/${conversationId}`, {
         method: "PATCH", signal: controller.signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model_profile_id: profileId })
       });
@@ -1128,9 +1137,12 @@ export function App({
             conversationTitle={currentConversation?.title}
             currentModelName={currentModelName}
             defaultModelName={defaultModelProfile?.model_name || capabilities?.active_model_name}
-            modelProfiles={activeModelProfiles.map(profile => ({ id: profile.id, model_name: profile.model_name, connection_name: modelCatalog.catalog.connections.find(connection => connection.id === profile.connection_id)?.name || "模型连接" }))}
+            modelProfiles={activeModelProfiles.map(profile => ({ id: profile.id, model_name: profile.model_name, connection_id: profile.connection_id, connection_name: modelCatalog.catalog.connections.find(connection => connection.id === profile.connection_id)?.name || "模型连接" }))}
+            serviceModels={composerConnection ? { connection_id: composerConnection.id, connection_name: composerConnection.name || "当前服务", revision: composerConnection.revision, models: composerDiscovery.models.filter(name => !disabledServiceModels.has(name)), busy: composerDiscovery.busy, error: composerDiscovery.error } : undefined}
+            onDiscoverServiceModels={composerDiscovery.discover}
+            onServiceModelChange={async modelName => { if (composerConnection) await selectConversationModel(null, { connectionId: composerConnection.id, modelName, revision: composerConnection.revision }); }}
             selectedModelProfileId={currentConversation?.model_profile_id ?? null}
-            modelSelectionBusy={modelSelectionBusy}
+            modelSelectionBusy={modelSelectionBusy || modelCatalog.busy}
             modelProfileUnavailable={modelProfileUnavailable}
             modelConfigured={capabilities ? capabilities.configured !== false : undefined}
             onModelProfileChange={selectConversationModel}

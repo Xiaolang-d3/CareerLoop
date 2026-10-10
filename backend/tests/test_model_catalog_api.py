@@ -65,6 +65,43 @@ def test_saved_connection_discovery_uses_its_own_key(client, monkeypatch):
     assert factory.call_args.kwargs["base_url"] == first["model_base_url"]
 
 
+def test_service_model_selection_reuses_profile_and_preserves_default(client):
+    from app.agent.model_catalog import get_profile_connection
+
+    catalog, connection, _profile = create(client, "first", "synthetic-first-key")
+    original_default = catalog["default_profile_id"]
+    path = f"/agent/model-connections/{connection['id']}/profiles/ensure"
+    body = {"model_name": "discovered-model", "expected_revision": connection["revision"]}
+    first = client.post(path, json=body)
+    repeated = client.post(path, json=body)
+    assert first.status_code == repeated.status_code == 200
+    models = [item for item in repeated.json()["profiles"] if item["connection_id"] == connection["id"] and item["model_name"] == "discovered-model"]
+    assert len(models) == 1
+    assert repeated.json()["default_profile_id"] == original_default
+    assert "synthetic-first-key" not in repeated.text and "secret_ref" not in repeated.text
+    conversation = client.post("/conversations", json={"title": "service catalog selection"}).json()
+    selected = client.patch(f"/conversations/{conversation['id']}", json={"model_profile_id": models[0]["id"]})
+    assert selected.status_code == 200
+    resolved = get_profile_connection(selected.json()["model_profile_id"])
+    assert resolved["model_name"] == "discovered-model"
+    assert resolved["api_key"] == "synthetic-first-key"
+    assert resolved["model_base_url"] == connection["model_base_url"]
+
+
+def test_service_model_rejects_stale_connection_and_disabled_model(client):
+    _catalog, connection, profile = create(client, "first", "synthetic-first-key")
+    path = f"/agent/model-connections/{connection['id']}/profiles/ensure"
+    body = {"model_name": "discovered-model", "expected_revision": connection["revision"]}
+    client.patch(f"/agent/model-connections/{connection['id']}", json={"name": "renamed", "expected_revision": connection["revision"]})
+    assert client.post(path, json=body).status_code == 409
+    client.patch(f"/agent/model-profiles/{profile['id']}", json={"enabled": False, "expected_revision": profile["revision"]})
+    disabled = client.post(path, json={"model_name": profile["model_name"], "expected_revision": connection["revision"] + 1})
+    assert disabled.status_code == 400 and "停用" in disabled.json()["detail"]
+    client.delete(f"/agent/model-connections/{connection['id']}")
+    archived = client.post(path, json={**body, "expected_revision": connection["revision"] + 2})
+    assert archived.status_code == 400
+
+
 def test_connection_edit_preserves_credentials_and_rejects_stale_revision(client):
     _catalog, connection, _profile = create(client, "first", "synthetic-first-key")
     address = {"model_base_url": "https://changed.example.test/v1", "expected_revision": connection["revision"], "api_key": ""}

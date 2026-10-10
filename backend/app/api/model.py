@@ -19,7 +19,7 @@ from ..observability.model_context import model_call_scope
 from ..models import ModelProviderError, OpenAICompatibleProvider, build_model_provider
 from ..model_protocol import protocol_requires_api_key
 from .schemas import AgentSettingsIn, ModelCapabilitiesIn, ModelDiscoveryIn
-from .model_contracts import ConnectionCreateIn, ConnectionUpdateIn, DefaultProfileIn, ProfileCreateIn, ProfileUpdateIn, RoutingPolicyIn
+from .model_contracts import ConnectionCreateIn, ConnectionUpdateIn, DefaultProfileIn, ProfileCreateIn, ProfileUpdateIn, RoutingPolicyIn, ServiceModelIn
 
 
 router = APIRouter()
@@ -145,6 +145,13 @@ def model_profiles_create(payload: ProfileCreateIn) -> dict[str, Any]:
     from ..agent.model_catalog import add_model_profile
 
     return _catalog_mutation(add_model_profile, payload.model_dump(exclude_unset=True))
+
+
+@router.post("/agent/model-connections/{connection_id}/profiles/ensure")
+def model_service_profile_ensure(connection_id: str, payload: ServiceModelIn) -> dict[str, Any]:
+    from ..agent.model_catalog import ensure_service_model_profile
+
+    return _catalog_mutation(ensure_service_model_profile, connection_id, payload.model_dump())
 
 
 @router.patch("/agent/model-profiles/{profile_id}")

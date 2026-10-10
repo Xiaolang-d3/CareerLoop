@@ -487,6 +487,9 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                     currentModelName={props.currentModelName}
                     defaultModelName={props.defaultModelName}
                     profiles={props.modelProfiles ?? []}
+                    serviceModels={props.serviceModels}
+                    onDiscover={props.onDiscoverServiceModels}
+                    onServiceChange={props.onServiceModelChange}
                     selectedProfileId={props.selectedModelProfileId ?? null}
                     profileDisabled={Boolean(props.modelProfileUnavailable)}
                     serviceUnavailable={Boolean(props.modelUnavailable)}

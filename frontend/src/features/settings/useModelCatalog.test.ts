@@ -8,6 +8,18 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 afterEach(cleanup);
 
 describe("useModelCatalog", () => {
+  it("materializes a service model using the saved connection revision without changing default", async () => {
+    const selected = { ...catalog, profiles: [{ id: "service-profile", connection_id: "service-id", model_name: "new-model", enabled: true, revision: 1 }] };
+    const client = vi.fn().mockResolvedValueOnce(catalog).mockResolvedValueOnce(selected);
+    const { result } = renderHook(() => useModelCatalog({ fetchJson: client as ReturnType<typeof createApiClient>, scope: "session", enabled: true }));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    let profile: string | null = null;
+    await act(async () => { profile = await result.current.ensureProfile("service-id", "new-model", 3); });
+    expect(profile).toBe("service-profile");
+    expect(client.mock.calls[1][0]).toBe("/agent/model-connections/service-id/profiles/ensure");
+    expect(JSON.parse(client.mock.calls[1][1].body)).toEqual({ model_name: "new-model", expected_revision: 3 });
+    expect(result.current.catalog.default_profile_id).toBe("profile-new");
+  });
   it("drops an older read after a mutation returns a newer catalog", async () => {
     const old = deferred<ModelCatalog>();
     const client = vi.fn<ReturnType<typeof createApiClient>>().mockReturnValueOnce(old.promise).mockResolvedValue(catalog);

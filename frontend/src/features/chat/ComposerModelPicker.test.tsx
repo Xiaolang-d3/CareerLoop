@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ComposerModelPicker } from "./ComposerModelPicker";
 
@@ -19,6 +19,31 @@ const openMenu = () => fireEvent.click(screen.getByRole("button", { name: /切�
 afterEach(cleanup);
 
 describe("ComposerModelPicker", () => {
+  it("loads service models on opening and searches/selects an unsaved model on the same service", async () => {
+    const props = setup({
+      profiles: profiles.map(profile => ({ ...profile, connection_id: profile.id === "p1" ? "service-a" : "service-b" })),
+      serviceModels: { connection_id: "service-a", connection_name: "主连接", revision: 1, models: ["gpt-5.5", "grok-model", "claude-model"], busy: false, error: "" },
+      onDiscover: vi.fn().mockResolvedValue(undefined), onServiceChange: vi.fn().mockResolvedValue(undefined)
+    });
+    openMenu();
+    await waitFor(() => expect(props.onDiscover).toHaveBeenCalledOnce());
+    expect(screen.getAllByRole("option", { name: "gpt-5.5" })).toHaveLength(1);
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索模型" }), { target: { value: "grok" } });
+    expect(screen.queryByRole("option", { name: "claude-model" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("option", { name: "grok-model" }));
+    expect(props.onServiceChange).toHaveBeenCalledWith("grok-model");
+    expect(props.onChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps saved models usable after catalog failure and exposes a retry", () => {
+    const props = setup({ serviceModels: { connection_id: "service-a", connection_name: "主连接", revision: 1, models: [], busy: false, error: "服务暂时不可用" }, onDiscover: vi.fn().mockResolvedValue(undefined) });
+    openMenu();
+    expect(screen.getByRole("alert")).toHaveTextContent("服务暂时不可用");
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(props.onDiscover).toHaveBeenCalledWith(true);
+    fireEvent.click(screen.getByRole("option", { name: "claude-x" }));
+    expect(props.onChange).toHaveBeenCalledWith("p2");
+  });
   it("opens a grouped menu and switches models", () => {
     const props = setup();
     openMenu();

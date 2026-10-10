@@ -39,6 +39,12 @@ class ProfileCreateIn(BaseModel):
     context_limit: int | None = Field(default=None, ge=1)
 
 
+class ServiceModelIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    model_name: str = Field(min_length=1, max_length=120)
+    expected_revision: int = Field(ge=0)
+
+
 class ProfileUpdateIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_revision: int = Field(ge=0)

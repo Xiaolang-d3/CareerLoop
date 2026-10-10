@@ -124,7 +124,10 @@ export type ChatComposerDraft = {
 export type ChatWorkspaceProps = {
   conversationTitle?: string;
   currentModelName?: string;
-  modelProfiles?: Array<{ id: string; model_name: string; connection_name: string }>;
+  modelProfiles?: Array<{ id: string; model_name: string; connection_name: string; connection_id?: string }>;
+  serviceModels?: { connection_id: string; connection_name: string; revision: number; models: string[]; busy: boolean; error: string };
+  onDiscoverServiceModels?: (refresh?: boolean) => Promise<void>;
+  onServiceModelChange?: (modelName: string) => Promise<void>;
   selectedModelProfileId?: string | null;
   defaultModelName?: string;
   modelSelectionBusy?: boolean;

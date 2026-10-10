@@ -1,14 +1,19 @@
-import { Check, ChevronUp, Settings2, TriangleAlert } from "lucide-react";
+import { Check, ChevronUp, RefreshCw, Search, Settings2, TriangleAlert } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
+import type { ChatWorkspaceProps } from "./types";
 
-type ModelProfileOption = { id: string; model_name: string; connection_name: string };
+type ModelProfileOption = { id: string; model_name: string; connection_name: string; connection_id?: string };
+type ModelOption = { id?: string; model_name: string };
 
 type Props = {
   configured: boolean;
   currentModelName?: string;
   defaultModelName?: string;
   profiles: ModelProfileOption[];
+  serviceModels?: ChatWorkspaceProps["serviceModels"];
+  onDiscover?: (refresh?: boolean) => Promise<void>;
+  onServiceChange?: (modelName: string) => Promise<void>;
   selectedProfileId: string | null;
   profileDisabled: boolean;
   serviceUnavailable: boolean;
@@ -43,17 +48,26 @@ function ModelIcon({ name }: { name: string }) {
 /** 输入框工具栏里的模型切换：胶囊按钮 + 向上弹出的分组菜单。 */
 export function ComposerModelPicker(props: Props) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const listId = useId();
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
+  const discoverRef = useRef(props.onDiscover);
+  discoverRef.current = props.onDiscover;
+
+  useEffect(() => {
+    if (!open) return;
+    setQuery("");
+    void discoverRef.current?.();
+  }, [open, props.serviceModels?.connection_id, props.serviceModels?.revision]);
 
   useLayoutEffect(() => {
     if (!open) return;
     const place = () => {
       const rect = rootRef.current?.getBoundingClientRect();
       if (!rect) return;
-      const width = Math.min(280, window.innerWidth - 16);
+      const width = Math.min(320, window.innerWidth - 16);
       setMenuStyle({ left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)), bottom: window.innerHeight - rect.top + 8, width, maxHeight: Math.max(160, Math.min(440, rect.top - 16)) });
     };
     place();
@@ -82,13 +96,35 @@ export function ComposerModelPicker(props: Props) {
 
   const label = props.currentModelName || props.defaultModelName || "默认模型";
   const warning = props.profileDisabled ? "已停用" : props.serviceUnavailable ? "服务不可用" : "";
-  const groups = new Map<string, ModelProfileOption[]>();
-  for (const profile of props.profiles) groups.set(profile.connection_name, [...(groups.get(profile.connection_name) ?? []), profile]);
+  const groups = new Map<string, { name: string; items: ModelOption[] }>();
+  const service = props.serviceModels;
+  if (service) groups.set(service.connection_id, { name: service.connection_name, items: [] });
+  for (const profile of props.profiles) {
+    const key = profile.connection_id ?? profile.connection_name;
+    const group = groups.get(key) ?? { name: profile.connection_name, items: [] };
+    group.items.push(profile);
+    groups.set(key, group);
+  }
+  if (service) {
+    const group = groups.get(service.connection_id)!;
+    for (const name of service.models) {
+      if (!group.items.some(profile => profile.model_name === name)) group.items.push({ model_name: name });
+    }
+  }
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleGroups = Array.from(groups.entries()).map(([key, group]) => [key, { ...group, items: group.items.filter(item => `${item.model_name} ${group.name}`.toLowerCase().includes(normalizedQuery)) }] as const).filter(([, group]) => group.items.length);
+  const count = Array.from(groups.values()).reduce((total, group) => total + group.items.length, 0);
   const disabled = props.busy || !props.canSelect;
 
   const choose = (profileId: string | null) => {
     setOpen(false);
+    rootRef.current?.querySelector<HTMLElement>(".model-pill")?.focus();
     if (profileId !== props.selectedProfileId) void props.onChange(profileId);
+  };
+  const chooseService = (modelName: string) => {
+    setOpen(false);
+    rootRef.current?.querySelector<HTMLElement>(".model-pill")?.focus();
+    void props.onServiceChange?.(modelName);
   };
   const onListKey = (event: KeyboardEvent<HTMLDivElement>) => {
     const items = Array.from(listRef.current?.querySelectorAll<HTMLElement>('[role="option"]:not([aria-disabled="true"])') ?? []);
@@ -97,10 +133,10 @@ export function ComposerModelPicker(props: Props) {
     else if (event.key === "ArrowDown") { event.preventDefault(); items[(index + 1) % items.length]?.focus(); }
     else if (event.key === "ArrowUp") { event.preventDefault(); items[(index - 1 + items.length) % items.length]?.focus(); }
   };
-  const option = (id: string | null, name: string, text?: string) => {
-    const selected = (props.selectedProfileId ?? null) === id;
+  const option = (id: string | null | undefined, name: string, text?: string) => {
+    const selected = id !== undefined && (props.selectedProfileId ?? null) === id;
     return (
-      <button key={id ?? "default"} type="button" role="option" aria-selected={selected} className={`model-option${selected ? " is-selected" : ""}`} onClick={() => choose(id)}>
+      <button key={id === undefined ? `service:${name}` : id ?? "default"} type="button" role="option" aria-selected={selected} disabled={disabled} className={`model-option${selected ? " is-selected" : ""}`} onClick={() => id === undefined ? chooseService(name) : choose(id)} title={name}>
         <ModelIcon name={name} />
         <span className="model-option-name">{text ?? name}</span>
         {selected ? <Check size={15} className="model-option-check" aria-hidden="true" /> : null}
@@ -111,22 +147,28 @@ export function ComposerModelPicker(props: Props) {
   return (
     <div className="model-picker" ref={rootRef}>
       {open ? createPortal(
-        <div className="model-menu" id={listId} role="listbox" aria-label="选择模型" ref={listRef} onKeyDown={onListKey} style={menuStyle}>
-          <div className="model-menu-scroll">
+        <div className="model-menu" ref={listRef} onKeyDown={onListKey} style={menuStyle}>
+          {service ? <div className="model-menu-tools">
+            <div className="model-menu-heading"><span>可选模型 <small>{count}</small></span><button type="button" aria-label="刷新模型列表" disabled={service.busy || disabled} onClick={() => void props.onDiscover?.(true)} title="读取当前服务的模型目录，不进行逐模型调用测试"><RefreshCw size={14} className={service.busy ? "spinning" : undefined} aria-hidden="true" /></button></div>
+            <label className="model-menu-search"><Search size={14} aria-hidden="true" /><input aria-label="搜索模型" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索模型名称" autoComplete="off" /></label>
+            {service.busy ? <p className="model-menu-status" role="status">正在读取服务模型…</p> : null}
+            {service.error ? <p className="model-menu-status model-menu-error" role="alert">{service.error} <button type="button" disabled={service.busy || disabled} onClick={() => void props.onDiscover?.(true)}>重试</button></p> : null}
+          </div> : null}
+          <div className="model-menu-scroll" id={listId} role="listbox" aria-label="选择模型">
             {warning ? (
               <p className="model-menu-alert">
                 <TriangleAlert size={14} aria-hidden="true" />
                 {props.profileDisabled ? "当前模型已停用，请换一个模型" : "当前模型服务不可用，可以换一个模型或检查设置"}
               </p>
             ) : null}
-            <div className="model-menu-group-label">默认</div>
-            {option(null, props.defaultModelName || "默认模型", `跟随默认${props.defaultModelName ? ` · ${props.defaultModelName}` : ""}`)}
-            {Array.from(groups.entries()).map(([group, items]) => (
-              <div key={group} role="group" aria-label={group}>
-                <div className="model-menu-group-label">{group}</div>
-                {items.map((profile) => option(profile.id, profile.model_name))}
+            {!normalizedQuery ? <><div className="model-menu-group-label">默认</div>{option(null, props.defaultModelName || "默认模型", `跟随默认${props.defaultModelName ? ` · ${props.defaultModelName}` : ""}`)}</> : null}
+            {visibleGroups.map(([key, group]) => (
+              <div key={key} role="group" aria-label={group.name}>
+                <div className="model-menu-group-label">{group.name} <span>{group.items.length}</span></div>
+                {group.items.map((profile) => option(profile.id, profile.model_name))}
               </div>
             ))}
+            {normalizedQuery && !visibleGroups.length ? <p className="model-menu-status">没有匹配的模型</p> : null}
             {props.profileDisabled && props.selectedProfileId ? (
               <div role="option" aria-selected="true" aria-disabled="true" className="model-option is-disabled">
                 <ModelIcon name={label} /><span className="model-option-name">{label}</span><small>已停用</small>
