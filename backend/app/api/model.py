@@ -8,6 +8,7 @@ from ..agent.bootstrap import reload_agent_components
 from ..agent.model_capabilities import apply_actual_protocol, build_model_list, infer_model_capabilities
 from ..agent.settings import AgentSettingsConflict, get_agent_settings, get_model_connection, save_agent_settings
 from ..model_connection import resolve_model_connection
+from ..models.capability_probe import probe_capabilities
 from ..models.auto_negotiating import get_negotiated_model_protocol
 from ..secret_store import SecretStoreUnavailable
 from ..agent.operations import get_agent_operations_snapshot
@@ -314,22 +315,14 @@ async def model_capabilities_probe(payload: ModelCapabilitiesIn) -> dict[str, An
         timeout_seconds=min(settings.model_timeout_seconds, 20),
         protocol=model_protocol,
     )
-    try:
-        with model_call_scope(connection, stage="vision_probe"):
-            async with asyncio.timeout(_diagnostic_timeout()):
-                report["vision"] = await provider.probe_vision()
+    with model_call_scope(connection, stage="capability_probe"):
+        results, errors = await probe_capabilities(provider, _diagnostic_timeout())
+    confirmed = any(result["status"] in {"supported", "unsupported"} for result in results.values())
+    if confirmed:
         apply_actual_protocol(report, provider.name, base_url)
-        report["probed"] = True
-        report["probe_error"] = None
-    except TimeoutError:
-        report["probed"] = False
-        report["probe_error"] = "图片输入检测超时，请重试"
-    except ModelProviderError as exc:
-        report["probed"] = False
-        report["probe_error"] = str(exc)
-    except Exception:
-        report["probed"] = False
-        report["probe_error"] = "图片输入检测失败，请确认服务配置后重试"
+    report.update(results)
+    report["probed"] = confirmed
+    report["probe_error"] = "；".join(errors) or None
     return report
 
 

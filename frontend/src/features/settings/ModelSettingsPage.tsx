@@ -130,6 +130,7 @@ function CapabilityRow({
       <div>
         <strong>{label}</strong>
         <small>{flag?.detail || "尚未读取该能力"}</small>
+        {flag?.source === "probe" && flag.protocol && <small>本次检测协议：{protocolLabel(flag.protocol)}</small>}
       </div>
       <em>{capabilityLabels[status]}</em>
     </article>
@@ -337,7 +338,7 @@ export function ModelSettingsPage({
           <section className="settings-card model-capability-card">
             <div className="settings-card-heading model-monitor-heading">
               <span><ScanSearch size={18} /></span>
-              <div><h3>模型能力检测</h3><p>先按模型 ID 判断，再可用一次轻量探测确认是否支持多模态。</p></div>
+              <div><h3>模型能力检测</h3><p>分别检测图片输入、流式输出和工具调用；将发送三组小请求，可能产生少量用量。</p></div>
               <ActionButton variant="secondary" className="model-check-button" disabled={busy || editing || capabilitiesBusy} onClick={onProbeCapabilities}>
                 <RefreshCw className={capabilitiesBusy ? "spinning" : ""} size={15} />
                 {capabilitiesBusy ? "检测中…" : "检测"}
@@ -350,7 +351,7 @@ export function ModelSettingsPage({
             {capabilities?.attachment_vision_enabled === false && capabilities.vision.status === "supported" ? (
               <p className="model-capability-note">模型侧通常支持看图，但应用看图开关 ATTACHMENT_VISION_ENABLED 尚未开启。</p>
             ) : null}
-            {capabilities?.probed ? <p className="model-capability-note">多模态结果来自一次真实图片探测，不是评分。</p> : null}
+            {capabilities?.probed ? <p className="model-capability-note">各项结果来自独立探测；失败或未返回有效结果的项目保留为未知。</p> : null}
           </section>
           <section className="settings-card model-monitor-card">
             <div className="settings-card-heading model-monitor-heading">

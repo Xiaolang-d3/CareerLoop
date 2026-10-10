@@ -156,6 +156,7 @@ type ModelServiceEvent = {
 export type ModelCapabilityStatus = "supported" | "unsupported" | "unknown";
 
 export type ModelCapabilityFlag = {
+  protocol?: Exclude<ModelProtocol, "auto">;
   status: ModelCapabilityStatus;
   source: "model_id" | "probe" | "client";
   detail: string;
