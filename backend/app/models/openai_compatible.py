@@ -24,9 +24,10 @@ from .base import ModelProviderError
 from .validation import is_protocol_rejection, is_vision_rejection, upstream_error_detail, validate_diagnostic_response
 
 
+# A 32x32 RGB PNG: some services reject dimensions below 8 pixels.
 _TINY_PNG_DATA_URL = (
     "data:image/png;base64,"
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAJklEQVR4nO3NMQ0AAAwDoPo33arYsQQMkB6LQCAQCAQCgUAg+BIMi1X0pjxKe0gAAAAASUVORK5CYII="
 )
 _ACCOUNT_POOL_MARKERS = (
     "all available accounts exhausted",
@@ -282,7 +283,7 @@ class OpenAICompatibleProvider:
         )
 
     async def probe_vision(self) -> dict[str, str]:
-        """Send a 1x1 PNG to see whether the current model accepts image input."""
+        """Send a 32x32 PNG to see whether the current model accepts image input."""
         started_at = perf_counter()
         try:
             response = await self._client.chat.completions.create(
