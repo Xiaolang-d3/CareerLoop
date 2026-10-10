@@ -112,8 +112,11 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
     setNoticeMessage("");
     setChatMessages((current) => [...current, optimisticMessage]);
     let terminalReceived = false;
+    const isCurrentRun = () => chatAgentRef.current === agent && currentConversationIdRef.current === conversationId;
+    const acceptsStreamEvents = () => !terminalReceived && isCurrentRun();
 
     const ensureStreamingAssistant = () => {
+      if (!acceptsStreamEvents()) return;
       setChatMessages((current) => current.some((message) => message.id === optimisticAssistantId)
         ? current
         : [...current, {
@@ -134,6 +137,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
     };
 
     const updateAgentEvent = (agentEvent: AgentRunResult["events"][number]) => {
+      if (!acceptsStreamEvents()) return;
       ensureStreamingAssistant();
       setChatMessages((current) => current.map((message) => {
         if (message.id !== optimisticAssistantId) return message;
@@ -173,7 +177,9 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
         assistantMessage: ChatMessage;
       };
     }) => {
+      if (terminalReceived) return;
       terminalReceived = true;
+      if (!isCurrentRun()) return;
       const { userMessage, assistantMessage, status } = snapshot.careerLoop;
       if (currentConversationIdRef.current === conversationId) {
         setChatMessages((current) => [
@@ -195,8 +201,8 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
         });
       }
       const agentError = assistantMessage.payload?.agent?.error;
-      if (agentError?.code && /model|provider|authentication|service|rate_limit|timeout/.test(agentError.code)) {
-        setModelUnavailable(agentError.message || "模型服务暂不可用，请到模型设置检查配置后重试。");
+      if (status === "failed") {
+        setModelUnavailable(agentError?.message || "本次执行失败，请重试。");
         setRetryChatDraft({
           content: userMessage.content,
           modelProfileId: selectedModelProfileId,
@@ -231,6 +237,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
 
     const subscriber: AgentSubscriber = {
       onCustomEvent: ({ event }) => {
+        if (!acceptsStreamEvents()) return;
         if (event.name === "careerloop.user_message") {
           const userMessage = event.value as ChatMessage;
           if (currentConversationIdRef.current === conversationId) {
@@ -245,12 +252,14 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
         }
       },
       onTextMessageStartEvent: () => {
+        if (!acceptsStreamEvents()) return;
         ensureStreamingAssistant();
         setChatMessages((current) => current.map((message) =>
           message.id === optimisticAssistantId ? { ...message, content: "" } : message
         ));
       },
       onTextMessageContentEvent: ({ event }) => {
+        if (!acceptsStreamEvents()) return;
         ensureStreamingAssistant();
         setChatMessages((current) => current.map((message) =>
           message.id === optimisticAssistantId
@@ -261,7 +270,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
       onReasoningMessageStartEvent: ({ event }) => {
         updateAgentEvent({
           round: 0,
-          tool_call_id: event.messageId,
+          tool_call_id: event.messageId.replace(/^reasoning:/, ""),
           tool_name: "agent_thinking",
           status: "running",
           message: ""
@@ -270,7 +279,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
       onReasoningMessageContentEvent: ({ event, reasoningMessageBuffer }) => {
         updateAgentEvent({
           round: 0,
-          tool_call_id: event.messageId,
+          tool_call_id: event.messageId.replace(/^reasoning:/, ""),
           tool_name: "agent_thinking",
           status: "running",
           message: reasoningMessageBuffer + event.delta
@@ -279,7 +288,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
       onReasoningMessageEndEvent: ({ event, reasoningMessageBuffer }) => {
         updateAgentEvent({
           round: 0,
-          tool_call_id: event.messageId,
+          tool_call_id: event.messageId.replace(/^reasoning:/, ""),
           tool_name: "agent_thinking",
           status: "done",
           message: reasoningMessageBuffer
@@ -311,7 +320,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
         handleTerminal(event.snapshot as Parameters<typeof handleTerminal>[0]);
       },
       onRunErrorEvent: ({ event }) => {
-        setErrorMessage(event.message || "流式执行失败");
+        if (isCurrentRun()) setModelUnavailable(event.message || "流式执行失败");
       }
     };
 
@@ -331,12 +340,12 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
         setErrorMessage(error instanceof Error ? error.message : "后台数据刷新失败");
       });
     } catch (error) {
+      if (!isCurrentRun() || terminalReceived) return;
       if (currentConversationIdRef.current === conversationId) {
         setChatMessages((current) => current.filter((message) => ![optimisticId, optimisticAssistantId].includes(message.id)));
       }
       if (error instanceof DOMException && error.name === "AbortError") return;
       const message = error instanceof Error ? error.message : "消息发送失败";
-      setErrorMessage(message);
       setModelUnavailable(message);
       setRetryChatDraft({
         content,

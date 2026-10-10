@@ -88,7 +88,7 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
     conversations: [conversation],
     conversationBusy: false,
     waitingForUser: false,
-    latestAgent: extras.latestAgent,
+    latestAgent: extras.latestAgent ?? [...messages].reverse().find((item) => item.role === "assistant")?.payload?.agent,
     taskCancelBusy: false,
     retryDraft: extras.retryDraft ?? null,
     chatEndRef: createRef<HTMLDivElement>(),
@@ -119,6 +119,30 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
 }
 
 describe("ChatWorkspace", () => {
+  it("shows one failure prompt with settings, retry and the retained draft", () => {
+    const draft: ChatRetryDraft = { content: "保留的问题", attachmentIds: [], visionAttachmentIds: [], webSearch: false, webSearchMode: "auto", reason: "send_failed" };
+    const props = renderChat([], { modelUnavailable: "服务暂时不可用", retryDraft: draft });
+    const prompt = screen.getByRole("alert", { name: "模型服务不可用" });
+    expect(props.view.container.querySelectorAll(".chat-retry-prompt")).toHaveLength(1);
+    expect(screen.queryByText("上一条消息未发送成功")).not.toBeInTheDocument();
+    fireEvent.click(within(prompt).getByRole("button", { name: "重试" }));
+    expect(props.onRetry).toHaveBeenCalledWith(draft);
+    fireEvent.click(within(prompt).getByRole("button", { name: "去设置模型" }));
+    expect(props.onOpenModelSettings).toHaveBeenCalledOnce();
+    fireEvent.click(within(prompt).getByText("查看保留的内容"));
+    expect(within(prompt).getByText(draft.content)).toBeVisible();
+  });
+
+  it("shows one live activity and a separate research-details entry", () => {
+    const agent: AgentRunResult = { provider: "test", platform: "local", rounds: 1, status: "done", events: [{
+      round: 1, tool_call_id: "search-1", tool_name: "search_library", status: "running", message: "正在查阅项目资料"
+    }] };
+    renderChat([message, { ...assistantMessage("", -1), payload: { agent } }], { chatBusy: true, latestAgent: agent });
+    expect(screen.getAllByText("正在检索资料")).toHaveLength(1);
+    expect(screen.getAllByText("正在查阅项目资料")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "思考过程，打开研究详情" })).toBeVisible();
+  });
+
   it("shows the fixed routing version and stage reasons in historical model details", () => {
     renderChat([message, { ...assistantMessage("最终回答"), payload: { model_selection: {
       profile_id: "execute", connection_id: "c", profile_revision: 1, connection_revision: 2,
@@ -810,7 +834,8 @@ describe("ChatWorkspace", () => {
       }
     ], { chatBusy: true });
 
-    const toggle = screen.getByRole("button", { name: /正在检索公开资料/ });
+    expect(screen.getAllByText("正在检索公开资料")).toHaveLength(1);
+    const toggle = screen.getByRole("button", { name: "思考过程，打开研究详情" });
     fireEvent.click(toggle);
     const body = screen.getByRole("complementary", { name: "研究详情" });
     expect(body).not.toHaveTextContent("已识别为公司公开信息研究，需要先规划并限制可用工具");
@@ -877,7 +902,8 @@ describe("ChatWorkspace", () => {
       }
     ], { chatBusy: true });
 
-    const toggle = screen.getByRole("button", { name: /正在补齐必要步骤/ });
+    expect(screen.getAllByText("正在补齐必要步骤")).toHaveLength(1);
+    const toggle = screen.getByRole("button", { name: "思考过程，打开研究详情" });
     expect(toggle).not.toHaveTextContent("search_public_web");
     fireEvent.click(toggle);
     expect(screen.getByRole("complementary", { name: "研究详情" }))
@@ -911,7 +937,8 @@ describe("ChatWorkspace", () => {
       }
     ], { chatBusy: true });
 
-    const toggle = screen.getByRole("button", { name: /正在纠正重复步骤/ });
+    expect(screen.getAllByText("正在纠正重复步骤")).toHaveLength(1);
+    const toggle = screen.getByRole("button", { name: "思考过程，打开研究详情" });
     expect(toggle).not.toHaveTextContent("opaque-secret");
     fireEvent.click(toggle);
     expect(screen.getByRole("complementary", { name: "研究详情" }))
@@ -973,7 +1000,7 @@ describe("ChatWorkspace", () => {
     expect(screen.queryByText("正在思考")).not.toBeInTheDocument();
   });
 
-  it("shows the current executing task in the collapsed thinking header", () => {
+  it("shows the current executing task once above the composer", () => {
     const thoughtBody = "先确认项目范围，再对照公司公开资料展开追问。";
     renderChat([
       message,
@@ -1021,13 +1048,14 @@ describe("ChatWorkspace", () => {
       }
     ], { chatBusy: true });
 
-    const toggle = screen.getByRole("button", { name: /正在检索公开资料/ });
-    expect(toggle).toHaveTextContent("搜索公司资料");
+    const toggle = screen.getByRole("button", { name: "思考过程，打开研究详情" });
+    expect(screen.getAllByText("正在检索公开资料")).toHaveLength(1);
+    expect(screen.getAllByText(/正在进行：搜索公司资料/)).toHaveLength(1);
+    expect(toggle).not.toHaveTextContent("搜索公司资料");
     expect(toggle).not.toHaveTextContent(thoughtBody);
-    expect(screen.queryByText("思考过程")).not.toBeInTheDocument();
   });
 
-  it("uses the latest tool event message as the muted current-task line", () => {
+  it("uses the latest tool event message once in the live activity", () => {
     renderChat([
       message,
       {
@@ -1053,8 +1081,9 @@ describe("ChatWorkspace", () => {
       }
     ], { chatBusy: true });
 
-    const toggle = screen.getByRole("button", { name: /正在检索资料/ });
-    expect(toggle).toHaveTextContent("正在从简历中定位项目证据");
+    expect(screen.getAllByText("正在检索资料")).toHaveLength(1);
+    expect(screen.getAllByText("正在从简历中定位项目证据")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "思考过程，打开研究详情" })).not.toHaveTextContent("正在从简历中定位项目证据");
   });
 
   it("keeps the thought body private while allowing the research panel to open", () => {
@@ -1084,7 +1113,7 @@ describe("ChatWorkspace", () => {
       }
     ], { chatBusy: true });
 
-    const toggle = screen.getByRole("button", { name: "正在整理要点，打开研究详情" });
+    const toggle = screen.getByRole("button", { name: "思考过程，打开研究详情" });
     expect(toggle).not.toHaveTextContent(thoughtBody);
     fireEvent.click(toggle);
     expect(screen.getByRole("complementary", { name: "研究详情" })).toBeInTheDocument();

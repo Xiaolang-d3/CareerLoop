@@ -541,16 +541,15 @@ function ThoughtProcess({
   agent?: AgentRunResult;
   onOpen?: () => void;
 }) {
-  const { title, currentTask } = thinkingHeaderCopy(agent, streaming);
+  const title = "思考过程";
   const { thoughts, steps, sources } = thoughtProcessContent(agent);
   const hasBody = thoughts.length + steps.length + sources.length > 0;
-  if (!hasBody && !streaming) return null;
+  if (!hasBody) return null;
   const headerCopy = (
     <>
       <span className="thinking-process-icon"><ThinkingMark /></span>
       <span className="thinking-process-copy">
         <strong><span className="thinking-process-title">{title}</span></strong>
-        {currentTask ? <small className="thinking-process-current" title={currentTask}>{currentTask}</small> : null}
       </span>
     </>
   );
