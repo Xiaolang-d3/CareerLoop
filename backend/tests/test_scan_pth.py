@@ -92,6 +92,30 @@ def test_bypass_a_pth_adds_directory_with_sitecustomize(tmp_path):
     assert result.returncode == 1 and "usercustomize: added to sys.path by helper.pth" in result.stderr
 
 
+def test_bypass_a4_pth_adds_zip_with_sitecustomize(tmp_path):
+    """A RECORD-owned paths-only .pth pointing at a zip holding sitecustomize.py (zipimport runs it)."""
+    import zipfile
+
+    site = tmp_path / "site"
+    site.mkdir()
+    archive = tmp_path / "payload.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("sitecustomize.py", "print('pwned')\n")
+    for line in (str(archive), "../payload.zip"):
+        content = f"{line}\n".encode()
+        (site / "helper.pth").write_bytes(content)
+        record(site, "helper-1.0", "helper.pth", content)
+        result = run(str(site))
+        assert result.returncode == 1, line
+        assert "payload.zip: file added to sys.path by helper.pth" in result.stderr
+    # any regular file is refused, not only zips with a startup module
+    (tmp_path / "plain.txt").write_text("x")
+    content = f"{tmp_path / 'plain.txt'}\n".encode()
+    (site / "helper.pth").write_bytes(content)
+    record(site, "helper-1.0", "helper.pth", content)
+    assert "plain.txt: file added to sys.path" in run(str(site)).stderr
+
+
 def test_bypass_b_utf8_bom_before_import_line(tmp_path, monkeypatch):
     """site decodes .pth as utf-8-sig, so a BOM does not hide an import line."""
     marker = tmp_path / "pwned"

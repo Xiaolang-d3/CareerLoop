@@ -22,7 +22,9 @@ would run all of that before the scan, so this script:
   are on the allowlist and that distribution's whole RECORD verifies (so the
   module it imports, e.g. ``_distutils_hack``, is the reviewed one);
 * rejects ``sitecustomize``/``usercustomize`` (any form) in the site
-  directories and in every directory a ``.pth`` adds to ``sys.path``.
+  directories and in every directory a ``.pth`` adds to ``sys.path``, and
+  rejects a ``.pth`` that adds a regular file (a zip is imported from via
+  zipimport, so a ``sitecustomize`` inside it would run).
 
 Usage::
 
@@ -143,14 +145,19 @@ def startup_modules_in(directory: Path) -> list[Path]:
 
 
 def added_paths(site_dir: Path, text: str) -> list[Path]:
-    """Directories site.addpackage() would add for the non-import lines."""
+    """Existing paths site.addpackage() would add for the non-import lines.
+
+    site adds any path that exists, including a regular file: a zip there is
+    imported from via zipimport (sitecustomize inside it runs at startup), so
+    callers reject everything that is not a directory.
+    """
     paths = []
     for line in text.splitlines():
         stripped = line.rstrip()
         if not stripped or stripped.startswith("#") or is_executable_line(line):
             continue
         candidate = (site_dir / stripped).resolve() if not os.path.isabs(stripped) else Path(stripped).resolve()
-        if candidate.is_dir():
+        if candidate.exists():
             paths.append(candidate)
     return paths
 
@@ -192,6 +199,10 @@ def scan(directories: list[Path]) -> tuple[list[str], int]:
                 else:
                     problems.extend(records.verify_distribution(owner[0]))
             for added in added_paths(directory, text):
+                if not added.is_dir():
+                    problems.append(f"{added}: file added to sys.path by {path.name} (zipimport could run "
+                                    "sitecustomize from it); only directories are allowed")
+                    continue
                 for module in startup_modules_in(added):
                     problems.append(f"{module}: added to sys.path by {path.name}; runs on every interpreter start")
     return problems, found
