@@ -43,7 +43,7 @@ export function ModelSettingsDialog({ title, locked = false, onClose, children }
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
       }}>
         <header className="model-dialog-heading"><h2 id={titleId}>{title}</h2><button type="button" aria-label="关闭模型设置" disabled={locked} onClick={onClose}><X size={18} /></button></header>
-        {children}
+        <div className="model-dialog-body">{children}</div>
       </section>
     </div>, document.body
   );

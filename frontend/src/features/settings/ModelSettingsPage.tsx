@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, ChevronDown, Cpu, Gauge, Image, LoaderCircle, RefreshCw, Save, ScanSearch, Wrench } from "lucide-react";
+import { Activity, ChevronDown, Eye, EyeOff, Gauge, Image, LoaderCircle, RefreshCw, Save, ScanSearch, Wrench } from "lucide-react";
 import { ActionButton } from "../../components/ui/ActionButton";
 import type { AgentSettings, ModelCapabilityFlag, ModelCapabilityReport, ModelServiceMonitor } from "../../types";
 import "./model-settings.css";
@@ -176,8 +176,13 @@ export function ModelSettingsPage({
     onCancelEdit();
     setDialogOpen(false);
     setManualModel(false);
+    setShowKey(false);
+    setModelSearch("");
   }
   const [manualModel, setManualModel] = useState(false);
+  const [showKey, setShowKey] = useState(false);
+  const [modelSearch, setModelSearch] = useState("");
+  useEffect(() => { if (!settings.api_key || !dialogOpen) setShowKey(false); }, [settings.api_key, dialogOpen]);
   const effectiveProtocol = resolvedProtocol(settings.model_name, settings.model_protocol, settings.model_base_url);
   const savedConnectionUnchanged = settings.model_name === savedSettings.model_name && settings.model_base_url === savedSettings.model_base_url && settings.model_protocol === savedSettings.model_protocol;
   const actualProtocol = !editing && savedConnectionUnchanged
@@ -194,6 +199,7 @@ export function ModelSettingsPage({
   const managedKey = savedSettings.api_key_source === "environment" || savedSettings.secret_storage === "environment";
   const fieldsBusy = busy || saveUnknown;
   const catalog = Array.from(new Set(availableModels.map((name) => name.trim()).filter(Boolean)));
+  const filteredModels = catalog.filter(name => name.toLowerCase().includes(modelSearch.trim().toLowerCase()));
   const remainingQuota = monitor?.usage?.remaining_quota ?? null;
   const quotaAvailable = Boolean(monitor?.usage?.quota_available && remainingQuota != null);
   const usedTokens = monitor?.usage?.total_tokens ?? monitor?.summary.total_tokens ?? 0;
@@ -210,7 +216,7 @@ export function ModelSettingsPage({
     <section className="model-settings-page">
       <section className="settings-card model-settings-card model-current-summary">
         <div><h3>当前模型</h3><strong>{savedSettings.model_name || "尚未配置"}</strong><p>{savedSettings.model_base_url || "使用服务商默认地址"}</p></div>
-        <ActionButton variant="primary" onClick={() => { setManualModel(false); setDialogOpen(true); }}>配置模型</ActionButton>
+        <ActionButton variant="primary" onClick={() => { setManualModel(false); setModelSearch(""); setShowKey(false); setDialogOpen(true); }}>配置模型</ActionButton>
       </section>
       {dialogOpen && <ModelSettingsDialog title="配置模型" locked={fieldsBusy} onClose={closeDialog}>
         {error && <p role="alert" className="model-capability-error">{error}</p>}
@@ -218,20 +224,20 @@ export function ModelSettingsPage({
         {storageReadOnly ? <p className="model-settings-warning" role="status">{managedKey ? "当前使用只读环境变量密钥，页面无法更换；本地 macOS 可使用系统钥匙串保存个人密钥。" : "本机密钥存储暂不可写。已保存密钥仍可使用；更换密钥前请修复系统钥匙串。"}</p> : null}
         {saveUnknown ? <p className="model-settings-warning" role="status">保存结果待确认，请重新读取服务端状态；不会自动重复提交。</p> : null}
         <section className="settings-card model-settings-card model-connection-card">
-          <div className="settings-card-heading model-connection-heading">
-            <span><Cpu size={18} /></span>
-            <div><h3>连接你的模型</h3><p>填写服务地址和密钥，再选择要使用的模型。</p></div>
-          </div>
+          <p className="model-dialog-intro">填写服务地址和密钥，再选择模型。配置仅保存在本机。</p>
           <label>
             <span id="model-base-url-label">Base URL</span>
             <input aria-labelledby="model-base-url-label" aria-describedby="model-base-url-help" type="url" autoComplete="off" spellCheck={false} value={settings.model_base_url} disabled={fieldsBusy} placeholder={protocolBaseUrl(effectiveProtocol)} onChange={(event) => changeSettings({ ...settings, model_base_url: event.target.value })} onBlur={discoverOnBlur} />
             <small id="model-base-url-help">填写服务商提供的 API 地址，包含其要求的 /v1 等路径。</small>
           </label>
-          <label>
-            <span id="model-api-key-label">API Key</span>
-            <input aria-labelledby="model-api-key-label" aria-describedby="model-api-key-help" type="password" autoComplete="new-password" value={settings.api_key} disabled={fieldsBusy || storageReadOnly} placeholder={effectiveProtocol === "ollama" ? "本地 Ollama 可留空" : canReuseStoredKey ? "已配置，留空则继续使用" : "请输入 API Key"} onChange={(event) => changeSettings({ ...settings, api_key: event.target.value })} onBlur={discoverOnBlur} />
+          <div className="model-key-field">
+            <div className="model-field-heading"><label id="model-api-key-label" htmlFor="model-api-key">API Key</label>{canReuseStoredKey && <span className="model-key-badge">已配置</span>}</div>
+            <div className="model-key-input">
+              <input id="model-api-key" aria-labelledby="model-api-key-label" aria-describedby="model-api-key-help" type={showKey ? "text" : "password"} autoComplete="new-password" value={settings.api_key} disabled={fieldsBusy || storageReadOnly} placeholder={effectiveProtocol === "ollama" ? "本地 Ollama 可留空" : canReuseStoredKey ? "已配置，留空则继续使用" : "请输入 API Key"} onChange={(event) => changeSettings({ ...settings, api_key: event.target.value })} onBlur={discoverOnBlur} />
+              <button type="button" aria-label={showKey ? "隐藏本次输入的密钥" : "显示本次输入的密钥"} aria-pressed={showKey} disabled={fieldsBusy || !settings.api_key} onClick={() => setShowKey(!showKey)}>{showKey ? <EyeOff size={16} /> : <Eye size={16} />}</button>
+            </div>
             <small id="model-api-key-help">{effectiveProtocol === "ollama" ? "本地 Ollama 可不填写密钥。" : addressChanged ? "服务地址已更改，请填写该服务的密钥；不会复用旧地址的密钥。" : canReuseStoredKey ? managedKey ? "当前使用环境变量中的密钥，页面不显示原文。" : "已保存密钥；留空继续使用，不显示原文。" : "填写服务商提供的密钥。"}</small>
-          </label>
+          </div>
           <div className="model-name-setting">
             <div className="model-field-heading">
               <label htmlFor="model-name-input">模型名称</label>
@@ -240,14 +246,16 @@ export function ModelSettingsPage({
                 {discoveryBusy ? "读取中…" : "刷新列表"}
               </button>
             </div>
+            {catalog.length > 8 && !manualModel && <input type="search" aria-label="搜索模型" placeholder="搜索模型名称…" value={modelSearch} disabled={fieldsBusy} onChange={event => setModelSearch(event.target.value)} />}
             {catalog.length > 0 && !manualModel ? (
               <select id="model-name-input" value={settings.model_name} disabled={fieldsBusy} onChange={(event) => changeSettings({ ...settings, model_name: event.target.value })}>
                 {!settings.model_name && <option value="">选择模型</option>}
-                {Array.from(new Set([settings.model_name, ...catalog].filter(Boolean))).map((model) => <option key={model} value={model}>{model}</option>)}
+                {Array.from(new Set([settings.model_name, ...filteredModels].filter(Boolean))).map((model) => <option key={model} value={model}>{model}</option>)}
               </select>
             ) : (
               <input id="model-name-input" value={settings.model_name} disabled={fieldsBusy} placeholder="输入模型名称" onChange={(event) => changeSettings({ ...settings, model_name: event.target.value })} />
             )}
+            {modelSearch.trim() && !manualModel && <small role="status">{filteredModels.length ? `找到 ${filteredModels.length} 个匹配模型` : "没有匹配的模型，可修改搜索词或手动填写。"}</small>}
             {catalog.length > 0 && <button className="model-manual-button" type="button" disabled={fieldsBusy} onClick={() => setManualModel(!manualModel)}>{manualModel ? "从列表选择" : "手动填写"}</button>}
             <small className={discoveryError ? "model-discovery-error" : ""}>
               {discoveryBusy
@@ -279,9 +287,9 @@ export function ModelSettingsPage({
             </section>
           </details>
           <div className="model-settings-actions">
-            <p role="status">{saveUnknown ? "保存结果待确认" : editing ? "有未保存的修改" : `当前模型：${savedSettings.model_name || "尚未配置"}`}</p>
+            <p role="status">{saveUnknown ? "保存结果待确认" : busy ? "正在保存配置…" : !settings.model_name.trim() ? "请先选择或填写模型名称" : keyRequired ? "请填写当前服务的 API Key" : editing ? "有未保存的修改" : `当前模型：${savedSettings.model_name || "尚未配置"}`}</p>
             {saveUnknown && <ActionButton variant="secondary" disabled={busy} onClick={onResumeEditing}>读取最新配置并继续编辑</ActionButton>}
-            {editing && !saveUnknown && <ActionButton variant="secondary" disabled={fieldsBusy} onClick={closeDialog}>取消</ActionButton>}
+            {!saveUnknown && <ActionButton variant="secondary" disabled={fieldsBusy} onClick={closeDialog}>取消</ActionButton>}
             {saveUnknown ? <ActionButton variant="primary" disabled={busy} onClick={onConfirmSave}>{busy ? "确认中…" : "重新确认保存结果"}</ActionButton> : <ActionButton variant="primary" disabled={busy || !editing || !settings.model_name.trim() || keyRequired || (storageReadOnly && Boolean(settings.api_key.trim()))} onClick={onSave}>
               {busy ? <LoaderCircle className="spinning" size={16} /> : <Save size={16} />}{busy ? "保存中…" : "保存并应用"}
             </ActionButton>}

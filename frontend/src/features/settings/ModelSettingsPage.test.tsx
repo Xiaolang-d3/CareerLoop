@@ -148,6 +148,39 @@ describe("ModelSettingsPage", () => {
     expect(dialog).toBeInTheDocument();
   });
 
+  it("reveals only a newly entered key and hides it again after clearing", () => {
+    const page = props({ editing: true });
+    const { rerender } = render(<ModelSettingsPage {...page} />);
+    expect(screen.getByRole("button", { name: "显示本次输入的密钥" })).toBeDisabled();
+    rerender(<ModelSettingsPage {...page} settings={{ ...settings, api_key: "test-only-draft" }} />);
+    fireEvent.click(screen.getByRole("button", { name: "显示本次输入的密钥" }));
+    expect(screen.getByLabelText("API Key")).toHaveAttribute("type", "text");
+    rerender(<ModelSettingsPage {...page} />);
+    expect(screen.getByLabelText("API Key")).toHaveAttribute("type", "password");
+    expect(screen.getByRole("button", { name: "显示本次输入的密钥" })).toBeDisabled();
+  });
+
+  it("filters a large catalog while preserving the selected model", () => {
+    const onSettingsChange = vi.fn();
+    render(<ModelSettingsPage {...props({ availableModels: ["gpt-5.5", ...Array.from({ length: 10 }, (_, i) => `custom-${i}`)], onSettingsChange })} />);
+    fireEvent.change(screen.getByLabelText("搜索模型"), { target: { value: "CUSTOM-8" } });
+    const select = screen.getByLabelText("模型名称") as HTMLSelectElement;
+    expect(Array.from(select.options).map(item => item.value)).toEqual(["gpt-5.5", "custom-8"]);
+    fireEvent.change(select, { target: { value: "custom-8" } });
+    expect(onSettingsChange).toHaveBeenCalledWith(expect.objectContaining({ model_name: "custom-8" }));
+    fireEvent.change(screen.getByLabelText("搜索模型"), { target: { value: "missing" } });
+    expect(screen.getByText("没有匹配的模型，可修改搜索词或手动填写。")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "手动填写" }));
+    expect(screen.queryByLabelText("搜索模型")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("模型名称")).toHaveAttribute("placeholder", "输入模型名称");
+  });
+
+  it("explains why saving is unavailable when a new service needs a key", () => {
+    render(<ModelSettingsPage {...props({ editing: true, settings: { ...settings, model_base_url: "https://new.example.test" } })} />);
+    expect(screen.getByText("请填写当前服务的 API Key")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "保存并应用" })).toBeDisabled();
+  });
+
   it("prevents dismissal while a save result is unknown", () => {
     baseRender(<ModelSettingsPage {...props({ saveUnknown: true })} />);
     expect(screen.getByRole("button", { name: "关闭模型设置" })).toBeDisabled();
@@ -161,7 +194,7 @@ describe("ModelSettingsPage", () => {
 
     render(<ModelSettingsPage {...props()} />);
 
-    expect(screen.getByRole("heading", { name: "连接你的模型" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "配置模型" })).toBeInTheDocument();
     expect(screen.getByLabelText(/^Base URL/)).toHaveValue("https://api.openai.com/v1");
     expect(screen.getByLabelText(/^Base URL/)).not.toBeDisabled();
     expect(screen.getByLabelText(/^Base URL/)).not.toHaveAttribute("readonly");
@@ -170,7 +203,7 @@ describe("ModelSettingsPage", () => {
     expect(screen.getByLabelText("模型名称")).toHaveValue("gpt-5.5");
     expect(screen.getByLabelText("模型名称")).not.toBeDisabled();
     expect(screen.getByRole("button", { name: "保存并应用" })).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "取消" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "取消" })).toBeEnabled();
     expect(screen.queryByText("已锁定")).not.toBeInTheDocument();
     expect(screen.queryByRole("table", { name: "模型列表", hidden: true })).not.toBeInTheDocument();
     expect(screen.getByText("高级设置").closest("details")).not.toHaveAttribute("open");
