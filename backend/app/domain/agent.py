@@ -54,6 +54,12 @@ class ModelRequest(BaseModel):
     parameters: dict[str, float | int] = Field(default_factory=dict)
     # Optional per-profile reasoning effort for providers that support it.
     reasoning_effort: Literal["low", "medium", "high"] | None = None
+    # Structured output (OpenAI ``response_format`` shape, e.g. json_schema);
+    # translated per protocol by the model layer.
+    response_format: dict[str, Any] | None = None
+    # Mark the static system prompt cacheable where the protocol needs an
+    # explicit marker (Anthropic); other providers cache automatically.
+    prompt_cache: bool = True
 
 
 class ModelResponse(BaseModel):

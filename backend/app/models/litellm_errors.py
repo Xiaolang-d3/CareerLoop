@@ -1,0 +1,146 @@
+"""Translate LiteLLM exceptions into 灯灯's ModelProviderError codes."""
+from __future__ import annotations
+
+import json
+import re
+from typing import Any
+
+from .base import ModelProviderError
+from .litellm_core import get_litellm
+from .openai_compatible import _ACCOUNT_POOL_MARKERS, _MODEL_UNAVAILABLE_MARKERS, _rejects_chat_completions
+
+
+_ROUTE_LABELS = {
+    "openai": "Chat Completions",
+    "responses": "Responses API",
+    "anthropic": "Anthropic Messages",
+    "gemini": "Gemini generateContent",
+    "ollama": "Ollama Chat",
+}
+_CONTEXT_MARKERS = (
+    "context_length_exceeded", "maximum context length", "context window", "prompt is too long",
+    "too many tokens", "input is too long",
+)
+_CONTENT_POLICY_MARKERS = ("content_policy", "content policy", "content management policy", "content_filter")
+_PREFIX = re.compile(r"^(?:litellm\.)?[A-Za-z]+Error:\s*", re.IGNORECASE)
+_PROVIDER_PREFIX = re.compile(r"^[A-Za-z_]+Exception\s*-\s*", re.IGNORECASE)
+
+
+def litellm_error_detail(exc: BaseException) -> str:
+    """Upstream reason without LiteLLM's ``litellm.XError: ProviderException -`` wrapper."""
+    response = getattr(exc, "response", None)
+    payload: Any = None
+    if response is not None:
+        try:
+            payload = response.json()
+        except Exception:
+            payload = None
+    if payload is None:
+        body = getattr(exc, "body", None)
+        payload = body if isinstance(body, (dict, str)) else None
+    text = ""
+    if isinstance(payload, dict):
+        error = payload.get("error", payload)
+        if isinstance(error, dict):
+            text = str(error.get("message") or error.get("detail") or error.get("code") or "")
+        elif isinstance(error, str):
+            text = error
+    elif isinstance(payload, str):
+        text = payload
+    if not text:
+        message = str(getattr(exc, "message", "") or str(exc) or "")
+        message = _PROVIDER_PREFIX.sub("", _PREFIX.sub("", message.strip())).strip()
+        try:
+            decoded = json.loads(message)
+        except ValueError:
+            decoded = None
+        if isinstance(decoded, dict):
+            error = decoded.get("error", decoded)
+            message = str(error.get("message") if isinstance(error, dict) else error or message)
+        text = message
+    text = text.strip()
+    if text.startswith("<") or "<html" in text[:80].lower():
+        return ""
+    # LiteLLM appends a retry hint and model-group metadata to router errors.
+    text = text.split("Received Model Group=")[0].split(" LiteLLM Retried:")[0].strip()
+    return text[:300]
+
+
+def is_litellm_exception(exc: BaseException) -> bool:
+    return type(exc).__module__.startswith("litellm")
+
+
+def map_litellm_error(exc: BaseException, protocol: str = "openai") -> ModelProviderError:
+    if isinstance(exc, ModelProviderError):
+        return exc
+    litellm = get_litellm()
+    detail = litellm_error_detail(exc)
+    lowered = detail.lower()
+    status = getattr(exc, "status_code", None)
+    route = _ROUTE_LABELS.get(protocol, "模型")
+
+    if isinstance(exc, litellm.Timeout):
+        return ModelProviderError("request_timeout", "模型服务响应超时，请稍后重试", retryable=True)
+    if any(marker in lowered for marker in _ACCOUNT_POOL_MARKERS):
+        return ModelProviderError(
+            "account_pool_exhausted",
+            "模型网关没有可调度的上游账户，请联系服务商检查账户状态、额度或并发限制",
+            retryable=True,
+        )
+    # LiteLLM classifies some upstream bodies by text (e.g. a 401 whose type is
+    # "invalid_request_error" becomes BadRequestError), so the HTTP status wins.
+    if isinstance(exc, (litellm.AuthenticationError, litellm.PermissionDeniedError)) or status in {401, 403}:
+        return ModelProviderError("authentication_failed", "模型服务认证失败，请检查 API Key 是否有效")
+    if isinstance(exc, litellm.RateLimitError) or status == 429:
+        return ModelProviderError("rate_limited", "模型服务触发限流，请稍后重试", retryable=True)
+    if isinstance(exc, litellm.ContextWindowExceededError) or (
+        status in {400, 413, 422} and any(marker in lowered for marker in _CONTEXT_MARKERS)
+    ):
+        return ModelProviderError(
+            "context_window_exceeded",
+            "对话内容超出了当前模型的上下文长度，请精简资料或改用更长上下文的模型",
+        )
+    if isinstance(exc, litellm.ContentPolicyViolationError) or (
+        status in {400, 403, 422} and any(marker in lowered for marker in _CONTENT_POLICY_MARKERS)
+    ):
+        return ModelProviderError(
+            "content_policy",
+            f"模型服务拒绝了本次内容（内容安全策略）{('：' + detail[:160]) if detail else ''}",
+        )
+    if protocol == "openai" and status in {400, 404, 422} and _rejects_chat_completions(lowered):
+        return ModelProviderError(
+            "protocol_unsupported",
+            f"模型不支持 Chat Completions 协议，可在连接的接口协议中改用 OpenAI Responses API：{detail[:200]}",
+        )
+    if isinstance(exc, litellm.NotFoundError) or status in {404, 405}:
+        if status != 405 and any(marker in lowered for marker in _MODEL_UNAVAILABLE_MARKERS):
+            return ModelProviderError("model_unavailable", f"当前账户组不支持模型 {detail[:160] or '（未知模型）'}")
+        return ModelProviderError(
+            "route_not_found",
+            f"当前地址没有提供 {route} 路由，可检查协议或 API 根路径",
+        )
+    if isinstance(exc, litellm.ServiceUnavailableError):
+        return ModelProviderError(
+            "service_unavailable",
+            f"模型服务暂时不可用（{status or 503}）{('：' + detail[:160]) if detail else ''}，请稍后重试",
+            retryable=True,
+        )
+    if isinstance(exc, litellm.APIConnectionError) and not status:
+        return ModelProviderError(
+            "service_unavailable", "无法连接模型服务，请检查网关地址或网络状态", retryable=True,
+        )
+    if isinstance(exc, (litellm.BadRequestError, litellm.UnprocessableEntityError)):
+        message = f"模型服务返回异常状态（{status or 400}）"
+        return ModelProviderError("provider_error", f"{message}：{detail}" if detail else message)
+    if isinstance(status, int) and status >= 400:
+        message = f"模型服务返回异常状态（{status}）"
+        return ModelProviderError(
+            "provider_error", f"{message}：{detail}" if detail else message, retryable=status >= 500,
+        )
+    if isinstance(exc, (litellm.APIConnectionError, litellm.APIError, litellm.InternalServerError, litellm.BadGatewayError)):
+        return ModelProviderError(
+            "provider_error",
+            f"模型服务发生异常{('：' + detail[:200]) if detail else ''}",
+            retryable=True,
+        )
+    return ModelProviderError("provider_error", "模型服务发生未知异常")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import os
 from collections.abc import Callable
 
 from .anthropic_messages import AnthropicMessagesProvider
@@ -11,6 +13,42 @@ from .openai_responses import OpenAIResponsesProvider
 from ..model_protocol import base_url_for_protocol, model_protocol_candidates, normalize_model_protocol
 
 
+logger = logging.getLogger(__name__)
+
+MODEL_BACKEND_ENV = "DENGDENG_MODEL_BACKEND"
+_NATIVE_CLASSES = {
+    "openai": OpenAICompatibleProvider,
+    "responses": OpenAIResponsesProvider,
+    "anthropic": AnthropicMessagesProvider,
+    "gemini": GeminiGenerateContentProvider,
+    "ollama": OllamaChatProvider,
+}
+
+
+def model_backend() -> str:
+    """``litellm`` (default) or ``native``; the native adapters stay for one release as a rollback."""
+    requested = (os.getenv(MODEL_BACKEND_ENV) or "litellm").strip().lower()
+    if requested == "native":
+        return "native"
+    from .litellm_core import litellm_available
+
+    if not litellm_available():
+        logger.warning("LiteLLM is not installed; falling back to the native model adapters")
+        return "native"
+    return "litellm"
+
+
+def _provider_class(candidate: str, backend: str):
+    if backend == "litellm":
+        from .litellm_provider import LiteLLMProvider
+
+        def build(**kwargs):
+            return LiteLLMProvider(protocol=candidate, **kwargs)
+
+        return build
+    return _NATIVE_CLASSES[candidate]
+
+
 def build_model_provider(
     *,
     api_key: str,
@@ -20,20 +58,21 @@ def build_model_provider(
     protocol: str = "auto",
     detected_protocol: str | None = None,
     on_protocol_detected: Callable[[str], None] | None = None,
+    backend: str | None = None,
+    price_per_million_input: float | None = None,
+    price_per_million_output: float | None = None,
 ):
     """Build a provider; auto mode may start from a previously detected protocol."""
-    provider_classes = {
-        "openai": OpenAICompatibleProvider,
-        "responses": OpenAIResponsesProvider,
-        "anthropic": AnthropicMessagesProvider,
-        "gemini": GeminiGenerateContentProvider,
-        "ollama": OllamaChatProvider,
-    }
+    backend = backend or model_backend()
+    extra = (
+        {"price_per_million_input": price_per_million_input, "price_per_million_output": price_per_million_output}
+        if backend == "litellm" else {}
+    )
     candidates = model_protocol_candidates(model, protocol, base_url or "")
     providers = [
         (
             candidate,
-            provider_classes[candidate](
+            _provider_class(candidate, backend)(
                 api_key=api_key,
                 model=model,
                 base_url=base_url_for_protocol(
@@ -42,6 +81,7 @@ def build_model_provider(
                     fallback=index > 0,
                 ),
                 timeout_seconds=timeout_seconds,
+                **extra,
             ),
         )
         for index, candidate in enumerate(candidates)

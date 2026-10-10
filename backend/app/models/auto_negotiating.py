@@ -80,6 +80,20 @@ class AutoNegotiatingModelProvider:
         return str(self._active_provider.models_url)
 
     @property
+    def negotiated(self) -> bool:
+        """True once a protocol for this connection is known (remembered or persisted)."""
+        return self._cache_key in _SUCCESSFUL_PROTOCOLS
+
+    @property
+    def active_provider(self) -> Any:
+        """The provider for the protocol auto mode currently uses."""
+        cached = _SUCCESSFUL_PROTOCOLS.get(self._cache_key)
+        for name, provider in self._providers:
+            if name == cached:
+                return provider
+        return self._active_provider
+
+    @property
     def _active_provider(self) -> Any:
         return self._providers[self._active_index][1]
 
