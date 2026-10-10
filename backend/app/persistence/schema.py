@@ -120,6 +120,9 @@ CREATE TABLE IF NOT EXISTS model_service_events (
                 input_tokens INTEGER NOT NULL DEFAULT 0,
                 output_tokens INTEGER NOT NULL DEFAULT 0,
                 selection_reason TEXT NOT NULL DEFAULT '',
+                cost_usd REAL,
+                backend TEXT NOT NULL DEFAULT '',
+                fallback_from_profile_id TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -178,6 +181,32 @@ CREATE TABLE IF NOT EXISTS model_routing_policy (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     version INTEGER NOT NULL DEFAULT 1,
     payload_json TEXT NOT NULL DEFAULT '{}'
+);
+
+-- v29: LiteLLM router fallbacks (one policy per workspace) and per-profile
+-- capability overrides that win over live probes and LiteLLM model data.
+CREATE TABLE IF NOT EXISTS model_fallback_policy (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    enabled INTEGER NOT NULL DEFAULT 0,
+    fallback_profile_ids_json TEXT NOT NULL DEFAULT '[]',
+    context_window_profile_ids_json TEXT NOT NULL DEFAULT '[]',
+    content_policy_profile_ids_json TEXT NOT NULL DEFAULT '[]',
+    retry_policy_json TEXT NOT NULL DEFAULT '{}',
+    allowed_fails INTEGER NOT NULL DEFAULT 3,
+    cooldown_seconds INTEGER NOT NULL DEFAULT 60,
+    revision INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- source = 'user' (manual override) or 'probe' (last live probe result).
+CREATE TABLE IF NOT EXISTS model_capability_records (
+    profile_id TEXT NOT NULL REFERENCES model_profiles(id),
+    capability TEXT NOT NULL,
+    source TEXT NOT NULL CHECK (source IN ('user', 'probe')),
+    status TEXT NOT NULL CHECK (status IN ('supported', 'unsupported')),
+    detail TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (profile_id, capability, source)
 );
 
 CREATE TABLE IF NOT EXISTS schema_migrations (

@@ -25,11 +25,26 @@ def get_profile_connection(profile_id: str | None = None, *, selection: dict[str
     return resolve_profile(profile_id, selection=selection)
 
 
+def _routing_revision() -> int:
+    from ..models.factory import model_backend
+    from .model_routing import get_fallback_policy
+
+    if model_backend() != "litellm":
+        return -1
+    try:
+        return int(get_fallback_policy()["revision"])
+    except Exception:
+        return 0
+
+
 def _runtime_cache_key(connection: dict[str, Any]) -> tuple[Any, ...]:
+    from ..models.factory import model_backend
+
     return (
         current_user_id(), connection.get("profile_id"), connection.get("profile_revision"),
         connection.get("connection_id"), connection.get("connection_revision"),
         connection["model_name"], connection["model_base_url"], connection.get("model_protocol", "auto"),
+        model_backend(), _routing_revision(),
     )
 
 
@@ -118,7 +133,10 @@ def _build_components(model_connection: dict[str, Any]) -> tuple[AgentRuntime, d
         protocol=model_connection.get("model_protocol", "auto"),
         detected_protocol=model_connection.get("detected_protocol"),
         on_protocol_detected=detected_protocol_recorder(model_connection),
+        price_per_million_input=model_connection.get("price_per_million_input"),
+        price_per_million_output=model_connection.get("price_per_million_output"),
     )
+    model = _with_fallbacks(model, model_connection, settings.model_timeout_seconds)
     model = configure_model_provider(
         model, model_connection.get("parameters", {}), model_connection.get("reasoning_effort"),
     )
@@ -148,6 +166,24 @@ def _build_components(model_connection: dict[str, Any]) -> tuple[AgentRuntime, d
         configured=True,
     )
     return runtime, capabilities
+
+
+def _with_fallbacks(model: Any, model_connection: dict[str, Any], timeout_seconds: float) -> Any:
+    """Route through litellm.Router when the user configured fallback models."""
+    from ..models.factory import model_backend
+    from .model_routing import get_fallback_policy, policy_has_fallbacks
+
+    if model_backend() != "litellm" or not model_connection.get("profile_id"):
+        return model
+    policy = get_fallback_policy()
+    if not policy_has_fallbacks(policy):
+        return model
+    from ..models.litellm_router import build_routed_provider
+
+    return build_routed_provider(
+        model, model_connection, policy, timeout_seconds=timeout_seconds,
+        load_profile=lambda profile_id: get_profile_connection(profile_id),
+    )
 
 
 def _cached_components(model_connection: dict[str, Any]) -> tuple[AgentRuntime, dict[str, Any]]:

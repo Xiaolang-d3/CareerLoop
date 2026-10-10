@@ -24,6 +24,9 @@ ERROR_LABELS = {
     "model_unavailable": "模型不可用",
     "account_pool_exhausted": "上游账户耗尽",
     "not_configured": "未完成配置",
+    "context_window_exceeded": "超出上下文长度",
+    "content_policy": "内容被拒绝",
+    "fallback_used": "已切换备用模型",
 }
 
 
@@ -41,10 +44,19 @@ def record_model_service_event(
     protocol: str = "openai",
     input_tokens: int = 0,
     output_tokens: int = 0,
+    cost_usd: float | None = None,
+    backend: str = "",
+    fallback_from_profile_id: str = "",
+    identity: dict[str, Any] | None = None,
     db_path: str | Path | None = None,
 ) -> None:
-    """Persist only operational metadata; prompts and responses are never stored."""
-    identity = current_model_call()
+    """Persist only operational metadata; prompts and responses are never stored.
+
+    ``identity`` overrides the ambient call scope, e.g. when a router fallback
+    model answered for another profile.
+    """
+    identity = {**current_model_call(), **(identity or {})}
+    cost = float(cost_usd) if isinstance(cost_usd, (int, float)) and math.isfinite(cost_usd) and cost_usd >= 0 else None
     with connect(db_path) as conn:
         conn.execute(
             """
@@ -52,8 +64,9 @@ def record_model_service_event(
                 request_kind, status, error_code, error_message, latency_ms,
                 total_tokens, model_name, base_url, response_id, protocol,
                 run_id, call_id, profile_id, connection_id, connection_revision,
-                profile_revision, stage, selection_reason, input_tokens, output_tokens
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                profile_revision, stage, selection_reason, input_tokens, output_tokens,
+                cost_usd, backend, fallback_from_profile_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 request_kind,
@@ -71,6 +84,7 @@ def record_model_service_event(
                 identity.get("connection_revision", 0), identity.get("profile_revision", 0),
                 identity.get("stage", ""), identity.get("selection_reason", ""),
                 max(0, input_tokens), max(0, output_tokens),
+                cost, backend, fallback_from_profile_id,
             ),
         )
         conn.execute(
@@ -112,7 +126,8 @@ def get_model_monitor_snapshot(
             SELECT id, request_kind, status, error_code, error_message,
                    latency_ms, total_tokens, model_name, base_url, protocol, created_at,
                    run_id, call_id, profile_id, connection_id, connection_revision,
-                   profile_revision, stage, selection_reason, input_tokens, output_tokens
+                   profile_revision, stage, selection_reason, input_tokens, output_tokens,
+                   cost_usd, backend, fallback_from_profile_id
             FROM model_service_events
             WHERE created_at >= ? AND model_name = ? AND ({candidate_clause}){identity_clause}
             ORDER BY id DESC
@@ -199,6 +214,12 @@ def get_model_monitor_snapshot(
             "input_tokens": sum(int(event.get("input_tokens") or 0) for event in events),
             "output_tokens": sum(int(event.get("output_tokens") or 0) for event in events),
             "legacy_identity_events": sum(not event.get("profile_id") for event in events),
+            # Estimate from profile prices or LiteLLM's bundled price map; calls
+            # with unknown pricing are counted separately instead of as free.
+            "estimated_cost_usd": round(sum(float(event.get("cost_usd") or 0) for event in events), 6),
+            "priced_requests": sum(event.get("cost_usd") is not None for event in events if event["status"] == "success"),
+            "unpriced_requests": sum(event.get("cost_usd") is None for event in events if event["status"] == "success"),
+            "fallback_requests": sum(bool(event.get("fallback_from_profile_id")) for event in events),
         },
         "usage": {
             "window_hours": window_hours,

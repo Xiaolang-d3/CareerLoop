@@ -945,6 +945,11 @@ class AgentRuntime:
             if isinstance(reasoning_items, list) and reasoning_items:
                 # Replayed to Responses API on the next turn (store=False keeps nothing upstream).
                 assistant_payload["responses_reasoning_items"] = reasoning_items
+            thinking_blocks = response.provider_metadata.get("thinking_blocks")
+            if isinstance(thinking_blocks, list) and thinking_blocks:
+                # Anthropic requires the signed thinking blocks back with the
+                # tool results to continue extended thinking across tool turns.
+                assistant_payload["thinking_blocks"] = thinking_blocks
             messages.append(
                 AgentMessage(
                     role="assistant",
@@ -1691,6 +1696,7 @@ class AgentRuntime:
                 await self._record_reasoning(
                     response, event_callback, events=events, round_number=round_number,
                 )
+                self._note_answering_model(response)
                 return response
             except ModelProviderError as exc:
                 if not exc.retryable or retry_number >= self._max_model_retries:
@@ -1714,6 +1720,17 @@ class AgentRuntime:
                 )
                 await self._publish(event_callback, AgentStreamEvent(type="text_reset"))
         raise AssertionError("unreachable model retry state")
+
+    def _note_answering_model(self, response: ModelResponse) -> None:
+        """Record on the run's model selection when a router fallback answered."""
+        metadata = response.provider_metadata
+        selection = self._selection_context.get()
+        if not isinstance(selection, dict) or not selection or not metadata.get("routed"):
+            return
+        if metadata.get("fallback_from_profile_id"):
+            selection["fallback_used"] = True
+            selection["answered_profile_id"] = str(metadata.get("answered_profile_id") or "")
+            selection["answered_model_name"] = str(metadata.get("answered_model_name") or "")
 
     @staticmethod
     async def _publish(

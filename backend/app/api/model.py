@@ -18,7 +18,7 @@ from ..observability.model_context import model_call_scope
 from ..models import ModelProviderError, OpenAICompatibleProvider, build_model_provider
 from ..model_protocol import connection_protocol_label, normalize_model_protocol, protocol_requires_api_key
 from .schemas import AgentSettingsIn, ModelCapabilitiesIn, ModelDiscoveryIn
-from .model_contracts import ConnectionCreateIn, ConnectionUpdateIn, DefaultProfileIn, ProfileCreateIn, ProfileUpdateIn
+from .model_contracts import CapabilityOverridesIn, ConnectionCreateIn, ConnectionUpdateIn, DefaultProfileIn, FallbackPolicyIn, ProfileCreateIn, ProfileUpdateIn
 
 
 router = APIRouter()
@@ -49,6 +49,8 @@ def _provider_for(connection: dict[str, Any], timeout_seconds: float, *, remembe
         protocol=connection.get("model_protocol", "auto"),
         detected_protocol=connection.get("detected_protocol"),
         on_protocol_detected=detected_protocol_recorder(connection),
+        price_per_million_input=connection.get("price_per_million_input"),
+        price_per_million_output=connection.get("price_per_million_output"),
     )
 
 
@@ -273,8 +275,126 @@ def model_capabilities_get(model_name: str = "") -> dict[str, Any]:
     report["protocol_label"] = connection_protocol_label(
         connection.get("model_protocol", "auto"), report.get("actual_protocol"), report["model_name"], connection["model_base_url"],
     )
+    extended = _profile_report_or_none(connection.get("profile_id")) if not model_name.strip() or model_name.strip() == connection["model_name"] else None
     return {**report, "connection_id": connection.get("connection_id", ""),
-            "config_revision": connection.get("config_revision", 0)}
+            "config_revision": connection.get("config_revision", 0),
+            **({"merged": extended} if extended else {})}
+
+
+def _profile_report_or_none(profile_id: Any) -> dict[str, Any] | None:
+    if not profile_id:
+        return None
+    from ..agent.model_routing import profile_capability_report
+
+    try:
+        return profile_capability_report(str(profile_id))
+    except Exception:
+        return None
+
+
+def _remember_probe(profile_id: str, vision: dict[str, Any]) -> None:
+    from ..agent.model_routing import set_capability_record
+
+    status = vision.get("status")
+    if status in {"supported", "unsupported"}:
+        try:
+            set_capability_record(profile_id, "vision", status, source="probe", detail=str(vision.get("detail") or ""))
+        except Exception:
+            pass  # Remembering a probe is an optimization only.
+
+
+@router.get("/agent/model-layer")
+def model_layer_get() -> dict[str, Any]:
+    """Which model backend is active and how LiteLLM is configured (no secrets)."""
+    from ..models.factory import model_backend
+    from ..models.litellm_core import OFFLINE_ENVIRONMENT, litellm_import_seconds, litellm_loaded, litellm_version
+
+    return {
+        "backend": model_backend(),
+        "litellm_version": litellm_version(),
+        "litellm_loaded": litellm_loaded(),
+        "litellm_import_seconds": litellm_import_seconds(),
+        "offline_cost_map": OFFLINE_ENVIRONMENT["LITELLM_LOCAL_MODEL_COST_MAP"] == "True",
+    }
+
+
+@router.get("/agent/model-fallbacks")
+def model_fallbacks_get() -> dict[str, Any]:
+    from ..agent.model_routing import get_fallback_policy
+    from ..models.factory import model_backend
+
+    return {**get_fallback_policy(), "backend": model_backend()}
+
+
+@router.put("/agent/model-fallbacks")
+def model_fallbacks_put(payload: FallbackPolicyIn) -> dict[str, Any]:
+    from ..agent.model_routing import save_fallback_policy
+    from ..models.factory import model_backend
+
+    try:
+        policy = save_fallback_policy(payload.model_dump(exclude_unset=True))
+    except AgentSettingsConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    reload_agent_components()
+    return {**policy, "backend": model_backend()}
+
+
+def _profile_report(profile_id: str) -> dict[str, Any]:
+    from ..agent.model_routing import profile_capability_report
+
+    try:
+        return profile_capability_report(profile_id)
+    except SecretStoreUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/agent/model-profiles/{profile_id}/capabilities")
+def model_profile_capabilities_get(profile_id: str) -> dict[str, Any]:
+    return _profile_report(profile_id)
+
+
+@router.put("/agent/model-profiles/{profile_id}/capabilities")
+def model_profile_capabilities_put(profile_id: str, payload: CapabilityOverridesIn) -> dict[str, Any]:
+    from ..agent.model_routing import set_capability_record
+
+    try:
+        for capability, value in payload.overrides.items():
+            set_capability_record(profile_id, capability, value, source="user")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _profile_report(profile_id)
+
+
+@router.post("/agent/model-profiles/{profile_id}/capabilities/probe")
+async def model_profile_capabilities_probe(profile_id: str) -> dict[str, Any]:
+    from ..agent.model_catalog import get_profile_connection
+
+    try:
+        connection = get_profile_connection(profile_id)
+    except SecretStoreUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if protocol_requires_api_key(connection["resolved_model_protocol"]) and not connection["api_key"]:
+        raise HTTPException(status_code=400, detail="请先为该连接保存 API Key")
+    provider = _provider_for(connection, min(get_settings().model_timeout_seconds, 20))
+    probe_error = None
+    try:
+        with model_call_scope(connection, stage="vision_probe"):
+            async with asyncio.timeout(_diagnostic_timeout()):
+                vision = await provider.probe_vision()
+        _remember_probe(profile_id, vision)
+    except TimeoutError:
+        probe_error = "图片输入检测超时，请重试"
+    except ModelProviderError as exc:
+        probe_error = str(exc)
+    except Exception:
+        probe_error = "图片输入检测失败，请确认服务配置后重试"
+    return {**_profile_report(profile_id), "probe_error": probe_error}
 
 
 @router.post("/agent/models/capabilities")
@@ -311,6 +431,8 @@ async def model_capabilities_probe(payload: ModelCapabilitiesIn) -> dict[str, An
         with model_call_scope(connection, stage="vision_probe"):
             async with asyncio.timeout(_diagnostic_timeout()):
                 report["vision"] = await provider.probe_vision()
+        if remember and connection.get("profile_id"):
+            _remember_probe(str(connection["profile_id"]), report["vision"])
         apply_actual_protocol(report, provider.name, base_url)
         report["protocol_label"] = connection_protocol_label(model_protocol, provider.name, model_name, base_url)
         report["probed"] = True

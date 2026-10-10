@@ -46,13 +46,13 @@ def initialize_workspace(db_path: str | Path | None = None) -> None:
         if version > DB_SCHEMA_VERSION:
             raise ValueError("数据库来自更新版本，请升级应用后打开")
         if tables:
-            if not 1 <= version <= 27:
+            if not 1 <= version <= 28:
                 raise ValueError("未知数据库格式，未修改原文件")
             if version < 24:
                 _backup(path)
             else:
-                # v28 only adds nullable model columns, but every schema bump
-                # keeps a coherent pre-upgrade snapshot like earlier releases.
+                # v28/v29 only add model columns and tables, but every schema
+                # bump keeps a coherent pre-upgrade snapshot like earlier releases.
                 _backup(path, f"before-schema-v{DB_SCHEMA_VERSION}")
             if version < 22:
                 from ..compatibility.schema_v22 import init_db as upgrade_to_v22
@@ -92,6 +92,9 @@ def initialize_workspace(db_path: str | Path | None = None) -> None:
                 "connection_revision": "INTEGER NOT NULL DEFAULT 0", "profile_revision": "INTEGER NOT NULL DEFAULT 0",
                 "stage": "TEXT NOT NULL DEFAULT ''", "input_tokens": "INTEGER NOT NULL DEFAULT 0",
                 "output_tokens": "INTEGER NOT NULL DEFAULT 0", "selection_reason": "TEXT NOT NULL DEFAULT ''",
+                # v29: estimated USD cost, model backend and router fallback origin.
+                "cost_usd": "REAL", "backend": "TEXT NOT NULL DEFAULT ''",
+                "fallback_from_profile_id": "TEXT NOT NULL DEFAULT ''",
             }.items():
                 if name not in event_columns:
                     conn.execute(f"ALTER TABLE model_service_events ADD COLUMN {name} {definition}")

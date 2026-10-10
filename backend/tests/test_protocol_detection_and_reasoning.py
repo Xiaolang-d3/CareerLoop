@@ -82,7 +82,7 @@ class _Fake:
 
 # --- 1. migration -----------------------------------------------------------
 
-def test_v27_database_upgrades_to_v28_with_backup(tmp_path):
+def test_v27_database_upgrades_to_current_schema_with_backup(tmp_path):
     path = tmp_path / "careerloop.db"
     init_db(path)
     with sqlite3.connect(path) as conn:
@@ -94,8 +94,8 @@ def test_v27_database_upgrades_to_v28_with_backup(tmp_path):
     with sqlite3.connect(path) as conn:
         assert "detected_protocol" in {row[1] for row in conn.execute("PRAGMA table_info(model_connections)")}
         assert "reasoning_effort" in {row[1] for row in conn.execute("PRAGMA table_info(model_profiles)")}
-        assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == DB_SCHEMA_VERSION == 28
-    assert (tmp_path / ".upgrade-backups" / "before-schema-v28" / "careerloop.db").exists()
+        assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == DB_SCHEMA_VERSION == 29
+    assert (tmp_path / ".upgrade-backups" / f"before-schema-v{DB_SCHEMA_VERSION}" / "careerloop.db").exists()
 
 
 # --- 1. detected protocol ---------------------------------------------------
