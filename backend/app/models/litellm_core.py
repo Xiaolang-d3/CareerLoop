@@ -15,8 +15,10 @@ place:
 """
 from __future__ import annotations
 
+import logging
 import os
 import threading
+from contextlib import contextmanager
 from time import perf_counter
 from typing import Any
 
@@ -68,6 +70,47 @@ def _configure(module: Any) -> None:
     module.num_retries = 0
 
 
+def _is_litellm_filter(candidate: Any) -> bool:
+    module = getattr(type(candidate), "__module__", "") or ""
+    if callable(candidate) and not isinstance(candidate, logging.Filter):
+        module = getattr(candidate, "__module__", "") or module
+    return module == "litellm" or module.startswith("litellm.")
+
+
+@contextmanager
+def _defer_litellm_log_filters():
+    """Hold back the log filters LiteLLM attaches while its package is importing.
+
+    ``litellm/_logging.py`` runs early in ``import litellm`` and adds filters to
+    other libraries' loggers (``uvicorn.access``, ``uvicorn.error``, ``asyncio``,
+    ``httpx`` …). Each filter lazily imports ``litellm.rust_bridge.*``. When the
+    first import happens in a worker thread (a sync FastAPI endpoint), the event
+    loop thread logs an access line, the filter starts importing LiteLLM
+    submodules concurrently, and the two threads deadlock on the module locks:
+    Python raises ``_DeadlockError`` in the importer, drops ``litellm`` from
+    ``sys.modules``, but the filters stay attached, so every later log call
+    raises ``KeyError: 'litellm'`` and the server stops answering, /health too.
+
+    Filters defined in ``litellm.*`` are therefore collected instead of attached
+    and only attached once the package is fully imported; on failure they are
+    discarded.
+    """
+    pending: list[tuple[logging.Filterer, Any]] = []
+    original = logging.Filterer.addFilter
+
+    def add_filter(self: logging.Filterer, filter: Any) -> None:  # noqa: A002 - logging's name
+        if _is_litellm_filter(filter):
+            pending.append((self, filter))
+        else:
+            original(self, filter)
+
+    logging.Filterer.addFilter = add_filter  # type: ignore[method-assign]
+    try:
+        yield pending
+    finally:
+        logging.Filterer.addFilter = original  # type: ignore[method-assign]
+
+
 def get_litellm() -> Any:
     """Import and configure LiteLLM once, offline."""
     global _module, _import_seconds
@@ -77,7 +120,12 @@ def get_litellm() -> Any:
         if _module is None:
             apply_offline_environment()
             started = perf_counter()
-            import litellm  # noqa: PLC0415 - the only sanctioned import site
+            with _defer_litellm_log_filters() as pending:
+                import litellm  # noqa: PLC0415 - the only sanctioned import site
+            # Fully imported now: LiteLLM's filters may run (and lazily import
+            # its submodules) from any thread without racing the import.
+            for owner, deferred in pending:
+                owner.addFilter(deferred)
             import warnings
 
             # LiteLLM's Responses usage object trips a harmless pydantic
