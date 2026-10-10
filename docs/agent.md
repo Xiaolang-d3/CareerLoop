@@ -250,6 +250,8 @@ Agent 新知识写入 library_knowledge 的 pending 状态；用户确认后才�
 
 模型连接支持 OpenAI 兼容 Chat Completions、OpenAI Responses、Anthropic Messages、Google Gemini `generateContent` 与 Ollama Chat。显式 `model_protocol` 永远优先；`auto` 会先识别官方域名和 Ollama 地址，再按模型家族选择协议（`claude-*` → Anthropic、`gemini-*` → Gemini，其他 → OpenAI 兼容）。自定义多协议网关上的 Claude/Gemini 会先调用原生协议；只有 404/405 路由不存在、HTTP 200 却无法解析为该协议等可证明的协议不匹配，才回退到 OpenAI 兼容，并按网关 + 模型 + 密钥指纹缓存成功协议。认证失败、限流、模型不可用、上游账户池耗尽和其他 5xx 都不得换协议重试；流式响应一旦输出任何事件也不得回退，以免重复正文。根地址回退到 OpenAI 兼容时会尝试标准 `/v1`，已带路径的自定义 API 根地址不改写。Responses 与非标准包装仍可在设置页显式选择。
 
+模型能力主动检测分为图片、流式、工具三项，分别使用诊断总预算的三分之一，单项失败不跳过其他项。流式需要非空文本增量和正常完成结果；工具检测要求返回指定无副作用工具的名称与随机参数，仅验证返回值、不执行工具。错误/超时或未取得有效证据保留 unknown，逐项记录实际协议，避免把不同协议的探测结果误认为单一协议能力；GET 仍只做静态推断，探测结果未自动写入模型档案的路由能力声明。
+
 自动模式在提供 API 根地址且首选 Chat Completions 时，增加同根地址的 Responses 候选。明确的协议拒绝（包括 400 中英文“不支持 chat completions”）、缺失路由或无效响应允许回退；认证、限流、额度、普通参数错误不触发回退。流式事件已输出后不回退，成功协议按地址、模型与密钥指纹缓存在进程中；显式协议保持单一候选。该机制不能推断服务商未公开或不兼容的任意协议。
 
 Base URL 视为对应协议的 API 根地址：显式 OpenAI 兼容客户端不自动追加 `/v1`，Responses 请求 `/responses`，Anthropic 请求 `/v1/messages`，Gemini 请求 `/models/{model}:generateContent`，Ollama 请求 `/api/chat`。OpenAI 兼容调用还会验证响应中存在 `choices`，流式调用至少返回响应 ID、用量、结束原因、正文或工具调用之一；网页回退或空响应即使 HTTP 状态为 200 也会记为 `invalid_provider_response`，不得标记为健康。模型目录只证明名称可见，不证明当前账户可实际调用；设置页提示是否可用以连接检测为准，诊断区展示已保存连接的调用结果。本地 Ollama 可不配置 API Key；其他协议要求密钥。`GET /agent/capabilities` 在缺少密钥时返回 200 与 `configured: false`（可先配置再对话），真正运行 Agent 仍要求已配置密钥。runtime、模型发现、能力检测与健康监控使用同一协议解析结果。runtime 的 system 消息必须保持协议级 system 语义：Anthropic 合并到顶层 `system`，不能降级成 `user` 消息。系统提示在 `backend/app/models/openai_compatible.py`：中文、不编造经历与来源、只使用本轮实际提供的工具、不点名具体工具名、过程叙述交给界面。本轮工具清单由 runtime 注入。缺少关键信息或指代有歧义时必须调用 `ask_user`，不要猜测，也不要只在正文里提问。用户明确要求思维导图时可输出 Mermaid `mindmap` 代码块，界面渲染为可展开、缩放的交互导图；普通回答不主动生成图。
