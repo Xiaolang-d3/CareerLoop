@@ -17,7 +17,7 @@ import { AssistantRuntimeProvider, ComposerPrimitive, ThreadPrimitive, type Thre
 
 import { useAui, useAuiState } from "@assistant-ui/store";
 
-import { ArrowUpRight, FileText, History, ImagePlus, LoaderCircle, PanelRight, Pencil, Plus, RefreshCw, Search, Send, Square, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, ArrowUpRight, FileText, Globe, History, ImagePlus, LoaderCircle, PanelRight, Paperclip, Pencil, Plus, RefreshCw, Square, TriangleAlert, X } from "lucide-react";
 
 function asClarificationOption(value: unknown, index: number): ChatClarificationOption | null {
   if (!value || typeof value !== "object") return null;
@@ -65,6 +65,8 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   const researchToggleRef = useRef<HTMLButtonElement>(null);
   const aui = useAui();
   const composerText = useAuiState((state) => state.composer.text);
+  const [composerFocused, setComposerFocused] = useState(false);
+  const showComposerHint = (!props.chatBusy && composerFocused) || composerText.length >= 180_000;
   const localDrafts = useRef(new Map<number, string>());
   const drafts = props.composerDrafts ?? localDrafts.current;
   useLayoutEffect(() => {
@@ -83,7 +85,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
     if (!input) return;
     const resize = () => {
       const style = window.getComputedStyle(input);
-      const min = Number.parseFloat(style.minHeight) || 52;
+      const min = Number.parseFloat(style.minHeight) || 40;
       const max = Number.parseFloat(style.maxHeight) || Math.min(240, window.innerHeight * .3);
       input.style.height = "0px";
       const height = Math.max(min, input.scrollHeight);
@@ -461,20 +463,25 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                 ))}
               </div>
             ) : null}
-            <ComposerPrimitive.Root className="composer-input composer-input--enhanced" onSubmit={(event) => { if (props.attachmentBusy || props.modelSelectionBusy || props.modelProfileUnavailable) event.preventDefault(); }}>
+            <ComposerPrimitive.Root
+              className="composer-input composer-input--enhanced"
+              onFocusCapture={() => setComposerFocused(true)}
+              onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setComposerFocused(false); }}
+              onSubmit={(event) => { if (props.attachmentBusy || props.modelSelectionBusy || props.modelProfileUnavailable) event.preventDefault(); }}
+            >
               <ComposerPrimitive.Input
                 ref={props.chatInputRef}
                 rows={1}
                 maxLength={200_000}
                 aria-label="输入消息"
                 aria-describedby="composer-input-hint"
-                placeholder={clarification ? "回答上面的问题，或直接说下一件…" : "描述任务，或添加一份资料…"}
+                placeholder={clarification ? "回答上面的问题，或直接说下一件…" : "输入你的问题或任务…"}
                 submitMode="enter"
                 unstable_insertNewlineOnTouchEnter
                 onPaste={handleComposerPaste}
               />
               <div className="composer-bottom-row">
-              <div className="composer-shortcuts" aria-label="添加资料">
+              <div className="composer-shortcuts" role="group" aria-label="输入选项">
                   <ComposerModelPicker
                     configured={props.modelConfigured !== false}
                     currentModelName={props.currentModelName}
@@ -488,20 +495,19 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                     onChange={(profileId) => props.onModelProfileChange?.(profileId)}
                     onOpenSettings={props.onOpenModelSettings}
                   />
-                  <button type="button" onClick={() => attachmentInputRef.current?.click()} disabled={props.attachmentBusy} title="上传图片或文档，也可直接粘贴图片">
-                    {props.attachmentBusy ? <LoaderCircle className="spinning" size={15} /> : <ImagePlus size={15} />}
-                    <span>{props.attachmentBusy ? "处理中…" : "资料"}</span>
+                  <button className="composer-tool composer-attachment-tool" type="button" aria-label={props.attachmentBusy ? "附件处理中" : "添加附件"} onClick={() => attachmentInputRef.current?.click()} disabled={props.attachmentBusy} title={props.attachmentBusy ? "正在处理附件" : "添加图片或文档，也可粘贴图片或拖入文件"}>
+                    {props.attachmentBusy ? <LoaderCircle className="spinning" size={16} aria-hidden="true" /> : <Paperclip size={17} aria-hidden="true" />}
                   </button>
                   <button
                     type="button"
-                    className={`web-search-toggle ${props.webSearchSelected ? "active" : ""} ${!props.webSearchAvailable ? "unavailable" : ""}`.trim()}
+                    className={`composer-tool web-search-toggle ${props.webSearchSelected ? "active" : ""} ${!props.webSearchAvailable ? "unavailable" : ""}`.trim()}
                     onClick={props.onToggleWebSearch}
                     disabled={props.chatBusy}
                     aria-pressed={props.webSearchSelected}
                     aria-label="联网搜索"
                     title={props.webSearchAvailable ? "为下一条消息补充公开信息" : "可以选中；发送后会提示配置 AgentSearch"}
                   >
-                    <Search size={15} />
+                    <Globe size={16} aria-hidden="true" />
                     <span>联网</span>
                   </button>
                   {props.webSearchSelected ? (
@@ -525,12 +531,17 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                   </ComposerPrimitive.Cancel>
                 ) : (
                   <ComposerPrimitive.Send className="send-button" aria-label="发送" disabled={props.attachmentBusy || props.modelSelectionBusy || props.modelProfileUnavailable} title={props.attachmentBusy ? "资料处理完成后即可发送" : props.modelSelectionBusy ? "模型选择保存后即可发送" : props.modelProfileUnavailable ? "当前模型已停用，请切换模型" : "发送消息"}>
-                    <Send size={16} /><span>发送</span>
+                    <ArrowUp size={18} aria-hidden="true" /><span>发送</span>
                   </ComposerPrimitive.Send>
                 )}
               </div>
             </ComposerPrimitive.Root>
-            <div className="composer-input-hint" id="composer-input-hint"><span className="composer-keyboard-hint">Enter 发送 · Shift + Enter 换行</span><span className="composer-touch-hint">支持多行输入，点击按钮发送</span>{composerText.length >= 180_000 && <span role="status">{composerText.length.toLocaleString()} / 200,000 字</span>}</div>
+            <span id="composer-input-hint" className="sr-only"><span className="composer-keyboard-hint">Enter 发送 · Shift + Enter 换行</span><span className="composer-touch-hint">回车换行，点击发送按钮发送</span></span>
+            <div className={`composer-input-hint${showComposerHint ? " is-active" : ""}`} aria-hidden={!showComposerHint}>
+              <span className="composer-keyboard-hint" aria-hidden="true"><kbd>Enter</kbd><span>发送</span><span className="composer-hint-divider">·</span><kbd>Shift</kbd><span>+</span><kbd>Enter</kbd><span>换行</span></span>
+              <span className="composer-touch-hint" aria-hidden="true">回车换行 · 点击 <ArrowUp size={12} /> 发送</span>
+              {composerText.length >= 180_000 && <span className="composer-character-count" role="status">{composerText.length.toLocaleString()} / 200,000 字</span>}
+            </div>
             {isDraggingAttachment ? <div className="composer-drop-hint" aria-live="polite">松开即可添加图片或文档</div> : null}
           </div>
           {showStarters ? (

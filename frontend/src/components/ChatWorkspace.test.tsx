@@ -119,6 +119,45 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
 }
 
 describe("ChatWorkspace", () => {
+  it("shows keyboard hints while editing without losing the draft when focus moves through the tools", () => {
+    const props = renderChat();
+    const input = screen.getByRole("textbox", { name: "输入消息" });
+    const hint = props.view.container.querySelector(".composer-input-hint")!;
+    expect(hint).toHaveAttribute("aria-hidden", "true");
+    expect(input).toHaveAccessibleDescription(/Enter 发送 · Shift \+ Enter 换行/);
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "保留正在编辑的内容" } });
+    expect(hint).toHaveAttribute("aria-hidden", "false");
+    const attachment = screen.getByRole("button", { name: "添加附件" });
+    expect(within(screen.getByRole("group", { name: "输入选项" })).getByRole("button", { name: "添加附件" })).toBe(attachment);
+    expect(attachment).toHaveTextContent(/^$/);
+    fireEvent.blur(input, { relatedTarget: attachment });
+    fireEvent.focus(attachment);
+    expect(hint).toHaveAttribute("aria-hidden", "false");
+    fireEvent.blur(attachment, { relatedTarget: document.body });
+    expect(hint).toHaveAttribute("aria-hidden", "true");
+    expect(input).toHaveValue("保留正在编辑的内容");
+  });
+
+  it("keeps the character limit visible when a long draft is not focused", () => {
+    const props = renderChat();
+    const input = screen.getByRole("textbox", { name: "输入消息" });
+    fireEvent.change(input, { target: { value: "字".repeat(180_001) } });
+    expect(screen.getByText("180,001 / 200,000 字")).toHaveAttribute("role", "status");
+    expect(props.view.container.querySelector(".composer-input-hint")).toHaveAttribute("aria-hidden", "false");
+    expect(input).toHaveAttribute("maxlength", "200000");
+  });
+
+  it("opens file selection from the compact attachment button", () => {
+    const props = renderChat();
+    const fileInput = props.view.container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    const choose = vi.spyOn(fileInput, "click").mockImplementation(() => undefined);
+    fireEvent.click(screen.getByRole("button", { name: "添加附件" }));
+    expect(choose).toHaveBeenCalledOnce();
+    props.view.rerender(<ChatWorkspace {...props} attachmentBusy />);
+    expect(screen.getByRole("button", { name: "附件处理中" })).toBeDisabled();
+  });
+
   it("keeps a greeting focused on messages and one model picker", () => {
     const greeting = { ...assistantMessage("你好，有什么可以帮你？"), payload: { model_selection: {
       profile_id: "grok", connection_id: "local", profile_revision: 1, connection_revision: 1, model_name: "grok-4.7"
@@ -207,7 +246,7 @@ describe("ChatWorkspace", () => {
 
   it("puts the model picker in the composer toolbar and reminds the user to configure a model", () => {
     const props = renderChat([message], { modelConfigured: false });
-    const toolbar = screen.getByLabelText("添加资料");
+    const toolbar = screen.getByRole("group", { name: "输入选项" });
     fireEvent.click(within(toolbar).getByRole("button", { name: "未配置模型，去设置" }));
     expect(props.onOpenModelSettings).toHaveBeenCalledOnce();
     expect(screen.queryByRole("button", { name: /切换模型/ })).not.toBeInTheDocument();
@@ -597,7 +636,7 @@ describe("ChatWorkspace", () => {
     expect(screen.getByRole("button", { name: "分析一份材料" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "查找公开信息" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "起草一份内容" })).toBeInTheDocument();
-    expect(screen.getByLabelText("输入消息")).toHaveAttribute("placeholder", "描述任务，或添加一份资料…");
+    expect(screen.getByLabelText("输入消息")).toHaveAttribute("placeholder", "输入你的问题或任务…");
   });
 
   it("hides starter prompts once the conversation has messages", () => {

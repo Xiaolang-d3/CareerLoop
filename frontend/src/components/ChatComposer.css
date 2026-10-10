@@ -3,38 +3,65 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  min-height: 108px !important;
-  padding: 12px !important;
+  --composer-action-size: 36px;
+  min-height: 100px !important;
+  padding: 10px !important;
+  border-radius: 16px !important;
 }
 .chat-workspace .chat-composer .composer-input.composer-input--enhanced textarea {
   box-sizing: border-box;
   width: 100%;
-  min-height: 52px !important;
+  min-height: 40px !important;
   max-height: min(240px, 30dvh);
-  padding: 6px 4px !important;
+  padding: 4px !important;
   resize: none;
   line-height: 1.6;
   scrollbar-gutter: stable;
 }
+.chat-workspace .composer-input.composer-input--enhanced textarea::placeholder { color: var(--color-text-muted); opacity: 1; font-weight: 400; }
 .chat-workspace .composer-input.composer-input--enhanced .composer-bottom-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--composer-action-size);
+  align-items: end;
+  gap: 8px;
   width: 100%;
-  margin-top: 4px;
+  margin-top: 0;
   flex: none;
 }
-.chat-workspace .composer-input.composer-input--enhanced .composer-shortcuts { flex-wrap: wrap; min-width: 0; }
-.chat-workspace .composer-input.composer-input--enhanced .send-button { position: static; flex: none; transform: none; }
+.chat-workspace .composer-input.composer-input--enhanced .composer-shortcuts { flex-wrap: wrap; min-width: 0; gap: 4px; }
+.chat-workspace .chat-composer .composer-input.composer-input--enhanced .send-button { position: static; justify-self: end; flex: none; width: var(--composer-action-size); min-width: var(--composer-action-size); height: var(--composer-action-size); min-height: var(--composer-action-size); border-radius: 10px; box-shadow: none; transform: none; }
 .chat-workspace .composer-input.composer-input--enhanced .send-button:hover { transform: none; }
 .chat-workspace .composer-input.composer-input--enhanced .send-button:disabled { opacity: .45; box-shadow: none; cursor: not-allowed; }
-.composer-input-hint { display: flex; justify-content: space-between; gap: 8px; padding: 6px 4px 0; color: #817b92; font-size: 11px; line-height: 16px; }
+.chat-workspace .chat-composer .composer-input.composer-input--enhanced .composer-tool { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 32px; padding: 0 8px; border-radius: 8px; color: var(--color-text-secondary); background: transparent; }
+.chat-workspace .chat-composer .composer-input.composer-input--enhanced .composer-tool:hover,
+.chat-workspace .chat-composer .composer-input.composer-input--enhanced .composer-tool.active { color: var(--color-brand-strong); background: var(--color-brand-soft); }
+.chat-workspace .chat-composer .composer-input.composer-input--enhanced .composer-attachment-tool { width: 32px; padding: 0; }
+.chat-workspace .composer-tool:focus-visible,
+.chat-workspace .composer-input.composer-input--enhanced .send-button:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+.chat-workspace .composer-input.composer-input--enhanced .model-picker { max-width: 100%; }
+.chat-workspace .composer-input.composer-input--enhanced .model-pill { max-width: min(220px, 100%); }
+.chat-workspace .composer-input.composer-input--enhanced .model-pill-name { font-weight: 500; }
+.chat-workspace .composer-input.composer-input--enhanced .web-search-mode { min-width: 0; max-width: 100%; border-radius: 8px; font-weight: 400; }
+.composer-input-hint { display: flex; align-items: center; justify-content: flex-end; gap: 12px; min-height: 18px; padding: 6px 4px 0; color: var(--color-text-muted); font-size: 10px; line-height: 16px; opacity: 0; visibility: hidden; transition: opacity .15s ease; }
+.composer-input-hint.is-active { opacity: 1; visibility: visible; }
+.composer-input-hint .composer-keyboard-hint { display: inline-flex; align-items: center; gap: 5px; }
+.composer-input-hint kbd { padding: 0 3px; border: 1px solid var(--color-border); border-radius: 3px; background: var(--color-surface); font: inherit; line-height: 14px; }
+.composer-hint-divider { padding: 0 3px; }
+.composer-character-count { margin-left: auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .composer-touch-hint { display: none; }
 @media (pointer: coarse) {
-  .composer-keyboard-hint { display: none; }
-  .composer-touch-hint { display: inline; }
+  .chat-workspace .composer-keyboard-hint { display: none; }
+  .composer-touch-hint { display: inline-flex; align-items: center; gap: 3px; }
+  .chat-workspace .chat-composer .composer-input.composer-input--enhanced .composer-tool { min-height: 40px; }
+  .chat-workspace .chat-composer .composer-input.composer-input--enhanced .composer-attachment-tool { width: 40px; }
+  .chat-workspace .chat-composer .composer-input.composer-input--enhanced { --composer-action-size: 40px; }
 }
 @media (max-width: 600px) {
-  .chat-workspace .chat-composer .composer-input.composer-input--enhanced { padding: 8px !important; }
+  .chat-workspace .chat-composer .composer-input.composer-input--enhanced { padding: 8px !important; --composer-action-size: 40px; }
   .chat-workspace .chat-composer .composer-input.composer-input--enhanced textarea { font-size: 16px !important; }
+  .composer-input-hint { flex-wrap: wrap; gap: 4px 8px; }
 }
+@media (prefers-reduced-motion: reduce) { .composer-input-hint { transition: none; } }
 
 /* A quieter input frame keeps the conversation content prominent. */
 .assistant-page .chat-workspace .chat-composer .composer-input.composer-input--enhanced {
@@ -49,7 +76,7 @@
 }
 .assistant-page .chat-workspace .composer-input-hint {
   color: var(--color-text-muted);
-  padding-top: 8px;
+  padding-top: 6px;
 }
 @media (max-width: 600px) {
   .assistant-page .chat-workspace .composer-input.composer-input--enhanced .composer-bottom-row { align-items: flex-end; }
