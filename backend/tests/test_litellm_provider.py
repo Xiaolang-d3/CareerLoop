@@ -317,6 +317,21 @@ def test_malformed_json_maps_to_invalid_response_without_traceback(server, proto
     assert stored == ["模型服务返回了无法解析的响应"]
 
 
+STREAM_PATHS = {**PROTOCOL_PATHS, "gemini": "streamGenerateContent"}
+
+
+@pytest.mark.parametrize("protocol", list(PROTOCOL_BASES))
+@pytest.mark.parametrize("streaming", [False, True])
+def test_error_status_body_is_decoded_not_bytes_repr(server, protocol, streaming):
+    # Anthropic/Gemini streaming errors used to show b'{"error": ...}'.
+    path = STREAM_PATHS[protocol] if streaming else PROTOCOL_PATHS[protocol]
+    server.raw[path] = (400, b'{"error": {"message": "field tools[0] is invalid"}}')
+    provider = LiteLLMProvider("sk-test", "gpt-4o", f"{server.url}{PROTOCOL_BASES[protocol]}", 5, protocol=protocol)
+    with pytest.raises(ModelProviderError) as caught:
+        run(collect(provider, request()) if streaming else provider.generate(request()))
+    assert str(caught.value) == "模型服务返回异常状态（400）：field tools[0] is invalid"
+
+
 def test_error_detail_strips_litellm_wrappers():
     from app.models.litellm_core import get_litellm
     from app.models.litellm_errors import litellm_error_detail
@@ -328,6 +343,8 @@ def test_error_detail_strips_litellm_wrappers():
         'GeminiException BadRequestError - {"error": {"message": "bad input"}}': "bad input",
         "Expecting value\nTraceback (most recent call last):\n  File \"x.py\", line 1": "Expecting value",
         "Unable to get json response - boom, Original Response: {not json": "Unable to get json response - boom",
+        "AnthropicException - b'{\"error\": {\"message\": \"bad input\"}}'": "bad input",
+        "b'plain \\xe4\\xbd\\xa0\\xe5\\xa5\\xbd'": "plain 你好",
     }
     for raw, expected in cases.items():
         exc = litellm.APIError(status_code=500, message=raw, llm_provider="openai", model="m")

@@ -16,7 +16,7 @@ ChatRuntime ─► ConfiguredModelProvider (档案参数 / 推理强度)
 | --- | --- |
 | `backend/app/models/litellm_core.py` | **唯一** `import litellm` 的模块。导入前写入离线环境变量，懒加载并记录导入耗时，统一配置 `drop_params`、关闭回调、遥测与消息日志。 |
 | `backend/app/models/litellm_provider.py` | `LiteLLMProvider`：实现 `generate` / `stream` / `check_connection` / `list_models` / `probe_vision` / `name` / `models_url`，事件语义、错误码与监控 `_record_event` 与原生适配器一致。 |
-| `backend/app/models/litellm_errors.py` | LiteLLM 异常 → `ModelProviderError` 现有错误码（中文提示），保留 `protocol_unsupported`，新增 `context_window_exceeded`、`content_policy`。 |
+| `backend/app/models/litellm_errors.py` | LiteLLM 异常 → `ModelProviderError` 现有错误码（中文提示），保留 `protocol_unsupported`，新增 `context_window_exceeded`、`content_policy`。上游错误体以字节或 `b'…'` 形式出现时（Anthropic / Gemini 流式）先解码再解析 JSON。 |
 | `backend/app/models/litellm_router.py` | `RoutedModelProvider` + `build_router`：把启用的模型档案组成 `litellm.Router`，记录实际回答的模型与是否发生回退。 |
 | `backend/app/agent/model_routing.py` | 备用模型策略与能力记录（SQLite），能力合并优先级。 |
 | `backend/app/models/factory.py` | `DENGDENG_MODEL_BACKEND=litellm|native` 选择实现，默认 `litellm`；未安装 LiteLLM 时自动退回 `native`。 |

@@ -1,6 +1,7 @@
 """Translate LiteLLM exceptions into 灯灯's ModelProviderError codes."""
 from __future__ import annotations
 
+import ast
 import json
 import re
 from typing import Any
@@ -92,6 +93,20 @@ def failure_kind(exc: BaseException) -> str | None:
     return None
 
 
+_BYTES_LITERAL = re.compile(r"""b(['"]).*\1""", re.DOTALL)
+
+
+def _decode_bytes_literal(text: str) -> str:
+    """Streaming Anthropic/Gemini errors carry ``str(bytes)``, e.g. ``b'{"error": ...}'``."""
+    if not _BYTES_LITERAL.fullmatch(text):
+        return text
+    try:
+        value = ast.literal_eval(text)
+    except (ValueError, SyntaxError):
+        return text
+    return value.decode("utf-8", "replace").strip() if isinstance(value, bytes) else text
+
+
 def litellm_error_detail(exc: BaseException) -> str:
     """Upstream reason without LiteLLM's ``litellm.XError: ProviderException -`` wrapper."""
     response = getattr(exc, "response", None)
@@ -103,6 +118,8 @@ def litellm_error_detail(exc: BaseException) -> str:
             payload = None
     if payload is None:
         body = getattr(exc, "body", None)
+        if isinstance(body, (bytes, bytearray)):
+            body = bytes(body).decode("utf-8", "replace")
         payload = body if isinstance(body, (dict, str)) else None
     text = ""
     if isinstance(payload, dict):
@@ -115,7 +132,7 @@ def litellm_error_detail(exc: BaseException) -> str:
         text = payload
     if not text:
         text = str(getattr(exc, "message", "") or str(exc) or "")
-    text = _strip_wrappers(text)
+    text = _decode_bytes_literal(_strip_wrappers(text))
     if text.startswith("{"):
         try:
             decoded = json.loads(text)
