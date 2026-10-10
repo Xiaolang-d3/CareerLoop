@@ -4,7 +4,37 @@
 
 ## [Unreleased]
 
+### 修复
+
+- 后端冷启动后，第一个请求若是模型能力报告（首次加载 LiteLLM），整个服务可能卡死、连 `/health` 也不再响应。原因是 LiteLLM 在加载过程中给 uvicorn / asyncio 日志器挂的过滤器与加载线程在模块锁上互锁；现在这些过滤器等 LiteLLM 加载完成后才挂上。
+
+- 模型服务在错误信息里回显 API Key 时（例如回显 Authorization 头），错误提示与调用监控不再保存或显示该密钥：按当前连接的密钥精确遮盖，并遮盖 `Bearer …`、`sk-…`、`AIza…`、`api_key=…`、`?key=…` 等常见形式。原生实现与 LiteLLM 实现、备用模型路由均适用。后端日志（包括 LiteLLM、OpenAI SDK 的调试日志和异常堆栈，以及写入 `backend.log` 的内容）也会按同样规则遮盖。
+
+- LiteLLM 模型层：连接被拒或地址不可达时与原生实现一致，显示「无法连接模型服务」（可重试），不再报「服务异常」；返回无法解析的 JSON 时显示「模型服务返回了无法解析的响应」。错误信息去掉 LiteLLM 内部前后缀和 Python 堆栈，不再写入调用监控。Anthropic、Gemini 流式请求出错时显示解码后的错误原因，不再显示 `b'{"error": …}'` 这样的原始字节。
+
+- 接口协议为「自动」时，如果模型服务明确拒绝 Chat Completions（例如「模型 grok-4.7 不支持 chat completions 协议」），会自动改用 OpenAI Responses API 重试并记住可用协议；手动指定协议时不做回退。
+
+- 「自动」协议会记住每个连接实际可用的协议并保存在本地，应用重启后直接使用，不再先失败一次；修改连接地址、密钥或协议后会重新识别。连接列表、高级设置和调用监控会显示「自动 · 实际使用 OpenAI Responses API」这类实际协议。
+
+- 通过 OpenAI Responses API 使用推理模型时，多轮工具调用之间会保留模型的推理上下文（以加密形式随请求回传，服务端仍不保存对话）；服务商不支持该参数时自动去掉后重试。
+
 ### 新增
+
+- 模型层改用 LiteLLM Python SDK（1.104.0，锁定版本与哈希，离线加载价格表、不发送遥测）。各协议的请求格式、流式解析和错误分类由 LiteLLM 处理；需要时可用 `DENGDENG_MODEL_BACKEND=native` 回到原来的实现。详见 `docs/model-layer.md`。
+
+- 新增「备用模型」设置：主模型出错时按顺序换用其他已保存的模型，另可分别指定「超长上下文时换用」和「内容被拒时换用」的模型，并设置超时、限流、服务错误的重试次数以及连续失败后的冷却时间。回答下方会注明「由备用模型 … 回答」，调用监控也会标记备用调用。
+
+- 每个模型可查看能力标签：视觉、推理、工具、结构化输出、PDF、缓存，以及上下文长度和最大输出，并标明来源（实测 / LiteLLM / 手动 / 推测）；可手动设置覆盖，或对单个模型做一次真实看图检测。
+
+- 调用监控新增估算费用：近 24 小时估算费用、每次调用的费用；优先使用模型自定义价格，其次 LiteLLM 价格表，本地 Ollama 记为 0。
+
+- 推理强度对所有协议生效（Anthropic、Gemini、OpenAI 兼容、Responses、Ollama）；能力数据显示模型不支持推理时，推理强度选择会提示并停用。Anthropic 推理模型在多轮工具调用之间保留带签名的思考内容。
+
+- 使用 OpenAI Responses API 的推理模型，在对话中实时显示推理摘要，完成后保留在本轮过程记录里。
+
+- 「连接与模型」中可为每个模型设置「推理强度」（默认 / 低 / 中 / 高），对支持推理的 OpenAI Responses API 模型生效；服务商不支持时自动忽略该设置并继续回答。
+
+- 连接检测或读取模型列表时，如果模型明确不支持 Chat Completions，会提示「该模型不支持 Chat Completions，改用 OpenAI Responses API」，一键切换协议、保存并重新检测。
 
 - AI 工作区输入框工具栏新增模型切换：胶囊按钮显示当前模型，点开后向上弹出按连接分组、带厂商图标的模型菜单（支持键盘上下选择和 Esc 关闭），底部可进入「管理模型」；未配置模型时提示「未配置模型，去设置」并直达模型设置；当前模型服务不可用或已停用时，切换器显示警告并提供设置入口。
 
@@ -15,6 +45,10 @@
 - 不再把旧 `#/workspace`、`#/workbench`、`#/opportunities`、`#/interview-prep`、`#/projects`、`#/knowledge` 等深链转进 AI 工作区或资料库。无法识别的地址打开首页，并改写为 `#/home`。
 
 ### 变更
+
+- 本地数据库升级到第 29 版（从第 27 版或第 28 版直接升级）：新增连接的实际协议与模型推理强度字段，以及调用费用、备用模型记录、备用模型设置与模型能力记录；升级前会在数据目录 `.upgrade-backups/before-schema-v29/` 自动备份原数据库。没有自动降级，回到旧版本需手动恢复该备份并会丢失升级后的数据（见 `docs/model-layer.md`）。
+
+- 模型温度与最大输出长度设置现在会实际发送给模型服务（原实现未发送）。
 
 - 模型连接增加凭证与地址绑定、版本化安全存储和保存一致性保护；修复旧请求覆盖新配置、检测无效响应误报成功、实际协议与监控不一致，以及桌面请求超时和取消失效。
 
@@ -58,6 +92,18 @@
 - 删除退役 DTO、统计、页面、样式、配置和直接依赖，以及没有入口的独立创作页。创作继续由 AI 工作区提供。
 
 ### 工程
+
+- `schema_migrations` 按版本记录迁移名称（v28 `model_protocol_and_reasoning`、v29 `litellm_model_layer`，此前每个版本都写 `independent_library`）。升级测试改用由 v27、v28 版本真实生成的数据库快照（`backend/tests/fixtures/`），检查行数、完整性、备份版本与幂等。
+
+- 文档同步检查改为 `scripts/check-docs-sync.sh`：使用三点 diff（只看 PR 自身的改动），模型层、监控、数据库、迁移与协议代码变更也要求更新 `docs/agent.md`；LiteLLM 模型层、后端依赖、`backend/scripts/` 或 `.github/workflows/` 变更要求更新 `docs/model-layer.md`。匹配改用 here-string，避免变更文件很多时 `echo | grep -q` 在 pipefail 下因 SIGPIPE（退出码 141）被当成「未匹配」而漏报。
+
+- 后端全部依赖（运行、开发与 LiteLLM）改为从唯一的哈希锁定文件 `backend/requirements-lock.txt` 安装（仅 wheel、`--require-hashes --no-deps`，每个包都校验哈希）；已有 venv 通过 `backend/scripts/install_deps.sh` 在锁文件变化时强制重装。安装后立即以 `python -I -S` 扫描可执行 `.pth` 与 `sitecustomize`（扫描本身不会触发它们），按内容哈希放行并与包 RECORD 比对；CI 的后端测试、e2e 与桌面构建都执行。桌面 sidecar 打包 LiteLLM 及其数据文件，安装包增大约 31 MB；冒烟测试对打包结果逐一检查五种协议的真实调用。
+
+- `.pth` 扫描补齐三处绕过：不属于任何包 RECORD 的 `.pth` 一律失败（包括与 setuptools 放行文件逐字节相同的副本）；`.pth` 加入 `sys.path` 的目录也检查 `sitecustomize` / `usercustomize`，指向普通文件（如含 `sitecustomize.py` 的 zip）的路径行直接判失败；按 UTF-8 BOM 解码，BOM 后的 `import` 行不再被当成路径；放行的可执行 `.pth` 还要求属于 setuptools 且该包 RECORD 全部文件校验通过。
+
+- `install_deps.sh`（`dev.sh`、`start-remote.sh` 调用）每次启动都重新扫描 `.pth`，不再只在锁文件变化时扫描；扫描失败会删除安装标记，下次强制按哈希重装。
+
+- 后端依赖锁拆成运行时锁 `requirements-lock.txt`（部署与桌面 sidecar 使用，不含 pytest、PyInstaller）、开发锁 `requirements-dev-lock.txt`（`dev.sh`、CI 测试）和只含 PyInstaller 的构建锁；桌面打包在单独的 `backend/.venv-build`（运行时锁 + 构建锁）中进行，检测到开发包会拒绝打包。`install_deps.sh` 增加 `runtime|dev|build` 模式，模式或锁文件变化时重建 venv。
 
 - 首页公开源适配器与 Agent 循环分离，账号工作区使用 JSON 快照缓存；后台合并刷新、来源失败保留旧内容，不调用模型生成资讯。数据库版本仍为 25，没有新增迁移。
 

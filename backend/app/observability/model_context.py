@@ -12,6 +12,8 @@ _PUBLIC_SELECTION_FIELDS = frozenset({
     "profile_id", "connection_id", "profile_revision", "connection_revision",
     "model_name", "model_base_url", "model_protocol", "resolved_model_protocol",
     "stage", "policy_version", "selection_reason", "capability_status",
+    # Set when a LiteLLM router fallback model answered part of the run.
+    "fallback_used", "answered_profile_id", "answered_model_name",
 })
 
 

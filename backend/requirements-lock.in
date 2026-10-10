@@ -1,0 +1,4 @@
+# Runtime dependencies only: production (start-remote.sh), the desktop sidecar
+# bundle. Compile with the command in docs/model-layer.md.
+-r requirements.txt
+-r requirements-litellm.in

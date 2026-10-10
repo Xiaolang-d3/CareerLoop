@@ -938,13 +938,23 @@ class AgentRuntime:
                     events=events,
                     plan=plan,
                 )
+            assistant_payload: dict[str, Any] = {
+                "tool_calls": [call.model_dump(mode="json") for call in response.tool_calls]
+            }
+            reasoning_items = response.provider_metadata.get("responses_reasoning_items")
+            if isinstance(reasoning_items, list) and reasoning_items:
+                # Replayed to Responses API on the next turn (store=False keeps nothing upstream).
+                assistant_payload["responses_reasoning_items"] = reasoning_items
+            thinking_blocks = response.provider_metadata.get("thinking_blocks")
+            if isinstance(thinking_blocks, list) and thinking_blocks:
+                # Anthropic requires the signed thinking blocks back with the
+                # tool results to continue extended thinking across tool turns.
+                assistant_payload["thinking_blocks"] = thinking_blocks
             messages.append(
                 AgentMessage(
                     role="assistant",
                     content=response.content,
-                    payload={
-                        "tool_calls": [call.model_dump(mode="json") for call in response.tool_calls]
-                    },
+                    payload=assistant_payload,
                 )
             )
             round_error: ToolError | None = None
@@ -1600,11 +1610,18 @@ class AgentRuntime:
             return response
 
         response: ModelResponse | None = None
+        reasoning_parts: list[str] = []
         async for event in stream(request):
             if event.type == "text_delta" and event.delta:
                 await self._publish(
                     event_callback,
                     AgentStreamEvent(type="text_delta", delta=event.delta),
+                )
+            elif event.type == "reasoning_delta" and event.delta:
+                reasoning_parts.append(event.delta)
+                await self._publish(
+                    event_callback,
+                    AgentStreamEvent(type="reasoning_delta", delta=event.delta),
                 )
             elif event.type == "completed":
                 response = event.response
@@ -1614,7 +1631,36 @@ class AgentRuntime:
                 "模型流已结束，但没有返回完整响应",
                 retryable=True,
             )
+        if reasoning_parts:
+            metadata = dict(response.provider_metadata)
+            metadata["reasoning_summary"] = "".join(reasoning_parts).strip() or metadata.get("reasoning_summary", "")
+            metadata["reasoning_streamed"] = True
+            response = response.model_copy(update={"provider_metadata": metadata})
         return response
+
+    async def _record_reasoning(
+        self,
+        response: ModelResponse,
+        event_callback: StreamCallback | None,
+        *,
+        events: list[ToolEvent],
+        round_number: int,
+    ) -> None:
+        """Keep the model's reasoning summary visible in the saved run timeline."""
+        summary = str(response.provider_metadata.get("reasoning_summary") or "").strip()
+        if not summary:
+            return
+        event = ToolEvent(
+            round=round_number,
+            tool_call_id=f"model-reasoning-{round_number}",
+            tool_name="agent_thinking",
+            status="done",
+            message=summary[:4000],
+            data={"source": "model_reasoning"},
+        )
+        events.append(event)
+        if not response.provider_metadata.get("reasoning_streamed"):
+            await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
 
     async def _generate_response_with_retry(
         self,
@@ -1647,6 +1693,10 @@ class AgentRuntime:
                         event_callback,
                         AgentStreamEvent(type="agent_event", event=event),
                     )
+                await self._record_reasoning(
+                    response, event_callback, events=events, round_number=round_number,
+                )
+                self._note_answering_model(response)
                 return response
             except ModelProviderError as exc:
                 if not exc.retryable or retry_number >= self._max_model_retries:
@@ -1670,6 +1720,17 @@ class AgentRuntime:
                 )
                 await self._publish(event_callback, AgentStreamEvent(type="text_reset"))
         raise AssertionError("unreachable model retry state")
+
+    def _note_answering_model(self, response: ModelResponse) -> None:
+        """Record on the run's model selection when a router fallback answered."""
+        metadata = response.provider_metadata
+        selection = self._selection_context.get()
+        if not isinstance(selection, dict) or not selection or not metadata.get("routed"):
+            return
+        if metadata.get("fallback_from_profile_id"):
+            selection["fallback_used"] = True
+            selection["answered_profile_id"] = str(metadata.get("answered_profile_id") or "")
+            selection["answered_model_name"] = str(metadata.get("answered_model_name") or "")
 
     @staticmethod
     async def _publish(

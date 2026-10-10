@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 
+from ..redaction import remember_secret
 from ..agent.settings import get_agent_settings, persona_prompt
 from ..domain import ModelRequest, ModelResponse, ModelStreamEvent, ModelUsage, ToolCall
 from ..observability.model_monitor import record_model_service_event
@@ -34,6 +35,8 @@ class AnthropicMessagesProvider:
         if not api_key:
             raise ValueError("启用 Anthropic Messages Provider 时必须配置 API Key")
         self._model = model
+        self._secret = api_key  # masked in error messages
+        remember_secret(api_key)  # masked verbatim in logs
         self._base_url = (base_url or "https://api.anthropic.com").rstrip("/")
         self._client = httpx.AsyncClient(
             headers={
@@ -375,8 +378,12 @@ class AnthropicMessagesProvider:
     def _raise_for_status(response: httpx.Response) -> None:
         response.raise_for_status()
 
+    def _provider_error(self, exc: Exception) -> ModelProviderError:
+        # Gateways may echo the key back in error bodies; never surface or store it.
+        return self._map_provider_error(exc).redact(self._secret)
+
     @staticmethod
-    def _provider_error(exc: Exception) -> ModelProviderError:
+    def _map_provider_error(exc: Exception) -> ModelProviderError:
         if isinstance(exc, httpx.TimeoutException):
             return ModelProviderError("request_timeout", "模型服务响应超时，请稍后重试", retryable=True)
         if isinstance(exc, httpx.RequestError):

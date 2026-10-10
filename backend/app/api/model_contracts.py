@@ -7,6 +7,7 @@ from .schemas import ConversationUpdate
 
 
 Protocol = Literal["auto", "openai", "responses", "anthropic", "gemini", "ollama"]
+ReasoningEffort = Literal["low", "medium", "high"]
 
 
 class ConnectionCreateIn(BaseModel):
@@ -36,6 +37,7 @@ class ProfileCreateIn(BaseModel):
     model_name: str = Field(min_length=1, max_length=120)
     parameters: dict[str, float | int] = Field(default_factory=dict)
     context_limit: int | None = Field(default=None, ge=1)
+    reasoning_effort: ReasoningEffort | None = None
 
 
 class ProfileUpdateIn(BaseModel):
@@ -45,6 +47,7 @@ class ProfileUpdateIn(BaseModel):
     enabled: bool | None = None
     parameters: dict[str, float | int] | None = None
     context_limit: int | None = Field(default=None, ge=1)
+    reasoning_effort: ReasoningEffort | None = None
 
 
 class DefaultProfileIn(BaseModel):
@@ -54,3 +57,32 @@ class DefaultProfileIn(BaseModel):
 
 class ConversationModelUpdate(ConversationUpdate):
     model_profile_id: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+CapabilityName = Literal["vision", "tools", "reasoning", "structured_output", "pdf", "prompt_caching"]
+CapabilityValue = Literal["supported", "unsupported"]
+
+
+class RetryPolicyIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    timeout: int = Field(default=0, ge=0, le=3)
+    rate_limit: int = Field(default=0, ge=0, le=3)
+    server_error: int = Field(default=0, ge=0, le=3)
+
+
+class FallbackPolicyIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: int | None = Field(default=None, ge=0)
+    enabled: bool | None = None
+    fallback_profile_ids: list[str] | None = Field(default=None, max_length=5)
+    context_window_profile_ids: list[str] | None = Field(default=None, max_length=2)
+    content_policy_profile_ids: list[str] | None = Field(default=None, max_length=2)
+    retry_policy: RetryPolicyIn | None = None
+    allowed_fails: int | None = Field(default=None, ge=1, le=20)
+    cooldown_seconds: int | None = Field(default=None, ge=0, le=3600)
+
+
+class CapabilityOverridesIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # null clears a manual override so live probes / LiteLLM data apply again.
+    overrides: dict[CapabilityName, CapabilityValue | None]

@@ -93,10 +93,14 @@ export type ModelConnection = {
   name: string;
   model_base_url: string;
   model_protocol: ModelProtocol;
+  /** Protocol that auto negotiation actually settled on for this connection. */
+  detected_protocol?: ResolvedModelProtocol | null;
+  protocol_label?: string;
   api_key_configured: boolean;
   enabled: boolean;
   revision: number;
 };
+export type ReasoningEffort = "low" | "medium" | "high";
 export type ModelProfile = {
   id: string;
   connection_id: string;
@@ -106,6 +110,7 @@ export type ModelProfile = {
   parameters?: Record<string, unknown> | null;
   capabilities?: Record<string, unknown> | null;
   context_limit?: number | null;
+  reasoning_effort?: ReasoningEffort | null;
 };
 export type ModelCatalog = {
   connections: ModelConnection[];
@@ -127,6 +132,8 @@ export type AgentSettings = {
   model_base_url: string;
   model_protocol: ModelProtocol;
   resolved_model_protocol?: ResolvedModelProtocol;
+  detected_model_protocol?: ResolvedModelProtocol | null;
+  model_protocol_label?: string;
   api_key: string;
   api_key_configured: boolean;
   connection_id?: string;
@@ -150,6 +157,11 @@ type ModelServiceEvent = {
   base_url: string;
   protocol: ResolvedModelProtocol;
   created_at: string;
+  /** Estimated USD for this call (LiteLLM price map or the profile's own prices). */
+  cost_usd?: number | null;
+  backend?: string;
+  /** Set when this call answered as a router fallback for another profile. */
+  fallback_from_profile_id?: string;
 };
 
 export type ModelCapabilityStatus = "supported" | "unsupported" | "unknown";
@@ -174,6 +186,44 @@ export type ModelCapabilityReport = {
   probed: boolean;
   probe_error: string | null;
   attachment_vision_enabled?: boolean;
+  /** Merged report for the saved default profile (user > probe > LiteLLM > heuristic). */
+  merged?: ProfileCapabilityReport;
+};
+
+export type ProfileCapabilityName = "vision" | "tools" | "reasoning" | "structured_output" | "pdf" | "prompt_caching";
+export type ProfileCapabilitySource = "user" | "probe" | "litellm" | "heuristic" | "none";
+export type ProfileCapability = {
+  status: ModelCapabilityStatus;
+  source: ProfileCapabilitySource;
+  detail: string;
+  label: string;
+  overridden: boolean;
+  probe_status: "supported" | "unsupported" | null;
+  litellm_status: "supported" | "unsupported" | null;
+};
+export type ProfileCapabilityReport = {
+  profile_id: string;
+  model_name: string;
+  protocol: ResolvedModelProtocol;
+  capabilities: Record<ProfileCapabilityName, ProfileCapability>;
+  context_window: { tokens: number | null; source: "user" | "litellm" | "none" };
+  max_output_tokens: { tokens: number | null; source: "litellm" | "none" };
+  litellm_known: boolean;
+  pricing: { input_per_million_usd: number | null; output_per_million_usd: number | null };
+  probe_error?: string | null;
+};
+
+export type ModelRetryPolicy = { timeout: number; rate_limit: number; server_error: number };
+export type ModelFallbackPolicy = {
+  enabled: boolean;
+  fallback_profile_ids: string[];
+  context_window_profile_ids: string[];
+  content_policy_profile_ids: string[];
+  retry_policy: ModelRetryPolicy;
+  allowed_fails: number;
+  cooldown_seconds: number;
+  revision: number;
+  backend?: "litellm" | "native";
 };
 
 export type ModelServiceMonitor = {
@@ -184,6 +234,9 @@ export type ModelServiceMonitor = {
   model_name: string;
   base_url: string;
   protocol: ResolvedModelProtocol;
+  configured_protocol?: ModelProtocol;
+  detected_protocol?: ResolvedModelProtocol | null;
+  protocol_label?: string;
   api_key_configured: boolean;
   window_hours: number;
   summary: {
@@ -196,6 +249,10 @@ export type ModelServiceMonitor = {
     timeout_count: number;
     consecutive_failures: number;
     total_tokens?: number;
+    estimated_cost_usd?: number | null;
+    priced_requests?: number;
+    unpriced_requests?: number;
+    fallback_requests?: number;
   };
   usage?: {
     window_hours: number;
@@ -218,6 +275,8 @@ export type ModelServiceCheck = ModelServiceMonitor & {
   available: boolean;
   check_error_code: string | null;
   check_error_message: string | null;
+  /** Machine-readable hint, e.g. "responses" when Chat Completions was rejected. */
+  suggested_protocol?: ResolvedModelProtocol | null;
 };
 
 export type AgentOperationsSnapshot = {

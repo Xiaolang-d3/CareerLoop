@@ -10,6 +10,10 @@ export type ModelSelection = {
   model_base_url?: string;
   model_protocol?: string;
   stage_selections?: Record<string, { model_name?: string; profile_id?: string; profile_revision?: number; connection_revision?: number }>;
+  /** A LiteLLM router fallback model answered (part of) this turn. */
+  fallback_used?: boolean;
+  answered_profile_id?: string;
+  answered_model_name?: string;
 };
 
 export type AgentRunResult = {

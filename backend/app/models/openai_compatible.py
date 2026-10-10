@@ -15,6 +15,7 @@ from openai import (
     RateLimitError,
 )
 
+from ..redaction import remember_secret
 from ..domain import ModelRequest, ModelResponse, ModelStreamEvent, ModelUsage, ToolCall
 from ..agent.settings import get_agent_settings, persona_prompt
 from ..observability.model_monitor import record_model_service_event
@@ -91,6 +92,8 @@ class OpenAICompatibleProvider:
         if not api_key:
             raise ValueError("启用 OpenAI Provider 时必须配置 OPENAI_API_KEY")
         self._model = model
+        self._secret = api_key  # masked in error messages
+        remember_secret(api_key)  # masked verbatim in logs
         self._base_url = self._normalize_base_url(base_url)
         self._client = AsyncOpenAI(
             api_key=api_key,
@@ -362,8 +365,12 @@ class OpenAICompatibleProvider:
         """The model catalog address actually requested, after base URL normalization."""
         return f"{str(self._client.base_url).rstrip('/')}/models"
 
+    def _provider_error(self, exc: Exception) -> ModelProviderError:
+        # Gateways may echo the key back in error bodies; never surface or store it.
+        return self._map_provider_error(exc).redact(self._secret)
+
     @staticmethod
-    def _provider_error(exc: Exception) -> ModelProviderError:
+    def _map_provider_error(exc: Exception) -> ModelProviderError:
         if isinstance(exc, AuthenticationError):
             return ModelProviderError(
                 "authentication_failed",
@@ -407,6 +414,11 @@ class OpenAICompatibleProvider:
                 return ModelProviderError(
                     "route_not_found",
                     "当前地址没有提供 Chat Completions 路由，可检查协议或 API 根路径",
+                )
+            if exc.status_code in {400, 404, 422} and _rejects_chat_completions(normalized_detail):
+                return ModelProviderError(
+                    "protocol_unsupported",
+                    f"模型不支持 Chat Completions 协议，可在连接的接口协议中改用 OpenAI Responses API：{detail[:200]}",
                 )
             message = f"模型服务返回异常状态（{exc.status_code}）"
             if detail:
@@ -552,3 +564,15 @@ class OpenAICompatibleProvider:
                     content.append({"type": "image_url", "image_url": {"url": image_url}})
             return {"role": message.role, "content": content}
         return {"role": message.role, "content": message.content}
+
+
+_CHAT_COMPLETIONS_MARKERS = ("chat completions", "chat/completions", "chat_completions", "chat completion")
+_UNSUPPORTED_MARKERS = ("不支持", "not support", "unsupported", "only supports", "only available", "use the responses", "responses api")
+
+
+def _rejects_chat_completions(detail: str) -> bool:
+    """Upstream explicitly says this model cannot be served over Chat Completions."""
+    text = detail.lower()
+    return any(marker in text for marker in _CHAT_COMPLETIONS_MARKERS) and any(
+        marker in text for marker in _UNSUPPORTED_MARKERS
+    )

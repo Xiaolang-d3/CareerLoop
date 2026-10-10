@@ -23,15 +23,87 @@ _OPENAI_ERRORS = (
 )
 
 
+_REASONING_EFFORTS = frozenset({"low", "medium", "high"})
+_ENCRYPTED_REASONING_INCLUDE = "reasoning.encrypted_content"
+_REASONING_DELTA_EVENTS = frozenset({"response.reasoning_summary_text.delta", "response.reasoning_text.delta"})
+# Optional request features an upstream rejected, remembered per API root and
+# model so later providers for the same connection skip the failing request.
+_UNSUPPORTED_OPTIONS: dict[tuple[str, str], set[str]] = {}
+
+
+def clear_unsupported_option_cache() -> None:
+    _UNSUPPORTED_OPTIONS.clear()
+
+
+def _field(value: Any, name: str, default: Any = None) -> Any:
+    return value.get(name, default) if isinstance(value, dict) else getattr(value, name, default)
+
+
+def _rejected_option(arguments: dict[str, Any], exc: Exception) -> str | None:
+    """Name the optional argument an upstream 400 explicitly complains about."""
+    if not isinstance(exc, APIStatusError) or getattr(exc, "status_code", None) not in {400, 422}:
+        return None
+    text = f"{upstream_error_detail(exc)} {getattr(exc, 'message', '')}".lower()
+    if "include" in arguments and any(word in text for word in ("include", "encrypted")):
+        return "include"
+    if "reasoning" in arguments and any(word in text for word in ("reasoning", "effort", "summary")):
+        return "reasoning"
+    if "include" in arguments and "reasoning" in text:
+        return "include"
+    return None
+
+
+def _reasoning_items(output: list[Any]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Collect replayable reasoning items and their human-readable summaries."""
+    items: list[dict[str, Any]] = []
+    summaries: list[str] = []
+    for item in output:
+        if _field(item, "type", "") != "reasoning":
+            continue
+        summary: list[dict[str, str]] = []
+        for part in _field(item, "summary", None) or []:
+            text = str(_field(part, "text", "") or "")
+            if text:
+                summary.append({"type": "summary_text", "text": text})
+                summaries.append(text)
+        encrypted = _field(item, "encrypted_content", None)
+        # With store=False only encrypted reasoning can be replayed; an id
+        # alone refers to an item the server never persisted.
+        if encrypted:
+            items.append({
+                "type": "reasoning",
+                "id": str(_field(item, "id", "") or ""),
+                "encrypted_content": str(encrypted),
+                "summary": summary,
+            })
+    return items, summaries
+
+
 class OpenAIResponsesProvider(OpenAICompatibleProvider):
     """OpenAI Responses API provider sharing the configured API root and key."""
 
     name = "responses"
 
+    @property
+    def _unsupported_options(self) -> set[str]:
+        return _UNSUPPORTED_OPTIONS.setdefault((self._base_url or "", self._model), set())
+
+    async def _create(self, arguments: dict[str, Any]) -> Any:
+        """Create a response, retrying once per optional feature the upstream rejects."""
+        while True:
+            try:
+                return await self._client.responses.create(**arguments)
+            except APIStatusError as exc:
+                option = _rejected_option(arguments, exc)
+                if option is None:
+                    raise
+                arguments.pop(option, None)
+                self._unsupported_options.add(option)
+
     async def generate(self, request: ModelRequest) -> ModelResponse:
         started_at = perf_counter()
         try:
-            response = await self._client.responses.create(**self._request_arguments(request))
+            response = await self._create(self._request_arguments(request))
             result = self._response_from_response(response)
         except _OPENAI_ERRORS as exc:
             error = self._provider_error(exc)
@@ -60,13 +132,19 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
         stream = None
         completed_response = None
         try:
-            stream = await self._client.responses.create(**arguments)
+            stream = await self._create(arguments)
             async for event in stream:
                 event_type = getattr(event, "type", "")
                 if event_type == "response.output_text.delta":
                     delta = str(getattr(event, "delta", "") or "")
                     if delta:
                         yield ModelStreamEvent(type="text_delta", delta=delta)
+                elif event_type in _REASONING_DELTA_EVENTS:
+                    delta = str(getattr(event, "delta", "") or "")
+                    if delta:
+                        yield ModelStreamEvent(type="reasoning_delta", delta=delta)
+                elif event_type == "response.reasoning_summary_part.added" and int(getattr(event, "summary_index", 0) or 0) > 0:
+                    yield ModelStreamEvent(type="reasoning_delta", delta="\n\n")
                 elif event_type == "response.completed":
                     completed_response = getattr(event, "response", None)
         except _OPENAI_ERRORS as exc:
@@ -181,12 +259,28 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
                 for tool in request.tools
             ]
             arguments["tool_choice"] = request.tool_choice
+        unsupported = self._unsupported_options
+        if "include" not in unsupported:
+            # store=False keeps nothing server-side; encrypted reasoning lets the
+            # model keep its chain of thought across tool turns.
+            arguments["include"] = [_ENCRYPTED_REASONING_INCLUDE]
+        if request.reasoning_effort in _REASONING_EFFORTS and "reasoning" not in unsupported:
+            arguments["reasoning"] = {"effort": request.reasoning_effort, "summary": "auto"}
         return arguments
 
     @staticmethod
     def _convert_input_message(message: Any) -> list[dict[str, Any]]:
         if message.role == "assistant" and message.payload.get("tool_calls"):
             items: list[dict[str, Any]] = []
+            # Reasoning must precede the function calls it produced.
+            for reasoning in message.payload.get("responses_reasoning_items") or []:
+                if isinstance(reasoning, dict) and reasoning.get("encrypted_content"):
+                    items.append({
+                        "type": "reasoning",
+                        "id": str(reasoning.get("id") or ""),
+                        "encrypted_content": str(reasoning["encrypted_content"]),
+                        "summary": list(reasoning.get("summary") or []),
+                    })
             if message.content:
                 items.append({"role": "assistant", "content": message.content})
             items.extend(
@@ -251,15 +345,21 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
                 output_tokens=int(getattr(raw_usage, "output_tokens", 0) or 0),
                 total_tokens=int(getattr(raw_usage, "total_tokens", 0) or 0),
             )
+        metadata: dict[str, Any] = {
+            "model": getattr(response, "model", self._model),
+            "finish_reason": getattr(response, "status", None),
+            "response_id": getattr(response, "id", "") or "",
+            "base_url": self._base_url,
+            "protocol": self.name,
+        }
+        reasoning_items, summaries = _reasoning_items(output)
+        if reasoning_items:
+            metadata["responses_reasoning_items"] = reasoning_items
+        if summaries:
+            metadata["reasoning_summary"] = "\n\n".join(summaries)
         return ModelResponse(
             content=str(getattr(response, "output_text", "") or ""),
             tool_calls=tool_calls,
             usage=usage,
-            provider_metadata={
-                "model": getattr(response, "model", self._model),
-                "finish_reason": getattr(response, "status", None),
-                "response_id": getattr(response, "id", "") or "",
-                "base_url": self._base_url,
-                "protocol": self.name,
-            },
+            provider_metadata=metadata,
         )
