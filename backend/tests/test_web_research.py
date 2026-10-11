@@ -4,11 +4,15 @@ import unittest
 from unittest.mock import patch
 
 from app.config import Settings
+from app.research.options import SearchRequest, SearchResponse
+from app.research.search import public_search_capabilities, validate_search_options
+from app.search_options import WebSearchOptions
 from app.tools import SearchPublicWebTool, ToolContext
-from app.research.web import AgentSearchClient, validate_backend_url
+from app.research.web import AgentSearchClient, WebResearchError, validate_backend_url
 
 
 class FakeAgentSearchClient:
+    provider = "agent_search"
     def __init__(self) -> None:
         self.queries: list[str] = []
         self.modes: list[str] = []
@@ -29,8 +33,13 @@ class FakeAgentSearchClient:
             }
         ]
 
-    async def search(self, query: str, count: int, *, mode: str = "general"):
-        return await self.search_extract(query, count, mode=mode)
+    async def search(self, request: SearchRequest):
+        mode = request.task_category if request.topic == "auto" else request.topic
+        sources = await self.search_extract(request.query, request.count, mode=mode)
+        return SearchResponse(
+            sources=sources, provider=self.provider, requested_topic=request.topic,
+            sent_topic=mode, effective_topic=mode, source_preference=request.source_preference,
+        )
 
     async def enrich_sources(self, sources, *, concurrency: int = 1):
         return sources, []
@@ -39,14 +48,14 @@ class FakeAgentSearchClient:
 
 
 class EmptyAgentSearchClient(FakeAgentSearchClient):
-    async def search(self, query: str, count: int, *, mode: str = "general"):
+    async def search_extract(self, query: str, count: int, *, mode: str = "general"):
         self.queries.append(query)
         self.modes.append(mode)
         return []
 
 
 class CountRespectingAgentSearchClient(FakeAgentSearchClient):
-    async def search(self, query: str, count: int, *, mode: str = "general"):
+    async def search_extract(self, query: str, count: int, *, mode: str = "general"):
         self.queries.append(query)
         self.modes.append(mode)
         return [
@@ -151,7 +160,7 @@ class WebResearchTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.data["source_count"], 8)
         self.assertEqual(result.data["evidence_count"], 8)
 
-    async def test_generic_web_search_can_prioritize_technical_sources(self) -> None:
+    async def test_agent_search_rejects_legacy_technical_soft_preference_before_search(self) -> None:
         client = FakeAgentSearchClient()
         result = await SearchPublicWebTool(
             settings=Settings(web_research_enabled=True),
@@ -161,10 +170,77 @@ class WebResearchTest(unittest.IsolatedAsyncioTestCase):
             ToolContext(platform_name="manual", web_search_mode="technical"),
         )
 
-        self.assertTrue(result.ok)
-        self.assertEqual(result.data["search_mode"], "technical")
-        self.assertIn("site:stackoverflow.com", client.queries[0])
-        self.assertIn("site:docs.python.org", client.queries[0])
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error.code, "web_search_source_preference_unsupported")
+        self.assertEqual(client.queries, [])
+
+    async def test_agent_search_manual_topic_overrides_task_hint(self) -> None:
+        for topic, category in (("general", "news"), ("news", "company")):
+            with self.subTest(topic=topic):
+                client = FakeAgentSearchClient()
+                result = await SearchPublicWebTool(settings=Settings(web_research_enabled=True), client=client).execute(
+                    {"query": "示例科技", "category": category},
+                    ToolContext(platform_name="manual", web_search_options=WebSearchOptions(
+                        enabled=True, topic=topic, provider="agent_search",
+                    )),
+                )
+                self.assertTrue(result.ok)
+                self.assertEqual(client.modes, [topic])
+                self.assertEqual(client.queries, ["示例科技"])
+                self.assertEqual(result.data["search_metadata"]["effective_topic"], topic)
+
+    async def test_disabled_turn_cannot_be_enabled_by_tool_arguments_or_injected_client(self) -> None:
+        client = FakeAgentSearchClient()
+        result = await SearchPublicWebTool(settings=Settings(web_research_enabled=True), client=client).execute(
+            {"query": "公开资料", "enabled": True, "topic": "finance"},
+            ToolContext(platform_name="manual", web_search_options=WebSearchOptions(enabled=False)),
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error.code, "web_search_not_allowed")
+        self.assertEqual(client.queries, [])
+
+    async def test_provider_change_and_unsupported_finance_do_not_make_search_requests(self) -> None:
+        for options, code in (
+            (WebSearchOptions(enabled=True, provider="tavily"), "web_search_provider_changed"),
+            (WebSearchOptions(enabled=True, topic="finance", provider="agent_search"), "web_search_topic_unsupported"),
+        ):
+            with self.subTest(code=code):
+                client = FakeAgentSearchClient()
+                result = await SearchPublicWebTool(settings=Settings(web_research_enabled=True), client=client).execute(
+                    {"query": "公开资料"}, ToolContext(platform_name="manual", web_search_options=options),
+                )
+                self.assertFalse(result.ok)
+                self.assertEqual(result.error.code, code)
+                self.assertEqual(client.queries, [])
+
+    async def test_agent_search_adapter_selects_task_only_when_auto(self) -> None:
+        client = AgentSearchClient(base_url="http://127.0.0.1:3939")
+        for topic, task, sent in (
+            ("auto", "company", "company"), ("auto", "news", "news"),
+            ("general", "news", "general"), ("news", "company", "news"),
+        ):
+            with self.subTest(topic=topic, task=task), patch.object(AgentSearchClient, "_request", return_value={"results": []}) as send:
+                response = await client.search(SearchRequest(query="公开资料", count=4, topic=topic, task_category=task))
+                send.assert_called_once_with("/search", {"q": "公开资料", "count": 4, "mode": sent})
+                self.assertEqual(response.sent_topic, sent)
+                self.assertEqual(response.effective_topic, sent)
+
+    async def test_agent_search_adapter_rejects_unsupported_options_before_http(self) -> None:
+        client = AgentSearchClient(base_url="http://127.0.0.1:3939")
+        for values in ({"topic": "finance"}, {"source_preference": "technical"}):
+            with self.subTest(values=values), patch.object(AgentSearchClient, "_request") as send:
+                with self.assertRaises(WebResearchError):
+                    await client.search(SearchRequest(query="公开资料", **values))
+                send.assert_not_called()
+
+    def test_capabilities_are_adapter_support_and_unknown_provider_is_unavailable(self) -> None:
+        self.assertEqual(public_search_capabilities("tavily")["supported_topics"], ["auto", "general", "news", "finance"])
+        self.assertTrue(public_search_capabilities("tavily")["supports_technical_preference"])
+        self.assertFalse(public_search_capabilities("agent_search")["supports_auto_parameters"])
+        for provider in ("disabled", "unknown"):
+            self.assertEqual(public_search_capabilities(provider)["supported_topics"], [])
+            with self.assertRaises(WebResearchError):
+                validate_search_options(WebSearchOptions(enabled=True), provider)
 
 
 

@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from ..domain import ToolDefinition, ToolResult
 from ..registry import NamedRegistry
+from ..search_options import WebSearchOptions
 from ..tooling import TOOL_SPECS, ToolSpec
 
 
@@ -16,6 +17,7 @@ class ToolContext(BaseModel):
     task_id: int | None = None
     user_content: str = ""
     web_search_mode: Literal["auto", "technical", "general"] = "auto"
+    web_search_options: WebSearchOptions | None = None
 
 
 class ToolHandler(Protocol):

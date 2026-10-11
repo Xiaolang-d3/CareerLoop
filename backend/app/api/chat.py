@@ -110,20 +110,19 @@ def _ag_ui_vision_attachment_ids(payload: RunAgentInput) -> list[str]:
     return raw_ids[:4]
 
 
-def _ag_ui_web_search(payload: RunAgentInput) -> bool:
+def _ag_ui_web_search_fields(payload: RunAgentInput) -> dict[str, Any]:
     forwarded = payload.forwarded_props or {}
-    value = forwarded.get("webSearch", False) if isinstance(forwarded, dict) else False
-    if not isinstance(value, bool):
-        raise HTTPException(status_code=422, detail="webSearch 必须是布尔值")
-    return value
-
-
-def _ag_ui_web_search_mode(payload: RunAgentInput) -> str:
-    forwarded = payload.forwarded_props or {}
-    value = forwarded.get("webSearchMode", "auto") if isinstance(forwarded, dict) else "auto"
-    if value not in {"auto", "technical", "general"}:
-        raise HTTPException(status_code=422, detail="webSearchMode 必须是 auto、technical 或 general")
-    return value
+    if not isinstance(forwarded, dict):
+        return {}
+    mapping = {
+        "webSearch": "web_search",
+        "webSearchMode": "web_search_mode",
+        "webSearchTopic": "web_search_topic",
+        "webSearchSourcePreference": "web_search_source_preference",
+        "webSearchProvider": "web_search_provider",
+    }
+    # Omitting a key must remain distinguishable from choosing false/auto/none.
+    return {field: forwarded[key] for key, field in mapping.items() if key in forwarded}
 
 
 @router.post("/ag-ui")
@@ -147,16 +146,19 @@ async def run_ag_ui(payload: dict[str, Any], request: Request) -> StreamingRespo
         if selected is not None and (not isinstance(selected, str) or not selected.strip() or len(selected) > 120):
             raise HTTPException(status_code=422, detail="modelProfileId 必须是模型档案 ID 或 null")
         model_selection["model_profile_id"] = selected
-    return await stream_chat_response(
-        ChatMessageIn(
+    try:
+        chat_input = ChatMessageIn(
             content=content,
             conversation_id=conversation_id,
             attachment_ids=_ag_ui_attachment_ids(ag_ui_input),
             vision_attachment_ids=_ag_ui_vision_attachment_ids(ag_ui_input),
-            web_search=_ag_ui_web_search(ag_ui_input),
-            web_search_mode=_ag_ui_web_search_mode(ag_ui_input),
+            **_ag_ui_web_search_fields(ag_ui_input),
             **model_selection,
-        ),
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors(include_url=False)) from exc
+    return await stream_chat_response(
+        chat_input,
         ag_ui_input=ag_ui_input,
         accept=request.headers.get("accept"),
     )

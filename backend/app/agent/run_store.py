@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from ..db import connect
 from ..domain import AgentRunResult, AgentRunSnapshot, ToolCall, ToolError, ToolResult
+from ..search_options import WebSearchOptions, web_search_options_from_payload
 from ..tooling import ToolSpec
 from .model_binding import internal_model_selection
 
@@ -77,16 +78,19 @@ class AgentRunStore:
         task_id: int | None,
         user_content: str,
         model_selection: dict[str, Any] | None = None,
+        web_search_options: WebSearchOptions | None = None,
     ) -> dict:
         with connect(self._db_path) as conn:
             conn.execute(
                 """
                 INSERT INTO agent_execution_runs
-                    (run_id, conversation_id, task_id, user_content, status, model_selection_json)
-                VALUES (?, ?, ?, ?, 'queued', ?)
+                    (run_id, conversation_id, task_id, user_content, status, model_selection_json, checkpoint_json)
+                VALUES (?, ?, ?, ?, 'queued', ?, ?)
                 ON CONFLICT(run_id) DO NOTHING
                 """,
-                (run_id, conversation_id, task_id, user_content, json.dumps(internal_model_selection(model_selection))),
+                (run_id, conversation_id, task_id, user_content, json.dumps(internal_model_selection(model_selection)),
+                 json.dumps({"binding_only": True, "web_search_options": web_search_options.model_dump()})
+                 if web_search_options is not None else "{}"),
             )
             row = conn.execute(
                 "SELECT * FROM agent_execution_runs WHERE run_id = ?",
@@ -117,7 +121,7 @@ class AgentRunStore:
                     "SELECT * FROM agent_execution_runs WHERE run_id = ?",
                     (run_id,),
                 ).fetchone()
-        return self._decode_run(_safe_row_to_dict(row))
+        return self._decode_run_with_search_options(_safe_row_to_dict(row))
 
     def get_run(self, run_id: str) -> dict | None:
         with connect(self._db_path) as conn:
@@ -125,7 +129,7 @@ class AgentRunStore:
                 "SELECT * FROM agent_execution_runs WHERE run_id = ?",
                 (run_id,),
             ).fetchone()
-        return self._decode_run(_safe_row_to_dict(row)) if row is not None else None
+        return self._decode_run_with_search_options(_safe_row_to_dict(row)) if row is not None else None
 
     def latest_for_conversation(self, conversation_id: int) -> dict | None:
         with connect(self._db_path) as conn:
@@ -136,7 +140,20 @@ class AgentRunStore:
                 """,
                 (conversation_id,),
             ).fetchone()
-        return self._decode_run(_safe_row_to_dict(row)) if row is not None else None
+        return self._decode_run_with_search_options(_safe_row_to_dict(row)) if row is not None else None
+
+    def _decode_run_with_search_options(self, raw: dict) -> dict:
+        run = self._decode_run(raw)
+        if run["web_search_options"] is None and run.get("user_message_id"):
+            with connect(self._db_path) as conn:
+                row = conn.execute(
+                    "SELECT payload_json FROM chat_messages WHERE id = ? AND conversation_id = ? AND role = 'user'",
+                    (run["user_message_id"], run.get("conversation_id")),
+                ).fetchone()
+            if row is not None:
+                payload = _safe_row_to_dict(row).get("payload")
+                run["web_search_options"] = web_search_options_from_payload(payload)
+        return run
 
     def list_steps(self, run_id: str) -> list[dict]:
         with connect(self._db_path) as conn:
@@ -184,7 +201,12 @@ class AgentRunStore:
         run_id: str,
         snapshot: AgentRunSnapshot,
     ) -> None:
-        snapshot = snapshot.model_copy(update={"model_selection": internal_model_selection(snapshot.model_selection)})
+        existing = self.get_run(run_id)
+        original_options = existing.get("web_search_options") if existing is not None else None
+        snapshot = snapshot.model_copy(update={
+            "model_selection": internal_model_selection(snapshot.model_selection),
+            "web_search_options": original_options or snapshot.web_search_options,
+        })
         with connect(self._db_path) as conn:
             conn.execute(
                 """
@@ -240,7 +262,7 @@ class AgentRunStore:
             # calls cannot replace the first recorded completion time.
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
-                "SELECT status, started_at, completed_at, result_json FROM agent_execution_runs WHERE run_id = ?",
+                "SELECT status, started_at, completed_at, result_json, checkpoint_json FROM agent_execution_runs WHERE run_id = ?",
                 (run_id,),
             ).fetchone()
             if row is not None:
@@ -274,6 +296,13 @@ class AgentRunStore:
             checkpoint_json = (
                 result.snapshot.model_dump_json() if result.snapshot is not None else None
             )
+            if checkpoint_json is None and row is not None:
+                original_checkpoint = _safe_row_to_dict(row).get("checkpoint")
+                if isinstance(original_checkpoint, dict) and original_checkpoint.get("web_search_options") is not None:
+                    checkpoint_json = json.dumps({
+                        "binding_only": True,
+                        "web_search_options": web_search_options_from_payload(original_checkpoint).model_dump(),
+                    })
             conn.execute(
                 """
                 UPDATE agent_execution_runs
@@ -493,17 +522,22 @@ class AgentRunStore:
                 run[field] = timestamp.isoformat(timespec="milliseconds")
         raw_checkpoint = run.get("checkpoint")
         raw_result = run.get("result")
-        checkpoint = cls._decode_model(AgentRunSnapshot, raw_checkpoint)
+        binding_only = isinstance(raw_checkpoint, dict) and raw_checkpoint.get("binding_only") is True
+        checkpoint = None if binding_only else cls._decode_model(AgentRunSnapshot, raw_checkpoint)
         result = cls._decode_model(AgentRunResult, raw_result)
         run["checkpoint"] = checkpoint
         run["result"] = result
         run["checkpoint_invalid"] = bool(run.get("checkpoint_invalid")) or (
-            isinstance(raw_checkpoint, dict) and bool(raw_checkpoint) and checkpoint is None
+            not binding_only and isinstance(raw_checkpoint, dict) and bool(raw_checkpoint) and checkpoint is None
         )
         run["result_invalid"] = bool(run.get("result_invalid")) or (
             isinstance(raw_result, dict) and bool(raw_result) and result is None
         )
         run["cancel_requested"] = bool(run.get("cancel_requested"))
+        options_payload = raw_checkpoint if isinstance(raw_checkpoint, dict) and raw_checkpoint.get("web_search_options") is not None else None
+        if options_payload is None and result is not None and result.snapshot is not None:
+            options_payload = {"web_search_options": result.snapshot.web_search_options} if result.snapshot.web_search_options is not None else None
+        run["web_search_options"] = web_search_options_from_payload(options_payload) if options_payload is not None else None
         if not isinstance(run.get("model_selection"), dict):
             if run.get("model_selection") is not None:
                 run["model_selection_invalid"] = True

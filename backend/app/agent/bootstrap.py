@@ -8,6 +8,7 @@ from ..observability.model_context import public_model_selection
 from ..config import get_settings
 from ..models import ModelProviderRegistry, build_model_provider
 from ..model_protocol import protocol_requires_api_key
+from ..research.search import public_search_capabilities
 from ..tools import AskUserTool, SearchPublicWebTool, ToolRegistry
 from ..tools.library import GetLibraryContextTool, SearchLibraryTool, ProposeLibraryKnowledgeTool
 from .runtime import AgentRuntime
@@ -66,6 +67,7 @@ def _capabilities_payload(
     configured: bool,
     setup_message: str | None = None,
 ) -> dict[str, Any]:
+    search_provider = settings.resolved_web_search_provider if settings.web_research_enabled else "disabled"
     payload: dict[str, Any] = {
         "configured": configured,
         "active_model_provider": active_model_provider,
@@ -84,7 +86,8 @@ def _capabilities_payload(
         },
         "web_research": {
             "enabled": settings.web_research_enabled,
-            "provider": settings.resolved_web_search_provider if settings.web_research_enabled else "disabled",
+            "provider": search_provider,
+            **public_search_capabilities(search_provider),
         },
     }
     if setup_message:

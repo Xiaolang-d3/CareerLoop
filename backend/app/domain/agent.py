@@ -4,6 +4,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from ..search_options import WebSearchOptions
+
 
 class ToolDefinition(BaseModel):
     name: str = Field(min_length=1)
@@ -111,6 +113,7 @@ class AgentClarification(BaseModel):
 class AgentRunSnapshot(BaseModel):
     # Internal immutable identity only. Credentials are resolved from versioned storage.
     model_selection: dict[str, Any] = Field(default_factory=dict)
+    web_search_options: WebSearchOptions | None = None
     resume_mode: Literal["waiting_user", "checkpoint"] = "waiting_user"
     route_kind: str
     needs_plan: bool

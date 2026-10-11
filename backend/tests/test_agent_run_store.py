@@ -8,16 +8,19 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.agent.run_store import AgentRunStore
+from app.agent.snapshots import load_run_snapshot, save_run_snapshot
 from app.db import connect, init_db
 from app.domain import (
     AgentPlan,
     AgentPlanStep,
     AgentRunResult,
     AgentRunSnapshot,
+    AgentMessage,
     ToolCall,
     ToolResult,
 )
 from app.tooling import ToolSpec
+from app.search_options import WebSearchOptions
 
 
 class AgentRunStoreTest(unittest.TestCase):
@@ -37,6 +40,65 @@ class AgentRunStoreTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
+
+    def test_search_binding_survives_early_crash_checkpoint_and_terminal_replay(self) -> None:
+        options = WebSearchOptions(enabled=True, topic="news", provider="tavily")
+        run = self.store.start_run("search-binding", conversation_id=self.conversation_id,
+                                   task_id=self.task_id, user_content="AI动态", web_search_options=options)
+        self.assertEqual(run["web_search_options"], options)
+        self.assertIsNone(run["checkpoint"])
+        self.assertFalse(run["checkpoint_invalid"])
+        self.store.interrupt_active_runs()
+        changed = self.store.start_run("search-binding", conversation_id=self.conversation_id,
+                                       task_id=self.task_id, user_content="覆盖请求", web_search_options=WebSearchOptions())
+        self.assertEqual(changed["web_search_options"], options)
+        self.store.checkpoint("search-binding", AgentRunSnapshot(route_kind="web_search", needs_plan=False,
+                               web_search_options=WebSearchOptions(enabled=True, topic="finance")))
+        self.assertEqual(self.store.get_run("search-binding")["checkpoint"].web_search_options, options)
+        self.store.finish("search-binding", AgentRunResult(content="完成", provider="test", platform="manual", rounds=1))
+        self.assertEqual(self.store.get_run("search-binding")["web_search_options"], options)
+
+    def test_legacy_run_backfills_only_from_bound_user_message(self) -> None:
+        with connect(self.db_path) as conn:
+            user_id = conn.execute(
+                "INSERT INTO chat_messages (role, content, conversation_id, payload_json) VALUES ('user', '联网问题', ?, ?)",
+                (self.conversation_id, '{"web_search":true,"web_search_mode":"technical"}'),
+            ).lastrowid
+        self.store.start_run("legacy-binding", conversation_id=self.conversation_id, task_id=self.task_id, user_content="联网问题")
+        self.store.bind_messages("legacy-binding", user_message_id=user_id)
+        options = self.store.get_run("legacy-binding")["web_search_options"]
+        self.assertTrue(options.enabled)
+        self.assertEqual((options.topic, options.source_preference), ("general", "technical"))
+
+    def test_legacy_waiting_snapshot_does_not_inherit_later_user_consent(self) -> None:
+        snapshot = AgentRunSnapshot(route_kind="web_search", needs_plan=False,
+                                    allowed_tools=["search_public_web"], messages=[AgentMessage(role="user", content="原任务")])
+        save_run_snapshot(self.conversation_id, snapshot, self.db_path)
+        with connect(self.db_path) as conn:
+            conn.execute("INSERT INTO chat_messages (role, content, conversation_id, payload_json) VALUES ('user', '新任务', ?, ?)",
+                         (self.conversation_id, '{"web_search":true,"web_search_mode":"technical"}'))
+        loaded = load_run_snapshot(self.conversation_id, self.db_path)
+        self.assertFalse(loaded.web_search_options.enabled)
+
+    def test_legacy_waiting_snapshot_reads_bound_original_user_not_latest(self) -> None:
+        snapshot = AgentRunSnapshot(route_kind="web_search", needs_plan=False,
+                                    allowed_tools=["search_public_web"], messages=[AgentMessage(role="user", content="原任务")])
+        with connect(self.db_path) as conn:
+            user_id = conn.execute(
+                "INSERT INTO chat_messages (role, content, conversation_id, payload_json) VALUES ('user', '原任务', ?, ?)",
+                (self.conversation_id, '{"web_search":true,"web_search_mode":"technical"}'),
+            ).lastrowid
+        self.store.start_run("legacy-waiting", conversation_id=self.conversation_id, task_id=self.task_id, user_content="原任务")
+        self.store.bind_messages("legacy-waiting", user_message_id=user_id)
+        self.store.finish("legacy-waiting", AgentRunResult(content="请选择", provider="test", platform="manual", rounds=1,
+                                                         status="waiting_user", snapshot=snapshot))
+        save_run_snapshot(self.conversation_id, snapshot, self.db_path)
+        with connect(self.db_path) as conn:
+            conn.execute("INSERT INTO chat_messages (role, content, conversation_id, payload_json) VALUES ('user', '新任务', ?, ?)",
+                         (self.conversation_id, '{"web_search":false,"web_search_mode":"general"}'))
+        loaded = load_run_snapshot(self.conversation_id, self.db_path)
+        self.assertTrue(loaded.web_search_options.enabled)
+        self.assertEqual((loaded.web_search_options.topic, loaded.web_search_options.source_preference), ("general", "technical"))
 
     def test_run_lifecycle_persists_checkpoint_and_terminal_result(self) -> None:
         started = self.store.start_run(

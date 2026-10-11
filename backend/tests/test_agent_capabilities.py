@@ -80,7 +80,14 @@ class AgentCapabilitiesApiTest(unittest.TestCase):
             }):
                 response = self.client.get("/agent/capabilities")
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.json()["web_research"], {"enabled": enabled, "provider": expected})
+            search = response.json()["web_research"]
+            self.assertEqual(search["enabled"], enabled)
+            self.assertEqual(search["provider"], expected)
+            self.assertEqual(search["supported_topics"],
+                             ["auto", "general", "news", "finance"] if expected == "tavily"
+                             else ["auto", "general", "news"] if expected == "agent_search" else [])
+            self.assertIs(search["supports_auto_parameters"], expected == "tavily")
+            self.assertIs(search["supports_technical_preference"], expected == "tavily")
             self.assertNotIn("tvly-private-test-key", response.text)
 
     def test_ag_ui_returns_400_when_api_key_missing(self) -> None:

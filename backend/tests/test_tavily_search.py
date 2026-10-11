@@ -8,9 +8,11 @@ from unittest.mock import patch
 import httpx
 
 from app.config import Settings, get_settings
+from app.research.options import SearchRequest, TECHNICAL_DOMAINS
 from app.research.search import build_public_search_client
 from app.research.tavily import TavilySearchClient
 from app.research.web import AgentSearchClient, WebResearchError
+from app.search_options import WebSearchOptions
 from app.tools import SearchPublicWebTool, ToolContext
 
 
@@ -107,6 +109,78 @@ class TavilySearchTest(unittest.IsolatedAsyncioTestCase):
         await client.search("示例科技", 3, mode="company")
         self.assertEqual(payloads[0]["query"], "示例科技")
         self.assertEqual(payloads[0]["topic"], "general")
+
+    async def test_structured_search_uses_native_topics_and_basic_auto_parameters(self) -> None:
+        for topic, task in (("auto", "company"), ("general", "news"), ("news", "general"), ("finance", "company")):
+            requests = []
+
+            def respond(request):
+                requests.append(request)
+                return httpx.Response(200, json={
+                    "results": [public_item()], "auto_parameters": {"topic": "news" if topic == "auto" else topic},
+                })
+
+            with self.subTest(topic=topic):
+                client = TavilySearchClient(TEST_KEY, transport=httpx.MockTransport(respond))
+                response = await client.search(SearchRequest(query="示例资料", count=3, topic=topic, task_category=task))
+                payload = json.loads(requests[0].content)
+                self.assertEqual(payload["auto_parameters"], topic == "auto")
+                self.assertEqual(payload["search_depth"], "basic")
+                if topic == "auto":
+                    self.assertNotIn("topic", payload)
+                    self.assertIsNone(response.sent_topic)
+                    self.assertEqual(response.effective_topic, "news")
+                else:
+                    self.assertEqual(payload["topic"], topic)
+                    self.assertEqual(response.sent_topic, topic)
+                    self.assertEqual(response.effective_topic, topic)
+                self.assertFalse(payload["include_answer"])
+                self.assertEqual(payload["include_raw_content"], "markdown")
+                self.assertFalse(payload["include_images"])
+                self.assertNotIn("time_range", payload)
+                self.assertEqual(response.requested_topic, topic)
+
+    async def test_technical_preference_is_structured_and_query_stays_unchanged(self) -> None:
+        requests = []
+
+        def respond(request):
+            requests.append(request)
+            return httpx.Response(200, json={"results": [public_item()]})
+
+        client = TavilySearchClient(TEST_KEY, transport=httpx.MockTransport(respond))
+        response = await client.search(SearchRequest(
+            query="Python 最新发布", topic="news", source_preference="technical",
+        ))
+        payload = json.loads(requests[0].content)
+        self.assertEqual(payload["query"], "Python 最新发布")
+        self.assertNotIn("site:", payload["query"])
+        self.assertEqual(payload["include_domains"], list(TECHNICAL_DOMAINS))
+        self.assertEqual(payload["include_domains_mode"], "prefer")
+        self.assertEqual(payload["topic"], "news")
+        self.assertEqual(response.source_preference, "technical")
+
+    async def test_actual_topic_is_unknown_when_service_omits_or_returns_invalid_metadata(self) -> None:
+        for metadata in (None, {}, {"topic": "company"}, {"topic": ["news"]}, "news"):
+            with self.subTest(metadata=metadata):
+                client = TavilySearchClient(TEST_KEY, transport=httpx.MockTransport(
+                    lambda request: httpx.Response(200, json={"results": [public_item()], "auto_parameters": metadata}),
+                ))
+                response = await client.search(SearchRequest(query="公开新闻", topic="auto", task_category="news"))
+                self.assertIsNone(response.effective_topic)
+                self.assertEqual(response.requested_topic, "auto")
+                self.assertIsNone(response.sent_topic)
+
+    async def test_explicit_topic_and_different_actual_service_topic_remain_separate(self) -> None:
+        client = TavilySearchClient(TEST_KEY, transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={
+                "results": [public_item()], "auto_parameters": {"topic": "news"},
+            }),
+        ))
+        response = await client.search(SearchRequest(query="公开资料", topic="general"))
+        self.assertEqual(response.requested_topic, "general")
+        self.assertEqual(response.sent_topic, "general")
+        self.assertEqual(response.effective_topic, "news")
+        self.assertEqual(len(response.warnings), 1)
 
     async def test_extract_only_missing_pages_and_preserves_partial_results(self) -> None:
         requests = []
@@ -217,6 +291,54 @@ class TavilySearchTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("external_content_notice", result.data)
         self.assertNotIn(TEST_KEY, str(result.model_dump()))
         self.assertEqual(len(requests), 1)
+
+    async def test_tool_user_topic_and_preference_override_model_arguments(self) -> None:
+        for topic, category in (("general", "news"), ("news", "company"), ("finance", "company"), ("auto", "news")):
+            requests = []
+
+            def respond(request):
+                requests.append(request)
+                return httpx.Response(200, json={"results": [public_item()], "auto_parameters": {"topic": "finance"}})
+
+            with self.subTest(topic=topic):
+                client = TavilySearchClient(TEST_KEY, transport=httpx.MockTransport(respond))
+                result = await SearchPublicWebTool(
+                    settings=Settings(web_research_enabled=True, tavily_api_key=TEST_KEY), client=client,
+                ).execute(
+                    {"query": "示例资料", "category": category, "topic": "news", "source_preference": "none"},
+                    ToolContext(platform_name="manual", web_search_options=WebSearchOptions(
+                        enabled=True, topic=topic, source_preference="technical", provider="tavily",
+                    )),
+                )
+                self.assertTrue(result.ok)
+                payload = json.loads(requests[0].content)
+                self.assertEqual(payload["query"], "示例资料")
+                self.assertEqual(payload.get("topic"), None if topic == "auto" else topic)
+                self.assertEqual(payload["include_domains_mode"], "prefer")
+                self.assertEqual(result.data["search_metadata"]["requested_topic"], topic)
+                self.assertEqual(result.data["search_metadata"]["effective_topic"], "finance")
+                self.assertEqual(result.data["search_metadata"]["source_preference"], "technical")
+                self.assertNotIn(TEST_KEY, str(result.model_dump()))
+
+    async def test_retry_preserves_identical_search_parameters(self) -> None:
+        requests = []
+
+        def respond(request):
+            requests.append(request)
+            if len(requests) == 1:
+                return httpx.Response(500, json={"detail": TEST_KEY})
+            return httpx.Response(200, json={"results": [public_item()]})
+
+        client = TavilySearchClient(TEST_KEY, transport=httpx.MockTransport(respond))
+        with patch("app.tools.search_public_web.asyncio.sleep"):
+            result = await SearchPublicWebTool(
+                settings=Settings(web_research_enabled=True, tavily_api_key=TEST_KEY), client=client,
+            ).execute({"query": "公开资料"}, ToolContext(
+                platform_name="manual", web_search_options=WebSearchOptions(enabled=True, topic="finance", provider="tavily"),
+            ))
+        self.assertTrue(result.ok)
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(requests[0].content, requests[1].content)
 
     async def test_auth_failure_does_not_retry_or_fall_back_to_agent_search(self) -> None:
         requests = []

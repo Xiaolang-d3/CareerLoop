@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 
 from ..version import USER_AGENT
+from .options import SearchRequest, SearchResponse, TECHNICAL_DOMAINS, legacy_search_request
 from .web import AgentSearchClient, WebResearchError, is_public_source_url
 
 
@@ -16,6 +17,7 @@ def _text(value: Any) -> str:
 
 @dataclass(frozen=True)
 class TavilySearchClient:
+    provider: ClassVar[str] = "tavily"
     api_key: str = field(repr=False)
     timeout_seconds: float = 25
     transport: httpx.AsyncBaseTransport | None = field(default=None, repr=False)
@@ -27,18 +29,28 @@ class TavilySearchClient:
                 "尚未配置 Tavily API Key，请在本地 backend/.env 中填写 TAVILY_API_KEY 并重启后端",
             )
 
-    async def search(self, query: str, count: int, *, mode: str = "general") -> list[dict[str, Any]]:
-        limit = max(1, min(count, 10))
-        payload = await self._request("/search", {
-            "query": query,
+    async def search(
+        self, request: SearchRequest | str, count: int | None = None, *, mode: str = "general",
+    ) -> SearchResponse | list[dict[str, Any]]:
+        legacy = isinstance(request, str)
+        if legacy:
+            request = legacy_search_request(request, count if count is not None else 8, mode)
+        limit = request.count
+        parameters: dict[str, Any] = {
+            "query": request.query,
             "max_results": limit,
-            "topic": "news" if mode == "news" else "general",
             "search_depth": "basic",
-            "auto_parameters": False,
+            "auto_parameters": request.topic == "auto",
             "include_answer": False,
             "include_raw_content": "markdown",
             "include_images": False,
-        })
+        }
+        if request.topic != "auto":
+            parameters["topic"] = request.topic
+        if request.source_preference == "technical":
+            parameters["include_domains"] = list(TECHNICAL_DOMAINS)
+            parameters["include_domains_mode"] = "prefer"
+        payload = await self._request("/search", parameters)
         raw_results = payload.get("results")
         if not isinstance(raw_results, list):
             raise WebResearchError("invalid_response", "Tavily 搜索结果格式不正确")
@@ -65,7 +77,24 @@ class TavilySearchClient:
             sources.append(normalized)
             if len(sources) >= limit:
                 break
-        return sources
+        if legacy:
+            return sources
+        returned_parameters = payload.get("auto_parameters")
+        returned_topic = returned_parameters.get("topic") if isinstance(returned_parameters, dict) else None
+        effective_topic = (
+            returned_topic
+            if isinstance(returned_topic, str) and returned_topic in {"general", "news", "finance"}
+            else None
+        )
+        warnings = []
+        if request.topic != "auto" and effective_topic is not None and effective_topic != request.topic:
+            warnings.append("搜索服务返回的实际类别与请求类别不同")
+        return SearchResponse(
+            sources=sources, provider="tavily", requested_topic=request.topic,
+            sent_topic=request.topic if request.topic != "auto" else None,
+            effective_topic=effective_topic,
+            source_preference=request.source_preference, warnings=warnings,
+        )
 
     async def enrich_sources(
         self,

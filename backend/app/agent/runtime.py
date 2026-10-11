@@ -26,6 +26,7 @@ from ..domain import (
     ToolResult,
 )
 from ..models import ModelProviderError, ModelProviderRegistry
+from ..search_options import WebSearchOptions, legacy_web_search_mode, web_search_options_from_payload
 from ..tools import ToolContext, ToolRegistry
 from ..observability.model_context import model_call_scope
 from .model_binding import internal_model_selection, is_bound_selection, is_legacy_selection, selection_identity
@@ -150,6 +151,7 @@ class AgentRuntime:
         self._model_router = model_router
         self._selection_context: ContextVar[dict[str, Any]] = ContextVar(f"selection-{id(self)}", default={})
         self._run_context: ContextVar[str] = ContextVar(f"run-{id(self)}", default="")
+        self._search_context: ContextVar[WebSearchOptions | None] = ContextVar(f"search-{id(self)}", default=None)
         self._tool_executor = ToolExecutor(tools, tool_timeout_seconds)
 
     @property
@@ -196,6 +198,7 @@ class AgentRuntime:
         image_urls: list[str] | None = None,
         routing_content: str | None = None,
         web_search_mode: str = "auto",
+        web_search_options: WebSearchOptions | None = None,
         resume: AgentRunSnapshot | None = None,
         run_id: str | None = None,
         model_selection: dict[str, Any] | None = None,
@@ -213,6 +216,26 @@ class AgentRuntime:
         ):
             # Do not revive retired career tools from a persisted checkpoint.
             resume = None
+        options = web_search_options
+        if resume is not None:
+            inherited = resume.web_search_options
+            if inherited is None:
+                original_user = next((message for message in reversed(resume.messages) if message.role == "user"), None)
+                inherited = web_search_options_from_payload(original_user.payload if original_user is not None else None)
+            if resume.resume_mode == "checkpoint" or options is None:
+                options = inherited
+            elif options != inherited:
+                # A confirmation with changed consent is a fresh plan with fresh
+                # tool permissions; completed context is preserved for the model.
+                original_content = "\n".join(message.content for message in resume.messages if message.role == "user")
+                history = [*resume.messages]
+                routing_content = original_content + "\n" + user_content
+                resume = None
+        if options is not None:
+            web_search_mode = legacy_web_search_mode(options)
+            routing_content = (routing_content or user_content).replace("[系统可信开关：本轮允许联网搜索]", "")
+            if options.enabled:
+                routing_content += "\n[系统可信开关：本轮允许联网搜索]"
         selection = internal_model_selection(model_selection or self._model_selection)
         if resume is not None:
             # A legacy checkpoint has no evidence about its previous model.
@@ -233,6 +256,7 @@ class AgentRuntime:
                 }
         selection_token = self._selection_context.set(selection)
         run_token = self._run_context.set(str(run_id or ""))
+        search_token = self._search_context.set(options)
         try:
             result = await self._run(
                 user_content, platform_name=platform_name, history=history,
@@ -245,6 +269,7 @@ class AgentRuntime:
         finally:
             self._run_context.reset(run_token)
             self._selection_context.reset(selection_token)
+            self._search_context.reset(search_token)
 
     async def _run(
         self,
@@ -277,6 +302,9 @@ class AgentRuntime:
             )
         routing_text = routing_content or user_content
         available_tools = set(self._tools.names())
+        options = self._search_context.get()
+        if options is not None and not options.enabled:
+            available_tools -= WEB_RESEARCH_TOOLS
         tool_specs = {spec.name: spec for spec in self._tools.specs()}
         route = route_task(
             routing_text,
@@ -634,6 +662,7 @@ class AgentRuntime:
     ) -> AgentRunSnapshot:
         return AgentRunSnapshot(
             model_selection=self._current_model_selection(),
+            web_search_options=self._search_context.get(),
             resume_mode=resume_mode,
             route_kind=route.kind,
             needs_plan=route.needs_plan,
@@ -1054,6 +1083,7 @@ class AgentRuntime:
                             task_id=task_id,
                             user_content=user_content,
                             web_search_mode=web_search_mode,
+                            web_search_options=self._search_context.get(),
                         ),
                         round_number=round_number,
                         conversation_id=conversation_id,
@@ -1267,6 +1297,14 @@ class AgentRuntime:
                 if decision.result is None:
                     raise RuntimeError("持久化工具决策缺少结果")
                 return decision.result
+        if (tool_call.name in WEB_RESEARCH_TOOLS and context.web_search_options is not None
+                and not context.web_search_options.enabled):
+            message = "本轮未获得联网许可，不能新增搜索；请开启联网后重新发送。"
+            blocked = ToolResult(ok=False, status="blocked", message=message,
+                                 error=ToolError(code="web_search_not_allowed", message=message))
+            if self._run_store is not None and run_id is not None and fingerprint is not None:
+                self._run_store.record_tool_result(run_id, fingerprint, blocked)
+            return blocked
         for retry_number in range(self._max_tool_retries + 1):
             result = await self._await_with_cancellation(
                 self._tool_executor.execute(
@@ -1485,6 +1523,7 @@ class AgentRuntime:
         image_urls: list[str] | None = None,
         routing_content: str | None = None,
         web_search_mode: str = "auto",
+        web_search_options: WebSearchOptions | None = None,
         resume: AgentRunSnapshot | None = None,
         run_id: str | None = None,
         model_selection: dict[str, Any] | None = None,
@@ -1492,6 +1531,7 @@ class AgentRuntime:
         execution_id = run_id or f"agent-{uuid.uuid4().hex}"
         effective_content = user_content
         effective_resume = resume
+        effective_options = web_search_options
         effective_selection = internal_model_selection(model_selection or self._model_selection)
         if resume is not None:
             effective_selection = internal_model_selection(resume.model_selection)
@@ -1509,6 +1549,8 @@ class AgentRuntime:
             else:
                 if existing is not None:
                     effective_selection = internal_model_selection(existing.get("model_selection"))
+                    # Reconnecting a run never accepts current composer values.
+                    effective_options = existing.get("web_search_options") or WebSearchOptions()
                 if (
                     existing is not None
                     and existing["status"] == "interrupted"
@@ -1516,7 +1558,8 @@ class AgentRuntime:
                     effective_content = str(existing.get("user_content") or user_content)
                     if existing.get("checkpoint") is not None:
                         effective_resume = existing["checkpoint"].model_copy(
-                            update={"resume_mode": "checkpoint"}
+                            update={"resume_mode": "checkpoint",
+                                    "web_search_options": effective_options}
                         )
                 self._run_store.start_run(
                     execution_id,
@@ -1524,6 +1567,7 @@ class AgentRuntime:
                     task_id=task_id,
                     user_content=effective_content,
                     model_selection=effective_selection,
+                    web_search_options=effective_options,
                 )
         queue: asyncio.Queue[AgentStreamEvent | None] = asyncio.Queue()
 
@@ -1550,6 +1594,7 @@ class AgentRuntime:
                         image_urls=image_urls,
                         routing_content=routing_content,
                         web_search_mode=web_search_mode,
+                        web_search_options=effective_options,
                         resume=effective_resume,
                         run_id=execution_id,
                         model_selection=effective_selection,

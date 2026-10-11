@@ -6,12 +6,13 @@ import json
 import socket
 from dataclasses import dataclass
 from http.client import RemoteDisconnected
-from typing import Any
+from typing import Any, ClassVar
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import ProxyHandler, Request, build_opener
 
 from ..version import USER_AGENT
+from .options import SearchRequest, SearchResponse, legacy_search_request
 
 PROXY_FAKE_IP_NETWORK = ipaddress.ip_network("198.18.0.0/15")
 
@@ -133,6 +134,7 @@ def _source_classification(domain: str, official_domain: str) -> tuple[int, str]
 
 @dataclass(frozen=True)
 class AgentSearchClient:
+    provider: ClassVar[str] = "agent_search"
     base_url: str
     token: str | None = None
     timeout_seconds: float = 25
@@ -160,12 +162,36 @@ class AgentSearchClient:
 
     async def search(
         self,
-        query: str,
-        count: int,
+        request: SearchRequest | str,
+        count: int | None = None,
         *,
         mode: str = "general",
-    ) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(self._search_sync, query, count, mode)
+    ) -> SearchResponse | list[dict[str, Any]]:
+        legacy = isinstance(request, str)
+        if legacy:
+            request = legacy_search_request(request, count if count is not None else 8, mode)
+        # Unsupported settings fail before HTTP, never become a different mode.
+        if request.topic == "finance":
+            raise WebResearchError(
+                "web_search_topic_unsupported", "AgentSearch 不支持金融类别，请选择其他类别后重新发送",
+            )
+        if request.source_preference == "technical":
+            raise WebResearchError(
+                "web_search_source_preference_unsupported",
+                "AgentSearch 不支持优先技术资料，请选择不限来源后重新发送",
+            )
+        selected_mode = (
+            "company" if legacy and mode == "company"
+            else request.task_category if request.topic == "auto" else request.topic
+        )
+        sources = await asyncio.to_thread(self._search_sync, request.query, request.count, selected_mode)
+        if legacy:
+            return sources
+        return SearchResponse(
+            sources=sources, provider="agent_search", requested_topic=request.topic,
+            sent_topic=selected_mode, effective_topic=selected_mode,
+            source_preference=request.source_preference,
+        )
 
     async def enrich_sources(
         self,
@@ -207,7 +233,7 @@ class AgentSearchClient:
             {
                 "q": query,
                 "count": max(1, min(count, 10)),
-                "mode": mode if mode in {"general", "news", "company"} else "general",
+                "mode": mode,
             },
         )
         return self._normalize_search_payload(payload)
