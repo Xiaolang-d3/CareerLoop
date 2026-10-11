@@ -127,9 +127,13 @@ backend/app/
 
 消息复制只复制用户文本或助手结果正文，复制反馈通过按钮提示和状态播报提供。编辑输入上限与新消息相同；编辑重发/重新生成继续沿用既有删除消息尾部再发送的协议，会替换本轮及后续消息，影响说明放在操作提示和无障碍描述中，不再常驻每条消息下方；编辑界面说明资料与联网选项不会自动沿用。对话记录仅在已加载列表内搜索标题/摘要，不额外请求服务端或读取消息全文。
 
-外部感知：`agent-search/` 是独立仓库，对话里的 `search_public_web` 会调用它。它不是灯灯 runtime 的一部分，`scripts/dev.sh` 不负责启动它。`search_public_web` 按 `category` 走 `general` / `news` / `company` 策略；用户选择“技术来源”时，工具会在 `general` 查询中优先加入官方文档、GitHub 与 Stack Overflow；“自动来源”只在识别到技术关键词时采用该策略。使用 company 搜索策略时，配套 AgentSearch 必须支持 `/search?...&mode=company`。AgentSearch 可配置 Brave / 博查作为主检索，未配置时仍走 SearXNG；中文查询会再融合国内搜索源。部署、环境变量和健康检查步骤见根目录 `README.md`。
+外部感知：对话里的 `search_public_web` 通过 `research/search.py` 选择搜索服务。`WEB_SEARCH_PROVIDER=auto` 时，有 `TAVILY_API_KEY` 就直接调用 Tavily 官方 HTTPS API，否则使用 AgentSearch；也可显式指定 `tavily` / `agent_search`。能力接口和工具结果报告实际配置的 provider，联网按钮提示当前服务，不返回密钥。显式选择 Tavily 却未配置密钥时返回 `tavily_not_configured`，鉴权、额度、超时或其他失败不得偷偷改用另一服务。
 
-运行边界：AgentSearch 默认地址是 `http://127.0.0.1:3939`，由 `WEB_RESEARCH_ENABLED`、`AGENT_SEARCH_BASE_URL` 和可选的 `AGENT_SEARCH_TOKEN` 控制。单个上游引擎失败可以让 `/health` 显示 `degraded`，不能仅据此判定全部搜索不可用，应以实际 `/search` 结果为准。连接失败、超时或所有查询均失败时，工具必须返回“联网服务暂不可用”的可重试结论，不能把它解释为公司名称不完整、公司不存在或招聘平台没有岗位。
+Tavily 使用 basic 搜索、关闭自动参数和服务端答案生成，新闻映射为 news，普通及公司查询映射为 general。将搜索摘要 `content` 与正文 `raw_content` 分开归一化；优先复用已返回正文，只为前四个结果中缺失正文的公开 URL 批量调用 Extract。结果过滤私有/本机地址、去重并限制数量，单次响应上限 3 MB、正文上限 5000 字符。HTTP 200 中的单页提取失败或提取请求失败均保留摘要并返回警告，不宣称正文已读取；不得将上游错误正文暴露为错误提示。网页及摘要仍是不可信外部内容，沿用同一证据分级、引用和工具权限边界。搜索鉴权、额度、限流、超时及网络错误分别返回 `tavily_*` 错误码；只有限流、服务端及网络错误可重试。
+
+`agent-search/` 是独立仓库，不是灯灯 runtime 的一部分，`scripts/dev.sh` 不负责启动它。选择 AgentSearch 后，`search_public_web` 按 `category` 走 `general` / `news` / `company` 策略；使用 company 策略时，配套 AgentSearch 必须支持 `/search?...&mode=company`。AgentSearch 可配置 Brave / 博查作为主检索，未配置时仍走 SearXNG；中文查询会再融合国内搜索源。两种服务都保留“技术来源”的官方文档、GitHub 与 Stack Overflow 查询偏好，“自动来源”只在识别到技术关键词时采用该策略。部署、环境变量和健康检查步骤见根目录 `README.md`。
+
+运行边界：`WEB_RESEARCH_ENABLED` 控制是否允许联网；`WEB_SEARCH_PROVIDER` 控制服务选择，`TAVILY_API_KEY` 只用于 Tavily。AgentSearch 默认地址是 `http://127.0.0.1:3939`，其地址与令牌由 `AGENT_SEARCH_BASE_URL` 和可选的 `AGENT_SEARCH_TOKEN` 控制。单个上游引擎失败可以让 AgentSearch `/health` 显示 `degraded`，不能仅据此判定全部搜索不可用，应以实际 `/search` 结果为准。连接失败、超时或所有查询均失败时，工具必须返回“联网服务暂不可用”的可重试结论，不能把它解释为公司名称不完整、公司不存在或招聘平台没有岗位。
 
 ## 对话运行时
 
