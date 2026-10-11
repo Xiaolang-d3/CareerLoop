@@ -1,6 +1,6 @@
 # 联网搜索类别实施计划
 
-制定日期：2026-10-11。状态：计划已制定，功能尚未实施。范围为 CareerLoop 对话内联网搜索；按当前已接入 Tavily、保留 AgentSearch 的代码制定。
+制定日期：2026-10-11。实施日期：2026-10-11。状态：功能已实施，自动化验证通过；浏览器视觉和真实联网验收未完成。范围为 CareerLoop 对话内联网搜索；按当前已接入 Tavily、保留 AgentSearch 的代码制定。
 
 ## 交付目标
 
@@ -8,7 +8,7 @@
 
 本次实施包括参数统一、Tavily 原生类别、服务能力声明、重试和恢复、输入框交互与回归验证。时间范围、自定义域名列表、图片搜索、搜索深度开关、独立搜索设置页面不属于本次交付，后续按需求补齐。现有来源引用、正文提取、错误处理和单一过程折叠区继续使用。
 
-## 官方依据与当前差距
+## 官方依据与实施前差距
 
 已核对 [Tavily Search API](https://docs.tavily.com/documentation/api-reference/endpoint/search) 和 [官方搜索实践](https://docs.tavily.com/documentation/best-practices/best-practices-search)。
 
@@ -21,7 +21,7 @@
 
 官方自动参数可能选择 advanced 搜索深度。本次固定 basic 以控制搜索调用成本；正文 Extract 是额外调用，不能将一轮研究宣称为只消耗一次搜索额度。
 
-当前代码存在三组不同含义：
+实施前代码存在三组不同含义：
 
 - 输入框和请求使用 `web_search_mode=auto / technical / general`。
 - Agent 工具使用 `category=general / news / company`，仅 general 会应用输入框模式。
@@ -42,7 +42,7 @@
 | `source_preference` | `none / technical` | 来源偏好，默认不限来源 |
 | `version` | `1` | 兼容与恢复解析版本 |
 
-内部 `ChatMessageIn` 保留 `web_search`，增加 `web_search_topic` 和 `web_search_source_preference`；AG-UI 对应 `webSearch`、`webSearchTopic`、`webSearchSourcePreference`。当前发送入口是 `POST /ag-ui`，不另建重复的 REST 发送接口。入口统一归一化后传给 runtime 和 ToolContext，不在各层重复判定。搜索服务标识在运行绑定时记录，API Key 继续走现有凭证链路，不进入配置快照、消息或日志。
+内部 `ChatMessageIn` 保留 `web_search`，增加 `web_search_topic` 和 `web_search_source_preference`；AG-UI 对应 `webSearch`、`webSearchTopic`、`webSearchSourcePreference`。当前发送入口是 `POST /ag-ui`，不另建重复的 REST 发送接口。入口统一归一化后传给 runtime 和 ToolContext，不在各层重复判定。搜索服务标识在运行绑定时记录；重试、编辑与重新生成通过可选 `web_search_provider`／`webSearchProvider` 校验原服务，实际使用服务端配置，客户端不能选择服务。API Key 继续走现有凭证链路，不进入配置快照、消息或日志。
 
 模型可决定检索问题和研究任务线索。用户的联网许可、手动类别、来源偏好由可信上下文确定，不提供给模型修改。
 
@@ -138,3 +138,19 @@ cd frontend && npm run test && npm run build
 上线按兼容接口 → adapter／能力 → 界面的顺序；本地应用以一个完整版本交付。服务参数被拒绝时报告对应错误，不用偷偷删除用户筛选来换取成功。回退应部署对应完整旧版本；回退前保留本机工作区数据快照，核验新快照字段对旧版本的兼容，不直接修改用户历史记录。
 
 实施后更新 `docs/agent.md` 的外部感知与运行恢复规则、`CHANGELOG.md` 的用户可见变更。计划文档在各阶段记录实际完成状态与验证结果。
+
+## 实施记录（2026-10-11）
+
+四阶段功能均已完成：冻结的联网配置贯穿 AG-UI、用户消息、运行绑定和快照；搜索 adapter 接入 Tavily 原生类别与技术来源偏好；输入框改为四类别菜单，搜索设置位于模块内；元数据进入现有来源和回答详情。运行绑定复用现有 `checkpoint_json`，无需 SQLite 列迁移或新增凭证。
+
+补充修复了实施审查发现的恢复边界：旧快照不能继承后续消息的许可；禁止执行的工具台账记为 blocked；已提交结果但未保存回答消息时允许零网络补写；失败重试、编辑和重新生成先核验原搜索服务及能力，再回退消息。客户端携带的 provider 仅作期望校验，服务选择仍以服务端配置为准；同 runId 不接受客户端更改配置。
+
+验证结果：
+
+- 后端全量：698 项测试、68 个子测试通过。
+- 前端全量：438 项测试、47 个文件通过。随后补充非法旧模式的安全读取回归，相关 26 项测试、3 个文件再次通过；当前用例总数为 439。最终生产构建成功。
+- 回归覆盖原生参数、用户选择优先级、能力拒绝、字段校验、旧记录安全读取、确认追问、恢复、失败草稿、编辑与重新生成、账号／对话隔离、菜单键盘与视口边界。
+- 本地后端已重新启动，`/health` 返回正常；现有前端返回 HTTP 200。
+- 所有自动化验证模拟模型与搜索，没有调用真实 Tavily。浏览器视觉验收未执行，窄屏和深色主题的实际效果仍需在可操作浏览器中复核；不能将单元测试视为视觉或真实联网验收。
+
+维护说明已同步至 `docs/agent.md` 和 `CHANGELOG.md`。后端代码提交为 `a4fce60`，前端代码提交为 `d9da501`；代码与文档分别提交，本地工作区历史数据保持原格式可读。
