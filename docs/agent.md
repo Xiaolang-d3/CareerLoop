@@ -363,4 +363,12 @@ macOS 单机网页和桌面的新密钥写入 Keychain；环境模式只读管�
 
 ### 聊天成果归档边界
 
-`chat/artifacts.py` 提供持久化回答、闭合代码围栏和原附件的只读清单，以及用户主动调用的 `save-to-library` 接口。它不注册 Agent 工具，不改变 classify/plan/execute 路由或恢复快照；生成图片能力尚未接入。存档默认 enabled=false，只在用户勾选且有可读正文时索引脱敏文本，生成来源和未完成状态保存在 metadata 中；不自动确认知识。保存验证账户、终态、消息/资源快照与原件哈希，归档副本不随聊天回退/删除而删除。接口和验证见 [实施记录](chat-results-implementation.md)。
+`chat/artifacts.py` 提供持久化回答、闭合代码围栏和原附件的只读清单，以及用户主动调用的 `save-to-library` 接口。它不注册 Agent 工具，保留 classify/plan/execute 角色与旧恢复快照；Grok 文字生图通过下述独立分支接入。存档默认 enabled=false，只在用户勾选且有可读正文时索引脱敏文本，生成来源和未完成状态保存在 metadata 中；不自动确认知识。保存验证账户、终态、消息/资源快照与原件哈希，归档副本不随聊天回退/删除而删除。接口和验证见 [实施记录](chat-results-implementation.md)。
+
+### v29 Grok 文字生图
+
+明确的当轮文字生图指令进入 Grok 4.7 原生 Responses 分支，只使用冻结 execute 模型；文档、旧消息和询问生图原理不授权原生工具。非 Grok 4.7 或手动选择其他协议时在请求前失败，不能把文字回答当成已生图。`ModelRequest.image_generation` 与 function tools 分开，原生请求仅允许 action=generate；不改变三个模型阶段，不与本地搜索工具混用。
+
+`ModelResponse.images` 中 Base64 是排除序列化且隐藏 repr 的 SecretStr；`output_blocks` 保留文本/图片顺序。最终图片由 `chat/image_assets.py` 校验并存入账户本地目录，运行/消息/SSE 只返回资产引用；没有文字的图片结果仍为合法完成。过程使用 image_generation 事件，输入框不新增重复状态区。
+
+v29 新增 chat_image_operations/chat_image_assets，保留旧表、消息与索引。操作以 runId 固定模型档案/连接版本，请求前提交 started；同操作完成重放复用结果，未知执行状态阻止自动重发，取消/超时/协议不支持不自动切换协议或重试。消息和图片关联在一个事务内保存；回退清理已绑定图片但保留尝试标记，删对话清理聊天资源，文件库图片副本独立保留。真实服务需要开放 image_generation；目录识别、vision 和客户端工具能力不证明生图可用。首期不支持图像编辑、联网后生图或落盘失败后的结果找回，详见 [实施记录](chat-results-implementation.md)。
