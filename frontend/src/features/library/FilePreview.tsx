@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type { LibrarySourceDetail } from "../../types";
 import { MarkdownContent } from "../chat/ChatMarkdown";
 
@@ -7,11 +7,13 @@ const PdfReader = lazy(() => import("./PdfReader"));
 export function FilePreview({
   source,
   mode,
-  loadOriginal
+  loadOriginal,
+  loadAsset
 }: {
   source: LibrarySourceDetail;
   mode: "original" | "text";
   loadOriginal?: (source: LibrarySourceDetail, signal?: AbortSignal) => Promise<Blob>;
+  loadAsset?: (sourceId: number, assetId: string, signal?: AbortSignal) => Promise<Blob>;
 }) {
   const [url, setUrl] = useState(""),
     [error, setError] = useState(""),
@@ -23,6 +25,11 @@ export function FilePreview({
   const isPdf = source.mime_type === "application/pdf";
   const isText = source.mime_type.startsWith("text/");
   const isMarkdown = source.mime_type === "text/markdown" || /\.md$/i.test(source.original_filename);
+  const imageLoader = useCallback(async (src: string, signal: AbortSignal) => {
+    const id = src.match(/^assets\/([a-f0-9]{32})\.(png|jpg|webp)$/)?.[1];
+    if (!id || !loadAsset) throw new Error("图片读取暂不可用");
+    return loadAsset(source.id, id, signal);
+  }, [source.id, loadAsset]);
   useEffect(() => {
     setUrl("");
     setError("");
@@ -76,7 +83,7 @@ export function FilePreview({
     if (isText && originalText !== null)
       return (
         <article className="fl-text-page">
-          {isMarkdown ? <MarkdownContent>{originalText || "原文件没有文字。"}</MarkdownContent> : <pre>{originalText || "原文件没有文字。"}</pre>}
+          {isMarkdown ? <MarkdownContent imageLoader={imageLoader}>{originalText || "原文件没有文字。"}</MarkdownContent> : <pre>{originalText || "原文件没有文字。"}</pre>}
         </article>
       );
     if (isPdf ? !pdfBytes : !url)

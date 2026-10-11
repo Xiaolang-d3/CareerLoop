@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from ..search_options import WebSearchOptions
 
@@ -54,6 +54,13 @@ class ModelRequest(BaseModel):
     tools: list[ToolDefinition] = Field(default_factory=list)
     tool_choice: Literal["auto", "required", "none"] = "auto"
     parameters: dict[str, float | int] = Field(default_factory=dict)
+    image_generation: bool = False
+
+
+class ModelImageOutput(BaseModel):
+    item_id: str
+    # Binary results are transient, never part of a checkpoint, log or SSE payload.
+    base64_data: SecretStr = Field(exclude=True, repr=False)
 
 
 class ModelResponse(BaseModel):
@@ -61,10 +68,12 @@ class ModelResponse(BaseModel):
     tool_calls: list[ToolCall] = Field(default_factory=list)
     usage: ModelUsage | None = None
     provider_metadata: dict[str, Any] = Field(default_factory=dict)
+    images: list[ModelImageOutput] = Field(default_factory=list, exclude=True, repr=False)
+    output_blocks: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ModelStreamEvent(BaseModel):
-    type: Literal["text_delta", "completed"]
+    type: Literal["text_delta", "completed", "image_progress"]
     delta: str = ""
     response: ModelResponse | None = None
 
@@ -136,6 +145,8 @@ class AgentRunResult(BaseModel):
     platform: str
     rounds: int
     model_selection: dict[str, Any] = Field(default_factory=dict)
+    assets: list[dict[str, Any]] = Field(default_factory=list)
+    output_blocks: list[dict[str, Any]] = Field(default_factory=list)
     status: Literal["done", "failed", "waiting_user", "cancelled"] = "done"
     error: ToolError | None = None
     events: list[ToolEvent] = Field(default_factory=list)

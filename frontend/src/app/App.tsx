@@ -1047,6 +1047,11 @@ export function App({
                   onOrganizeSource={organizeLibrarySource}
                   onCreateFolder={createLibraryFolder}
                   onLoadOriginal={loadLibraryOriginal}
+                  onLoadAsset={async (sourceId, assetId, signal) => {
+                    const response = await fetchWithTimeout(`${apiBase}/library/sources/${sourceId}/assets/${encodeURIComponent(assetId)}/file`, { signal, headers: { Authorization: `Bearer ${accessToken}` } });
+                    if (!response.ok) throw new Error("存档图片读取失败");
+                    return response.blob();
+                  }}
                   onSearchSources={searchLibrarySources}
                   onUseForChat={useLibraryForChat}
                   busy={libraryBusy}
@@ -1200,7 +1205,7 @@ export function App({
             onUploadAttachment={uploadChatAttachment}
             onLoadAttachment={loadChatAttachment}
             onLoadAttachmentThumbnail={async (attachment, signal) => {
-              const response = await fetchWithTimeout(`${apiBase}/attachments/${encodeURIComponent(attachment.id)}/thumbnail`, { signal, headers: { Authorization: `Bearer ${accessToken}` } });
+              const response = await fetchWithTimeout(`${apiBase}/${attachment.origin === "generated" ? "chat-assets" : "attachments"}/${encodeURIComponent(attachment.id)}/thumbnail`, { signal, headers: { Authorization: `Bearer ${accessToken}` } });
               if (!response.ok) throw new Error("缩略图读取失败");
               return response.blob();
             }}

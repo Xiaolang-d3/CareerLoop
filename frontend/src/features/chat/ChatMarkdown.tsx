@@ -114,7 +114,8 @@ function CitationLink({
   );
 }
 
-const MarkdownRenderContext = createContext<{ sources: WebSource[]; streaming: boolean; onOpenSource?: (index: number) => void }>({
+export type MarkdownImageLoader = (src: string, signal: AbortSignal) => Promise<Blob>;
+const MarkdownRenderContext = createContext<{ sources: WebSource[]; streaming: boolean; onOpenSource?: (index: number) => void; imageLoader?: MarkdownImageLoader }>({
   sources: [],
   streaming: false
 });
@@ -179,7 +180,22 @@ const MARKDOWN_COMPONENTS: Components = {
 
 function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   const [failed, setFailed] = useState(false);
+  const [localUrl, setLocalUrl] = useState("");
+  const { imageLoader } = useContext(MarkdownRenderContext);
+  const local = Boolean(src && /^assets\/[a-f0-9]{32}\.(png|jpg|webp)$/.test(src));
   useEffect(() => setFailed(false), [src]);
+  useEffect(() => {
+    setLocalUrl("");
+    if (!local || !src || !imageLoader) return;
+    const abort = new AbortController();
+    let url = "";
+    void imageLoader(src, abort.signal).then(blob => {
+      if (abort.signal.aborted) return;
+      url = URL.createObjectURL(blob); setLocalUrl(url);
+    }).catch(() => { if (!abort.signal.aborted) setFailed(true); });
+    return () => { abort.abort(); if (url) URL.revokeObjectURL(url); };
+  }, [src, local, imageLoader]);
+  if (local) return failed ? <span role="alert">图片读取失败</span> : localUrl ? <a className="chat-markdown-image" href={localUrl} target="_blank" rel="noopener noreferrer" title="查看原图"><img src={localUrl} alt={alt || "生成图片"} /></a> : <span role="status">正在读取图片…</span>;
   if (!src || !/^https?:\/\//i.test(src)) return <span>{alt || "图片地址不可用"}</span>;
   return <a className="chat-markdown-image" href={src} target="_blank" rel="noopener noreferrer" title="打开原图">
     {failed ? <span>图片加载失败，打开原图{alt ? `：${alt}` : ""}</span> : <img src={src} alt={alt || "图片"} loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} />}
@@ -190,16 +206,18 @@ export function MarkdownContent({
   children,
   sources = [],
   streaming = false,
-  onOpenSource
+  onOpenSource,
+  imageLoader
 }: {
   children: string;
   sources?: WebSource[];
   streaming?: boolean;
   onOpenSource?: (index: number) => void;
+  imageLoader?: MarkdownImageLoader;
 }) {
   return (
     <div className="message-markdown">
-      <MarkdownRenderContext.Provider value={{ sources, streaming, onOpenSource }}>
+      <MarkdownRenderContext.Provider value={{ sources, streaming, onOpenSource, imageLoader }}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           skipHtml

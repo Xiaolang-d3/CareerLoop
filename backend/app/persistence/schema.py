@@ -2,6 +2,24 @@
 from .library_schema import LIBRARY_CORE_SCHEMA
 
 CURRENT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS chat_image_operations (
+    id TEXT PRIMARY KEY,
+    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'started' CHECK(status IN ('started','done')),
+    selection_json TEXT NOT NULL DEFAULT '{}',
+    result_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS chat_image_assets (
+    id TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL REFERENCES chat_image_operations(id) ON DELETE CASCADE,
+    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    message_id INTEGER REFERENCES chat_messages(id) ON DELETE SET NULL,
+    provider_item_id TEXT NOT NULL,
+    stored_path TEXT NOT NULL,
+    metadata_json TEXT NOT NULL,
+    UNIQUE(operation_id, provider_item_id)
+);
 CREATE TABLE IF NOT EXISTS conversations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL DEFAULT '新对话',

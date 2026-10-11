@@ -85,7 +85,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
       const details = await fetchJson<ChatAttachment>(`/attachments/${encodeURIComponent(attachment.id)}`, { signal });
       parsedText = details.parsed_text;
     }
-    const response = await fetchWithTimeout(`${apiBase}/attachments/${encodeURIComponent(attachment.id)}/file`, {
+    const response = await fetchWithTimeout(`${apiBase}/${attachment.origin === "generated" ? "chat-assets" : "attachments"}/${encodeURIComponent(attachment.id)}/file`, {
       headers: { Authorization: `Bearer ${accessToken}` },
       signal
     });

@@ -132,6 +132,24 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
 }
 
 describe("ChatWorkspace", () => {
+  it("shows pure generated images and exposes result actions without requiring text", () => {
+    const asset: ChatAttachment = { id: "generated", origin: "generated", kind: "image", original_filename: "生成图片.png", parse_status: "parsed" };
+    const pure: ChatMessage = { ...assistantMessage(""), payload: { agent: { provider: "responses", platform: "local", rounds: 1, status: "done", events: [], assets: [asset], output_blocks: [{ type: "image", asset_id: asset.id }] } } };
+    renderChat([message, pure], { onLoadResults: vi.fn() });
+    expect(screen.getAllByRole("button", { name: "预览 生成图片.png" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "查看与保存成果" })).toBeEnabled();
+  });
+
+  it("renders ordered text and images once when a snapshot repeats an image reference", () => {
+    const asset: ChatAttachment = { id: "generated", origin: "generated", kind: "image", original_filename: "生成图片.png", parse_status: "parsed" };
+    const mixed: ChatMessage = { ...assistantMessage("前言\n后记"), payload: { agent: { provider: "responses", platform: "local", rounds: 1, status: "done", events: [], assets: [asset], output_blocks: [{ type: "text", text: "前言" }, { type: "image", asset_id: asset.id }, { type: "image", asset_id: asset.id }, { type: "text", text: "后记" }] } } };
+    const p = renderChat([message, mixed]);
+    expect(screen.getAllByText("前言")).toHaveLength(1);
+    expect(screen.getAllByText("后记")).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "预览 生成图片.png" })).toHaveLength(1);
+    const output = p.view.container.querySelector(".message-result")!;
+    expect([...output.children].map(child => child.tagName)).toEqual(["DIV", "FIGURE", "DIV"]);
+  });
   it("opens one result reader without altering the composer draft", async () => {
     const load = vi.fn().mockResolvedValue({ message_id: 12, snapshot: "a".repeat(64), incomplete: false, artifacts: [{ selector: "answer", kind: "answer", filename: "回答.md", mime_type: "text/markdown", content: "# 完整成果", can_index: true }] });
     const p = renderChat([message, assistantMessage("完整成果")], { onLoadResults: load, onSaveResult: vi.fn() });

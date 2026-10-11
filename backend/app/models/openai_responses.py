@@ -14,6 +14,7 @@ from ..domain import ModelRequest, ModelResponse, ModelStreamEvent, ModelUsage, 
 from .base import ModelProviderError
 from .validation import upstream_error_detail, validate_diagnostic_response
 from .openai_compatible import OpenAICompatibleProvider, SYSTEM_PROMPT, _TINY_PNG_DATA_URL, _looks_like_vision_rejection
+from ..domain.agent import ModelImageOutput
 
 
 _OPENAI_ERRORS = (
@@ -33,7 +34,8 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
     async def generate(self, request: ModelRequest) -> ModelResponse:
         started_at = perf_counter()
         try:
-            response = await self._client.responses.create(**self._request_arguments(request))
+            client = self._client.with_options(timeout=180, max_retries=0) if request.image_generation else self._client
+            response = await client.responses.create(**self._request_arguments(request))
             result = self._response_from_response(response)
         except _OPENAI_ERRORS as exc:
             error = self._provider_error(exc)
@@ -61,8 +63,10 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
         arguments["stream"] = True
         stream = None
         completed_response = None
+        finished_images: dict[str, Any] = {}
         try:
-            stream = await self._client.responses.create(**arguments)
+            client = self._client.with_options(timeout=180, max_retries=0) if request.image_generation else self._client
+            stream = await client.responses.create(**arguments)
             async for event in stream:
                 event_type = getattr(event, "type", "")
                 if event_type == "response.output_text.delta":
@@ -71,6 +75,12 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
                         yield ModelStreamEvent(type="text_delta", delta=delta)
                 elif event_type == "response.completed":
                     completed_response = getattr(event, "response", None)
+                elif request.image_generation and event_type.startswith("response.image_generation_call."):
+                    yield ModelStreamEvent(type="image_progress", delta=event_type.rsplit(".", 1)[-1])
+                elif request.image_generation and event_type == "response.output_item.done":
+                    item = getattr(event, "item", None)
+                    if getattr(item, "type", "") == "image_generation_call":
+                        finished_images[str(getattr(item, "id", ""))] = item
         except _OPENAI_ERRORS as exc:
             error = self._provider_error(exc)
             self._record_event("stream", started_at, error=error)
@@ -84,6 +94,9 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
             error = ModelProviderError("provider_error", "Responses API 流式调用未返回完成事件")
             self._record_event("stream", started_at, error=error)
             raise error
+        if finished_images:
+            existing = {str(getattr(item, "id", "")) for item in completed_response.output}
+            completed_response.output.extend(item for key, item in finished_images.items() if key not in existing)
         result = self._response_from_response(completed_response)
         self._record_event(
             "stream",
@@ -184,6 +197,9 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
                 for tool in request.tools
             ]
             arguments["tool_choice"] = request.tool_choice
+        if request.image_generation:
+            arguments["tools"] = [{"type": "image_generation", "action": "generate"}]
+            arguments.pop("tool_choice", None)
         return arguments
 
     @staticmethod
@@ -229,7 +245,22 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
         if not isinstance(output, list) or status not in {"completed", "incomplete"}:
             raise ModelProviderError("invalid_provider_response", "模型服务返回了无法解析的 Responses API 响应")
         tool_calls: list[ToolCall] = []
+        images: list[ModelImageOutput] = []
+        blocks: list[dict[str, Any]] = []
+        seen_images: set[str] = set()
         for item in output:
+            if getattr(item, "type", "") == "message":
+                for part in getattr(item, "content", []) or []:
+                    if getattr(part, "type", "") == "output_text" and getattr(part, "text", ""):
+                        blocks.append({"type": "text", "text": str(part.text)})
+            if getattr(item, "type", "") == "image_generation_call":
+                item_id = str(getattr(item, "id", "") or "")
+                if getattr(item, "status", "") != "completed" or not item_id or not getattr(item, "result", None):
+                    raise ModelProviderError("incomplete_image_output", "生图服务没有返回完整图片；不会自动重新生成，请确认服务执行结果")
+                if item_id not in seen_images:
+                    seen_images.add(item_id)
+                    images.append(ModelImageOutput(item_id=item_id, base64_data=str(item.result)))
+                    blocks.append({"type": "image", "index": len(images) - 1})
             if getattr(item, "type", "") != "function_call":
                 continue
             try:
@@ -255,8 +286,10 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
                 total_tokens=int(getattr(raw_usage, "total_tokens", 0) or 0),
             )
         return ModelResponse(
-            content=str(getattr(response, "output_text", "") or ""),
+            content=str(getattr(response, "output_text", "") or "\n\n".join(b["text"] for b in blocks if b["type"] == "text")),
             tool_calls=tool_calls,
+            images=images,
+            output_blocks=blocks,
             usage=usage,
             provider_metadata={
                 "model": getattr(response, "model", self._model),

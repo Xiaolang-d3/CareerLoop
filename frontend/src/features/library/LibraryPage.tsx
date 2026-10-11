@@ -57,6 +57,7 @@ type Props = {
   ) => void | Promise<void>;
   onLoadSource: (id: number) => Promise<LibrarySourceDetail>;
   onLoadOriginal?: (source: LibrarySourceDetail, signal?: AbortSignal) => Promise<Blob>;
+  onLoadAsset?: (sourceId: number, assetId: string, signal?: AbortSignal) => Promise<Blob>;
   onUpdateSource: (
     id: number,
     changes: Partial<Pick<LibrarySource, "title" | "privacy_mode" | "enabled">> & { content?: string }
@@ -449,7 +450,7 @@ export function LibraryPage(props: Props) {
             <textarea aria-label="编辑资料正文" value={draft} onChange={(event) => setDraft(event.target.value)} />
           </label>
         ) : (
-          <FilePreview source={preview} mode={mode} loadOriginal={props.onLoadOriginal} />
+          <FilePreview source={preview} mode={mode} loadOriginal={props.onLoadOriginal} loadAsset={props.onLoadAsset} />
         )}
       </div>
       <footer className="fl-viewer-footer">

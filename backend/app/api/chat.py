@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from ag_ui.core import RunAgentInput
 from fastapi import HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse, Response
 from pydantic import ValidationError
 from .dependencies import require_conversation
 from ..chat.contracts import ChatMessageIn
@@ -21,6 +21,25 @@ from ..chat.artifacts import ArtifactConflict, SaveArtifactIn, message_artifacts
 
 
 router = APIRouter()
+
+
+@router.get("/chat-assets/{asset_id}/file")
+def generated_image_file(asset_id: str):
+    from ..chat.image_assets import asset_file
+    try:
+        path, filename, mime = asset_file(asset_id)
+        return FileResponse(path, filename=filename, media_type=mime, headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/chat-assets/{asset_id}/thumbnail")
+def generated_image_thumbnail(asset_id: str):
+    from ..chat.image_assets import asset_thumbnail
+    try:
+        return Response(asset_thumbnail(asset_id), media_type="image/webp", headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=404, detail="生成图片预览不可用") from exc
 
 
 @router.get("/chat/messages/{message_id}/artifacts")
@@ -71,6 +90,8 @@ def rewind_chat_messages(message_id: int, conversation_id: int | None = None) ->
             raise HTTPException(status_code=404, detail="消息不存在")
         if message["role"] != "user":
             raise HTTPException(status_code=400, detail="只能从用户消息开始回退")
+        from ..chat.image_assets import delete_images
+        delete_images(resolved_id, message_cutoff=message_id)
         deleted = conn.execute(
             "DELETE FROM chat_messages WHERE conversation_id = ? AND id >= ?",
             (resolved_id, message_id),

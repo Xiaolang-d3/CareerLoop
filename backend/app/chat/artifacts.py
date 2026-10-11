@@ -18,6 +18,7 @@ from ..library.sources import _clean_title, _index_source, _safe_filename, _sour
 from ..library.organization import list_folders
 from ..privacy import scan_and_redact
 from ..workspace import resolve_document_dir
+from .image_assets import asset_metadata, asset_file
 
 
 class ArtifactConflict(ValueError):
@@ -108,8 +109,23 @@ def _manifest(message: dict[str, Any], db_path: str | Path | None) -> dict[str, 
     citations = _sources(message)
     artifacts = []
     resources = []
-    if message["role"] == "assistant" and message["content"].strip():
+    images = []
+    if message["role"] == "assistant":
+        for ref in agent.get("assets", []):
+            asset = asset_metadata(str(ref.get("id") or ""), db_path)
+            if asset["conversation_id"] != message["conversation_id"] or asset["message_id"] != message["id"]:
+                raise ValueError("图片不属于当前消息")
+            images.append(asset)
+            resources.append({"id": asset["id"], "sha256": asset["sha256"]})
+    if message["role"] == "assistant" and (message["content"].strip() or images):
         content = message["content"]
+        if images:
+            by_id = {asset["id"]: asset for asset in images}
+            content = "\n\n".join(b.get("text", "") if b.get("type") == "text" else
+                                    f"![生成图片](assets/{b['asset_id']}{Path(by_id[b['asset_id']]['original_filename']).suffix})"
+                                    for b in agent.get("output_blocks", []) if b.get("type") == "text" or b.get("asset_id") in by_id)
+            if not content:
+                content = message["content"] + "\n\n" + "\n\n".join(f"![生成图片](assets/{a['id']}{Path(a['original_filename']).suffix})" for a in images)
         if incomplete:
             content = "> 未完成：此内容来自已停止或失败的执行。\n\n" + content
         if citations:
@@ -118,12 +134,16 @@ def _manifest(message: dict[str, Any], db_path: str | Path | None) -> dict[str, 
                 for s in citations
             ) + "\n"
         artifacts.append({"selector": "answer", "kind": "answer", "filename": "回答.md",
-                          "mime_type": "text/markdown", "content": content, "can_index": True})
+                          "mime_type": "text/markdown", "content": content, "can_index": bool(message["content"].strip()),
+                          **({"assets": images, "output_blocks": agent.get("output_blocks", [])} if images else {})})
         for index, block in enumerate(fenced_blocks(message["content"]), 1):
             ext = EXTENSIONS.get(block["language"], "txt")
             artifacts.append({"selector": f"code:{block['offset']}", "kind": "diagram" if ext == "mmd" else "code",
                               "filename": f"{'导图' if ext == 'mmd' else '代码'}-{index}.{ext}",
                               "mime_type": "text/plain", "content": block["content"], "can_index": bool(block["content"].strip())})
+        for asset in images:
+            artifacts.append({"selector": f"asset:{asset['id']}", "kind": "image", "filename": asset["original_filename"],
+                              "mime_type": asset["content_type"], "asset": asset, "can_index": False})
     if message["role"] == "user":
         for ref in message["payload"].get("attachments", []):
             attachment = get_attachment_metadata(str(ref.get("id") or ""), db_path=db_path)
@@ -177,6 +197,7 @@ def save_artifact(message_id: int, request: SaveArtifactIn, db_path: str | Path 
             else:
                 reused = False
                 text = artifact.get("content", "")
+                copies = []
                 if artifact["kind"] == "attachment":
                     attachment = get_attachment_metadata(artifact["attachment_id"], db_path=db_path)
                     path, _, _ = get_attachment_file(artifact["attachment_id"], db_path=db_path)
@@ -184,8 +205,22 @@ def save_artifact(message_id: int, request: SaveArtifactIn, db_path: str | Path 
                     if sha256(data).hexdigest() != attachment["sha256"]:
                         raise ArtifactConflict("附件原文件已变化，请重新上传后再保存")
                     text = str(attachment.get("parsed_text") or "")
+                elif artifact["kind"] == "image":
+                    asset = artifact["asset"]
+                    data = asset_file(asset["id"], db_path)[0].read_bytes()
+                    if sha256(data).hexdigest() != asset["sha256"]:
+                        raise ArtifactConflict("图片原文件已变化，请重新打开成果")
                 else:
                     data = text.encode("utf-8")
+                    for asset in artifact.get("assets", []):
+                        image_data = asset_file(asset["id"], db_path)[0].read_bytes()
+                        if sha256(image_data).hexdigest() != asset["sha256"]:
+                            raise ArtifactConflict("图片原文件已变化，请重新打开成果")
+                        copies.append((asset, image_data))
+                    if copies:
+                        # Markdown references belong to the original file; they
+                        # are not OCR text or facts the knowledge index can read.
+                        text = re.sub(r"!\[生成图片\]\(assets/[a-f0-9]{32}\.(?:png|jpg|webp)\)", "", text).strip()
                 if len(text) > 200_000:
                     raise ValueError("成果正文不能超过 20 万字")
                 text_status = "ready" if text.strip() else "not_required"
@@ -198,6 +233,11 @@ def save_artifact(message_id: int, request: SaveArtifactIn, db_path: str | Path 
                                              "selector": request.selector, "snapshot": request.snapshot,
                                              "incomplete": manifest["incomplete"], "model_name": (message["payload"].get("agent") or {}).get("model_selection", {}).get("model_name", ""),
                                              "sources": manifest["sources"]}}
+                if copies:
+                    metadata["chat_assets"] = [{**{k: a[k] for k in ("id", "content_type", "original_filename", "sha256", "width", "height")},
+                                                "path": f"assets/{a['id']}{Path(a['original_filename']).suffix}"} for a, _ in copies]
+                if artifact["kind"] == "image":
+                    metadata["generated_image"] = {k: artifact["asset"][k] for k in ("model_name", "sha256", "width", "height")}
                 run = conn.execute("SELECT run_id FROM agent_execution_runs WHERE assistant_message_id = ? ORDER BY created_at DESC LIMIT 1", (message_id,)).fetchone()
                 selection = (message["payload"].get("agent") or {}).get("model_selection") or {}
                 execute = (selection.get("stage_selections") or {}).get("execute") or selection
@@ -215,6 +255,13 @@ def save_artifact(message_id: int, request: SaveArtifactIn, db_path: str | Path 
                 stored = directory / filename
                 stored.write_bytes(data)
                 stored.chmod(0o600)
+                if copies:
+                    image_directory = directory / "assets"
+                    image_directory.mkdir(mode=0o700)
+                    for asset, image_data in copies:
+                        target = image_directory / f"{asset['id']}{Path(asset['original_filename']).suffix}"
+                        target.write_bytes(image_data)
+                        target.chmod(0o600)
                 conn.execute("UPDATE library_sources SET stored_path = ? WHERE id = ?",
                              (stored.relative_to(resolve_document_dir(db_path)).as_posix(), source_id))
     except Exception:

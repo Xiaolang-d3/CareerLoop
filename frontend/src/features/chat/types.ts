@@ -27,6 +27,8 @@ export type ModelSelection = {
 };
 
 export type AgentRunResult = {
+  assets?: ChatAttachment[];
+  output_blocks?: Array<{ type: "text"; text: string } | { type: "image"; asset_id: string }>;
   model_selection?: ModelSelection;
   provider: string;
   platform: string;
@@ -78,6 +80,10 @@ export type ChatMessage = {
 
 export type ChatAttachment = {
   id: string;
+  origin?: "generated";
+  width?: number;
+  height?: number;
+  model_name?: string;
   kind: "image" | "document";
   original_filename: string;
   parse_status: "pending" | "parsed" | "failed";

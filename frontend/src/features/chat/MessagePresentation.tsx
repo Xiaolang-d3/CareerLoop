@@ -18,6 +18,7 @@ import { webSearchTopicLabels } from "./webSearchOptions";
 import { AttachmentPreviewContext } from "./AttachmentPreviewDialog";
 import { ResultActionsContext } from "./result-types";
 import { HistoryAttachment } from "./HistoryAttachment";
+import { GeneratedImage } from "./GeneratedImage";
 import { ActionBarPrimitive, ComposerPrimitive, MessagePrimitive, type AppendMessage, type MessageState } from "@assistant-ui/react";
 import { ArrowUpRight, Check, CheckCircle2, ChevronDown, CircleHelp, Copy, FileText, FolderPlus, Info, LoaderCircle, PanelRight, Pencil, RefreshCw, Search, TriangleAlert, Wrench, X } from "lucide-react";
 
@@ -104,6 +105,7 @@ const ROUTE_SUMMARY_MESSAGE = /^已识别为/;
 
 const TOOL_ACTIVITY_LABELS: Record<string, string> = {
   search_public_web: "正在检索公开资料",
+  image_generation: "正在生成图片",
   get_library_context: "正在读取知识库",
   search_library: "正在检索资料",
   propose_library_knowledge: "正在添加待确认知识",
@@ -221,6 +223,7 @@ function formatRunTime(milliseconds: number): string {
 }
 
 const COMPLETED_ACTIVITY_LABELS: Record<string, string> = {
+  image_generation: "已生成图片",
   search_public_web: "已检索公开资料", get_library_context: "已读取知识库",
   search_library: "已检索资料", propose_library_knowledge: "已提交待确认知识",
   agent_planner: "已规划步骤", model_provider: "已生成回答",
@@ -648,6 +651,15 @@ export function ChatTurn({ state, chatBusy, stopping = false }: { state: Message
   const isActiveAssistant = chatBusy && source.id < 0;
   const resultContent = resultOnlyContent(source.content, Boolean(thoughtEvent?.message));
   const failed = source.payload?.agent?.status === "failed";
+  const assets = source.payload?.agent?.assets ?? [];
+  const blocks = source.payload?.agent?.output_blocks ?? [];
+  const seenAssets = new Set<string>();
+  const imageBlock = (id: string) => {
+    const asset = assets.find(item => item.id === id);
+    if (!asset || seenAssets.has(id)) return null;
+    seenAssets.add(id);
+    return <GeneratedImage key={id} asset={asset} messageId={source.id} />;
+  };
   const webSources = webSourcesFromAgent(source.payload?.agent);
   const searchMetadata = searchMetadataFromAgent(source.payload?.agent);
   const openResearch = (selectedSource?: number) => {
@@ -660,12 +672,13 @@ export function ChatTurn({ state, chatBusy, stopping = false }: { state: Message
         {source.role === "assistant" ? (
           <>
             <RunProcess agent={source.payload?.agent} streaming={isActiveAssistant} stopping={stopping && isActiveAssistant} content={resultContent} />
-            {resultContent ? <section className="message-result message-dialog" aria-label="输出结果">
-              <MarkdownContent sources={webSources} streaming={isActiveAssistant} onOpenSource={openResearch}>{resultContent}</MarkdownContent>
-            </section> : null}
+            {assets.length && blocks.length ? <section className="message-result message-dialog" aria-label="输出结果">{blocks.map((block, index) => block.type === "image" ? imageBlock(block.asset_id) : <MarkdownContent key={`text-${index}`} sources={webSources} streaming={isActiveAssistant} onOpenSource={openResearch}>{block.text}</MarkdownContent>)}{assets.filter(asset => !seenAssets.has(asset.id)).map(asset => imageBlock(asset.id))}</section> : <>
+              {resultContent ? <section className="message-result message-dialog" aria-label="输出结果"><MarkdownContent sources={webSources} streaming={isActiveAssistant} onOpenSource={openResearch}>{resultContent}</MarkdownContent></section> : null}
+              {assets.map(asset => imageBlock(asset.id))}
+            </>}
             <ActionBarPrimitive.Root className="message-actions" hideWhenRunning>
               <MessageCopyButton content={resultContent} label="复制回答" />
-              {openResult && resultContent && source.id > 0 && source.payload?.agent?.status !== "waiting_user" ? <button type="button" className="message-icon-action" aria-label="查看与保存成果" title="独立阅读、下载或保存到文件库" onClick={() => openResult(source.id)}><FolderPlus size={14} aria-hidden="true" /><span>成果</span></button> : null}
+              {openResult && (resultContent || assets.length > 0) && source.id > 0 && source.payload?.agent?.status !== "waiting_user" ? <button type="button" className="message-icon-action" aria-label="查看与保存成果" title="独立阅读、下载或保存到文件库" onClick={() => openResult(source.id)}><FolderPlus size={14} aria-hidden="true" /><span>成果</span></button> : null}
               <ActionBarPrimitive.Reload className="message-icon-action" aria-label={failed ? "重试回答" : "重新生成回答"} title={failed ? "重试回答，将替换本轮及后续消息" : "重新生成，将替换本轮及后续消息"} aria-describedby={`regenerate-impact-${source.id}`}>
                 <RefreshCw size={14} aria-hidden="true" />
               </ActionBarPrimitive.Reload>

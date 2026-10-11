@@ -287,6 +287,9 @@ class AgentRuntime:
     ) -> AgentRunResult:
         provider = self._models.get(self._model_provider)
         selected_platform = platform_name or self._platform_name
+        from ..chat.image_assets import image_generation_intent
+        if resume is None and image_generation_intent(user_content):
+            return await self._generate_image_run(provider, user_content, selected_platform, conversation_id, event_callback, run_id, image_urls)
         if resume is not None:
             return await self._resume_run(
                 provider=provider,
@@ -1666,6 +1669,47 @@ class AgentRuntime:
         self._selection_context.set(current)
         return provider, selection
 
+    async def _generate_image_run(self, provider, prompt, platform, conversation_id, callback, run_id, image_urls) -> AgentRunResult:
+        from ..chat.image_assets import begin_generation, persist_images
+        from ..observability.model_context import public_model_selection
+
+        events: list[ToolEvent] = []
+        selection = self._current_model_selection()
+        execute = selection.get("stage_selections", {}).get("execute") or selection
+        operation_id = run_id or f"image-{uuid.uuid4().hex}"
+        try:
+            if not re.match(r"^grok-4\.7(?:[-.]|$)", str(execute.get("model_name", "")), re.I):
+                raise ModelProviderError("image_model_required", "当前生图接入支持 Grok 4.7；请在输入框选择该模型，并确认服务开放生图工具")
+            if execute.get("model_protocol", "auto") not in {"auto", "responses"}:
+                raise ModelProviderError("image_generation_protocol", "Grok 生图需要 Responses 接口，请在模型配置中使用自动识别或 Responses")
+            if conversation_id is None:
+                raise ModelProviderError("image_conversation_required", "请在聊天对话中生成图片")
+            if image_urls:
+                raise ModelProviderError("image_edit_not_supported", "当前支持文字生图；基于附件的图片编辑尚未接入")
+            cached = begin_generation(operation_id, conversation_id, public_model_selection(selection))
+            if cached is None:
+                event = ToolEvent(round=1, tool_call_id=f"image-{operation_id}", tool_name="image_generation", status="running", message="正在生成图片")
+                events.append(event)
+                await self._publish(callback, AgentStreamEvent(type="agent_event", event=event))
+                # Native generation may have completed upstream when a transport
+                # fails. Neither runtime retries nor protocol fallback are safe.
+                response = await self._await_with_cancellation(self._generate_response(provider, ModelRequest(
+                    messages=[AgentMessage(role="user", content=prompt)], image_generation=True,
+                ), callback), run_id)
+                cached = persist_images(operation_id, response, str(execute["model_name"]))
+            event = ToolEvent(round=1, tool_call_id=f"image-{operation_id}", tool_name="image_generation", status="done", message=f"已生成 {len(cached['assets'])} 张图片")
+            events.append(event)
+            await self._publish(callback, AgentStreamEvent(type="agent_event", event=event))
+            return AgentRunResult(**cached, provider=self._model_provider, platform=platform, rounds=1, events=events)
+        except _RunCancellationRequested:
+            return self._cancelled_run_result(platform, 1, events, None)
+        except ModelProviderError as exc:
+            event = ToolEvent(round=1, tool_call_id=f"image-{operation_id}", tool_name="image_generation", status="failed", message=str(exc))
+            events.append(event)
+            await self._publish(callback, AgentStreamEvent(type="agent_event", event=event))
+            return AgentRunResult(content=str(exc), provider=self._model_provider, platform=platform, rounds=1,
+                                  status="failed", error=ToolError(code=exc.code, message=str(exc), retryable=False), events=events)
+
     async def _generate_response(self, provider, request: ModelRequest, event_callback: StreamCallback | None) -> ModelResponse:
         provider, selection = self._select_stage_model(provider, "execute", request, streaming=event_callback is not None)
         with model_call_scope(selection, self._run_context.get(), stage="execute"):
@@ -1696,6 +1740,11 @@ class AgentRuntime:
                 )
             elif event.type == "completed":
                 response = event.response
+            elif event.type == "image_progress" and request.image_generation:
+                await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=ToolEvent(
+                    round=1, tool_call_id=f"image-{self._run_context.get()}", tool_name="image_generation",
+                    status="running", message="正在生成图片" if event.delta != "completed" else "正在保存图片",
+                )))
         if response is None:
             raise ModelProviderError(
                 "empty_stream",

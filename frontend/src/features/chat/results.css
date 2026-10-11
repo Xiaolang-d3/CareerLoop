@@ -31,3 +31,14 @@
 .chat-workspace .message-attachments .chat-history-attachment.is-image > button:first-child { display: flex; flex-direction: column; align-items: flex-start; padding: 8px; }
 .chat-history-attachment img { display: block; width: auto; max-width: 100%; max-height: 160px; object-fit: contain; border-radius: 6px; }
 .chat-workspace .message-attachments .chat-history-attachment > button:not(:first-child) { background: transparent; border: 0; font-size: 11px; color: var(--color-text-muted); }
+
+.chat-generated-image { margin: 16px 0; width: min(100%, 640px); }
+.chat-generated-image .chat-history-attachment { max-width: none; width: 100%; }
+.chat-generated-image .chat-history-attachment > button { border: 1px solid var(--color-border); border-radius: 10px; padding: 8px 12px; background: var(--color-surface); color: var(--color-text-secondary); cursor: pointer; font: inherit; font-size: 12px; }
+.chat-generated-image .chat-history-attachment > button:first-child { display: flex; flex-direction: column; align-items: stretch; width: 100%; gap: 8px; }
+.chat-generated-image .chat-history-attachment img { width: 100%; height: auto; max-height: 460px; object-fit: contain; border-radius: 8px; }
+.chat-generated-image .chat-history-attachment > button:not(:first-child) { margin-top: 6px; }
+.chat-generated-image figcaption { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; color: var(--color-text-muted); font-size: 12px; }
+.chat-generated-image figcaption button { display: inline-flex; gap: 6px; align-items: center; padding: 6px 10px; color: var(--color-text-secondary); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px; cursor: pointer; }
+.chat-generated-image button:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 3px; }
+.chat-result-notice { color: var(--color-text-muted); font-size: 12px; padding: 0 24px; }

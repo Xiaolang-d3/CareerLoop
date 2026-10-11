@@ -95,6 +95,12 @@ class AutoNegotiatingModelProvider:
         raise RuntimeError("自动协议匹配没有可用候选")
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
+        if request.image_generation:
+            provider = next((provider for protocol, provider in self._providers if protocol == "responses"), None)
+            if provider is None:
+                raise ModelProviderError("image_generation_protocol", "Grok 生图需要 Responses 接口，请检查模型连接")
+            # A billed native tool cannot be retried through a different protocol.
+            return await provider.generate(request)
         return await self._call("generate", request)
 
     async def check_connection(self) -> None:
@@ -107,6 +113,13 @@ class AutoNegotiatingModelProvider:
         return await self._call("probe_vision")
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
+        if request.image_generation:
+            provider = next((provider for protocol, provider in self._providers if protocol == "responses"), None)
+            if provider is None:
+                raise ModelProviderError("image_generation_protocol", "Grok 生图需要 Responses 接口，请检查模型连接")
+            async for event in provider.stream(request):
+                yield event
+            return
         candidates = self._candidate_indexes()
         for position, index in enumerate(candidates):
             provider = self._providers[index][1]

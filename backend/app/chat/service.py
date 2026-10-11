@@ -191,10 +191,28 @@ def save_stream_result(conversation_id: int, task_id: int, user_message: dict[st
         clear_run_snapshot(conversation_id)
     public_result = result.model_dump(mode="json", exclude={"snapshot"})
     public_result["model_selection"] = public_model_selection(result.model_selection)
-    assistant_message = save_chat_message(
-        "assistant", result.content,
-        {"agent": public_result},
-        conversation_id, task_id,
-    )
+    if result.assets:
+        with connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            asset_ids = [asset["id"] for asset in result.assets]
+            rows = [conn.execute("SELECT message_id FROM chat_image_assets WHERE id=? AND conversation_id=?", (aid, conversation_id)).fetchone() for aid in asset_ids]
+            if not rows or any(row is None for row in rows):
+                raise ValueError("生成图片资源不可用")
+            bound_ids = {row["message_id"] for row in rows if row["message_id"] is not None}
+            if bound_ids:
+                if len(bound_ids) != 1 or any(row["message_id"] is None for row in rows):
+                    raise ValueError("图片的消息绑定不一致")
+                assistant_message = row_to_dict(conn.execute("SELECT * FROM chat_messages WHERE id=? AND conversation_id=?", (next(iter(bound_ids)), conversation_id)).fetchone())
+                if assistant_message is None:
+                    raise ValueError("图片所属消息不可用")
+            else:
+                cursor = conn.execute("INSERT INTO chat_messages(role,content,payload_json,conversation_id,task_id) VALUES ('assistant',?,?,?,?)",
+                                      (result.content, json_dump({"agent": public_result}), conversation_id, task_id))
+                assistant_message = row_to_dict(conn.execute("SELECT * FROM chat_messages WHERE id=?", (cursor.lastrowid,)).fetchone())
+            for asset in result.assets:
+                conn.execute("UPDATE chat_image_assets SET message_id=? WHERE id=? AND conversation_id=?",
+                             (assistant_message["id"], asset["id"], conversation_id))
+    else:
+        assistant_message = save_chat_message("assistant", result.content, {"agent": public_result}, conversation_id, task_id)
     refresh_conversation_summary(conversation_id)
     return {"user_message": user_message, "assistant_message": assistant_message}

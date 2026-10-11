@@ -347,9 +347,24 @@ def get_source_file(source_id: int, db_path: str | Path | None = None) -> tuple[
     return stored, source["original_filename"] or stored.name, source["mime_type"]
 
 
+def get_source_asset(source_id: int, asset_id: str, db_path: str | Path | None = None) -> tuple[Path, str, str]:
+    source = get_source(source_id, db_path=db_path)
+    if source is None:
+        raise ValueError("文件不存在")
+    asset = next((a for a in source.get("metadata", {}).get("chat_assets", []) if a.get("id") == asset_id), None)
+    if asset is None:
+        raise ValueError("文件图片不存在")
+    root = _library_root(db_path) / str(source_id)
+    target = (root / asset["path"]).resolve()
+    if root.is_symlink() or not root.resolve().is_relative_to(resolve_document_dir(db_path).resolve()) or not target.is_relative_to(root.resolve()) or not target.is_file() or target == root.resolve():
+        raise ValueError("文件图片不可用")
+    return target, asset["original_filename"], asset["content_type"]
+
+
 def delete_source(source_id: int, db_path: str | Path | None = None) -> bool:
     stored: Path | None = None
     original: bytes | None = None
+    asset_backups: list[tuple[Path, bytes]] = []
     try:
         with connect(db_path) as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -361,6 +376,9 @@ def delete_source(source_id: int, db_path: str | Path | None = None) -> bool:
             source = _source_from_row(row)
             stored = _stored_file(source, db_path)
             original = stored.read_bytes() if stored is not None and stored.is_file() else None
+            for asset in source.get("metadata", {}).get("chat_assets", []):
+                path, _, _ = get_source_asset(source_id, asset["id"], db_path)
+                asset_backups.append((path, path.read_bytes()))
             evidence = conn.execute(
                 """
                 SELECT e.id, e.knowledge_id, i.status
@@ -393,17 +411,28 @@ def delete_source(source_id: int, db_path: str | Path | None = None) -> bool:
                     )
             conn.execute("DELETE FROM library_sources WHERE id = ?", (source_id,))
             delete_document(SOURCE_TYPE, source_id, db_path=db_path, connection=conn)
+            for path, _ in asset_backups:
+                path.unlink(missing_ok=True)
             if stored is not None:
                 try:
                     stored.unlink(missing_ok=True)
                 except OSError as exc:
                     raise ValueError("无法删除原文件，请检查文件权限后重试") from exc
     except Exception:
+        for path, data in asset_backups:
+            if not path.exists():
+                path.write_bytes(data)
+                path.chmod(0o600)
         if stored is not None and original is not None and not stored.exists():
             stored.write_bytes(original)
             stored.chmod(0o600)
         raise
     if stored is not None:
+        if asset_backups:
+            try:
+                (stored.parent / "assets").rmdir()
+            except OSError:
+                pass
         try:
             stored.parent.rmdir()
         except OSError:
