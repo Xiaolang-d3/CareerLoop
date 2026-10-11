@@ -42,7 +42,8 @@ describe("interruptedRunRetryDraft", () => {
       attachmentIds: ["resume-1", "image-1"],
       visionAttachmentIds: ["image-1"],
       webSearch: true,
-      webSearchMode: "technical",
+      webSearchTopic: "general",
+      webSearchSourcePreference: "technical",
       runId: "run-recover-1",
       reason: "interrupted"
     });

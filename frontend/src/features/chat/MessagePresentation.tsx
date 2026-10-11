@@ -14,6 +14,8 @@ import { Children, createContext, isValidElement, useContext, useEffect, useId, 
 import { ChatWorkspaceMermaid } from "../../components/ChatWorkspaceMermaid";
 import { ChatWorkspaceMindmap } from "../../components/ChatWorkspaceMindmap";
 import { isMermaidMindmap } from "../../components/mindmap-source";
+import { searchMetadataFromAgent, type SearchMetadata } from "./searchMetadata";
+import { webSearchTopicLabels } from "./webSearchOptions";
 import { ActionBarPrimitive, ComposerPrimitive, MessagePrimitive, type AppendMessage, type MessageState } from "@assistant-ui/react";
 import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -278,7 +280,7 @@ export function EditMessageComposer() {
         <div className="message-meta"><strong>编辑消息</strong><span>将替换本条消息及后续消息，并重新生成回复</span></div>
         <ComposerPrimitive.Root className="message-edit-composer">
           <ComposerPrimitive.Input rows={3} maxLength={200_000} aria-label="编辑消息" aria-describedby="message-edit-impact" autoFocus />
-          <p className="message-edit-impact" id="message-edit-impact">本轮资料与联网选项不会自动沿用；需要时请取消编辑，另发新消息。</p>
+          <p className="message-edit-impact" id="message-edit-impact">沿用本轮联网设置；资料不会自动附加，需要重新添加资料时请取消编辑，另发新消息。</p>
           <div className="message-edit-actions">
             <ComposerPrimitive.Cancel><X size={12} />取消</ComposerPrimitive.Cancel>
             <ComposerPrimitive.Send><Check size={12} />保存并重新生成</ComposerPrimitive.Send>
@@ -641,6 +643,7 @@ function sourceDisplaySummary(source: WebSource): string {
 
 export function ResearchPanel({
   open,
+  agent,
   sources,
   selectedSource,
   streaming,
@@ -735,6 +738,7 @@ export function ResearchPanel({
             </div>
           )}
         </section>
+        {searchMetadataFromAgent(agent).length ? <details className="research-search-details"><summary>搜索参数</summary><SearchMetadataContent metadata={searchMetadataFromAgent(agent)} /></details> : null}
       </div>
     </aside>
   );
@@ -774,7 +778,17 @@ function MessageCopyButton({ content, label }: { content: string; label: string 
   return <><button type="button" className="message-icon-action" aria-label={label} title={feedback || label} onClick={() => void copy()} disabled={!content}>{feedback === "已复制" ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}</button><span className="message-copy-feedback" role="status">{feedback}</span></>;
 }
 
-function MessageModelDetails({ selection, messageId }: { selection: ModelSelection; messageId: number }) {
+function SearchMetadataContent({ metadata }: { metadata: SearchMetadata[] }) {
+  const topicLabel = (value: string | null) => value === "company" ? "公司" : value && value in webSearchTopicLabels ? webSearchTopicLabels[value as keyof typeof webSearchTopicLabels] : "未知";
+  return <>{metadata.map((item, index) => <span key={index} className="search-metadata-entry">
+    <strong>搜索服务：{item.provider === "tavily" ? "Tavily" : item.provider === "agent_search" ? "AgentSearch" : item.provider}</strong>
+    <span>请求类别：{webSearchTopicLabels[item.requested_topic]} · 发送类别：{item.sent_topic ? topicLabel(item.sent_topic) : "由服务判断"}</span>
+    <span>服务实际类别：{topicLabel(item.effective_topic)} · 来源偏好：{item.source_preference === "technical" ? "优先技术资料" : "不限来源"}</span>
+    {item.warnings.map((warning, warningIndex) => <span key={warningIndex}>{warning}</span>)}
+  </span>)}</>;
+}
+
+function MessageModelDetails({ selection, messageId, metadata }: { selection?: ModelSelection; messageId: number; metadata: SearchMetadata[] }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLSpanElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -803,13 +817,14 @@ function MessageModelDetails({ selection, messageId }: { selection: ModelSelecti
         <Info size={14} aria-hidden="true" />
       </button>
       {open ? <span id={`message-details-${messageId}`} className="message-model-details" role="region" aria-label="回答详情">
-        <strong>生成模型：{selection.model_name}</strong>
+        {selection ? <><strong>生成模型：{selection.model_name}</strong>
         <span>模型版本 {selection.profile_revision} · 连接版本 {selection.connection_revision}
           {selection.policy_version ? ` · 路由版本 ${selection.policy_version}` : ""}</span>
         {selection.stage_selections ? Object.entries(selection.stage_selections).map(([stage, stageSelection]) => (
           <span key={stage}>{modelStageLabels[stage] || stage}：{stageSelection.model_name || "未记录"} · {modelSelectionReasons[stageSelection.selection_reason || ""] || "原任务配置"}
             {stageSelection.capability_status === "unverified" ? " · 所需能力未验证" : stageSelection.capability_status ? "" : " · 本轮未调用"}</span>
-        )) : null}
+        )) : null}</> : null}
+        <SearchMetadataContent metadata={metadata} />
       </span> : null}
     </span>
   );
@@ -827,6 +842,7 @@ export function ChatTurn({ state, chatBusy, stopping = false }: { state: Message
   const resultContent = resultOnlyContent(source.content, Boolean(thoughtEvent?.message));
   const failed = source.payload?.agent?.status === "failed";
   const webSources = webSourcesFromAgent(source.payload?.agent);
+  const searchMetadata = searchMetadataFromAgent(source.payload?.agent);
   const openResearch = (selectedSource?: number) => {
     researchPanel?.openDetails(source.payload?.agent, webSources, selectedSource);
   };
@@ -845,7 +861,7 @@ export function ChatTurn({ state, chatBusy, stopping = false }: { state: Message
               <ActionBarPrimitive.Reload className="message-icon-action" aria-label={failed ? "重试回答" : "重新生成回答"} title={failed ? "重试回答，将替换本轮及后续消息" : "重新生成，将替换本轮及后续消息"} aria-describedby={`regenerate-impact-${source.id}`}>
                 <RefreshCw size={14} aria-hidden="true" />
               </ActionBarPrimitive.Reload>
-              {modelSelection?.model_name ? <MessageModelDetails key={source.id} selection={modelSelection} messageId={source.id} /> : null}
+              {modelSelection?.model_name || searchMetadata.length ? <MessageModelDetails key={source.id} selection={modelSelection} messageId={source.id} metadata={searchMetadata} /> : null}
             </ActionBarPrimitive.Root>
             <span className="message-action-hint sr-only" id={`regenerate-impact-${source.id}`}>重新生成将替换本轮及后续消息</span>
             <WebSourcesPanel sources={webSources} onOpen={() => openResearch()} />

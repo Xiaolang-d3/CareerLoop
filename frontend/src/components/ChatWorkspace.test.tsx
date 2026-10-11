@@ -2,7 +2,7 @@ import { createRef } from "react";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatWorkspace } from "./ChatWorkspace";
-import type { AgentRunResult, ChatMessage, ChatRetryDraft, ChatAttachment, ChatComposerDraft } from "../features/chat/types";
+import type { AgentRunResult, ChatMessage, ChatRetryDraft, ChatAttachment, ChatComposerDraft, ChatWorkspaceProps, WebSearchOptions } from "../features/chat/types";
 
 const mermaidMocks = vi.hoisted(() => ({
   initialize: vi.fn(),
@@ -62,6 +62,8 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
   latestAgent?: AgentRunResult;
   webSearchAvailable?: boolean;
   webSearchProvider?: string;
+  webSearchCapabilities?: ChatWorkspaceProps["webSearchCapabilities"];
+  composerSearchDrafts?: Map<number, WebSearchOptions>;
   retryDraft?: ChatRetryDraft | null;
   modelChecking?: boolean;
   modelUnavailable?: string;
@@ -77,6 +79,7 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
     libraryAttachments: extras.libraryAttachments,
     onLibraryAttachmentsConsumed: extras.onLibraryAttachmentsConsumed,
     composerDraft: extras.composerDraft,
+    composerSearchDrafts: extras.composerSearchDrafts,
     onComposerDraftConsumed: extras.onComposerDraftConsumed,
     density: extras.density,
     modelChecking: extras.modelChecking,
@@ -107,6 +110,7 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
     attachmentConfig: null,
     webSearchAvailable: extras.webSearchAvailable ?? false,
     webSearchProvider: extras.webSearchProvider,
+    webSearchCapabilities: extras.webSearchCapabilities ?? (extras.webSearchAvailable ? { enabled: true, provider: extras.webSearchProvider ?? "tavily", supported_topics: ["auto", "general", "news", "finance"] as Array<"auto" | "general" | "news" | "finance">, supports_auto_parameters: true, supports_technical_preference: true } : undefined),
     onUploadAttachment: vi.fn(),
     onRemoveAttachment: vi.fn(),
     onAttachmentInvalid: vi.fn(),
@@ -124,6 +128,48 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
 }
 
 describe("ChatWorkspace", () => {
+  it("restores search choices per conversation and resets them for a new account scope", () => {
+    const map = new Map<number, WebSearchOptions>();
+    const props = renderChat([message], { webSearchAvailable: true, composerSearchDrafts: map });
+    fireEvent.click(screen.getByRole("button", { name: "联网搜索" }));
+    fireEvent.click(screen.getByRole("button", { name: "搜索类别" }));
+    fireEvent.click(screen.getByRole("radio", { name: /金融/ }));
+    const second = { ...conversation, id: conversation.id + 1 };
+    props.view.rerender(<ChatWorkspace {...props} currentConversationId={second.id} conversations={[conversation, second]} />);
+    expect(screen.getByRole("button", { name: "联网搜索" })).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(screen.getByRole("button", { name: "联网搜索" }));
+    expect(screen.getByRole("button", { name: "搜索类别" })).toHaveTextContent("自动");
+    props.view.rerender(<ChatWorkspace {...props} />);
+    expect(screen.getByRole("button", { name: "搜索类别" })).toHaveTextContent("金融");
+    props.view.rerender(<ChatWorkspace {...props} composerSearchDrafts={new Map()} />);
+    expect(screen.getByRole("button", { name: "联网搜索" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("inherits clarification search settings and allows explicitly disabling them for the next send", async () => {
+    const pending: ChatMessage = { ...assistantMessage("请确认"), payload: { agent: { provider: "test", platform: "local", rounds: 1, status: "waiting_user", events: [] } } };
+    const source: ChatMessage = { ...message, payload: { web_search_options: { version: 1, enabled: true, topic: "news", source_preference: "technical", provider: "tavily" } } };
+    const props = renderChat([source, pending], { webSearchAvailable: true });
+    await waitFor(() => expect(screen.getByRole("button", { name: "搜索类别" })).toHaveTextContent("新闻"));
+    fireEvent.click(screen.getByRole("button", { name: "搜索类别" }));
+    expect(screen.getByText("沿用待确认任务的联网设置；修改后按新配置执行。")).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "联网搜索设置" }), { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "联网搜索" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "输入消息" }), { target: { value: "只用已有资料" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(props.onSend).toHaveBeenCalledWith("只用已有资料", [], [], false, "news", "technical"));
+  });
+
+  it("keeps unknown actual categories inside answer details without inventing a match", () => {
+    const answer: ChatMessage = { ...assistantMessage("测试回答"), payload: { agent: { provider: "test", platform: "local", rounds: 1, status: "done", events: [{ round: 1, tool_call_id: "search-1", tool_name: "search_public_web", status: "done", message: "检索完成", data: { search_metadata: { provider: "tavily", requested_topic: "auto", sent_topic: null, effective_topic: null, source_preference: "technical", warnings: [] } } }] } } };
+    renderChat([message, answer]);
+    expect(screen.queryByText(/服务实际类别/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "回答详情" }));
+    const details = screen.getByRole("region", { name: "回答详情" });
+    expect(details).toHaveTextContent("搜索服务：Tavily");
+    expect(details).toHaveTextContent("服务实际类别：未知");
+    expect(details).toHaveTextContent("优先技术资料");
+  });
+
   it("keeps the current model label while generating and provides a stop action", async () => {
     const props = renderChat([message], { chatBusy: true, currentModelName: "grok-4.7" });
     const model = screen.getByRole("button", { name: "切换模型，当前 grok-4.7" });
@@ -253,7 +299,7 @@ describe("ChatWorkspace", () => {
   });
 
   it("shows one failure prompt with settings, retry and the retained draft", () => {
-    const draft: ChatRetryDraft = { content: "保留的问题", attachmentIds: [], visionAttachmentIds: [], webSearch: false, webSearchMode: "auto", reason: "send_failed" };
+    const draft: ChatRetryDraft = { content: "保留的问题", attachmentIds: [], visionAttachmentIds: [], webSearch: false, webSearchTopic: "auto", webSearchSourcePreference: "none", reason: "send_failed" };
     const props = renderChat([], { modelUnavailable: "服务暂时不可用", retryDraft: draft });
     const prompt = screen.getByRole("alert", { name: "模型服务不可用" });
     expect(props.view.container.querySelectorAll(".chat-retry-prompt")).toHaveLength(1);
@@ -510,7 +556,8 @@ describe("ChatWorkspace", () => {
       attachmentIds: ["attachment-1"],
       visionAttachmentIds: [],
       webSearch: true,
-      webSearchMode: "technical",
+      webSearchTopic: "general",
+      webSearchSourcePreference: "technical",
       runId: "run-recover-1",
       reason: "interrupted"
     };
@@ -729,23 +776,27 @@ describe("ChatWorkspace", () => {
     expect(screen.getByRole("button", { name: "联网搜索" })).toHaveAttribute("title", "使用 Tavily 搜索公开信息");
     cleanup();
     renderChat([], { webSearchAvailable: false });
-    expect(screen.getByRole("button", { name: "联网搜索" })).toHaveAttribute("title", "可以选中；发送后会提示启用并配置搜索服务");
+    expect(screen.getByRole("button", { name: "联网搜索" })).toHaveAttribute("title", "开启后请读取能力并配置搜索服务");
   });
 
-  it("keeps source selection grouped with web search and sends the selected mode", async () => {
+  it("groups search categories with web search and sends the topic and source preference", async () => {
     const props = renderChat([], { webSearchAvailable: true });
 
-    expect(screen.queryByLabelText("联网搜索模式")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("搜索类别")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "联网搜索" }));
 
-    const mode = screen.getByLabelText("联网搜索模式");
+    const mode = screen.getByRole("button", { name: "搜索类别" });
     expect(mode.closest(".composer-web-search")).toContainElement(screen.getByRole("button", { name: "联网搜索" }));
-    expect(mode).toHaveValue("auto");
-    fireEvent.change(mode, { target: { value: "technical" } });
-    expect(mode).toHaveValue("technical");
+    expect(mode).toHaveTextContent("自动");
+    fireEvent.click(mode);
+    fireEvent.click(screen.getByRole("radio", { name: /新闻/ }));
+    expect(mode).toHaveTextContent("新闻");
+    fireEvent.click(mode);
+    fireEvent.click(screen.getByRole("button", { name: "搜索设置" }));
+    fireEvent.click(screen.getByRole("radio", { name: /优先技术资料/ }));
     fireEvent.change(screen.getByRole("textbox", { name: "输入消息" }), { target: { value: "查一下技术文档" } });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
-    await waitFor(() => expect(props.onSend).toHaveBeenCalledWith("查一下技术文档", [], [], true, "technical"));
+    await waitFor(() => expect(props.onSend).toHaveBeenCalledWith("查一下技术文档", [], [], true, "news", "technical"));
   });
 
   it("shows saved resume and analysis as attached composer context", () => {
@@ -908,7 +959,7 @@ describe("ChatWorkspace", () => {
     expect(screen.getByLabelText("输出结果")).toHaveTextContent("你指的是哪家公司？");
 
     fireEvent.click(screen.getByRole("button", { name: "字节跳动" }));
-    expect(onSend).toHaveBeenCalledWith("按字节跳动继续");
+    expect(onSend).toHaveBeenCalledWith("按字节跳动继续", [], [], false, "auto", "none");
     expect(onSuggestedAction).not.toHaveBeenCalled();
   });
 

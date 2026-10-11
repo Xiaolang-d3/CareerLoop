@@ -1633,6 +1633,9 @@
 .chat-workspace .research-source-detail { margin: 0 0 10px; }
 .chat-workspace .research-source-detail > strong { overflow-wrap: anywhere; }
 .chat-workspace .research-source-detail > p { display: block; max-height: 240px; overflow-y: auto; -webkit-line-clamp: unset; }
+.search-metadata-entry { display: grid; gap: 4px; margin-top: 8px; }
+.research-search-details { margin: 8px 0 16px; padding: 12px; border: 1px solid var(--color-border); border-radius: 8px; color: var(--color-text-secondary); font-size: 11px; line-height: 1.6; }
+.research-search-details summary { cursor: pointer; font-weight: 500; }
 .chat-workspace .research-source-copy strong { max-width: 100%; }
 .conversation-history-search { display: flex; align-items: center; gap: 8px; margin: 0 12px 12px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 9px; color: var(--color-text-muted); background: var(--color-surface); }
 .conversation-history-search:focus-within { border-color: var(--color-brand); box-shadow: var(--focus-ring); }

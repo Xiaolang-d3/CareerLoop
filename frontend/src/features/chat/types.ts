@@ -1,5 +1,15 @@
 import type { RefObject } from "react";
-import type { Conversation } from "../../types";
+import type { AgentCapabilities, Conversation } from "../../types";
+
+export type WebSearchTopic = "auto" | "general" | "news" | "finance";
+export type WebSearchSourcePreference = "none" | "technical";
+export type WebSearchOptions = {
+  version: 1;
+  enabled: boolean;
+  topic: WebSearchTopic;
+  source_preference: WebSearchSourcePreference;
+  provider?: string;
+};
 
 export type ModelSelection = {
   profile_id: string;
@@ -58,6 +68,9 @@ export type ChatMessage = {
     model_selection?: ModelSelection;
     attachments?: ChatAttachment[];
     web_search?: boolean;
+    web_search_topic?: WebSearchTopic;
+    web_search_source_preference?: WebSearchSourcePreference;
+    web_search_options?: WebSearchOptions;
     web_search_mode?: WebSearchMode;
   };
 };
@@ -93,7 +106,9 @@ export type ChatRetryDraft = {
   attachmentIds: string[];
   visionAttachmentIds: string[];
   webSearch: boolean;
-  webSearchMode: WebSearchMode;
+  webSearchTopic: WebSearchTopic;
+  webSearchSourcePreference: WebSearchSourcePreference;
+  webSearchProvider?: string;
   runId?: string;
   rewindMessageId?: number;
   reason?: "send_failed" | "interrupted";
@@ -149,6 +164,7 @@ export type ChatWorkspaceProps = {
   onLibraryAttachmentsConsumed?: () => void;
   composerDraft?: ChatComposerDraft | null;
   composerDrafts?: Map<number, string>;
+  composerSearchDrafts?: Map<number, WebSearchOptions>;
   onComposerDraftConsumed?: () => void;
   conversations: Conversation[];
   conversationBusy: boolean;
@@ -168,12 +184,16 @@ export type ChatWorkspaceProps = {
   attachmentConfig: AttachmentConfig | null;
   webSearchAvailable: boolean;
   webSearchProvider?: string;
+  webSearchCapabilities?: AgentCapabilities["web_research"];
+  webSearchCapabilitiesBusy?: boolean;
+  webSearchCapabilitiesError?: string;
+  onRefreshWebSearchCapabilities?: () => Promise<unknown>;
   onUploadAttachment: (file: File) => Promise<ChatAttachment>;
   onRemoveAttachment: (attachmentId: string) => Promise<void>;
   onAttachmentInvalid: (message: string) => void;
   onSuggestedAction: () => void;
   onCancelTask: () => void;
-  onSend: (content: string, attachmentIds?: string[], visionAttachmentIds?: string[], webSearch?: boolean, webSearchMode?: WebSearchMode) => Promise<void | boolean>;
+  onSend: (content: string, attachmentIds?: string[], visionAttachmentIds?: string[], webSearch?: boolean, webSearchTopic?: WebSearchTopic, webSearchSourcePreference?: WebSearchSourcePreference) => Promise<void | boolean>;
   onRetry?: (draft: ChatRetryDraft) => Promise<void | boolean>;
   onStop: () => Promise<void>;
   onEdit: (userMessageId: number, content: string) => Promise<void>;

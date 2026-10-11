@@ -1,4 +1,5 @@
 import type { ChatMessage, ChatRetryDraft } from "./features/chat/types";
+import { webSearchOptionsFromMessage } from "./features/chat/webSearchOptions";
 
 export type DurableAgentRunSummary = {
   run_id: string;
@@ -17,14 +18,17 @@ export function interruptedRunRetryDraft(
   );
   if (!userMessage) return null;
   const attachments = userMessage.payload?.attachments ?? [];
+  const search = webSearchOptionsFromMessage(userMessage);
   return {
     content: userMessage.content,
     attachmentIds: attachments.map((attachment) => attachment.id),
     visionAttachmentIds: attachments
       .filter((attachment) => attachment.vision_status === "consented")
       .map((attachment) => attachment.id),
-    webSearch: Boolean(userMessage.payload?.web_search),
-    webSearchMode: userMessage.payload?.web_search_mode ?? "auto",
+    webSearch: search.enabled,
+    webSearchTopic: search.topic,
+    webSearchSourcePreference: search.source_preference,
+    ...(search.provider ? { webSearchProvider: search.provider } : {}),
     runId: run.run_id,
     reason: "interrupted"
   };

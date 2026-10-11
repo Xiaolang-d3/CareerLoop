@@ -19,19 +19,20 @@ function setup() {
   const currentConversationIdRef = { current: 1 as number | null };
   const setErrorMessage = vi.fn();
   const setNoticeMessage = vi.fn();
+  const fetchJson = vi.fn();
   const hook = renderHook(() => useChatRun({
     apiBase: "/test-api", accessToken: "test-only-session",
-    fetchJson: vi.fn() as ReturnType<typeof createApiClient>,
+    fetchJson: fetchJson as ReturnType<typeof createApiClient>,
     currentConversationId: 1, currentConversationIdRef,
     setErrorMessage, setNoticeMessage,
     refreshConversations: vi.fn().mockResolvedValue([]),
     onLibraryChanged: vi.fn().mockResolvedValue(undefined)
   }));
-  return { ...hook, currentConversationIdRef, setErrorMessage, setNoticeMessage, finish: () => finish() };
+  return { ...hook, currentConversationIdRef, setErrorMessage, setNoticeMessage, fetchJson, finish: () => finish() };
 }
 
 function emit(name: keyof AgentSubscriber, value: Record<string, unknown>) {
-  const subscriber = client.runAgent.mock.calls[0][1] as AgentSubscriber;
+  const subscriber = client.runAgent.mock.calls.at(-1)![1] as AgentSubscriber;
   const callback = subscriber[name] as (value: Record<string, unknown>) => void;
   callback(value);
 }
@@ -44,9 +45,105 @@ beforeEach(() => { client.runAgent.mockReset(); client.abortRun.mockReset(); });
 afterEach(cleanup);
 
 describe("useChatRun stream reconciliation", () => {
+  it("keeps all search options and the run ID after a failed stream, including a server-bound provider", async () => {
+    const { result, fetchJson } = setup();
+    client.runAgent.mockImplementationOnce(async () => {
+      emit("onCustomEvent", { event: { name: "careerloop.user_message", value: { ...userMessage, payload: { web_search_options: { version: 1, enabled: true, topic: "finance", source_preference: "technical", provider: "tavily" } } } } });
+      throw new Error("连接中断");
+    });
+    await act(() => result.current.sendChatMessage(userMessage.content, ["doc-1"], [], true, "finance", "technical"));
+    const original = client.runAgent.mock.calls[0][0];
+    expect(original.forwardedProps).toMatchObject({ webSearch: true, webSearchTopic: "finance", webSearchSourcePreference: "technical" });
+    expect(original.forwardedProps).not.toHaveProperty("webSearchMode");
+    const draft = result.current.retryChatDraft!;
+    expect(draft).toMatchObject({ attachmentIds: ["doc-1"], webSearch: true, webSearchTopic: "finance", webSearchSourcePreference: "technical", webSearchProvider: "tavily", runId: original.runId });
+    fetchJson.mockResolvedValue({ web_research: { enabled: true, provider: "tavily", supported_topics: ["auto", "general", "news", "finance"], supports_technical_preference: true } });
+    client.runAgent.mockImplementationOnce(async () => emit("onStateSnapshotEvent", { event: { snapshot } }));
+    await act(() => result.current.sendChatMessage(draft.content, draft.attachmentIds, draft.visionAttachmentIds, draft.webSearch, draft.webSearchTopic, draft.webSearchSourcePreference, undefined, draft.runId, draft.rewindMessageId, draft.modelProfileId, draft.webSearchProvider));
+    expect(client.runAgent.mock.calls[1][0]).toMatchObject({ runId: original.runId, forwardedProps: { webSearchTopic: "finance", webSearchSourcePreference: "technical", webSearchProvider: "tavily" } });
+    expect(fetchJson).not.toHaveBeenCalled(); // Same-run replay may return stored results without using the current service.
+  });
+
+  it("inherits the waiting task search options when a clarification supplies no override", async () => {
+    const { result } = setup();
+    const pendingUser: ChatMessage = { ...userMessage, payload: { web_search_options: { version: 1, enabled: true, topic: "news", source_preference: "technical", provider: "tavily" } } };
+    const pendingAssistant: ChatMessage = { ...assistantMessage, payload: { agent: { provider: "test", platform: "local", rounds: 1, status: "waiting_user", events: [] } } };
+    act(() => result.current.setChatMessages([pendingUser, pendingAssistant]));
+    client.runAgent.mockImplementationOnce(async () => emit("onStateSnapshotEvent", { event: { snapshot } }));
+    await act(() => result.current.sendChatMessage("继续查最新发布"));
+    expect(client.runAgent.mock.calls[0][0].forwardedProps).toMatchObject({ webSearch: true, webSearchTopic: "news", webSearchSourcePreference: "technical" });
+  });
+
+  it("honors an explicit search disable and auto choice in a new clarification run", async () => {
+    const { result } = setup();
+    const pendingUser: ChatMessage = { ...userMessage, payload: { web_search_options: { version: 1, enabled: true, topic: "news", source_preference: "technical", provider: "tavily" } } };
+    const pendingAssistant: ChatMessage = { ...assistantMessage, payload: { agent: { provider: "test", platform: "local", rounds: 1, status: "waiting_user", events: [] } } };
+    act(() => result.current.setChatMessages([pendingUser, pendingAssistant]));
+    client.runAgent.mockImplementationOnce(async () => emit("onStateSnapshotEvent", { event: { snapshot } }));
+    await act(() => result.current.sendChatMessage("只整理已有资料", [], [], false, "auto", "none"));
+    expect(client.runAgent.mock.calls[0][0].forwardedProps).toMatchObject({ webSearch: false, webSearchTopic: "auto", webSearchSourcePreference: "none" });
+    expect(client.runAgent.mock.calls[0][0].runId).toBeTruthy();
+  });
+
+  it("checks the saved provider before deleting messages for regeneration", async () => {
+    const { result, fetchJson } = setup();
+    const original: ChatMessage = { ...userMessage, payload: { web_search_options: { version: 1, enabled: true, topic: "news", source_preference: "none", provider: "tavily" } } };
+    act(() => result.current.setChatMessages([original, assistantMessage]));
+    fetchJson.mockResolvedValue({ web_research: { enabled: true, provider: "agent_search", supported_topics: ["auto", "general", "news"], supports_technical_preference: false } });
+    await act(() => result.current.regenerateChatMessage(original.id));
+    expect(result.current.chatMessages).toEqual([original, assistantMessage]);
+    expect(fetchJson).toHaveBeenCalledOnce();
+    expect(fetchJson).toHaveBeenCalledWith("/agent/capabilities");
+    expect(client.runAgent).not.toHaveBeenCalled();
+    expect(result.current.modelUnavailable).toContain("历史消息已保留");
+    expect(result.current.chatBusy).toBe(false);
+  });
+
+  it("validates capability support before editing a historical search turn", async () => {
+    const { result, fetchJson } = setup();
+    const original: ChatMessage = { ...userMessage, payload: { web_search_options: { version: 1, enabled: true, topic: "news", source_preference: "technical", provider: "agent_search" } } };
+    act(() => result.current.setChatMessages([original, assistantMessage]));
+    fetchJson.mockResolvedValue({ web_research: { enabled: true, provider: "agent_search", supported_topics: ["auto", "general", "news"], supports_technical_preference: false } });
+    await act(() => result.current.editChatMessage(original.id, "新的问题"));
+    expect(result.current.chatMessages).toEqual([original, assistantMessage]);
+    expect(fetchJson).toHaveBeenCalledOnce();
+    expect(client.runAgent).not.toHaveBeenCalled();
+    expect(result.current.modelUnavailable).toContain("不支持优先技术资料");
+    expect(result.current.chatBusy).toBe(false);
+  });
+
+  it("preserves the historical search options for edit and sends provider only as an expected binding", async () => {
+    const { result, fetchJson } = setup();
+    const original: ChatMessage = { ...userMessage, payload: { attachments: [{ id: "old-doc", kind: "document", original_filename: "old.pdf", parse_status: "parsed" }], web_search_options: { version: 1, enabled: true, topic: "finance", source_preference: "technical", provider: "tavily" } } };
+    act(() => result.current.setChatMessages([original, assistantMessage]));
+    fetchJson.mockImplementation(async (path: string) => path === "/agent/capabilities" ? { web_research: { enabled: true, provider: "tavily", supported_topics: ["auto", "general", "news", "finance"], supports_technical_preference: true } } : path.startsWith("/chat/messages?") ? [] : { run: null });
+    client.runAgent.mockImplementationOnce(async () => emit("onStateSnapshotEvent", { event: { snapshot } }));
+    await act(() => result.current.editChatMessage(original.id, "新的金融问题"));
+    expect(fetchJson.mock.calls[0][0]).toBe("/agent/capabilities");
+    expect(fetchJson.mock.calls[1]).toEqual([`/chat/messages/${original.id}/tail?conversation_id=1`, { method: "DELETE" }]);
+    expect(client.runAgent.mock.calls[0][0].forwardedProps).toMatchObject({ attachmentIds: [], webSearch: true, webSearchTopic: "finance", webSearchSourcePreference: "technical", webSearchProvider: "tavily" });
+  });
+
+  it("locks duplicate regeneration clicks while the provider preflight is pending", async () => {
+    const { result, fetchJson } = setup();
+    const original: ChatMessage = { ...userMessage, payload: { web_search_options: { version: 1, enabled: true, topic: "news", source_preference: "none", provider: "tavily" } } };
+    act(() => result.current.setChatMessages([original, assistantMessage]));
+    let confirm!: (value: unknown) => void;
+    const pendingCapabilities = new Promise((resolve) => { confirm = resolve; });
+    fetchJson.mockImplementation(async (path: string) => path === "/agent/capabilities" ? pendingCapabilities : path.startsWith("/chat/messages?") ? [] : { run: null });
+    client.runAgent.mockImplementationOnce(async () => emit("onStateSnapshotEvent", { event: { snapshot } }));
+    let first!: Promise<void>;
+    act(() => { first = result.current.regenerateChatMessage(original.id); });
+    await act(() => result.current.regenerateChatMessage(original.id));
+    expect(fetchJson).toHaveBeenCalledOnce();
+    await act(async () => { confirm({ web_research: { enabled: true, provider: "tavily", supported_topics: ["auto", "general", "news", "finance"], supports_technical_preference: true } }); await first; });
+    expect(fetchJson.mock.calls.filter(([path]) => String(path).includes("/tail?"))).toHaveLength(1);
+    expect(client.runAgent).toHaveBeenCalledOnce();
+  });
+
   it("creates one assistant placeholder immediately and uses server timing before any token", async () => {
     const { result, finish } = setup();
-    let pending!: Promise<void>;
+    let pending!: Promise<void | false>;
     act(() => { pending = result.current.sendChatMessage(userMessage.content); });
     await waitFor(() => expect(client.runAgent).toHaveBeenCalledOnce());
     expect(result.current.chatMessages.map((message) => message.role)).toEqual(["user", "assistant"]);
@@ -79,7 +176,7 @@ describe("useChatRun stream reconciliation", () => {
 
   it("ignores malformed or unrelated timing metadata without inventing a duration", async () => {
     const { result, finish } = setup();
-    let pending!: Promise<void>;
+    let pending!: Promise<void | false>;
     act(() => { pending = result.current.sendChatMessage(userMessage.content); });
     await waitFor(() => expect(client.runAgent).toHaveBeenCalledOnce());
     const runId = client.runAgent.mock.calls[0][0].runId as string;
@@ -94,7 +191,7 @@ describe("useChatRun stream reconciliation", () => {
 
   it("keeps the first appearance order when later completion events update earlier activities", async () => {
     const { result, finish } = setup();
-    let pending!: Promise<void>;
+    let pending!: Promise<void | false>;
     act(() => { pending = result.current.sendChatMessage(userMessage.content); });
     await waitFor(() => expect(client.runAgent).toHaveBeenCalledOnce());
     act(() => {
@@ -112,7 +209,7 @@ describe("useChatRun stream reconciliation", () => {
 
   it("merges standard reasoning and the matching CareerLoop event into one activity", async () => {
     const { result, finish } = setup();
-    let pending!: Promise<void>;
+    let pending!: Promise<void | false>;
     act(() => { pending = result.current.sendChatMessage(userMessage.content); });
     await waitFor(() => expect(client.runAgent).toHaveBeenCalledOnce());
     act(() => {
@@ -130,7 +227,7 @@ describe("useChatRun stream reconciliation", () => {
 
   it("keeps one final answer when snapshots repeat and late stream events arrive", async () => {
     const { result, finish } = setup();
-    let pending!: Promise<void>;
+    let pending!: Promise<void | false>;
     act(() => { pending = result.current.sendChatMessage(userMessage.content); });
     await waitFor(() => expect(client.runAgent).toHaveBeenCalledOnce());
     act(() => {
@@ -149,7 +246,7 @@ describe("useChatRun stream reconciliation", () => {
 
   it("ignores events from a conversation that the user has left", async () => {
     const { result, currentConversationIdRef, finish } = setup();
-    let pending!: Promise<void>;
+    let pending!: Promise<void | false>;
     act(() => { pending = result.current.sendChatMessage(userMessage.content); });
     await waitFor(() => expect(client.runAgent).toHaveBeenCalledOnce());
     act(() => { currentConversationIdRef.current = 2; result.current.setChatMessages([]); });

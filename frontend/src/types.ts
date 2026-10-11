@@ -76,6 +76,9 @@ export type AgentCapabilities = {
   web_research?: {
     enabled: boolean;
     provider: string;
+    supported_topics?: Array<"auto" | "general" | "news" | "finance">;
+    supports_auto_parameters?: boolean;
+    supports_technical_preference?: boolean;
   };
 };
 

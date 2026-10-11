@@ -3,7 +3,9 @@ import type { AgentSubscriber, HttpAgent as HttpAgentType } from "@ag-ui/client"
 import { createApiClient, fetchWithTimeout } from "../../api/client";
 import { createClientId } from "../../api/clientId";
 import { interruptedRunRetryDraft, type DurableAgentRunSummary } from "../../durable-agent-run";
-import type { AgentRunResult, ChatAttachment, ChatMessage, ChatRetryDraft, WebSearchMode } from "../../features/chat/types";
+import type { AgentRunResult, ChatAttachment, ChatMessage, ChatRetryDraft, WebSearchSourcePreference, WebSearchTopic } from "../../features/chat/types";
+import { pendingWebSearchOptions, webSearchOptionsFromMessage, webSearchConfigurationIssue } from "./webSearchOptions";
+import type { AgentCapabilities } from "../../types";
 import type { RefObject } from "react";
 
 type Options = { apiBase: string; accessToken: string; fetchJson: ReturnType<typeof createApiClient>; currentConversationId: number | null; currentConversationIdRef: RefObject<number | null>; modelProfileId?: string | null; setErrorMessage: (message: string) => void; setNoticeMessage: (message: string) => void; refreshConversations: () => Promise<unknown>; onLibraryChanged: () => Promise<void> };
@@ -22,6 +24,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
   const [taskCancelBusy, setTaskCancelBusy] = useState(false);
 
   const [chatAttachmentBusy, setChatAttachmentBusy] = useState(false);
+  const sendingRef = useRef(false);
 
   async function refreshChat(conversationId = currentConversationId) {
     if (!conversationId) return;
@@ -76,23 +79,55 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
     setNoticeMessage("附件已移除");
   }
 
-  async function sendChatMessage(
+  async function sendChatMessage(...args: Parameters<typeof executeChatMessage>) {
+    if (sendingRef.current || chatBusy) return false;
+    sendingRef.current = true;
+    setChatBusy(true);
+    try { return await executeChatMessage(...args); }
+    finally {
+      sendingRef.current = false;
+      setChatBusy(false);
+    }
+  }
+
+  async function executeChatMessage(
     contentOverride: string,
     attachmentIds: string[] = [],
     visionAttachmentIds: string[] = [],
-    webSearch = false,
-    webSearchMode: WebSearchMode = "auto",
+    webSearchOverride?: boolean,
+    webSearchTopicOverride?: WebSearchTopic,
+    webSearchSourcePreferenceOverride?: WebSearchSourcePreference,
     conversationIdOverride?: number,
     runIdOverride?: string,
     rewindMessageId?: number,
     modelProfileIdOverride?: string | null,
+    expectedWebSearchProvider?: string,
   ) {
     const content = contentOverride.trim();
     const targetConversationId = conversationIdOverride ?? currentConversationId;
     const selectedModelProfileId = modelProfileIdOverride === undefined ? modelProfileId ?? null : modelProfileIdOverride;
     if (!content || chatBusy || !targetConversationId) return;
+    const inheritedSearch = runIdOverride ? null : pendingWebSearchOptions(chatMessages);
+    const webSearch = webSearchOverride ?? inheritedSearch?.enabled ?? false;
+    const webSearchTopic = webSearchTopicOverride ?? inheritedSearch?.topic ?? "auto";
+    const webSearchSourcePreference = webSearchSourcePreferenceOverride ?? inheritedSearch?.source_preference ?? "none";
     setModelUnavailable(null);
-    // Editing/retrying must not remove previous messages until the model works.
+    let boundSearchProvider = expectedWebSearchProvider;
+    if (webSearch && expectedWebSearchProvider && !runIdOverride) {
+      try {
+        const capabilities = await fetchJson<AgentCapabilities>("/agent/capabilities");
+        const search = capabilities.web_research;
+        if (!search || search.provider !== expectedWebSearchProvider) throw new Error("搜索服务与原任务不同。历史消息已保留，请按当前服务重新发送新消息。");
+        const issue = webSearchConfigurationIssue({ version: 1, enabled: true, topic: webSearchTopic, source_preference: webSearchSourcePreference }, search);
+        if (issue) throw new Error(issue);
+      } catch (error) {
+        setModelUnavailable(error instanceof Error ? error.message : "无法核对原任务的搜索服务");
+        setRetryChatDraft({ content, modelProfileId: selectedModelProfileId, attachmentIds, visionAttachmentIds, webSearch, webSearchTopic, webSearchSourcePreference,
+          webSearchProvider: expectedWebSearchProvider, ...(runIdOverride ? { runId: runIdOverride } : {}), ...(rewindMessageId !== undefined ? { rewindMessageId } : {}), reason: "send_failed" });
+        return false;
+      }
+    }
+    // Validate the saved search binding before editing/retrying removes history.
     if (rewindMessageId !== undefined) await rewindChatToUserMessage(rewindMessageId);
     const { HttpAgent } = await import("@ag-ui/client");
     const conversationId = targetConversationId;
@@ -104,7 +139,8 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
       id: optimisticId,
       role: "user",
       content,
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      payload: { web_search: webSearch, web_search_topic: webSearchTopic, web_search_source_preference: webSearchSourcePreference }
     };
     setChatBusy(true);
     setRetryChatDraft(null);
@@ -217,7 +253,9 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
           attachmentIds,
           visionAttachmentIds,
           webSearch,
-          webSearchMode,
+          webSearchTopic,
+          webSearchSourcePreference,
+          ...(userMessage.payload?.web_search_options?.provider || boundSearchProvider ? { webSearchProvider: userMessage.payload?.web_search_options?.provider || boundSearchProvider } : {}),
           rewindMessageId: userMessage.id,
           reason: "send_failed"
         });
@@ -247,6 +285,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
         if (!acceptsStreamEvents()) return;
         if (event.name === "careerloop.user_message") {
           const userMessage = event.value as ChatMessage;
+          if (userMessage.payload?.web_search_options?.provider) boundSearchProvider = userMessage.payload.web_search_options.provider;
           if (currentConversationIdRef.current === conversationId) {
             setChatMessages((current) => {
               let replaced = false;
@@ -357,7 +396,8 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
           runId: executionRunId,
           tools: [],
           context: [],
-          forwardedProps: { conversationId, modelProfileId: selectedModelProfileId, client: "careerloop-web", attachmentIds, visionAttachmentIds, webSearch, webSearchMode }
+          forwardedProps: { conversationId, modelProfileId: selectedModelProfileId, client: "careerloop-web", attachmentIds, visionAttachmentIds, webSearch, webSearchTopic, webSearchSourcePreference,
+            ...(expectedWebSearchProvider ? { webSearchProvider: expectedWebSearchProvider } : {}) }
         },
         subscriber
       );
@@ -380,7 +420,9 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
         attachmentIds,
         visionAttachmentIds,
         webSearch,
-        webSearchMode,
+        webSearchTopic,
+        webSearchSourcePreference,
+        ...(boundSearchProvider ? { webSearchProvider: boundSearchProvider } : {}),
         runId: executionRunId,
         reason: "send_failed"
       });
@@ -422,7 +464,10 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
   }
 
   async function editChatMessage(userMessageId: number, content: string) {
-    await sendChatMessage(content, [], [], false, "auto", undefined, undefined, userMessageId);
+    const sourceMessage = chatMessages.find((message) => message.id === userMessageId && message.role === "user");
+    if (!sourceMessage) throw new Error("找不到要编辑的用户消息");
+    const search = webSearchOptionsFromMessage(sourceMessage);
+    await sendChatMessage(content, [], [], search.enabled, search.topic, search.source_preference, undefined, undefined, userMessageId, undefined, search.provider);
   }
 
   async function regenerateChatMessage(userMessageId: number) {
@@ -430,7 +475,8 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
       (message) => message.id === userMessageId && message.role === "user"
     );
     if (!sourceMessage) throw new Error("找不到要重新生成的用户消息");
-    await sendChatMessage(sourceMessage.content, [], [], false, "auto", undefined, undefined, userMessageId);
+    const search = webSearchOptionsFromMessage(sourceMessage);
+    await sendChatMessage(sourceMessage.content, [], [], search.enabled, search.topic, search.source_preference, undefined, undefined, userMessageId, undefined, search.provider);
   }
 
   async function cancelCurrentTask() {
