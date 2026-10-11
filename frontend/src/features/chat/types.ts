@@ -164,6 +164,7 @@ export type ChatWorkspaceProps = {
   attachmentBusy: boolean;
   attachmentConfig: AttachmentConfig | null;
   webSearchAvailable: boolean;
+  webSearchProvider?: string;
   onUploadAttachment: (file: File) => Promise<ChatAttachment>;
   onRemoveAttachment: (attachmentId: string) => Promise<void>;
   onAttachmentInvalid: (message: string) => void;

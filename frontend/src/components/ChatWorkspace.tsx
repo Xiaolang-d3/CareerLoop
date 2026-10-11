@@ -509,7 +509,10 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                       disabled={props.chatBusy}
                       aria-pressed={props.webSearchSelected}
                       aria-label="联网搜索"
-                      title={props.webSearchAvailable ? "为下一条消息补充公开信息" : "可以选中；发送后会提示配置 AgentSearch"}
+                      title={props.webSearchAvailable
+                        ? props.webSearchProvider === "tavily" ? "使用 Tavily 搜索公开信息"
+                          : props.webSearchProvider === "agent_search" ? "使用 AgentSearch 搜索公开信息" : "为下一条消息补充公开信息"
+                        : "可以选中；发送后会提示启用并配置搜索服务"}
                     >
                       <Globe size={16} aria-hidden="true" />
                       <span>联网</span>

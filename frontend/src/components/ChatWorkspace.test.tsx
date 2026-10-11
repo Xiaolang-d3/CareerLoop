@@ -61,6 +61,7 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
   chatBusy?: boolean;
   latestAgent?: AgentRunResult;
   webSearchAvailable?: boolean;
+  webSearchProvider?: string;
   retryDraft?: ChatRetryDraft | null;
   modelChecking?: boolean;
   modelUnavailable?: string;
@@ -105,6 +106,7 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
     attachmentBusy: false,
     attachmentConfig: null,
     webSearchAvailable: extras.webSearchAvailable ?? false,
+    webSearchProvider: extras.webSearchProvider,
     onUploadAttachment: vi.fn(),
     onRemoveAttachment: vi.fn(),
     onAttachmentInvalid: vi.fn(),
@@ -712,6 +714,14 @@ describe("ChatWorkspace", () => {
       expect(screen.getByRole("button", { name: "联网搜索" })).toHaveAttribute("aria-pressed", "true");
       expect(screen.getByLabelText("输入消息")).toHaveValue("帮我查找并核对这个主题的公开信息：");
     });
+  });
+
+  it("identifies the configured search provider without requiring AgentSearch", () => {
+    renderChat([], { webSearchAvailable: true, webSearchProvider: "tavily" });
+    expect(screen.getByRole("button", { name: "联网搜索" })).toHaveAttribute("title", "使用 Tavily 搜索公开信息");
+    cleanup();
+    renderChat([], { webSearchAvailable: false });
+    expect(screen.getByRole("button", { name: "联网搜索" })).toHaveAttribute("title", "可以选中；发送后会提示启用并配置搜索服务");
   });
 
   it("keeps source selection grouped with web search and sends the selected mode", async () => {

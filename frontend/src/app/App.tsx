@@ -1181,6 +1181,7 @@ export function App({
             attachmentBusy={chatAttachmentBusy}
             attachmentConfig={attachmentConfig}
             webSearchAvailable={Boolean(capabilities?.web_research?.enabled)}
+            webSearchProvider={capabilities?.web_research?.provider}
             onUploadAttachment={uploadChatAttachment}
             onRemoveAttachment={removeChatAttachment}
             onAttachmentInvalid={setErrorMessage}

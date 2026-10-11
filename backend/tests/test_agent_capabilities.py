@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from app import db
 from app.db import init_db
+from app.config import Settings
 from app.main import app
 from api_client import create_authenticated_client
 
@@ -63,6 +64,24 @@ class AgentCapabilitiesApiTest(unittest.TestCase):
         self.assertIs(payload["configured"], True)
         self.assertTrue(payload["model_providers"])
         self.assertNotIn("setup_message", payload)
+
+    def test_capabilities_reports_resolved_search_provider_without_credentials(self) -> None:
+        for enabled, provider, expected in (
+            (True, "auto", "tavily"), (True, "agent_search", "agent_search"),
+            (False, "auto", "disabled"),
+        ):
+            with self.subTest(enabled=enabled, provider=provider), patch(
+                "app.agent.bootstrap.get_settings", return_value=Settings(
+                    web_research_enabled=enabled, web_search_provider=provider,
+                    tavily_api_key="tvly-private-test-key",
+                ),
+            ), patch("app.agent.bootstrap.get_profile_connection", return_value={
+                "model_name": "test-model", "model_base_url": "", "api_key": "",
+            }):
+                response = self.client.get("/agent/capabilities")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["web_research"], {"enabled": enabled, "provider": expected})
+            self.assertNotIn("tvly-private-test-key", response.text)
 
     def test_ag_ui_returns_400_when_api_key_missing(self) -> None:
         conversation = self.client.post("/conversations", json={"title": "未配置模型"}).json()

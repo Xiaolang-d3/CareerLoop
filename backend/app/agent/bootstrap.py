@@ -84,7 +84,7 @@ def _capabilities_payload(
         },
         "web_research": {
             "enabled": settings.web_research_enabled,
-            "provider": "agent_search" if settings.web_research_enabled else "disabled",
+            "provider": settings.resolved_web_search_provider if settings.web_research_enabled else "disabled",
         },
     }
     if setup_message:
