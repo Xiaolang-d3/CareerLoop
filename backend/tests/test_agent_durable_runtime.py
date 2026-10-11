@@ -4,6 +4,7 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from app.agent.run_store import AgentRunStore
 from app.agent.runtime import AgentRuntime, _tool_call_fingerprint
@@ -54,20 +55,18 @@ class AgentDurableRuntimeTest(unittest.IsolatedAsyncioTestCase):
         model = CountingModel()
         runtime = self._runtime(model, ToolRegistry())
 
-        first = await self._collect(
-            runtime,
-            "你好",
-            run_id="same-run",
-        )
-        second = await self._collect(
-            runtime,
-            "你好",
-            run_id="same-run",
-        )
+        with patch("app.agent.run_store._utc_now", side_effect=[
+            "2026-10-11T00:00:00.125+00:00", "2026-10-11T00:00:02.625+00:00",
+        ]):
+            first = await self._collect(runtime, "你好", run_id="same-run")
+            second = await self._collect(runtime, "你好", run_id="same-run")
 
         self.assertEqual(model.calls, 1)
         self.assertEqual(first[-1].result.content, "持久化回答")
         self.assertEqual(second[-1].result.content, "持久化回答")
+        self.assertEqual(first[-1].result.duration_ms, 2500)
+        self.assertEqual(second[-1].result.duration_ms, 2500)
+        self.assertEqual(first[-1].result.started_at, "2026-10-11T00:00:00.125+00:00")
         self.assertTrue(any(event.type == "text_delta" for event in second))
         self.assertEqual(self.store.get_run("same-run")["status"], "completed")
 

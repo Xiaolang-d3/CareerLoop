@@ -10,14 +10,14 @@ const STARTER_PROMPTS: Array<{
     { draft: "根据我的要求起草一份内容。用途、读者和要点是：", title: "起草一份内容" }
   ];
 import type { AgentRunResult, ChatClarification, ChatMessage, ChatSessionContext, ModelSelection } from "./types";
-import { Children, createContext, isValidElement, useContext, useEffect, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
+import { Children, createContext, isValidElement, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import { ChatWorkspaceMermaid } from "../../components/ChatWorkspaceMermaid";
 import { ChatWorkspaceMindmap } from "../../components/ChatWorkspaceMindmap";
 import { isMermaidMindmap } from "../../components/mindmap-source";
 import { ActionBarPrimitive, ComposerPrimitive, MessagePrimitive, type AppendMessage, type MessageState } from "@assistant-ui/react";
 import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ArrowUpRight, Check, CheckCircle2, ChevronDown, CircleHelp, Copy, FileText, ImagePlus, Info, LoaderCircle, PanelRight, Pencil, RefreshCw, Search, Square, TriangleAlert, X } from "lucide-react";
+import { ArrowUpRight, Check, CheckCircle2, ChevronDown, CircleHelp, Copy, FileText, ImagePlus, Info, LoaderCircle, PanelRight, Pencil, RefreshCw, Search, TriangleAlert, Wrench, X } from "lucide-react";
 
 const modelStageLabels: Record<string, string> = { classify: "意图识别", plan: "任务规划", execute: "执行回答" };
 const modelSelectionReasons: Record<string, string> = {
@@ -46,23 +46,14 @@ export function textFromAppendMessage(message: AppendMessage): string {
     .trim();
 }
 
-function AgentResultNote({ run, content }: { run?: AgentRunResult; content: string }) {
+function RunErrorNote({ run, content }: { run?: AgentRunResult; content: string }) {
   if (!run) return null;
   const failed = run.status === "failed";
-  const cancelled = run.status === "cancelled";
-  if (!failed && !cancelled) return null;
+  if (!failed) return null;
   const errorMessage = run.error?.message?.trim();
   const errorAlreadyShown = errorMessage && content.replace(/\s+/g, " ").includes(errorMessage.replace(/\s+/g, " "));
-  return (
-    <div className={`message-run-result ${cancelled ? "cancelled" : "failed"}`}>
-      {failed ? <TriangleAlert size={14} aria-hidden="true" /> : <Square size={12} aria-hidden="true" />}
-      <span>
-        <strong>{cancelled ? "已停止" : "生成失败"}</strong>
-        {errorMessage && !errorAlreadyShown ? <small>{errorMessage}</small> : null}
-        {failed && run.error?.retryable === false ? <small>请先检查设置或输入后再继续。</small> : null}
-      </span>
-    </div>
-  );
+  if (!errorMessage || errorAlreadyShown) return null;
+  return <p className="run-process-error">{errorMessage}</p>;
 }
 
 export type WebSource = {
@@ -304,16 +295,6 @@ const GENERIC_TASK_MESSAGE = /^(?:正在执行(?:\s+\S+)?|running|in progress)$/
 
 const ROUTE_SUMMARY_MESSAGE = /^已识别为/;
 
-const SYSTEM_THINKING_TOOLS = new Set([
-  "agent_thinking",
-  "agent_planner",
-  "model_provider",
-  "completion_validator",
-  "citation_validator",
-  "agent_loop_guard",
-  "agent_run_state"
-]);
-
 const TOOL_ACTIVITY_LABELS: Record<string, string> = {
   search_public_web: "正在检索公开资料",
   get_library_context: "正在读取知识库",
@@ -404,75 +385,6 @@ function workLineFromEvent(
   return TOOL_ACTIVITY_LABELS[event.tool_name] || "";
 }
 
-function thoughtSources(events: AgentRunResult["events"]): Array<{ host: string; url?: string; title?: string }> {
-  const seen = new Set<string>();
-  const sources: Array<{ host: string; url?: string; title?: string }> = [];
-  for (const event of events) {
-    const items = event.data?.sources;
-    if (!Array.isArray(items)) continue;
-    for (const item of items) {
-      if (!item || typeof item !== "object") continue;
-      const record = item as Record<string, unknown>;
-      const host = hostnameFromUnknown(record.domain || record.url);
-      if (!host || seen.has(host)) continue;
-      seen.add(host);
-      const url = typeof record.url === "string" && /^https?:\/\//i.test(record.url) ? record.url : undefined;
-      const title = typeof record.title === "string" ? record.title : undefined;
-      sources.push({ host, url, title });
-    }
-  }
-  return sources;
-}
-
-function clipThoughtLine(value: string): string {
-  const line = value.replace(/\s+/g, " ").trim();
-  if (!line) return "";
-  return line.length > 160 ? `${line.slice(0, 160)}…` : line;
-}
-
-function thoughtProcessContent(agent?: AgentRunResult): {
-  thoughts: string[];
-  steps: Array<{ text: string; status: string }>;
-  sources: Array<{ host: string; url?: string; title?: string }>;
-} {
-  const events = agent?.events ?? [];
-  const planSteps = planStepsFromAgent(agent);
-  const thoughts = events
-    .filter((event) => event.tool_name === "agent_thinking")
-    .map((event) => clipThoughtLine(event.message))
-    .filter((message) => message && !ROUTE_SUMMARY_MESSAGE.test(message));
-  const steps: Array<{ text: string; status: string }> = [];
-  const seen = new Set<string>();
-  const addStep = (value: string, status: string) => {
-    const text = clipThoughtLine(value);
-    if (!text || seen.has(text)) return;
-    seen.add(text);
-    steps.push({ text, status });
-  };
-
-  for (const event of events) {
-    if (event.tool_name === "agent_thinking") continue;
-    addStep(workLineFromEvent(event, planSteps), event.status);
-  }
-
-  for (const step of planSteps) {
-    if (events.some((event) => event.tool_name === step.tool_name && !SYSTEM_THINKING_TOOLS.has(event.tool_name))) {
-      continue;
-    }
-    if (step.status === "pending") continue;
-    if (step.status === "running") addStep(`正在进行：${step.title}`, step.status);
-    else if (step.status === "done") addStep(`已完成：${step.title}`, step.status);
-    else if (step.status === "failed") addStep(`失败：${step.title}`, step.status);
-  }
-
-  return { thoughts, steps, sources: thoughtSources(events) };
-}
-
-export function hasResearchDetails(agent?: AgentRunResult): boolean {
-  const { steps, sources } = thoughtProcessContent(agent);
-  return steps.length > 0 || sources.length > 0;
-}
-
 export function thinkingHeaderCopy(agent: AgentRunResult | undefined, streaming: boolean): { title: string; currentTask?: string } {
   if (!streaming) return { title: "思考过程" };
 
@@ -494,60 +406,105 @@ export function thinkingHeaderCopy(agent: AgentRunResult | undefined, streaming:
   return currentTask ? { title, currentTask } : { title };
 }
 
-function ThinkingMark({ size = 12 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path
-        d="M5.05 12.7A5.55 5.55 0 1 1 11.85 5.7"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        strokeLinecap="round"
-      />
-      <path
-        d="M12.55 7.05a5.55 5.55 0 0 1 .05 2.2"
-        stroke="#6557dc"
-        strokeWidth="1.75"
-        strokeLinecap="round"
-      />
-      <path
-        d="M12.4 9.85A5.55 5.55 0 0 1 10.7 12.7"
-        stroke="#8B9BFF"
-        strokeWidth="1.75"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
+function formatRunTime(milliseconds: number): string {
+  const seconds = Math.floor(Math.max(0, milliseconds) / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${seconds % 60}s`;
 }
 
-function ThinkingSourceChip({ host, url, title }: { host: string; url?: string; title?: string }) {
-  const inner = (
-    <>
-      <SourceFavicon domain={host} title={title || host} />
-      <span>{host}</span>
-    </>
-  );
-  if (url) {
-    return (
-      <a className="thinking-source-chip" href={url} target="_blank" rel="noreferrer" title={title || host}>
-        {inner}
-      </a>
-    );
+const COMPLETED_ACTIVITY_LABELS: Record<string, string> = {
+  search_public_web: "已检索公开资料", get_library_context: "已读取知识库",
+  search_library: "已检索资料", propose_library_knowledge: "已提交待确认知识",
+  agent_planner: "已规划步骤", model_provider: "已生成回答",
+  completion_validator: "已核对执行步骤", citation_validator: "已核对引用",
+  agent_loop_guard: "已调整执行步骤", agent_run_state: "已同步任务状态",
+  ask_user: "等待你的确认", agent_tool: "已执行工具"
+};
+
+function processEntries(agent: AgentRunResult | undefined, streaming: boolean) {
+  const steps = planStepsFromAgent(agent);
+  const merged = new Map<string, AgentRunResult["events"][number]>();
+  for (const event of agent?.events ?? []) {
+    merged.set(event.tool_call_id, { ...merged.get(event.tool_call_id), ...event });
   }
-  return <span className="thinking-source-chip">{inner}</span>;
+  return [...merged.values()].flatMap((event) => {
+    if (event.tool_name === "agent_thinking") {
+      const text = event.message.trim();
+      return text && !ROUTE_SUMMARY_MESSAGE.test(text)
+        ? [{ id: event.tool_call_id, text, thought: true, status: event.status, tool: event.tool_name }]
+        : [];
+    }
+    const isRunning = streaming && event.status === "running";
+    const neutral = (TOOL_ACTIVITY_LABELS[event.tool_name] || "执行任务").replace(/^正在/, "");
+    let text = isGenericTaskMessage(event.message, event.tool_name)
+      ? isRunning ? workLineFromEvent(event, steps)
+        : event.status === "done" ? COMPLETED_ACTIVITY_LABELS[event.tool_name] || neutral : neutral
+      : event.message.trim();
+    if (!streaming && event.status === "running") text = text.replace(/^正在/, "");
+    return text ? [{ id: event.tool_call_id, text, thought: false, status: event.status, tool: event.tool_name }] : [];
+  });
 }
 
-function ProcessDetailsLink({
-  agent,
-  onOpen
-}: {
+export function RunProcess({ agent, streaming, stopping = false, content = "" }: {
   agent?: AgentRunResult;
-  onOpen?: () => void;
+  streaming: boolean;
+  stopping?: boolean;
+  content?: string;
 }) {
-  if (!hasResearchDetails(agent) || !onOpen) return null;
+  const bodyId = useId();
+  const [expanded, setExpanded] = useState(streaming);
+  const previousStreaming = useRef(streaming);
+  const [now, setNow] = useState(Date.now);
+  const startedAt = agent?.started_at ? Date.parse(agent.started_at) : NaN;
+  useEffect(() => {
+    if (previousStreaming.current && !streaming) setExpanded(false);
+    previousStreaming.current = streaming;
+  }, [streaming]);
+  useEffect(() => {
+    if (!streaming || !Number.isFinite(startedAt)) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [streaming, startedAt]);
+  const elapsed = streaming && Number.isFinite(startedAt) ? Math.max(0, now - startedAt)
+    : !streaming && typeof agent?.duration_ms === "number" && Number.isFinite(agent.duration_ms)
+      ? Math.max(0, agent.duration_ms) : null;
+  const current = thinkingHeaderCopy(agent, streaming);
+  const generating = content.trim() && !agent?.events.some((event) => event.status === "running" && event.tool_name !== "agent_thinking");
+  const title = streaming ? stopping ? "正在停止生成" : generating ? "正在生成回复" : current.title
+    : elapsed !== null ? `用时 ${formatRunTime(elapsed)}` : "思考与执行过程";
+  const terminalError = !streaming && agent?.status === "failed" ? agent.error?.message?.trim() : undefined;
+  const entries = processEntries(agent, streaming).filter((entry) =>
+    (!streaming || entry.thought || entry.text !== title)
+    && !(terminalError && !entry.thought && entry.text === terminalError)
+  );
+  const outcome = !streaming ? agent?.status === "failed" ? "生成失败"
+    : agent?.status === "cancelled" ? "已停止" : agent?.status === "waiting_user" ? "等待确认" : "" : "";
+  if (!streaming && !entries.length && !outcome && elapsed === null) return null;
   return (
-    <button type="button" className="message-process-link" onClick={onOpen} aria-label="查看过程，打开研究详情">
-      <PanelRight size={14} aria-hidden="true" /><span>查看过程</span>
-    </button>
+    <section className={`run-process${streaming ? " is-running" : ""}${expanded ? " is-expanded" : ""}`} aria-label="思考与执行过程">
+      <button type="button" className="run-process-toggle" aria-expanded={expanded} aria-controls={bodyId}
+        aria-label={`${expanded ? "收起" : "展开"}思考与执行过程`} onClick={() => setExpanded((open) => !open)}>
+        {streaming ? <LoaderCircle size={14} className="spinning" aria-hidden="true" /> : null}
+        <span role={streaming ? "status" : undefined}>{title}</span>
+        {streaming && elapsed !== null ? <small>已用时 {formatRunTime(elapsed)}</small> : null}
+        {outcome ? <span className={`run-process-outcome${agent?.status === "failed" ? " is-failed" : ""}`}>{outcome}</span> : null}
+        <ChevronDown size={15} className="run-process-chevron" aria-hidden="true" />
+      </button>
+      <div id={bodyId} className="run-process-body" hidden={!expanded}>
+        {entries.map((entry) => entry.thought
+          ? <p key={entry.id} className="run-process-thought">{entry.text}</p>
+          : <div key={entry.id} className={`run-process-tool${entry.status === "failed" ? " is-failed" : ""}`}>
+            {entry.status === "failed" ? <TriangleAlert size={16} aria-hidden="true" />
+              : entry.tool === "search_public_web" || entry.tool === "search_library" ? <Search size={16} aria-hidden="true" />
+                : entry.tool === "get_library_context" ? <FileText size={16} aria-hidden="true" /> : <Wrench size={16} aria-hidden="true" />}
+            <span>{entry.text}</span>
+          </div>)}
+        {!entries.length ? <p className="run-process-empty">{streaming ? "等待模型响应…" : "未记录更多过程信息。"}</p> : null}
+      </div>
+      {!streaming ? <RunErrorNote run={agent} content={content} /> : null}
+    </section>
   );
 }
 
@@ -669,10 +626,6 @@ function WebSourcesPanel({ sources, onOpen }: { sources: WebSource[]; onOpen?: (
   );
 }
 
-function researchStepTitle(text: string): string {
-  return text.replace(/^(?:正在进行|已完成|失败|正在检索)[:：]\s*/, "").trim() || "处理信息";
-}
-
 function sourceConfidence(source: WebSource): "high" | "review" {
   const host = sourceDomain(source).toLowerCase();
   return /\.(?:gov|edu)(?:\.[a-z]{2})?$/.test(host) || /(?:^|\.)docs\./.test(host) ? "high" : "review";
@@ -688,7 +641,6 @@ function sourceDisplaySummary(source: WebSource): string {
 
 export function ResearchPanel({
   open,
-  agent,
   sources,
   selectedSource,
   streaming,
@@ -706,28 +658,12 @@ export function ResearchPanel({
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const sourceSectionRef = useRef<HTMLElement>(null);
   const panelScrollRef = useRef<HTMLDivElement>(null);
-  const [expandedStep, setExpandedStep] = useState<number | null>(null);
-  const process = thoughtProcessContent(agent);
-  const planSteps = planStepsFromAgent(agent);
-  const steps = process.steps.length
-    ? process.steps
-    : planSteps.map((step) => ({ text: step.title, status: step.status }));
-  const totalSteps = Math.max(steps.length, sources.length ? 4 : 1);
-  const completedSteps = agent?.status === "done"
-    ? totalSteps
-    : Math.min(totalSteps, steps.filter((step) => step.status === "done").length);
-  const progress = Math.max(streaming ? 8 : 0, Math.round((completedSteps / totalSteps) * 100));
-  const current = thinkingHeaderCopy(agent, streaming);
   const activeSource = sources[Math.min(selectedSource, Math.max(0, sources.length - 1))];
 
   useEffect(() => {
     if (!open) return;
     closeButtonRef.current?.focus({ preventScroll: true });
   }, [open]);
-
-  useEffect(() => {
-    setExpandedStep(null);
-  }, [agent]);
 
   useLayoutEffect(() => {
     if (!open || !sources.length || !sourceSectionRef.current || !panelScrollRef.current) return;
@@ -736,58 +672,19 @@ export function ResearchPanel({
 
   if (!open) return null;
   return (
-    <aside id="chat-research-panel" className="research-panel" aria-label="研究详情">
+    <aside id="chat-research-panel" className="research-panel" aria-label="来源详情">
       <header className="research-panel-header">
         <div>
           <span className={`research-live-dot${streaming ? " is-live" : ""}`} aria-hidden="true" />
-          <strong>{streaming ? current.title : agent?.status === "failed" ? "研究未完成" : "研究详情"}</strong>
-          <small>{completedSteps}/{totalSteps}</small>
+          <strong>来源详情</strong>
+          <small>{sources.length}</small>
         </div>
-        <button ref={closeButtonRef} type="button" onClick={onClose} aria-label="关闭研究详情" title="关闭研究详情">
+        <button ref={closeButtonRef} type="button" onClick={onClose} aria-label="关闭来源详情" title="关闭来源详情">
           <X size={17} />
         </button>
-        <div className="research-progress" aria-label={`研究进度 ${progress}%`}>
-          <span style={{ width: `${progress}%` }} />
-        </div>
       </header>
 
       <div className="research-panel-scroll" ref={panelScrollRef}>
-        <section className="research-section" aria-labelledby="research-process-title">
-          <div className="research-section-heading">
-            <span>过程</span>
-            <small>{streaming ? "实时更新" : "已完成"}</small>
-          </div>
-          <h2 id="research-process-title">这次回答是怎样形成的</h2>
-          {steps.length ? (
-            <ol className="research-process-list">
-              {steps.map((step, index) => {
-                const expanded = expandedStep === index;
-                const status = step.status === "failed" ? "failed" : step.status === "running" ? "running" : "done";
-                return (
-                  <li key={`${step.text}-${index}`} className={`is-${status}`}>
-                    <button type="button" aria-expanded={expanded} onClick={() => setExpandedStep(expanded ? null : index)}>
-                      <span className="research-step-state" aria-hidden="true">
-                        {status === "done" ? <Check size={12} /> : status === "failed" ? <TriangleAlert size={12} /> : <LoaderCircle size={12} />}
-                      </span>
-                      <span className="research-step-copy">
-                        <strong>{researchStepTitle(step.text)}</strong>
-                        <small>{status === "running" ? "进行中" : status === "failed" ? "需要检查" : "已完成"}</small>
-                      </span>
-                      <ChevronDown size={14} />
-                    </button>
-                    {expanded ? <p>{step.text}</p> : null}
-                  </li>
-                );
-              })}
-            </ol>
-          ) : (
-            <div className="research-empty-state">
-              <ThinkingMark size={16} />
-              <p>{streaming ? "正在拆解问题并准备下一步。" : "这条回答没有调用外部研究工具。"}</p>
-            </div>
-          )}
-        </section>
-
         <section className="research-section research-sources" aria-labelledby="research-sources-title" ref={sourceSectionRef}>
           <div className="research-section-heading">
             <span>引用</span>
@@ -834,7 +731,7 @@ export function ResearchPanel({
           ) : (
             <div className="research-empty-state">
               <Search size={16} />
-              <p>开启“联网”后，搜索节点与引用会集中显示在这里。</p>
+              <p>联网搜索返回的引用来源会显示在这里。</p>
             </div>
           )}
         </section>
@@ -918,7 +815,7 @@ function MessageModelDetails({ selection, messageId }: { selection: ModelSelecti
   );
 }
 
-export function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: boolean }) {
+export function ChatTurn({ state, chatBusy, stopping = false }: { state: MessageState; chatBusy: boolean; stopping?: boolean }) {
   const researchPanel = useContext(ResearchPanelActionsContext);
   const source = state.metadata.custom.source as ChatMessage | undefined;
   if (!source) return null;
@@ -939,13 +836,10 @@ export function ChatTurn({ state, chatBusy }: { state: MessageState; chatBusy: b
       <div className="message-content">
         {source.role === "assistant" ? (
           <>
-            <section className="message-result message-dialog" aria-label="输出结果">
+            <RunProcess agent={source.payload?.agent} streaming={isActiveAssistant} stopping={stopping && isActiveAssistant} content={resultContent} />
+            {resultContent ? <section className="message-result message-dialog" aria-label="输出结果">
               <MarkdownContent sources={webSources} streaming={isActiveAssistant} onOpenSource={openResearch}>{resultContent}</MarkdownContent>
-            </section>
-            <div className="message-run-meta">
-              <AgentResultNote run={source.payload?.agent} content={resultContent} />
-              <ProcessDetailsLink agent={source.payload?.agent} onOpen={() => openResearch()} />
-            </div>
+            </section> : null}
             <ActionBarPrimitive.Root className="message-actions" hideWhenRunning>
               <MessageCopyButton content={resultContent} label="复制回答" />
               <ActionBarPrimitive.Reload className="message-icon-action" aria-label={failed ? "重试回答" : "重新生成回答"} title={failed ? "重试回答，将替换本轮及后续消息" : "重新生成，将替换本轮及后续消息"} aria-describedby={`regenerate-impact-${source.id}`}>

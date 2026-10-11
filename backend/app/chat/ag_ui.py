@@ -54,6 +54,8 @@ async def event_stream(queue, worker, ag_ui_input: RunAgentInput, accept: str | 
             if event_name == "run_started":
                 yield encode(RunStartedEvent(threadId=thread_id, runId=run_id))
                 yield encode(CustomEvent(name="careerloop.user_message", value=data["user_message"]))
+                if data.get("timing", {}).get("started_at"):
+                    yield encode(CustomEvent(name="careerloop.run_timing", value=data["timing"]))
                 continue
             if event_name == "text_reset":
                 if text_started:

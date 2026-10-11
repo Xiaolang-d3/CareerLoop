@@ -18,15 +18,16 @@ function setup() {
   client.runAgent.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
   const currentConversationIdRef = { current: 1 as number | null };
   const setErrorMessage = vi.fn();
+  const setNoticeMessage = vi.fn();
   const hook = renderHook(() => useChatRun({
     apiBase: "/test-api", accessToken: "test-only-session",
     fetchJson: vi.fn() as ReturnType<typeof createApiClient>,
     currentConversationId: 1, currentConversationIdRef,
-    setErrorMessage, setNoticeMessage: vi.fn(),
+    setErrorMessage, setNoticeMessage,
     refreshConversations: vi.fn().mockResolvedValue([]),
     onLibraryChanged: vi.fn().mockResolvedValue(undefined)
   }));
-  return { ...hook, currentConversationIdRef, setErrorMessage, finish: () => finish() };
+  return { ...hook, currentConversationIdRef, setErrorMessage, setNoticeMessage, finish: () => finish() };
 }
 
 function emit(name: keyof AgentSubscriber, value: Record<string, unknown>) {
@@ -43,6 +44,72 @@ beforeEach(() => { client.runAgent.mockReset(); client.abortRun.mockReset(); });
 afterEach(cleanup);
 
 describe("useChatRun stream reconciliation", () => {
+  it("creates one assistant placeholder immediately and uses server timing before any token", async () => {
+    const { result, finish } = setup();
+    let pending!: Promise<void>;
+    act(() => { pending = result.current.sendChatMessage(userMessage.content); });
+    await waitFor(() => expect(client.runAgent).toHaveBeenCalledOnce());
+    expect(result.current.chatMessages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    const placeholder = result.current.chatMessages[1];
+    expect(placeholder.content).toBe("");
+    expect(placeholder.payload?.agent?.started_at).toBeUndefined();
+    expect(placeholder.payload?.agent?.duration_ms).toBeUndefined();
+    const runId = client.runAgent.mock.calls[0][0].runId as string;
+    const startedAt = "2026-10-11T00:00:00.125+00:00";
+    const timedAnswer: ChatMessage = { ...assistantMessage, payload: { agent: {
+      provider: "test", platform: "local", rounds: 1, status: "done", events: [],
+      started_at: startedAt, completed_at: "2026-10-11T00:06:29.125+00:00", duration_ms: 389000,
+    } } };
+    act(() => {
+      emit("onCustomEvent", { event: { name: "careerloop.user_message", value: userMessage } });
+      emit("onCustomEvent", { event: { name: "careerloop.run_timing", value: { run_id: runId, started_at: startedAt } } });
+      emit("onCustomEvent", { event: { name: "careerloop.user_message", value: userMessage } });
+    });
+    expect(result.current.chatMessages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(result.current.chatMessages[1].id).toBe(placeholder.id);
+    expect(result.current.chatMessages[1].payload?.agent?.started_at).toBe(startedAt);
+    act(() => {
+      emit("onStateSnapshotEvent", { event: { snapshot: { careerLoop: { status: "done", userMessage, assistantMessage: timedAnswer } } } });
+      emit("onCustomEvent", { event: { name: "careerloop.run_timing", value: { run_id: runId, started_at: "2026-10-11T01:00:00Z" } } });
+    });
+    expect(result.current.chatMessages).toEqual([userMessage, timedAnswer]);
+    expect(result.current.chatMessages[1].payload?.agent?.duration_ms).toBe(389000);
+    await act(async () => { finish(); await pending; });
+  });
+
+  it("ignores malformed or unrelated timing metadata without inventing a duration", async () => {
+    const { result, finish } = setup();
+    let pending!: Promise<void>;
+    act(() => { pending = result.current.sendChatMessage(userMessage.content); });
+    await waitFor(() => expect(client.runAgent).toHaveBeenCalledOnce());
+    const runId = client.runAgent.mock.calls[0][0].runId as string;
+    act(() => {
+      emit("onCustomEvent", { event: { name: "careerloop.run_timing", value: { run_id: "other-run", started_at: "2026-10-11T00:00:00Z" } } });
+      emit("onCustomEvent", { event: { name: "careerloop.run_timing", value: { run_id: runId, started_at: "invalid" } } });
+    });
+    expect(result.current.chatMessages[1].payload?.agent?.started_at).toBeUndefined();
+    expect(result.current.chatMessages[1].payload?.agent?.duration_ms).toBeUndefined();
+    await act(async () => { emit("onStateSnapshotEvent", { event: { snapshot } }); finish(); await pending; });
+  });
+
+  it("keeps the first appearance order when later completion events update earlier activities", async () => {
+    const { result, finish } = setup();
+    let pending!: Promise<void>;
+    act(() => { pending = result.current.sendChatMessage(userMessage.content); });
+    await waitFor(() => expect(client.runAgent).toHaveBeenCalledOnce());
+    act(() => {
+      for (const event of [
+        { tool_call_id: "first", tool_name: "read_library", status: "running", message: "读取资料" },
+        { tool_call_id: "second", tool_name: "search_public_web", status: "running", message: "搜索网页" },
+        { tool_call_id: "first", tool_name: "read_library", status: "done", message: "资料已读取" },
+      ]) emit("onCustomEvent", { event: { name: "careerloop.agent_event", value: { ...event, round: 1 } } });
+    });
+    const events = result.current.chatMessages[1].payload?.agent?.events;
+    expect(events?.map((event) => event.tool_call_id)).toEqual(["first", "second"]);
+    expect(events?.[0]).toMatchObject({ status: "done", message: "资料已读取" });
+    await act(async () => { emit("onStateSnapshotEvent", { event: { snapshot } }); finish(); await pending; });
+  });
+
   it("merges standard reasoning and the matching CareerLoop event into one activity", async () => {
     const { result, finish } = setup();
     let pending!: Promise<void>;
@@ -102,6 +169,23 @@ describe("useChatRun stream reconciliation", () => {
     expect(result.current.modelUnavailable).toBe("HTTP 500: Internal Server Error");
     expect(result.current.retryChatDraft?.content).toBe(userMessage.content);
     expect(setErrorMessage.mock.calls.filter(([message]) => message)).toEqual([]);
+  });
+
+  it("keeps cancellation in the persisted answer without a duplicate global notice", async () => {
+    const { result, setNoticeMessage } = setup();
+    const cancelledMessage: ChatMessage = { ...assistantMessage, payload: { agent: {
+      provider: "test", platform: "local", rounds: 1, status: "cancelled", events: [],
+      started_at: "2026-10-11T00:00:00.000+00:00", duration_ms: 1500,
+    } } };
+    client.runAgent.mockImplementationOnce(async () => {
+      emit("onStateSnapshotEvent", { event: { snapshot: { careerLoop: {
+        status: "cancelled", userMessage, assistantMessage: cancelledMessage,
+      } } } });
+    });
+    await act(() => result.current.sendChatMessage(userMessage.content));
+    expect(result.current.chatMessages).toEqual([userMessage, cancelledMessage]);
+    expect(result.current.chatMessages[1].payload?.agent?.status).toBe("cancelled");
+    expect(setNoticeMessage.mock.calls.filter(([message]) => message)).toEqual([]);
   });
 
   it("keeps the persisted failed turn and its retry target when the SDK also reports an error", async () => {

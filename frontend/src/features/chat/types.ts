@@ -22,6 +22,9 @@ export type AgentRunResult = {
   rounds: number;
   status: "done" | "failed" | "waiting_user" | "cancelled";
   stop_reason?: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  duration_ms?: number | null;
   error?: { code: string; message: string; retryable: boolean } | null;
   events: Array<{
     round: number;

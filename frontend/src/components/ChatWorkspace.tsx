@@ -1,7 +1,6 @@
 import { useConversationScroll } from "../features/chat/useConversationScroll";
-import { RunStatus } from "../features/chat/RunStatus";
 import { ComposerModelPicker } from "../features/chat/ComposerModelPicker";
-import { textFromAppendMessage, WebSource, webSourcesFromAgent, hasResearchDetails, ResearchPanelActionsContext, EditMessageComposer, thinkingHeaderCopy, ComposerClarification, StarterPromptList, ChatContextChips, ResearchPanel, ChatTurn } from "../features/chat/MessagePresentation";
+import { textFromAppendMessage, WebSource, webSourcesFromAgent, ResearchPanelActionsContext, EditMessageComposer, RunProcess, ComposerClarification, StarterPromptList, ChatContextChips, ResearchPanel, ChatTurn } from "../features/chat/MessagePresentation";
 
 import type { AgentRunResult, ChatMessage, ChatAttachment, WebSearchMode, ChatClarificationOption, ChatClarification, ChatWorkspaceProps } from "../features/chat/types";
 
@@ -103,9 +102,6 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
     return () => { observer.disconnect(); window.removeEventListener("resize", resize); };
   }, [composerText, props.chatInputRef]);
   const appliedDraftId = useRef<string | null>(null);
-  const placeholderThinking = thinkingHeaderCopy(props.latestAgent, true);
-  const generatingReply = props.messages.some((message) => message.id < 0 && message.role === "assistant" && message.content.trim())
-    && !props.latestAgent?.events.some((event) => event.status === "running" && event.tool_name !== "agent_thinking");
   const clarification = clarificationFromAgent(props.latestAgent);
   const [isDraggingAttachment, setIsDraggingAttachment] = useState(false);
   const [expandedPreview, setExpandedPreview] = useState<{ filename: string; url: string } | null>(null);
@@ -286,19 +282,19 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             )}
           </div>
           <div className="chat-session-tools" role="toolbar" aria-label="对话操作">
-            {researchPanelOpen || hasResearchDetails(defaultResearchAgent) ? (
+            {researchPanelOpen || defaultResearchSources.length > 0 ? (
               <button
                 ref={researchToggleRef}
                 className={`chat-session-tool chat-research-toggle${researchPanelOpen ? " is-open" : ""}`}
                 type="button"
                 onClick={() => researchPanelOpen ? closeResearchDetails(false) : openResearchDetails()}
-                aria-label="研究详情"
+                aria-label="来源详情"
                 aria-expanded={researchPanelOpen}
                 aria-controls="chat-research-panel"
-                title="查看搜索过程与引用来源"
+                title="查看引用来源"
               >
                 <PanelRight size={15} />
-                <span>研究详情</span>
+                <span>来源</span>
                 {defaultResearchSources.length ? <em>{defaultResearchSources.length}</em> : null}
               </button>
             ) : null}
@@ -340,9 +336,14 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             <ThreadPrimitive.Messages>
               {({ message }) => message.composer.isEditing
                 ? <EditMessageComposer />
-                : <ChatTurn state={message} chatBusy={props.chatBusy} />}
+                : <ChatTurn state={message} chatBusy={props.chatBusy} stopping={props.taskCancelBusy} />}
             </ThreadPrimitive.Messages>
           )}
+
+          {props.chatBusy && (!props.messages.length || props.messages.at(-1)?.role === "user")
+            && !props.messages.some((message) => message.role === "assistant" && message.id < 0) ? (
+            <div className="message assistant"><div className="message-content"><RunProcess streaming stopping={props.taskCancelBusy} /></div></div>
+          ) : null}
 
           <div ref={props.chatEndRef} />
           </div>
@@ -350,7 +351,6 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
 
         <div className="chat-composer">
           {scrolling.away ? <button type="button" className="chat-jump-latest" onClick={scrolling.jumpToLatest}>{scrolling.unread ? "有新内容 · 回到最新 ↓" : "回到最新 ↓"}</button> : null}
-          {props.chatBusy ? <RunStatus key={props.currentConversationId} title={props.taskCancelBusy ? "正在停止生成" : generatingReply ? "正在生成回复" : placeholderThinking.title} task={props.taskCancelBusy ? undefined : placeholderThinking.currentTask} /> : null}
           {props.messages.length === 0 && props.density !== "dock" ? (
             <div className="chat-welcome">
               <h2>你想完成什么？</h2>
@@ -593,7 +593,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
         onRemove={props.onRemoveConversation}
       />
       {conversationListOpen ? <button className="conversation-history-backdrop" type="button" aria-label="关闭对话记录" onClick={() => setConversationListOpen(false)} /> : null}
-      {researchPanelOpen ? <button className="research-panel-backdrop" type="button" aria-label="关闭研究详情" onClick={() => closeResearchDetails()} /> : null}
+      {researchPanelOpen ? <button className="research-panel-backdrop" type="button" aria-label="关闭来源详情" onClick={() => closeResearchDetails()} /> : null}
     </section>
   );
 }

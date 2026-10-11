@@ -325,7 +325,14 @@ async def stream_chat_response(
         streamed_events: dict[str, ToolEvent] = {}
         current_task = asyncio.current_task()
         try:
-            await queue.put(("run_started", {"user_message": user_message}))
+            run = run_store.get_run(ag_ui_input.run_id)
+            await queue.put(("run_started", {
+                "user_message": user_message,
+                "timing": {
+                    "run_id": ag_ui_input.run_id,
+                    "started_at": run.get("started_at") if run is not None else None,
+                },
+            }))
             if cached_execution is not None:
                 result = cached_execution["result"]
                 await queue.put(("text_reset", {}))

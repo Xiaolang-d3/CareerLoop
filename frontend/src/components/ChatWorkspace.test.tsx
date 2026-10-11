@@ -139,18 +139,22 @@ describe("ChatWorkspace", () => {
     expect(screen.getByRole("button", { name: "正在停止生成" })).toBeDisabled();
   });
 
-  it("places a stopped result and static process link in one row while preserving partial output", () => {
+  it("keeps a stopped process collapsed above the partial answer and allows reopening it", () => {
     const agent: AgentRunResult = { provider: "test", platform: "local", rounds: 1, status: "cancelled", events: [{ round: 1, tool_call_id: "search-1", tool_name: "search_library", status: "done", message: "已查阅项目资料" }] };
     const props = renderChat([message, { ...assistantMessage("已生成的部分内容"), payload: { agent } }]);
-    const link = screen.getByRole("button", { name: "查看过程，打开研究详情" });
-    const row = link.closest(".message-run-meta")!;
-    expect(row).toHaveTextContent("已停止");
-    expect(within(screen.getByRole("log")).getByText("已生成的部分内容")).toBeInTheDocument();
-    expect(props.view.container.querySelector(".thinking-process")).not.toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: "展开思考与执行过程" });
+    const process = screen.getByRole("region", { name: "思考与执行过程" });
+    const answer = within(screen.getByRole("log")).getByText("已生成的部分内容");
+    expect(toggle).toHaveTextContent("已停止");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(answer).toBeInTheDocument();
+    expect(process.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(props.view.container.querySelector(".chat-run-status")).not.toBeInTheDocument();
-    expect(link.querySelector(".spinning")).not.toBeInTheDocument();
-    fireEvent.click(link);
-    expect(screen.getByRole("complementary", { name: "研究详情" })).toBeVisible();
+    expect(process.querySelector(".spinning")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "查看过程，打开研究详情" })).not.toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(within(process).getByText("已查阅项目资料")).toBeVisible();
+    expect(screen.queryByRole("complementary", { name: "来源详情" })).not.toBeInTheDocument();
   });
 
   it("uses the final result instead of treating a recovered tool failure as a failed answer", () => {
@@ -214,7 +218,7 @@ describe("ChatWorkspace", () => {
     expect(screen.getAllByText("grok-4.7")).toHaveLength(1);
     expect(screen.queryByText(/生成模型：/)).not.toBeInTheDocument();
     expect(screen.queryByText("模型详情")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "研究详情" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "来源详情" })).not.toBeInTheDocument();
     for (const name of ["复制消息", "编辑消息", "复制回答", "重新生成回答", "回答详情"]) {
       expect(screen.getByRole("button", { name })).toHaveTextContent(/^$/);
     }
@@ -238,13 +242,13 @@ describe("ChatWorkspace", () => {
 
   it("does not repeat an error already present in the answer", () => {
     const errorMessage = "模型服务暂时不可用，请稍后重试。";
-    const props = renderChat([{ ...assistantMessage(errorMessage), payload: { agent: {
+    renderChat([{ ...assistantMessage(errorMessage), payload: { agent: {
       provider: "test", platform: "local", rounds: 1, status: "failed",
       events: [{ round: 1, tool_call_id: "provider-1", tool_name: "model_provider", status: "failed", message: errorMessage }],
       error: { code: "model_service_error", message: errorMessage, retryable: true }
     } } }]);
     expect(within(screen.getByRole("log")).getAllByText(errorMessage)).toHaveLength(1);
-    expect(props.view.container.querySelector(".message-run-result")).not.toHaveTextContent(errorMessage);
+    expect(screen.getByRole("region", { name: "思考与执行过程" })).not.toHaveTextContent("请先检查设置");
     expect(screen.getByRole("button", { name: "重试回答" })).toHaveTextContent(/^$/);
   });
 
@@ -262,14 +266,18 @@ describe("ChatWorkspace", () => {
     expect(within(prompt).getByText(draft.content)).toBeVisible();
   });
 
-  it("shows one live activity and a separate research-details entry", () => {
+  it("shows the live activity and current task in one expanded message process", () => {
     const agent: AgentRunResult = { provider: "test", platform: "local", rounds: 1, status: "done", events: [{
       round: 1, tool_call_id: "search-1", tool_name: "search_library", status: "running", message: "正在查阅项目资料"
     }] };
     renderChat([message, { ...assistantMessage("", -1), payload: { agent } }], { chatBusy: true, latestAgent: agent });
     expect(screen.getAllByText("正在检索资料")).toHaveLength(1);
     expect(screen.getAllByText("正在查阅项目资料")).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "查看过程，打开研究详情" })).toBeVisible();
+    const process = screen.getByRole("region", { name: "思考与执行过程" });
+    expect(within(process).getByRole("button", { name: "收起思考与执行过程" })).toHaveAttribute("aria-expanded", "true");
+    expect(process.closest(".message.assistant")).not.toBeNull();
+    expect(process.closest(".chat-composer")).toBeNull();
+    expect(screen.queryByRole("button", { name: "查看过程，打开研究详情" })).not.toBeInTheDocument();
   });
 
   it("shows the fixed routing version and stage reasons in historical model details", () => {
@@ -904,7 +912,7 @@ describe("ChatWorkspace", () => {
     expect(onSuggestedAction).not.toHaveBeenCalled();
   });
 
-  it("does not offer empty research details for a reply without tools", () => {
+  it("opens recorded process summaries inline without offering an empty source panel", () => {
     renderChat([{
       id: 12,
       role: "assistant",
@@ -928,9 +936,11 @@ describe("ChatWorkspace", () => {
     }]);
 
     expect(screen.queryByRole("button", { name: "查看过程，打开研究详情" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "研究详情" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("complementary", { name: "研究详情" })).not.toBeInTheDocument();
-    expect(screen.queryByText("先确认项目范围，再追问取舍。")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "来源详情" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "来源详情" })).not.toBeInTheDocument();
+    expect(screen.getByText("先确认项目范围，再追问取舍。")).not.toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "展开思考与执行过程" }));
+    expect(screen.getByText("先确认项目范围，再追问取舍。")).toBeVisible();
   });
 
   it("expands thinking with live tool work and hides the local route summary", () => {
@@ -977,12 +987,14 @@ describe("ChatWorkspace", () => {
     ], { chatBusy: true });
 
     expect(screen.getAllByText("正在检索公开资料")).toHaveLength(1);
-    const toggle = screen.getByRole("button", { name: "查看过程，打开研究详情" });
-    fireEvent.click(toggle);
-    const body = screen.getByRole("complementary", { name: "研究详情" });
+    const toggle = screen.getByRole("button", { name: "收起思考与执行过程" });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    const body = screen.getByRole("region", { name: "思考与执行过程" });
     expect(body).not.toHaveTextContent("已识别为公司公开信息研究，需要先规划并限制可用工具");
     expect(body).toHaveTextContent("已规划 1 个步骤：核验腾讯科技公开信息");
     expect(body).toHaveTextContent("腾讯科技");
+    expect(body.closest(".chat-composer")).toBeNull();
+    expect(screen.queryByRole("complementary", { name: "来源详情" })).not.toBeInTheDocument();
   });
 
   it("does not show the local route summary while waiting for the first real step", () => {
@@ -1045,10 +1057,9 @@ describe("ChatWorkspace", () => {
     ], { chatBusy: true });
 
     expect(screen.getAllByText("正在补齐必要步骤")).toHaveLength(1);
-    const toggle = screen.getByRole("button", { name: "查看过程，打开研究详情" });
+    const toggle = screen.getByRole("button", { name: "收起思考与执行过程" });
     expect(toggle).not.toHaveTextContent("search_public_web");
-    fireEvent.click(toggle);
-    expect(screen.getByRole("complementary", { name: "研究详情" }))
+    expect(screen.getByRole("region", { name: "思考与执行过程" }))
       .toHaveTextContent("必要步骤尚未完成，正在继续执行");
   });
 
@@ -1080,10 +1091,9 @@ describe("ChatWorkspace", () => {
     ], { chatBusy: true });
 
     expect(screen.getAllByText("正在纠正重复步骤")).toHaveLength(1);
-    const toggle = screen.getByRole("button", { name: "查看过程，打开研究详情" });
+    const toggle = screen.getByRole("button", { name: "收起思考与执行过程" });
     expect(toggle).not.toHaveTextContent("opaque-secret");
-    fireEvent.click(toggle);
-    expect(screen.getByRole("complementary", { name: "研究详情" }))
+    expect(screen.getByRole("region", { name: "思考与执行过程" }))
       .toHaveTextContent("已跳过重复工具调用，正在推进下一步");
   });
 
@@ -1125,24 +1135,52 @@ describe("ChatWorkspace", () => {
       }
     }]);
 
-    fireEvent.click(screen.getByRole("button", { name: "查看过程，打开研究详情" }));
+    fireEvent.click(screen.getByRole("button", { name: "展开思考与执行过程" }));
     expect(screen.queryByText(/已识别为/)).not.toBeInTheDocument();
     expect(screen.getByText("已找到并读取 2 条公开公司资料，可生成带来源的公司研究报告")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "查看全部 2 个来源" }));
+    const sourcePanel = screen.getByRole("complementary", { name: "来源详情" });
+    expect(sourcePanel).not.toHaveTextContent("已找到并读取 2 条公开公司资料，可生成带来源的公司研究报告");
     expect(screen.getByText("2 个来源")).toBeVisible();
     expect(screen.getByRole("button", { name: "来源 1：天眼查" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "来源 2：官网" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /打开原网页/ })).toHaveAttribute("href", "https://www.tianyancha.com/company/1");
   });
 
-  it("shows a specific thinking placeholder while waiting for the first assistant token", () => {
-    renderChat([message], { chatBusy: true });
+  it("shows a specific thinking placeholder while waiting for the first assistant token", async () => {
+    const props = renderChat([message], { chatBusy: true });
 
-    expect(screen.getAllByText("正在整理要点").length).toBeGreaterThan(0);
-    expect(screen.queryByRole("button", { name: "正在整理要点" })).not.toBeInTheDocument();
+    expect(screen.getAllByText("正在整理要点")).toHaveLength(1);
+    const process = screen.getByRole("region", { name: "思考与执行过程" });
+    expect(process.closest(".chat-thread")).not.toBeNull();
+    expect(process.closest(".chat-composer")).toBeNull();
+    expect(props.view.container.querySelectorAll(".message.assistant")).toHaveLength(1);
+    expect(props.view.container.querySelector(".chat-composer .run-process")).not.toBeInTheDocument();
+    expect(props.view.container.querySelector(".chat-run-status")).not.toBeInTheDocument();
+    expect(screen.getByText("等待模型响应…")).toBeVisible();
     expect(screen.queryByText("正在思考")).not.toBeInTheDocument();
+    props.view.rerender(<ChatWorkspace {...props} messages={[message, assistantMessage("", -1)]} />);
+    await waitFor(() => expect(screen.getAllByRole("region", { name: "思考与执行过程" })).toHaveLength(1));
+    expect(props.view.container.querySelectorAll(".message.assistant")).toHaveLength(1);
+    expect(props.view.container.querySelector(".chat-composer .run-process")).not.toBeInTheDocument();
   });
 
-  it("shows the current executing task once above the composer", () => {
+  it("does not append a second placeholder after the terminal assistant arrives while busy clears", () => {
+    const agent: AgentRunResult = {
+      provider: "test", platform: "local", rounds: 1, status: "done", duration_ms: 3_000,
+      events: [{ round: 1, tool_call_id: "thought-1", tool_name: "agent_thinking", status: "done", message: "已核对来源并整理结论。" }]
+    };
+    const props = renderChat([message, { ...assistantMessage("最终回答"), payload: { agent } }], { chatBusy: true });
+    expect(screen.getAllByRole("region", { name: "思考与执行过程" })).toHaveLength(1);
+    expect(props.view.container.querySelectorAll(".message.assistant")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "展开思考与执行过程" })).toHaveTextContent("用时 3s");
+    expect(screen.queryByText("等待模型响应…")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByText("最终回答")).toBeVisible();
+    expect(props.view.container.querySelector(".run-process .spinning")).not.toBeInTheDocument();
+  });
+
+  it("shows the current executing task once inside the message process", () => {
     const thoughtBody = "先确认项目范围，再对照公司公开资料展开追问。";
     renderChat([
       message,
@@ -1190,11 +1228,13 @@ describe("ChatWorkspace", () => {
       }
     ], { chatBusy: true });
 
-    const toggle = screen.getByRole("button", { name: "查看过程，打开研究详情" });
+    const toggle = screen.getByRole("button", { name: "收起思考与执行过程" });
     expect(screen.getAllByText("正在检索公开资料")).toHaveLength(1);
     expect(screen.getAllByText(/正在进行：搜索公司资料/)).toHaveLength(1);
     expect(toggle).not.toHaveTextContent("搜索公司资料");
     expect(toggle).not.toHaveTextContent(thoughtBody);
+    expect(screen.getByText(thoughtBody)).toBeVisible();
+    expect(toggle.closest(".chat-composer")).toBeNull();
   });
 
   it("uses the latest tool event message once in the live activity", () => {
@@ -1225,10 +1265,10 @@ describe("ChatWorkspace", () => {
 
     expect(screen.getAllByText("正在检索资料")).toHaveLength(1);
     expect(screen.getAllByText("正在从简历中定位项目证据")).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "查看过程，打开研究详情" })).not.toHaveTextContent("正在从简历中定位项目证据");
+    expect(screen.getByRole("button", { name: "收起思考与执行过程" })).not.toHaveTextContent("正在从简历中定位项目证据");
   });
 
-  it("keeps internal thoughts private without offering empty research details", () => {
+  it("shows the returned process summary in the dialogue without an empty source panel", () => {
     const thoughtBody = "我先读取简历，再对比岗位要求，然后整理成面试可讲的要点。";
     renderChat([
       message,
@@ -1256,8 +1296,9 @@ describe("ChatWorkspace", () => {
     ], { chatBusy: true });
 
     expect(screen.queryByRole("button", { name: "查看过程，打开研究详情" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "研究详情" })).not.toBeInTheDocument();
-    expect(screen.queryByText(thoughtBody)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "来源详情" })).not.toBeInTheDocument();
+    expect(screen.getByText(thoughtBody)).toBeVisible();
+    expect(screen.getByText(thoughtBody).closest(".run-process")).not.toBeNull();
   });
 
   it("renders in-text source links as numbered citation previews", async () => {
@@ -1308,10 +1349,10 @@ describe("ChatWorkspace", () => {
     viewport.scrollTop = 217;
     fireEvent.scroll(viewport);
     fireEvent.click(citation);
-    expect(screen.getByRole("complementary", { name: "研究详情" })).toHaveTextContent("腾讯科技（深圳）有限公司");
+    expect(screen.getByRole("complementary", { name: "来源详情" })).toHaveTextContent("腾讯科技（深圳）有限公司");
     expect(screen.getByRole("link", { name: "打开原网页" })).toHaveAttribute("target", "_blank");
     viewport.scrollTop = 0;
-    fireEvent.click(within(screen.getByRole("complementary", { name: "研究详情" })).getByRole("button", { name: "关闭研究详情" }));
+    fireEvent.click(within(screen.getByRole("complementary", { name: "来源详情" })).getByRole("button", { name: "关闭来源详情" }));
     await waitFor(() => expect(citation).toHaveFocus());
     await waitFor(() => expect(viewport.scrollTop).toBe(217));
   });
@@ -1349,13 +1390,13 @@ describe("ChatWorkspace", () => {
     }]);
 
     fireEvent.click(screen.getByRole("button", { name: "查看全部 1 个来源" }));
-    const panel = screen.getByRole("complementary", { name: "研究详情" });
+    const panel = screen.getByRole("complementary", { name: "来源详情" });
     expect(panel).toHaveTextContent("asyncio 用于编写并发代码");
     expect(screen.getByRole("link", { name: /打开原网页/ })).toHaveAttribute("href", "https://docs.python.org/3/library/asyncio.html");
 
     fireEvent.keyDown(window, { key: "Escape" });
-    expect(screen.queryByRole("complementary", { name: "研究详情" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "研究详情" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("complementary", { name: "来源详情" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "来源详情" })).toHaveAttribute("aria-expanded", "false");
   });
 
   it("renders each Mermaid block in its own stable container", async () => {

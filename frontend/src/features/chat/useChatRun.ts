@@ -110,7 +110,16 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
     setRetryChatDraft(null);
     setErrorMessage("");
     setNoticeMessage("");
-    setChatMessages((current) => [...current, optimisticMessage]);
+    const optimisticAssistant: ChatMessage = {
+      id: optimisticAssistantId,
+      role: "assistant",
+      content: "",
+      created_at: optimisticMessage.created_at,
+      payload: {
+        agent: { provider: "openai", platform: "manual", rounds: 0, status: "done", events: [] }
+      }
+    };
+    setChatMessages((current) => [...current, optimisticMessage, optimisticAssistant]);
     let terminalReceived = false;
     const isCurrentRun = () => chatAgentRef.current === agent && currentConversationIdRef.current === conversationId;
     const acceptsStreamEvents = () => !terminalReceived && isCurrentRun();
@@ -162,10 +171,9 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
           message: keepExistingMessage ? existing!.message : agentEvent.message,
           data: { ...existing?.data, ...agentEvent.data }
         };
-        const events = [
-          ...agent.events.filter((item) => item.tool_call_id !== agentEvent.tool_call_id),
-          merged
-        ];
+        const events = existing
+          ? agent.events.map((item) => item.tool_call_id === agentEvent.tool_call_id ? merged : item)
+          : [...agent.events, merged];
         return { ...message, payload: { ...message.payload, agent: { ...agent, events } } };
       }));
     };
@@ -214,7 +222,6 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
           reason: "send_failed"
         });
       }
-      if (status === "cancelled") setNoticeMessage("已停止生成");
     };
 
     const agent = new HttpAgent({
@@ -241,14 +248,34 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
         if (event.name === "careerloop.user_message") {
           const userMessage = event.value as ChatMessage;
           if (currentConversationIdRef.current === conversationId) {
-            setChatMessages((current) => [
-              ...current.filter((message) => ![optimisticId, userMessage.id].includes(message.id)),
-              userMessage
-            ]);
+            setChatMessages((current) => {
+              let replaced = false;
+              const messages = current.flatMap((message) => {
+                if (![optimisticId, userMessage.id].includes(message.id)) return [message];
+                if (replaced) return [];
+                replaced = true;
+                return [userMessage];
+              });
+              if (!replaced) {
+                const assistantIndex = messages.findIndex((message) => message.id === optimisticAssistantId);
+                messages.splice(assistantIndex < 0 ? messages.length : assistantIndex, 0, userMessage);
+              }
+              return messages;
+            });
           }
         }
         if (event.name === "careerloop.agent_event" && event.value && typeof event.value === "object") {
           updateAgentEvent(event.value as AgentRunResult["events"][number]);
+        }
+        if (event.name === "careerloop.run_timing" && event.value && typeof event.value === "object") {
+          const timing = event.value as { run_id?: string; started_at?: string };
+          if (timing.run_id !== executionRunId || typeof timing.started_at !== "string"
+            || !Number.isFinite(Date.parse(timing.started_at))) return;
+          ensureStreamingAssistant();
+          setChatMessages((current) => current.map((message) => {
+            if (message.id !== optimisticAssistantId || !message.payload?.agent) return message;
+            return { ...message, payload: { ...message.payload, agent: { ...message.payload.agent, started_at: timing.started_at } } };
+          }));
         }
       },
       onTextMessageStartEvent: () => {

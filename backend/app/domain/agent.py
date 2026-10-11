@@ -139,6 +139,9 @@ class AgentRunResult(BaseModel):
     plan: AgentPlan | None = None
     snapshot: AgentRunSnapshot | None = None
     stop_reason: str = ""
+    started_at: str | None = None
+    completed_at: str | None = None
+    duration_ms: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def infer_stop_reason(self) -> "AgentRunResult":

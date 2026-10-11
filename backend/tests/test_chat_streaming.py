@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from app import db
 import app.api.attachments as resources_module
@@ -70,6 +71,36 @@ class ChatStreamingApiTest(unittest.TestCase):
         self.assertEqual(text, "基于本地资料完成回答。")
         messages = self.client.get(f"/chat/messages?conversation_id={conversation['id']}").json()
         self.assertEqual([message["role"] for message in messages], ["user", "assistant"])
+
+    def test_ag_ui_emits_server_start_before_text_and_persists_terminal_duration(self) -> None:
+        conversation = self.client.post("/conversations", json={"title": "运行用时"}).json()
+
+        class Runtime:
+            async def run_stream(self, *args, **kwargs):
+                yield AgentStreamEvent(type="text_delta", delta="回答")
+                yield AgentStreamEvent(type="completed", result=AgentRunResult(
+                    content="回答", provider="test", platform="manual", rounds=1,
+                ))
+
+        started_at = "2026-10-11T00:00:00.125+00:00"
+        completed_at = "2026-10-11T00:06:29.125+00:00"
+        with patch("app.agent.run_store._utc_now", side_effect=[started_at, completed_at]):
+            first = self.with_runtime(Runtime(), lambda: self.run_ag_ui(conversation["id"], "计时", "run-timing"))
+        timing_index = next(index for index, event in enumerate(first) if event.get("name") == "careerloop.run_timing")
+        text_index = next(index for index, event in enumerate(first) if event["type"] == "TEXT_MESSAGE_CONTENT")
+        self.assertLess(timing_index, text_index)
+        self.assertEqual(first[timing_index]["value"], {"run_id": "run-timing", "started_at": started_at})
+        snapshot = next(event["snapshot"] for event in first if event["type"] == "STATE_SNAPSHOT")
+        agent = snapshot["careerLoop"]["assistantMessage"]["payload"]["agent"]
+        self.assertEqual(agent["started_at"], started_at)
+        self.assertEqual(agent["completed_at"], completed_at)
+        self.assertEqual(agent["duration_ms"], 389000)
+        messages = self.client.get(f"/chat/messages?conversation_id={conversation['id']}").json()
+        self.assertEqual(messages[-1]["payload"]["agent"]["duration_ms"], 389000)
+
+        second = self.run_ag_ui(conversation["id"], "计时", "run-timing")
+        replay = next(event["snapshot"] for event in second if event["type"] == "STATE_SNAPSHOT")
+        self.assertEqual(replay["careerLoop"]["assistantMessage"]["payload"]["agent"]["duration_ms"], 389000)
 
     def test_ag_ui_requires_user_text(self) -> None:
         conversation = self.client.post("/conversations", json={"title": "空输入"}).json()

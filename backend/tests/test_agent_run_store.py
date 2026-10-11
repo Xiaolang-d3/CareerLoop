@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 from app.agent.run_store import AgentRunStore
 from app.db import connect, init_db
@@ -87,6 +90,171 @@ class AgentRunStoreTest(unittest.TestCase):
         self.assertEqual(finished["stop_reason"], "completed")
         self.assertEqual(finished["result"].content, "完成")
         self.assertFalse(finished["result_invalid"])
+
+    def test_run_timing_uses_persisted_start_and_remains_stable_after_repeated_finish(self) -> None:
+        started_at = "2026-10-11T00:00:00.125+00:00"
+        completed_at = "2026-10-11T00:00:06.650+00:00"
+        with patch("app.agent.run_store._utc_now", side_effect=[started_at, completed_at]):
+            started = self.store.start_run(
+                "run-timed", conversation_id=self.conversation_id,
+                task_id=self.task_id, user_content="定时测试",
+            )
+            result = AgentRunResult(content="完成", provider="test", platform="manual", rounds=1)
+            self.assertIsNone(self.store.finish("run-timed", result))
+        self.assertEqual(started["started_at"], started_at)
+        self.assertEqual(result.started_at, started_at)
+        self.assertEqual(result.completed_at, completed_at)
+        self.assertEqual(result.duration_ms, 6525)
+
+        replacement = result.model_copy(update={"content": "保留的部分内容"})
+        with patch("app.agent.run_store._utc_now", return_value="2026-10-11T01:00:00.000+00:00"):
+            self.store.finish("run-timed", replacement)
+        stored = self.store.load_result("run-timed")
+        self.assertEqual(stored.content, "保留的部分内容")
+        self.assertEqual(stored.duration_ms, 6525)
+        self.assertEqual(stored.completed_at, completed_at)
+        self.assertEqual(self.store.get_run("run-timed")["completed_at"], completed_at)
+
+    def test_all_execution_outcomes_preserve_measured_time(self) -> None:
+        for status in ("done", "failed", "cancelled", "waiting_user"):
+            with self.subTest(status=status), patch("app.agent.run_store._utc_now", side_effect=[
+                "2026-10-11T00:00:00.000+00:00", "2026-10-11T00:00:01.500+00:00",
+            ]):
+                run_id = f"timed-{status}"
+                self.store.start_run(
+                    run_id, conversation_id=self.conversation_id,
+                    task_id=self.task_id, user_content="定时测试",
+                )
+                result = AgentRunResult(
+                    content="结束", provider="test", platform="manual", rounds=1, status=status,
+                )
+                self.store.finish(run_id, result)
+                self.assertEqual(self.store.load_result(run_id).duration_ms, 1500)
+                self.assertEqual(result.duration_ms, 1500)
+
+    def test_concurrent_finish_keeps_the_first_completion_time_in_one_transaction(self) -> None:
+        with patch("app.agent.run_store._utc_now", return_value="2026-10-11T00:00:00.000+00:00"):
+            self.store.start_run(
+                "concurrent-time", conversation_id=self.conversation_id,
+                task_id=self.task_id, user_content="并发结束",
+            )
+        first_clock = threading.Event()
+        release_first = threading.Event()
+        second_attempt = threading.Event()
+        second_read = threading.Event()
+        failures = []
+        results = [AgentRunResult(content="完成", provider="test", platform="manual", rounds=1) for _ in range(2)]
+
+        class TracedConnection:
+            def __init__(self, conn):
+                self.conn = conn
+
+            def execute(self, sql, *parameters):
+                if threading.current_thread().name == "second-finisher" and sql == "BEGIN IMMEDIATE":
+                    second_attempt.set()
+                cursor = self.conn.execute(sql, *parameters)
+                if threading.current_thread().name == "second-finisher" and sql.startswith("SELECT status"):
+                    second_read.set()
+                return cursor
+
+        @contextmanager
+        def traced_connect(db_path=None):
+            with connect(db_path) as conn:
+                yield TracedConnection(conn)
+
+        def clock():
+            if threading.current_thread().name == "first-finisher":
+                first_clock.set()
+                if not release_first.wait(5):
+                    raise RuntimeError("测试未释放首个结束事务")
+                return "2026-10-11T00:00:01.250+00:00"
+            return "2026-10-11T00:00:02.500+00:00"
+
+        def finish(index):
+            try:
+                self.store.finish("concurrent-time", results[index])
+            except Exception as exc:
+                failures.append(exc)
+
+        first = threading.Thread(target=finish, args=(0,), name="first-finisher")
+        second = threading.Thread(target=finish, args=(1,), name="second-finisher")
+        with patch("app.agent.run_store.connect", traced_connect), patch("app.agent.run_store._utc_now", side_effect=clock) as mocked_clock:
+            first.start()
+            try:
+                self.assertTrue(first_clock.wait(5))
+                second.start()
+                self.assertTrue(second_attempt.wait(5))
+                self.assertFalse(second_read.is_set())
+            finally:
+                release_first.set()
+                first.join(5)
+                if second.ident is not None:
+                    second.join(5)
+            self.assertEqual(mocked_clock.call_count, 1)
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(failures, [])
+        self.assertTrue(second_read.is_set())
+        self.assertEqual([result.duration_ms for result in results], [1250, 1250])
+        self.assertEqual(self.store.load_result("concurrent-time").duration_ms, 1250)
+
+    def test_waiting_user_resume_with_new_run_id_has_an_independent_duration(self) -> None:
+        with patch("app.agent.run_store._utc_now", side_effect=[
+            "2026-10-11T00:00:00.000+00:00", "2026-10-11T00:00:01.000+00:00",
+            "2026-10-11T00:10:00.000+00:00", "2026-10-11T00:10:03.000+00:00",
+        ]):
+            self.store.start_run(
+                "waiting-parent", conversation_id=self.conversation_id,
+                task_id=self.task_id, user_content="需要确认",
+            )
+            self.store.finish("waiting-parent", AgentRunResult(
+                content="请确认", provider="test", platform="manual", rounds=1, status="waiting_user",
+            ))
+            self.store.start_run(
+                "resumed-child", conversation_id=self.conversation_id,
+                task_id=self.task_id, user_content="确认继续",
+            )
+            self.store.link_waiting_resume(self.conversation_id, "resumed-child")
+            result = AgentRunResult(content="完成", provider="test", platform="manual", rounds=2)
+            self.store.finish("resumed-child", result)
+        self.assertEqual(result.duration_ms, 3000)
+        self.assertEqual(result.started_at, "2026-10-11T00:10:00.000+00:00")
+        self.assertEqual(self.store.load_result("waiting-parent").duration_ms, 1000)
+
+    def test_waiting_user_same_run_transition_does_not_reuse_previous_waiting_completion(self) -> None:
+        with patch("app.agent.run_store._utc_now", side_effect=[
+            "2026-10-11T00:00:00.000+00:00", "2026-10-11T00:00:01.000+00:00",
+            "2026-10-11T00:00:03.000+00:00",
+        ]):
+            self.store.start_run(
+                "waiting-transition", conversation_id=self.conversation_id,
+                task_id=self.task_id, user_content="需要确认",
+            )
+            self.store.finish("waiting-transition", AgentRunResult(
+                content="请确认", provider="test", platform="manual", rounds=1, status="waiting_user",
+            ))
+            result = AgentRunResult(content="完成", provider="test", platform="manual", rounds=2)
+            self.store.finish("waiting-transition", result)
+        self.assertEqual(result.duration_ms, 3000)
+        self.assertEqual(result.completed_at, "2026-10-11T00:00:03.000+00:00")
+
+    def test_legacy_sqlite_start_is_interpreted_as_utc_without_inventing_missing_time(self) -> None:
+        self.store.start_run(
+            "legacy-time", conversation_id=self.conversation_id,
+            task_id=self.task_id, user_content="旧时间格式",
+        )
+        with connect(self.db_path) as conn:
+            conn.execute("UPDATE agent_execution_runs SET started_at = '2026-10-11 00:00:00' WHERE run_id = 'legacy-time'")
+        result = AgentRunResult(content="完成", provider="test", platform="manual", rounds=1)
+        with patch("app.agent.run_store._utc_now", return_value="2026-10-11T00:00:02.500+00:00"):
+            self.store.finish("legacy-time", result)
+        self.assertEqual(result.started_at, "2026-10-11T00:00:00.000+00:00")
+        self.assertEqual(result.duration_ms, 2500)
+
+        missing = AgentRunResult(content="无记录", provider="test", platform="manual", rounds=1)
+        self.store.finish("missing-run", missing)
+        self.assertIsNone(missing.started_at)
+        self.assertIsNone(missing.duration_ms)
 
     def test_start_is_idempotent_and_does_not_replace_terminal_result(self) -> None:
         self.store.start_run(
