@@ -37,6 +37,8 @@ import { LibraryDialog } from "./LibraryDialog";
 import "./file-library.css";
 
 type Props = {
+  initialSourceId?: number | null;
+  onInitialSourceConsumed?: () => void;
   editor: LibraryEditor;
   sources: LibrarySource[];
   folders?: LibraryFolder[];
@@ -153,6 +155,13 @@ export function LibraryPage(props: Props) {
     [full, setFull] = useState(false),
     [loading, setLoading] = useState(false),
     [mode, setMode] = useState<"original" | "text">("original");
+  const initialOpened = useRef<number | null>(null);
+  useEffect(() => {
+    if (!props.initialSourceId || initialOpened.current === props.initialSourceId) return;
+    initialOpened.current = props.initialSourceId;
+    void open(props.initialSourceId, true);
+    props.onInitialSourceConsumed?.();
+  }, [props.initialSourceId]);
   const [menu, setMenu] = useState<number | "new" | null>(null),
     [dialog, setDialog] = useState<{ kind: DialogKind; ids: number[] } | null>(null);
   const [name, setName] = useState(""),
@@ -398,7 +407,7 @@ export function LibraryPage(props: Props) {
               label="用于对话"
               primary
               icon={<Sparkles size={17} />}
-              disabled={working || preview.parse_status !== "ready"}
+              disabled={working || preview.parse_status !== "ready" || !preview.character_count}
               action={() => useChat([preview.id])}
             />
           </div>
@@ -451,7 +460,7 @@ export function LibraryPage(props: Props) {
               <input
                 type="checkbox"
                 checked={key === "privacy_mode" ? preview.privacy_mode === "original" : preview.enabled}
-                disabled={working}
+                disabled={working || (key === "enabled" && !preview.character_count)}
                 onChange={(event) => {
                   const checked = event.target.checked;
                   void run(async () => {
@@ -496,7 +505,7 @@ export function LibraryPage(props: Props) {
                 label="用于对话"
                 primary
                 icon={<Sparkles size={16} />}
-                disabled={working || preview.parse_status !== "ready"}
+                disabled={working || preview.parse_status !== "ready" || !preview.character_count}
                 action={() => useChat([preview.id])}
               />
               <Button label="完整打开" icon={<Expand size={17} />} action={() => setFull(true)} />
@@ -778,10 +787,12 @@ export function LibraryPage(props: Props) {
                             <div>
                               <strong title={source.original_filename || source.title}>{source.title}</strong>
                               <small>
-                                {source.parse_status !== "ready"
+                                {source.text_parse_status === "not_required"
+                                  ? "原文件已存档 · 无可检索文字"
+                                  : source.parse_status !== "ready"
                                   ? "暂无提取文字"
                                   : !source.enabled
-                                    ? "已停用"
+                                    ? source.source_uri.startsWith("chat:") ? "仅存档" : "已停用"
                                     : source.original_filename || "文本笔记"}
                               </small>
                             </div>

@@ -57,6 +57,8 @@ function fencedMermaid(source: string): string {
 }
 
 function renderChat(messages: ChatMessage[] = [message], extras: {
+  onLoadResults?: ChatWorkspaceProps["onLoadResults"];
+  onSaveResult?: ChatWorkspaceProps["onSaveResult"];
   density?: "page" | "dock";
   chatBusy?: boolean;
   latestAgent?: AgentRunResult;
@@ -76,6 +78,8 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
   onComposerDraftConsumed?: () => void;
 } = {}) {
   const props = {
+    onLoadResults: extras.onLoadResults,
+    onSaveResult: extras.onSaveResult,
     libraryAttachments: extras.libraryAttachments,
     onLibraryAttachmentsConsumed: extras.onLibraryAttachmentsConsumed,
     composerDraft: extras.composerDraft,
@@ -128,6 +132,26 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
 }
 
 describe("ChatWorkspace", () => {
+  it("opens one result reader without altering the composer draft", async () => {
+    const load = vi.fn().mockResolvedValue({ message_id: 12, snapshot: "a".repeat(64), incomplete: false, artifacts: [{ selector: "answer", kind: "answer", filename: "回答.md", mime_type: "text/markdown", content: "# 完整成果", can_index: true }] });
+    const p = renderChat([message, assistantMessage("完整成果")], { onLoadResults: load, onSaveResult: vi.fn() });
+    const input = screen.getByRole("textbox", { name: "输入消息" });
+    fireEvent.change(input, { target: { value: "未发送草稿" } });
+    fireEvent.click(screen.getByRole("button", { name: "查看与保存成果" }));
+    expect(await screen.findByRole("dialog", { name: "聊天成果" })).toBeInTheDocument();
+    expect(load).toHaveBeenCalledWith(12, expect.any(AbortSignal));
+    fireEvent.click(screen.getByRole("button", { name: "关闭成果" }));
+    expect(input).toHaveValue("未发送草稿");
+    expect(p.onSend).not.toHaveBeenCalled();
+  });
+
+  it("does not expose final-result actions on an optimistic streaming response", () => {
+    const load = vi.fn();
+    renderChat([message, assistantMessage("生成中", -12)], { chatBusy: true, onLoadResults: load });
+    expect(screen.queryByRole("button", { name: "查看与保存成果" })).not.toBeInTheDocument();
+    expect(load).not.toHaveBeenCalled();
+  });
+
   it.each(["page", "dock"] as const)("returns to latest from the message overlay without changing the %s composer draft", (density) => {
     const p = renderChat([message, assistantMessage("已有回答")], { density });
     const viewport = screen.getByRole("log");

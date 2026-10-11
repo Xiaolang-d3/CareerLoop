@@ -105,3 +105,21 @@ describe("attachment preview", () => {
     expect(URL.createObjectURL).toHaveBeenCalledWith(original);
   });
 });
+
+
+it("switches between images in one preview without losing the original focus target", async () => {
+  const first = attachment("first.png", { id: "first", kind: "image" });
+  const second = attachment("second.png", { id: "second", kind: "image" });
+  const navigate = vi.fn();
+  const load = vi.fn().mockResolvedValue({ file: file("image", "image/png") });
+  const trigger = document.createElement("button"); document.body.appendChild(trigger); trigger.focus();
+  const view = render(<AttachmentPreviewDialog attachment={first} gallery={[first, second]} onNavigate={navigate} loadOriginal={load} onClose={vi.fn()} />);
+  await screen.findByRole("img", { name: "first.png" });
+  fireEvent.click(screen.getByRole("button", { name: "下一张图片" }));
+  expect(navigate).toHaveBeenCalledWith(second);
+  view.rerender(<AttachmentPreviewDialog attachment={second} gallery={[first, second]} onNavigate={navigate} loadOriginal={load} onClose={vi.fn()} />);
+  expect(await screen.findByRole("img", { name: "second.png" })).toBeInTheDocument();
+  expect(screen.getByText("2 / 2")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "下一张图片" })).toBeDisabled();
+  view.unmount(); expect(trigger).toHaveFocus(); trigger.remove();
+});

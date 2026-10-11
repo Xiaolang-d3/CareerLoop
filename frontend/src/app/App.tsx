@@ -16,6 +16,7 @@ import { AppIdentityMenu } from "../components/AppIdentityMenu";
 import { AppTopBar } from "../components/AppTopBar";
 import { ConversationDialog } from "../components/ConversationDialog";
 import type { AttachmentConfig, ChatAttachment, ChatComposerDraft, WebSearchOptions } from "../features/chat/types";
+import type { ArtifactManifest } from "../features/chat/result-types";
 import type { HomeReadableItem } from "../features/home/types";
 import { createHomeAnalysisConversation, homeAnalysisDraft } from "../features/home/analysis-draft";
 import { defaultAgentSettings, pageMeta, topbarSectionForPage } from "../constants";
@@ -154,6 +155,7 @@ export function App({
   const [noticeMessage, setNoticeMessage] = useState("");
   const { invalidateConversationReads, conversations, setConversations, currentConversationId, setCurrentConversationId, conversationBusy, setConversationBusy, conversationDialog, setConversationDialog, refreshConversations, createNewConversation, archiveConversation, renameConversation, removeConversation } = useConversations({ fetchJson, setActiveView, setErrorMessage, setNoticeMessage });
   const { libraryEditor, librarySources, libraryFolders, organizeLibrarySource, createLibraryFolder, loadLibraryOriginal, searchLibrarySources, confirmedKnowledgeCount, sourceCount, pendingKnowledge, libraryLoaded, libraryBusy, sourceImportBusy, enhancedDocumentParse, setLibraryEditor, setEnhancedDocumentParse, refreshLibrary, saveLibraryMetadata, importLibraryFiles, createPastedSource, updateLibrarySource, downloadLibrarySource, deleteLibrarySource } = useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, setNoticeMessage });
+  const [openLibraryResultId, setOpenLibraryResultId] = useState<number | null>(null);
   const [libraryAttachments, setLibraryAttachments] = useState<{ conversationId: number; attachments: ChatAttachment[] } | null>(null);
   const [homeComposerDraft, setHomeComposerDraft] = useState<ChatComposerDraft | null>(null);
   const composerDrafts = useMemo(() => new Map<number, string>(), [userEmail]);
@@ -1037,6 +1039,8 @@ export function App({
               ) : null}
               {appRoute.page === "library" ? (
                 <LibraryPage
+                  initialSourceId={openLibraryResultId}
+                  onInitialSourceConsumed={() => setOpenLibraryResultId(null)}
                   editor={libraryEditor}
                   sources={librarySources}
                   folders={libraryFolders}
@@ -1195,6 +1199,19 @@ export function App({
             onRefreshWebSearchCapabilities={refreshCapabilities}
             onUploadAttachment={uploadChatAttachment}
             onLoadAttachment={loadChatAttachment}
+            onLoadAttachmentThumbnail={async (attachment, signal) => {
+              const response = await fetchWithTimeout(`${apiBase}/attachments/${encodeURIComponent(attachment.id)}/thumbnail`, { signal, headers: { Authorization: `Bearer ${accessToken}` } });
+              if (!response.ok) throw new Error("缩略图读取失败");
+              return response.blob();
+            }}
+            resultFolders={libraryFolders}
+            onLoadResults={(messageId, signal) => fetchJson<ArtifactManifest>(`/chat/messages/${messageId}/artifacts`, { signal })}
+            onSaveResult={async (messageId, request, signal) => {
+              const result = await fetchJson<{ source: LibrarySourceDetail; reused: boolean }>(`/chat/messages/${messageId}/save-to-library`, { method: "POST", signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify(request) });
+              void refreshLibrary();
+              return result;
+            }}
+            onOpenSavedResult={sourceId => { setOpenLibraryResultId(sourceId); navigateRoute({ section: "settings", page: "library" }); }}
             onRemoveAttachment={removeChatAttachment}
             onAttachmentInvalid={setErrorMessage}
             onSuggestedAction={handleSuggestedAction}

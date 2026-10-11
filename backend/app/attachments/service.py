@@ -156,6 +156,26 @@ def get_attachment_store() -> AttachmentStore:
     return AttachmentStore(local_root=attachments_dir())
 
 
+def attachment_thumbnail(attachment_id: str, *, db_path: str | Path | None = None) -> bytes:
+    from PIL import Image, ImageOps
+
+    metadata = get_attachment_metadata(attachment_id, db_path=db_path)
+    if metadata["kind"] != "image":
+        raise ValueError("该附件不是图片")
+    path, _, _ = get_attachment_file(attachment_id, db_path=db_path)
+    try:
+        with Image.open(path) as original:
+            if original.width * original.height > 40_000_000:
+                raise ValueError("图片尺寸过大，请下载原图查看")
+            image = ImageOps.exif_transpose(original)
+            image.thumbnail((480, 320))
+            output = BytesIO()
+            image.save(output, format="WEBP", quality=80)
+            return output.getvalue()
+    except (OSError, Image.DecompressionBombError) as exc:
+        raise ValueError("无法读取图片缩略图") from exc
+
+
 def _safe_attachment(row: dict[str, Any]) -> dict[str, Any]:
     """Return attachment metadata without an object-store path or signed URL."""
     return {

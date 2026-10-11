@@ -1,3 +1,4 @@
+import { downloadText } from "../features/chat/result-files";
 import { useEffect, useId, useRef, useState } from "react";
 import "./ChatWorkspaceMermaid.css";
 
@@ -126,6 +127,7 @@ export function ChatWorkspaceMermaid({
         <div className="chat-mermaid-pending" role="status">图表生成中，完成后显示…</div>
       ) : (
         <>
+          <div className="chat-mermaid-downloads"><button type="button" onClick={() => downloadText(source, "图表.mmd")}>下载源码</button><button type="button" disabled={status !== "ready"} onClick={() => { const svg = containerRef.current?.querySelector("svg"); if (svg) downloadText(new XMLSerializer().serializeToString(svg), "图表.svg", "image/svg+xml"); }}>下载 SVG</button></div>
           <div
             ref={containerRef}
             id={containerId}

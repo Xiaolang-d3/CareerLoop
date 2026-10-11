@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { LibrarySourceDetail } from "../../types";
+import { MarkdownContent } from "../chat/ChatMarkdown";
 
 const PdfReader = lazy(() => import("./PdfReader"));
 
@@ -21,6 +22,7 @@ export function FilePreview({
   const canRender = source.mime_type === "application/pdf" || source.mime_type.startsWith("image/");
   const isPdf = source.mime_type === "application/pdf";
   const isText = source.mime_type.startsWith("text/");
+  const isMarkdown = source.mime_type === "text/markdown" || /\.md$/i.test(source.original_filename);
   useEffect(() => {
     setUrl("");
     setError("");
@@ -74,7 +76,7 @@ export function FilePreview({
     if (isText && originalText !== null)
       return (
         <article className="fl-text-page">
-          <pre>{originalText || "原文件没有文字。"}</pre>
+          {isMarkdown ? <MarkdownContent>{originalText || "原文件没有文字。"}</MarkdownContent> : <pre>{originalText || "原文件没有文字。"}</pre>}
         </article>
       );
     if (isPdf ? !pdfBytes : !url)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from ..attachments.service import (
     create_attachment,
     delete_attachment,
@@ -10,12 +10,22 @@ from ..attachments.service import (
     get_attachment_metadata,
     list_attachments,
     parse_attachment,
+    attachment_thumbnail,
 )
 from ..config import get_settings
 from .dependencies import require_conversation
 
 
 router = APIRouter()
+
+
+@router.get("/attachments/{attachment_id}/thumbnail")
+def attachments_thumbnail(attachment_id: str) -> Response:
+    try:
+        return Response(attachment_thumbnail(attachment_id), media_type="image/webp",
+                        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/attachments/{attachment_id}/file")

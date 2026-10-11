@@ -17,9 +17,29 @@ from ..chat.service import (
 from fastapi import APIRouter
 from ..chat import execution
 from ..chat.execution import stream_chat_response, is_chat_running
+from ..chat.artifacts import ArtifactConflict, SaveArtifactIn, message_artifacts, save_artifact
 
 
 router = APIRouter()
+
+
+@router.get("/chat/messages/{message_id}/artifacts")
+def chat_message_artifacts(message_id: int) -> dict[str, Any]:
+    try:
+        return message_artifacts(message_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409 if isinstance(exc, ArtifactConflict) else 404, detail=str(exc)) from exc
+
+
+@router.post("/chat/messages/{message_id}/save-to-library")
+def chat_message_save(message_id: int, payload: SaveArtifactIn) -> dict[str, Any]:
+    try:
+        return save_artifact(message_id, payload)
+    except ValueError as exc:
+        code = 409 if isinstance(exc, ArtifactConflict) else 404 if str(exc) == "消息不存在" else 422
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail="本地文件保存失败，请检查磁盘空间后重试") from exc
 
 
 @router.get("/chat/messages")

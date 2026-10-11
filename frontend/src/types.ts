@@ -51,6 +51,8 @@ export type LibrarySource = {
   trashed_at?: string | null;
   last_opened_at?: string | null;
   size_bytes?: number;
+  file_status?: "ready" | "unavailable";
+  text_parse_status?: "pending" | "ready" | "failed" | "not_required";
 };
 
 export type LibrarySourceDetail = LibrarySource & {

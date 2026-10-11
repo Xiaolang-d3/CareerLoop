@@ -123,6 +123,8 @@ def _summary(source: dict[str, Any]) -> dict[str, Any]:
         "trashed_at": source.get("trashed_at"),
         "last_opened_at": source.get("last_opened_at"),
         "size_bytes": (source.get("metadata") or {}).get("size_bytes", 0),
+        "file_status": (source.get("metadata") or {}).get("file_status", "ready" if source.get("stored_path") else "unavailable"),
+        "text_parse_status": (source.get("metadata") or {}).get("text_parse_status", source.get("parse_status") or "ready"),
     }
 
 
@@ -284,6 +286,8 @@ def update_source(
         raise ValueError("隐私模式不合法")
     next_enabled = current["enabled"] if enabled is None else enabled
     next_content = current["content"] if content is None else content.strip()
+    if enabled is True and not next_content.strip():
+        raise ValueError("该文件没有可检索文字，请先补充正文")
     if content is not None and not next_content:
         raise ValueError("资料内容不能为空")
     if len(next_content) > 200_000:
@@ -294,6 +298,8 @@ def update_source(
         if content is not None else None
     )
     metadata = dict(current["metadata"])
+    if content is not None and "text_parse_status" in metadata:
+        metadata["text_parse_status"] = "ready"
     if content is not None and current["source_kind"] == "upload":
         metadata["content_edited"] = True
     with connect(db_path) as conn:

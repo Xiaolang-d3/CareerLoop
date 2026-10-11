@@ -127,42 +127,42 @@
   background: var(--color-warning-soft);
 }
 
-:root[data-theme="dark"] .chat-workspace .chat-mindmap,
-:root[data-theme="dark"] .chat-workspace .chat-mindmap-toolbar {
+:root[data-theme="dark"] :is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap,
+:root[data-theme="dark"] :is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-toolbar {
   color: var(--color-text);
   background: var(--color-surface);
   border-color: var(--color-border);
 }
-:root[data-theme="dark"] .chat-workspace :is(.chat-mindmap-toolbar p, .chat-mindmap-pending, .chat-mindmap-fallback) {
+:root[data-theme="dark"] :is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) :is(.chat-mindmap-toolbar p, .chat-mindmap-pending, .chat-mindmap-fallback) {
   color: var(--color-text-muted);
 }
-:root[data-theme="dark"] .chat-workspace .chat-mindmap-fallback strong {
+:root[data-theme="dark"] :is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-fallback strong {
   color: var(--color-text);
 }
-:root[data-theme="dark"] .chat-workspace :is(.chat-mindmap-node, .chat-mindmap-actions button, .chat-mindmap-fallback-header button) {
+:root[data-theme="dark"] :is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) :is(.chat-mindmap-node, .chat-mindmap-actions button, .chat-mindmap-fallback-header button) {
   color: var(--color-text);
   background: var(--color-surface-subtle);
   border-color: var(--color-border-strong);
 }
-:root[data-theme="dark"] .chat-workspace .chat-mindmap-node.is-root,
-:root[data-theme="dark"] .chat-workspace :is(.chat-mindmap-node, .chat-mindmap-actions button, .chat-mindmap-fallback-header button):is(:hover, :focus-visible) {
+:root[data-theme="dark"] :is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-node.is-root,
+:root[data-theme="dark"] :is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) :is(.chat-mindmap-node, .chat-mindmap-actions button, .chat-mindmap-fallback-header button):is(:hover, :focus-visible) {
   color: var(--color-text);
   background: var(--color-brand-soft);
   border-color: var(--color-brand);
 }
-:root[data-theme="dark"] .chat-workspace .chat-mindmap-children {
+:root[data-theme="dark"] :is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-children {
   border-color: var(--color-border-strong);
 }
-:root[data-theme="dark"] .chat-workspace .chat-mindmap-node small {
+:root[data-theme="dark"] :is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-node small {
   color: var(--color-brand-strong);
   background: var(--color-surface-emphasis);
 }
-:root[data-theme="dark"] .chat-workspace .chat-mindmap-fallback pre {
+:root[data-theme="dark"] :is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-fallback pre {
   color: var(--color-text);
   background: var(--color-surface-subtle);
   border-color: var(--color-border);
 }
-:root[data-theme="dark"] .chat-workspace .chat-mindmap-fallback pre code {
+:root[data-theme="dark"] :is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-fallback pre code {
   color: var(--color-text);
   background: transparent;
 }

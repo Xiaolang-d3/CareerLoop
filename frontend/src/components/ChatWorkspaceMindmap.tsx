@@ -1,3 +1,4 @@
+import { downloadText } from "../features/chat/result-files";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { ChevronsDownUp, ChevronsUpDown, Maximize2, Minimize2, Minus, Plus, RotateCcw } from "lucide-react";
 import { collectExpandableIds, parseMermaidMindmap, type MindmapNode } from "./mindmap-source";
@@ -137,7 +138,7 @@ export function ChatWorkspaceMindmap({
       >
       <div className="chat-mindmap-toolbar">
         <p>点击节点展开或收起，拖动画布移动；可全屏查看或复位视图。</p>
-        <div className="chat-mindmap-actions">
+        <div className="chat-mindmap-actions"><button type="button" onClick={() => downloadText(normalizedSource, "思维导图.mmd")}>下载源码</button>
           <button type="button" onClick={() => setScaleClamped(scale - scaleStep)} aria-label="缩小">
             <Minus size={14} />
           </button>
@@ -197,7 +198,7 @@ function MindmapFallback({ source }: { source: string }) {
           </span>
           <button type="button" onClick={() => void copySource()}>{copied ? "已复制" : "复制源码"}</button>
         </div>
-        <pre><code className="language-mermaid">{source}</code></pre>
+        <button type="button" onClick={() => downloadText(source, "思维导图.mmd")}>下载源码</button><pre><code className="language-mermaid">{source}</code></pre>
       </div>
     </div>
   );

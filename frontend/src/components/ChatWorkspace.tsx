@@ -2,6 +2,9 @@ import { useConversationScroll } from "../features/chat/useConversationScroll";
 import { ComposerModelPicker } from "../features/chat/ComposerModelPicker";
 import { ComposerWebSearch } from "../features/chat/ComposerWebSearch";
 import { AttachmentPreviewDialog, AttachmentPreviewContext } from "../features/chat/AttachmentPreviewDialog";
+import { ResultDialog } from "../features/chat/ResultDialog";
+import { ResultActionsContext } from "../features/chat/result-types";
+import { AttachmentThumbnailContext } from "../features/chat/HistoryAttachment";
 import { defaultWebSearchOptions, pendingWebSearchOptions, webSearchConfigurationIssue } from "../features/chat/webSearchOptions";
 import { textFromAppendMessage, WebSource, webSourcesFromAgent, ResearchPanelActionsContext, EditMessageComposer, RunProcess, ComposerClarification, StarterPromptList, ChatContextChips, ResearchPanel, ChatTurn } from "../features/chat/MessagePresentation";
 
@@ -109,6 +112,8 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   const clarification = clarificationFromAgent(props.latestAgent);
   const [isDraggingAttachment, setIsDraggingAttachment] = useState(false);
   const [expandedPreview, setExpandedPreview] = useState<ChatAttachment | null>(null);
+  const [resultSelection, setResultSelection] = useState<{ messageId: number; selector?: string; saving?: boolean } | null>(null);
+  const gallery = expandedPreview?.kind === "image" ? (props.messages.find(message => message.payload?.attachments?.some(attachment => attachment.id === expandedPreview.id))?.payload?.attachments ?? props.pendingAttachments).filter(item => item.kind === "image") : [];
   const [conversationListOpen, setConversationListOpen] = useState(false);
   const [researchPanelOpen, setResearchPanelOpen] = useState(false);
   const scrolling = useConversationScroll(props.currentConversationId, props.messages, researchPanelOpen);
@@ -187,6 +192,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
 
   useEffect(() => {
     setExpandedPreview(null);
+    setResultSelection(null);
     setConversationListOpen(false);
     setResearchPanelOpen(false);
     setResearchSelection(null);
@@ -261,6 +267,8 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
     <section className={`chat-workspace ${props.density === "dock" ? "is-dock" : "is-page"} ${props.focused ? "is-focused" : ""} ${props.messages.length ? "has-history" : "is-empty"} ${props.chatBusy ? "is-running" : ""} ${researchPanelOpen ? "has-research-panel" : ""}`}>
       <ResearchPanelActionsContext.Provider value={{ openDetails: openResearchDetails }}>
       <AttachmentPreviewContext.Provider value={setExpandedPreview}>
+      <AttachmentThumbnailContext.Provider value={props.onLoadAttachmentThumbnail}>
+      <ResultActionsContext.Provider value={props.onLoadResults ? (messageId, selector, saving) => setResultSelection({ messageId, selector, saving }) : null}>
       <ThreadPrimitive.Root className="chat-main">
         <header
           className={`chat-session-header${isFreshUntitled ? " is-untitled" : " has-session"}`}
@@ -537,7 +545,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             />
           ) : null}
           {expandedPreview ? (
-            <AttachmentPreviewDialog key={expandedPreview.id} attachment={expandedPreview} localFile={props.localFiles[expandedPreview.id]} loadOriginal={props.onLoadAttachment} onClose={() => setExpandedPreview(null)} />
+            <AttachmentPreviewDialog attachment={expandedPreview} localFile={props.localFiles[expandedPreview.id]} loadOriginal={props.onLoadAttachment} gallery={gallery} onNavigate={setExpandedPreview} onClose={() => setExpandedPreview(null)} />
           ) : null}
         </div>
       </ThreadPrimitive.Root>
@@ -554,6 +562,9 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
         })}
         onClose={() => closeResearchDetails()}
       />
+      {resultSelection ? <ResultDialog key={resultSelection.messageId} {...resultSelection} services={props} onClose={() => setResultSelection(null)} /> : null}
+      </ResultActionsContext.Provider>
+      </AttachmentThumbnailContext.Provider>
       </AttachmentPreviewContext.Provider>
       </ResearchPanelActionsContext.Provider>
       <ConversationHistoryPanel

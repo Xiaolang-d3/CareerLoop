@@ -1,8 +1,7 @@
 import { createContext, lazy, Suspense, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Download, FileText, LoaderCircle, Minus, Plus, RotateCcw, X } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { ChevronLeft, ChevronRight, Download, FileText, LoaderCircle, Minus, Plus, RotateCcw, X } from "lucide-react";
+import { MarkdownContent } from "./ChatMarkdown";
 import type { ChatAttachment, ChatWorkspaceProps } from "./types";
 import "./attachment-preview.css";
 
@@ -24,13 +23,16 @@ function fileSize(bytes?: number) {
   return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
-export function AttachmentPreviewDialog({ attachment, localFile, loadOriginal, onClose }: {
+export function AttachmentPreviewDialog({ attachment, localFile, loadOriginal, gallery = [], onNavigate, onClose }: {
   attachment: ChatAttachment;
   localFile?: File;
   loadOriginal?: ChatWorkspaceProps["onLoadAttachment"];
   onClose: () => void;
+  gallery?: ChatAttachment[];
+  onNavigate?: (attachment: ChatAttachment) => void;
 }) {
   const format = attachmentFormat(attachment);
+  const galleryIndex = gallery.findIndex(item => item.id === attachment.id);
   const loaderRef = useRef(loadOriginal);
   loaderRef.current = loadOriginal;
   const dialogRef = useRef<HTMLElement>(null);
@@ -76,6 +78,7 @@ export function AttachmentPreviewDialog({ attachment, localFile, loadOriginal, o
     let objectUrl = "";
     setLoading(true);
     setError("");
+    setZoom(1); setImageWidth(null);
     setBlob(null);
     setUrl("");
     setBytes(null);
@@ -153,6 +156,7 @@ export function AttachmentPreviewDialog({ attachment, localFile, loadOriginal, o
         </header>
         {format === "word" ? <p className="chat-attachment-note">当前显示提取的文字内容，完整排版请下载原文件查看。</p> : null}
         {format === "image" && url && !error ? <nav className="chat-image-controls" aria-label="图片缩放">
+          {gallery.length > 1 ? <><button type="button" aria-label="上一张图片" disabled={galleryIndex <= 0} onClick={() => onNavigate?.(gallery[galleryIndex - 1])}><ChevronLeft size={16} /></button><span>{galleryIndex + 1} / {gallery.length}</span><button type="button" aria-label="下一张图片" disabled={galleryIndex >= gallery.length - 1} onClick={() => onNavigate?.(gallery[galleryIndex + 1])}><ChevronRight size={16} /></button></> : null}
           <button type="button" aria-label="缩小图片" disabled={zoom <= .5} onClick={() => setZoom(current => Math.max(.5, current - .25))}><Minus size={16} /></button>
           <button type="button" aria-label="重置图片缩放" onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</button>
           <button type="button" aria-label="放大图片" disabled={zoom >= 3} onClick={() => setZoom(current => Math.min(3, current + .25))}><Plus size={16} /></button>
@@ -162,7 +166,7 @@ export function AttachmentPreviewDialog({ attachment, localFile, loadOriginal, o
             : error ? <div className="chat-attachment-empty"><p role="alert">{error}</p><button type="button" onClick={() => setAttempt(current => current + 1)}><RotateCcw size={15} />重新加载</button></div>
             : format === "pdf" && bytes ? <Suspense fallback={<p className="chat-attachment-empty" role="status">正在加载 PDF 阅读器…</p>}><PdfReader bytes={bytes} title={attachment.original_filename} /></Suspense>
             : format === "image" && url ? <div className="chat-image-frame" style={{ width: `${Math.max(1, zoom) * 100}%` }}><img ref={imageRef} src={url} alt={attachment.original_filename} style={imageWidth ? { width: imageWidth * zoom, maxWidth: "none" } : undefined} onLoad={(event) => fitImage(event.currentTarget)} onError={() => setError("图片无法显示，请重新加载或下载原文件查看")} /></div>
-            : format === "markdown" ? <article className="chat-attachment-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={{ a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}>{text || "文件没有文字内容。"}</ReactMarkdown></article>
+            : format === "markdown" ? <article className="chat-attachment-markdown"><MarkdownContent>{text || "文件没有文字内容。"}</MarkdownContent></article>
             : format === "text" || format === "word" ? <pre className="chat-attachment-text">{text || (format === "word" ? "暂无提取文字，可下载原文件查看。" : "文件没有文字内容。")}</pre>
             : <div className="chat-attachment-empty"><FileText size={28} /><p>此格式暂不支持在线预览，可下载原文件查看。</p></div>}
         </div>

@@ -1,4 +1,4 @@
-.chat-workspace .chat-mindmap {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap {
   width: 100%;
   min-width: 0;
   margin: 12px 0;
@@ -10,7 +10,7 @@
   white-space: normal;
 }
 
-.chat-workspace .chat-mindmap-toolbar {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -20,21 +20,21 @@
   background: rgba(255, 255, 255, .72);
 }
 
-.chat-workspace .chat-mindmap-toolbar p {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-toolbar p {
   margin: 0;
   color: #6f6986;
   font-size: 11px;
   line-height: 1.4;
 }
 
-.chat-workspace .chat-mindmap-actions {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-actions {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
 }
 
-.chat-workspace .chat-mindmap-actions button {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-actions button {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -50,14 +50,14 @@
   cursor: pointer;
 }
 
-.chat-workspace .chat-mindmap-actions button:hover,
-.chat-workspace .chat-mindmap-actions button:focus-visible {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-actions button:hover,
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-actions button:focus-visible {
   border-color: #b7ade6;
   outline: none;
   background: #f4f1ff;
 }
 
-.chat-workspace .chat-mindmap-viewport {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-viewport {
   min-height: 220px;
   max-height: 420px;
   overflow: hidden;
@@ -65,7 +65,7 @@
   touch-action: none;
 }
 
-.chat-workspace .chat-mindmap-viewport:active {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-viewport:active {
   cursor: grabbing;
 }
 
@@ -79,7 +79,7 @@
   cursor: pointer;
 }
 
-.chat-workspace .chat-mindmap.is-fullscreen,
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap.is-fullscreen,
 .chat-mindmap:fullscreen {
   position: fixed;
   inset: 16px;
@@ -99,9 +99,9 @@
   border-radius: 0;
 }
 
-.chat-workspace .chat-mindmap.is-fullscreen .chat-mindmap-viewport,
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap.is-fullscreen .chat-mindmap-viewport,
 .chat-mindmap:fullscreen .chat-mindmap-viewport,
-.chat-workspace .chat-mindmap.is-fullscreen .chat-mindmap-world,
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap.is-fullscreen .chat-mindmap-world,
 .chat-mindmap:fullscreen .chat-mindmap-world {
   flex: 1 1 auto;
   min-height: 0;
@@ -109,7 +109,7 @@
   height: 100%;
 }
 
-.chat-workspace .chat-mindmap-world {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-world {
   display: flex;
   align-items: center;
   min-width: max-content;
@@ -118,13 +118,13 @@
   transform-origin: 24px 50%;
 }
 
-.chat-workspace .chat-mindmap-branch {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-branch {
   display: flex;
   align-items: center;
   gap: 0;
 }
 
-.chat-workspace .chat-mindmap-children {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-children {
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -134,7 +134,7 @@
   border-left: 2px solid #d4ceee;
 }
 
-.chat-workspace .chat-mindmap-node {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-node {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -152,7 +152,7 @@
   text-align: left;
 }
 
-.chat-workspace .chat-mindmap-node.is-root {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-node.is-root {
   max-width: 240px;
   min-height: 40px;
   border-color: #8d82dc;
@@ -162,25 +162,25 @@
   font-size: 13px;
 }
 
-.chat-workspace button.chat-mindmap-node {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) button.chat-mindmap-node {
   font: inherit;
   cursor: pointer;
 }
 
-.chat-workspace button.chat-mindmap-node:hover,
-.chat-workspace button.chat-mindmap-node:focus-visible {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) button.chat-mindmap-node:hover,
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) button.chat-mindmap-node:focus-visible {
   border-color: #8d82dc;
   outline: none;
   background: #f4f1ff;
 }
 
-.chat-workspace button.chat-mindmap-node.is-root:hover,
-.chat-workspace button.chat-mindmap-node.is-root:focus-visible {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) button.chat-mindmap-node.is-root:hover,
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) button.chat-mindmap-node.is-root:focus-visible {
   color: #fff;
   background: linear-gradient(135deg, #6e60d8, #4f41c2);
 }
 
-.chat-workspace .chat-mindmap-node small {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-node small {
   display: grid;
   place-items: center;
   min-width: 20px;
@@ -193,13 +193,13 @@
   font-weight: 750;
 }
 
-.chat-workspace .chat-mindmap-node.is-root small {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-node.is-root small {
   color: #5b4dce;
   background: #fff;
 }
 
-.chat-workspace .chat-mindmap-pending,
-.chat-workspace .chat-mindmap-fallback {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-pending,
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-fallback {
   display: grid;
   gap: 6px;
   padding: 16px;
@@ -207,23 +207,23 @@
   font-size: 12px;
 }
 
-.chat-workspace .chat-mindmap-fallback-header {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-fallback-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
-.chat-workspace .chat-mindmap-fallback-header > span {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-fallback-header > span {
   display: grid;
   gap: 2px;
 }
 
-.chat-workspace .chat-mindmap-fallback strong {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-fallback strong {
   color: #423d59;
 }
 
-.chat-workspace .chat-mindmap-fallback-header button {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-fallback-header button {
   flex: 0 0 auto;
   min-height: 30px;
   padding: 0 10px;
@@ -237,7 +237,7 @@
   cursor: pointer;
 }
 
-.chat-workspace .chat-mindmap-fallback pre {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-fallback pre {
   margin: 8px 0 0;
   padding: 10px 12px;
   overflow-x: auto;
@@ -246,24 +246,24 @@
   background: #f5f4f8;
 }
 
-.chat-workspace .chat-mindmap-fallback pre code {
+:is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-fallback pre code {
   padding: 0;
   color: #4a4657;
   background: transparent;
 }
 
 @media (max-width: 600px) {
-  .chat-workspace .chat-mindmap-toolbar {
+  :is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-toolbar {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .chat-workspace .chat-mindmap-viewport,
-  .chat-workspace .chat-mindmap-world {
+  :is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-viewport,
+  :is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-world {
     min-height: 200px;
   }
 
-  .chat-workspace .chat-mindmap-node {
+  :is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-node {
     max-width: 180px;
   }
 }

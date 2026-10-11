@@ -1,5 +1,6 @@
 import type { RefObject } from "react";
 import type { AgentCapabilities, Conversation } from "../../types";
+import type { ResultServices } from "./result-types";
 
 export type WebSearchTopic = "auto" | "general" | "news" | "finance";
 export type WebSearchSourcePreference = "none" | "technical";
@@ -141,7 +142,7 @@ export type ChatComposerDraft = {
   content: string;
 };
 
-export type ChatWorkspaceProps = {
+export type ChatWorkspaceProps = ResultServices & {
   conversationTitle?: string;
   currentModelName?: string;
   modelProfiles?: Array<{ id: string; model_name: string; connection_name: string; connection_id?: string }>;
@@ -192,6 +193,7 @@ export type ChatWorkspaceProps = {
   onRefreshWebSearchCapabilities?: () => Promise<unknown>;
   onUploadAttachment: (file: File) => Promise<ChatAttachment>;
   onLoadAttachment?: (attachment: ChatAttachment, signal?: AbortSignal) => Promise<{ file: Blob; parsedText?: string }>;
+  onLoadAttachmentThumbnail?: (attachment: ChatAttachment, signal?: AbortSignal) => Promise<Blob>;
   onRemoveAttachment: (attachmentId: string) => Promise<void>;
   onAttachmentInvalid: (message: string) => void;
   onSuggestedAction: () => void;

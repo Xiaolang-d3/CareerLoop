@@ -31,4 +31,11 @@ describe("original versus AI text", () => {
     expect(screen.getByText(/校正后的文字/)).toHaveTextContent("[邮箱已隐藏]");
     expect(load).toHaveBeenCalledOnce();
   });
+  it("reads a saved Markdown original with headings and tables without executing embedded HTML", async () => {
+    const load = vi.fn().mockResolvedValue({ text: async () => "# 成果标题\n\n|名称|状态|\n|---|---|\n|报告|保存|\n\n<script>untrusted()</script>" } as Blob);
+    const view = render(<FilePreview source={{ ...source, original_filename: "报告.md", mime_type: "text/markdown" }} mode="original" loadOriginal={load} />);
+    expect(await screen.findByRole("heading", { name: "成果标题" })).toBeInTheDocument();
+    expect(screen.getByRole("table")).toHaveTextContent("报告保存");
+    expect(view.container.querySelector("script")).toBeNull();
+  });
 });
