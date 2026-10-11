@@ -326,6 +326,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             </button>
           </div>
         </header>
+        <div className="chat-thread-surface">
         <ThreadPrimitive.Viewport ref={scrolling.viewportRef} onScroll={scrolling.onScroll} autoScroll={false} scrollToBottomOnInitialize={false} scrollToBottomOnThreadSwitch={false} scrollToBottomOnRunStart={false} className="chat-thread" role="log" aria-live="polite" aria-relevant="additions">
           <div ref={scrolling.contentRef} className="chat-thread-content">
           {props.messages.length === 0 && props.density === "dock" ? (
@@ -353,9 +354,10 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
           <div ref={props.chatEndRef} />
           </div>
         </ThreadPrimitive.Viewport>
+        {scrolling.away ? <button type="button" className="chat-jump-latest" onClick={scrolling.jumpToLatest}>{scrolling.unread ? "有新内容 · 回到最新 ↓" : "回到最新 ↓"}</button> : null}
+        </div>
 
         <div className="chat-composer">
-          {scrolling.away ? <button type="button" className="chat-jump-latest" onClick={scrolling.jumpToLatest}>{scrolling.unread ? "有新内容 · 回到最新 ↓" : "回到最新 ↓"}</button> : null}
           {props.messages.length === 0 && props.density !== "dock" ? (
             <div className="chat-welcome">
               <h2>你想完成什么？</h2>

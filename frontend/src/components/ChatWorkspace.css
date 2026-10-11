@@ -1326,7 +1326,7 @@
 }
 
 .assistant-page .chat-workspace .chat-main > .chat-session-header,
-.assistant-page .chat-workspace .chat-main > .chat-thread,
+.assistant-page .chat-workspace .chat-main > .chat-thread-surface,
 .assistant-page .chat-workspace .chat-main > .chat-composer {
   grid-column: 1;
   width: 100%;
@@ -1343,7 +1343,7 @@
   background: var(--color-surface);
 }
 
-.assistant-page .chat-workspace .chat-main > .chat-thread,
+.assistant-page .chat-workspace .chat-main > .chat-thread-surface > .chat-thread,
 .assistant-page .chat-workspace.has-history .chat-thread,
 .assistant-page .chat-workspace.is-empty .chat-thread {
   grid-row: 2;
@@ -1364,7 +1364,7 @@
   transform: none;
 }
 
-.assistant-page .chat-workspace.is-empty .chat-thread {
+.assistant-page .chat-workspace.is-empty .chat-thread-surface {
   visibility: hidden;
   padding-block: 0;
 }
@@ -1445,7 +1445,7 @@
   }
 
   .assistant-page .chat-workspace .chat-main > .chat-session-header,
-  .assistant-page .chat-workspace .chat-main > .chat-thread {
+  .assistant-page .chat-workspace .chat-main > .chat-thread-surface > .chat-thread {
     padding-inline: 16px;
   }
 
@@ -1513,7 +1513,7 @@
     min-height: 52px;
     gap: 8px;
   }
-  .assistant-page .chat-workspace .chat-main > .chat-thread { padding-block: 16px; }
+  .assistant-page .chat-workspace .chat-main > .chat-thread-surface > .chat-thread { padding-block: 16px; }
   .assistant-page .chat-workspace.is-empty .chat-main > .chat-composer { padding-block: 16px; }
   .assistant-page .chat-workspace.is-empty .chat-welcome { margin-bottom: 16px; }
   .assistant-page .chat-workspace.is-empty .chat-welcome h2 { font-size: 24px; }
@@ -1562,12 +1562,33 @@
 }
 
 .chat-workspace .chat-thread-content { display: grid; gap: 24px; min-width: 0; }
+.chat-workspace .chat-thread-surface {
+  position: relative;
+  display: flex;
+  grid-column: 1;
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.chat-workspace .chat-thread-surface > .chat-thread {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  box-sizing: border-box;
+}
 .chat-workspace .chat-composer { position: relative; }
 .chat-workspace .chat-jump-latest {
+  position: absolute;
+  z-index: 4;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
   display: block;
   width: max-content;
-  max-width: 100%;
-  margin: -4px auto 10px;
+  max-width: calc(100% - 24px);
+  margin: 0;
   padding: 7px 14px;
   border: 1px solid var(--color-border);
   border-radius: 999px;

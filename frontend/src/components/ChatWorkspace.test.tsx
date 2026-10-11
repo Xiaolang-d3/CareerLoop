@@ -128,6 +128,27 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
 }
 
 describe("ChatWorkspace", () => {
+  it.each(["page", "dock"] as const)("returns to latest from the message overlay without changing the %s composer draft", (density) => {
+    const p = renderChat([message, assistantMessage("已有回答")], { density });
+    const viewport = screen.getByRole("log");
+    Object.defineProperty(viewport, "scrollHeight", { configurable: true, value: 1500 });
+    Object.defineProperty(viewport, "clientHeight", { configurable: true, value: 300 });
+    const input = screen.getByRole("textbox", { name: "输入消息" });
+    fireEvent.change(input, { target: { value: "尚未发送的草稿" } });
+    viewport.scrollTop = 217;
+    fireEvent.scroll(viewport);
+    const jump = screen.getByRole("button", { name: "回到最新 ↓" });
+    expect(jump.closest(".chat-composer")).toBeNull();
+    expect(viewport.contains(jump)).toBe(false);
+    p.view.rerender(<ChatWorkspace {...p} messages={[message, assistantMessage("已有回答，追加内容")]} />);
+    expect(viewport.scrollTop).toBe(217);
+    fireEvent.click(screen.getByRole("button", { name: "有新内容 · 回到最新 ↓" }));
+    expect(viewport.scrollTop).toBe(1500);
+    expect(input).toHaveValue("尚未发送的草稿");
+    expect(p.onSend).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /回到最新/ })).not.toBeInTheDocument();
+  });
+
   it("opens newly added text attachments locally without sending or removing them", async () => {
     const p = renderChat([]);
     p.onUploadAttachment.mockResolvedValue({ id: "local-doc", kind: "document", original_filename: "资料.txt", parse_status: "parsed" });
