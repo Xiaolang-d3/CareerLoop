@@ -1,0 +1,168 @@
+/* Keep dark conversation colors above legacy light-only feature rules. */
+:root[data-theme="dark"] .chat-workspace {
+  color: var(--color-text);
+  background: var(--color-surface-subtle);
+}
+:root[data-theme="dark"] .chat-dock {
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+:root[data-theme="dark"] .chat-workspace .message.assistant .message-markdown,
+:root[data-theme="dark"] .chat-workspace .message-result > p {
+  color: var(--color-text);
+}
+:root[data-theme="dark"] .chat-workspace .chat-thread .message.user .message-dialog {
+  color: var(--color-text);
+  background: var(--color-surface-emphasis);
+}
+:root[data-theme="dark"] .chat-workspace .message-meta strong,
+:root[data-theme="dark"] .chat-workspace .md-citation-card-copy strong {
+  color: var(--color-text);
+}
+:root[data-theme="dark"] .chat-workspace :is(.message-meta time, .message-meta span, .message-actions button, .md-citation-card-copy small, .research-source-number) {
+  color: var(--color-text-muted);
+}
+:root[data-theme="dark"] .chat-workspace .message-actions button:is(:hover, :focus-visible) {
+  color: var(--color-brand-strong);
+  background: var(--color-brand-soft);
+}
+:root[data-theme="dark"] .chat-workspace .load-history-button {
+  color: var(--color-brand-strong);
+  background: var(--color-surface-subtle);
+  border-color: var(--color-border-strong);
+}
+:root[data-theme="dark"] .chat-workspace .load-history-button:hover {
+  background: var(--color-brand-soft);
+  border-color: var(--color-brand);
+}
+:root[data-theme="dark"] .chat-workspace :is(.md-citation-badge, .web-source-icon, .research-source-detail > div > span, .composer-context-status) {
+  color: var(--color-brand-strong);
+  background: var(--color-brand-soft);
+}
+
+:root[data-theme="dark"] .chat-workspace .chat-composer .composer-input.composer-input--enhanced {
+  color: var(--color-text);
+  background: var(--color-surface) !important;
+  border-color: var(--color-border-strong) !important;
+}
+:root[data-theme="dark"] .chat-workspace .chat-composer .composer-input.composer-input--enhanced:focus-within {
+  border-color: var(--color-brand) !important;
+  box-shadow: var(--focus-ring) !important;
+}
+:root[data-theme="dark"] .chat-workspace .chat-composer .composer-input textarea::placeholder {
+  color: var(--color-text-muted);
+  opacity: 1;
+}
+:root[data-theme="dark"] .chat-workspace .chat-composer .composer-input.composer-input--enhanced :is(.model-pill:not(.model-pill--warning):not(.model-pill--setup), .web-search-toggle:not(.active), .composer-attachment-tool) {
+  color: var(--color-text-secondary);
+  background: transparent;
+}
+:root[data-theme="dark"] .chat-workspace .chat-composer .composer-input.composer-input--enhanced :is(.model-pill:not(.model-pill--warning):not(.model-pill--setup), .web-search-toggle:not(.active), .composer-attachment-tool):is(:hover:not(:disabled), :focus-visible, .is-open) {
+  color: var(--color-brand-strong);
+  background: var(--color-brand-soft);
+}
+:root[data-theme="dark"] .chat-workspace .chat-composer .composer-input.composer-input--enhanced .model-pill:disabled {
+  opacity: 1;
+}
+:root[data-theme="dark"] .chat-workspace .chat-composer .composer-input.composer-input--enhanced .web-search-toggle.active {
+  color: var(--color-brand-strong);
+  background: var(--color-brand-soft);
+}
+:root[data-theme="dark"] .chat-workspace .chat-composer .composer-input.composer-input--enhanced .send-button:not(.stop-button) {
+  color: var(--color-bg);
+  background: var(--color-brand);
+  border-color: var(--color-brand);
+}
+:root[data-theme="dark"] .chat-workspace .chat-composer .composer-input.composer-input--enhanced .send-button:not(.stop-button):hover:not(:disabled) {
+  background: var(--color-brand-strong);
+  border-color: var(--color-brand-strong);
+}
+:root[data-theme="dark"] .chat-workspace :is(.composer-input-hint, .composer-attachments small, .composer-attachment-remove) {
+  color: var(--color-text-muted);
+}
+:root[data-theme="dark"] .chat-workspace .composer-attachment-remove {
+  background: var(--color-surface-subtle);
+}
+:root[data-theme="dark"] .chat-workspace .composer-attachment-remove:hover {
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
+}
+:root[data-theme="dark"] .chat-workspace .message-attachments em {
+  color: var(--color-success);
+}
+:root[data-theme="dark"] .chat-workspace .message-edit-actions button:not(:last-child) {
+  color: var(--color-text-secondary);
+  background: var(--color-surface);
+  border-color: var(--color-border-strong);
+}
+:root[data-theme="dark"] .chat-workspace .message-edit-actions button:not(:last-child):hover {
+  color: var(--color-brand-strong);
+  background: var(--color-brand-soft);
+}
+
+:root[data-theme="dark"] .chat-workspace :is(.research-panel-header, .conversation-history-header) {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+}
+:root[data-theme="dark"] .chat-workspace .task-prompt-copy strong {
+  color: var(--color-text);
+}
+:root[data-theme="dark"] .chat-workspace .task-prompt-copy small {
+  color: var(--color-text-secondary);
+}
+:root[data-theme="dark"] .chat-workspace :is(.task-prompt-copy > span, .task-prompt-icon, .task-prompt-actions button) {
+  color: var(--color-warning);
+  background: var(--color-warning-soft);
+  border-color: var(--color-warning);
+}
+
+/* Model menus are portalled outside the workspace. */
+:root[data-theme="dark"] .chat-workspace .chat-composer .composer-input :is(.model-pill--warning, .model-pill--setup),
+:root[data-theme="dark"] .model-menu-alert {
+  color: var(--color-warning);
+  background: var(--color-warning-soft);
+}
+:root[data-theme="dark"] .model-pill-badge {
+  color: var(--color-warning);
+  background: var(--color-warning-soft);
+}
+
+:root[data-theme="dark"] .chat-workspace .chat-mindmap,
+:root[data-theme="dark"] .chat-workspace .chat-mindmap-toolbar {
+  color: var(--color-text);
+  background: var(--color-surface);
+  border-color: var(--color-border);
+}
+:root[data-theme="dark"] .chat-workspace :is(.chat-mindmap-toolbar p, .chat-mindmap-pending, .chat-mindmap-fallback) {
+  color: var(--color-text-muted);
+}
+:root[data-theme="dark"] .chat-workspace .chat-mindmap-fallback strong {
+  color: var(--color-text);
+}
+:root[data-theme="dark"] .chat-workspace :is(.chat-mindmap-node, .chat-mindmap-actions button, .chat-mindmap-fallback-header button) {
+  color: var(--color-text);
+  background: var(--color-surface-subtle);
+  border-color: var(--color-border-strong);
+}
+:root[data-theme="dark"] .chat-workspace .chat-mindmap-node.is-root,
+:root[data-theme="dark"] .chat-workspace :is(.chat-mindmap-node, .chat-mindmap-actions button, .chat-mindmap-fallback-header button):is(:hover, :focus-visible) {
+  color: var(--color-text);
+  background: var(--color-brand-soft);
+  border-color: var(--color-brand);
+}
+:root[data-theme="dark"] .chat-workspace .chat-mindmap-children {
+  border-color: var(--color-border-strong);
+}
+:root[data-theme="dark"] .chat-workspace .chat-mindmap-node small {
+  color: var(--color-brand-strong);
+  background: var(--color-surface-emphasis);
+}
+:root[data-theme="dark"] .chat-workspace .chat-mindmap-fallback pre {
+  color: var(--color-text);
+  background: var(--color-surface-subtle);
+  border-color: var(--color-border);
+}
+:root[data-theme="dark"] .chat-workspace .chat-mindmap-fallback pre code {
+  color: var(--color-text);
+  background: transparent;
+}
