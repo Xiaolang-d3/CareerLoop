@@ -1,6 +1,7 @@
 import { useConversationScroll } from "../features/chat/useConversationScroll";
 import { ComposerModelPicker } from "../features/chat/ComposerModelPicker";
 import { ComposerWebSearch } from "../features/chat/ComposerWebSearch";
+import { AttachmentPreviewDialog, AttachmentPreviewContext } from "../features/chat/AttachmentPreviewDialog";
 import { defaultWebSearchOptions, pendingWebSearchOptions, webSearchConfigurationIssue } from "../features/chat/webSearchOptions";
 import { textFromAppendMessage, WebSource, webSourcesFromAgent, ResearchPanelActionsContext, EditMessageComposer, RunProcess, ComposerClarification, StarterPromptList, ChatContextChips, ResearchPanel, ChatTurn } from "../features/chat/MessagePresentation";
 
@@ -52,6 +53,7 @@ export function clarificationFromAgent(run?: AgentRunResult): ChatClarification 
 type ChatWorkspaceContentProps = ChatWorkspaceProps & {
   pendingAttachments: ChatAttachment[];
   previewUrls: Record<string, string>;
+  localFiles: Record<string, File>;
   uploadingPreview: { filename: string; url: string } | null;
   onUpload: (file?: File) => Promise<void>;
   onRemovePendingAttachment: (attachmentId: string) => Promise<void>;
@@ -106,7 +108,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   const appliedDraftId = useRef<string | null>(null);
   const clarification = clarificationFromAgent(props.latestAgent);
   const [isDraggingAttachment, setIsDraggingAttachment] = useState(false);
-  const [expandedPreview, setExpandedPreview] = useState<{ filename: string; url: string } | null>(null);
+  const [expandedPreview, setExpandedPreview] = useState<ChatAttachment | null>(null);
   const [conversationListOpen, setConversationListOpen] = useState(false);
   const [researchPanelOpen, setResearchPanelOpen] = useState(false);
   const scrolling = useConversationScroll(props.currentConversationId, props.messages, researchPanelOpen);
@@ -258,6 +260,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   return (
     <section className={`chat-workspace ${props.density === "dock" ? "is-dock" : "is-page"} ${props.focused ? "is-focused" : ""} ${props.messages.length ? "has-history" : "is-empty"} ${props.chatBusy ? "is-running" : ""} ${researchPanelOpen ? "has-research-panel" : ""}`}>
       <ResearchPanelActionsContext.Provider value={{ openDetails: openResearchDetails }}>
+      <AttachmentPreviewContext.Provider value={setExpandedPreview}>
       <ThreadPrimitive.Root className="chat-main">
         <header
           className={`chat-session-header${isFreshUntitled ? " is-untitled" : " has-session"}`}
@@ -448,16 +451,13 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                       ? <button
                         type="button"
                         className="composer-attachment-preview-button"
-                        onClick={() => setExpandedPreview({ filename: attachment.original_filename, url: props.previewUrls[attachment.id] })}
+                        onClick={() => setExpandedPreview(attachment)}
                         aria-label={`查看 ${attachment.original_filename}`}
                       ><img className="composer-attachment-preview" src={props.previewUrls[attachment.id]} alt={`${attachment.original_filename} 预览`} /></button>
-                      : <span className="composer-attachment-icon">
-                        {attachment.kind === "document" ? <FileText size={15} /> : <ImagePlus size={15} />}
-                      </span>}
-                    {attachment.kind === "document" ? <span>
-                      <strong>{attachment.original_filename}</strong>
-                      <small>随本轮消息发送</small>
-                    </span> : null}
+                      : <button type="button" className="composer-file-preview-button" onClick={() => setExpandedPreview(attachment)} aria-label={`预览 ${attachment.original_filename}`} title={`预览 ${attachment.original_filename}`}>
+                        <span className="composer-attachment-icon">{attachment.kind === "document" ? <FileText size={15} /> : <ImagePlus size={15} />}</span>
+                        <span><strong>{attachment.original_filename}</strong><small>点击预览 · 随本轮发送</small></span>
+                      </button>}
                     <button className="composer-attachment-remove" type="button" onClick={() => void props.onRemovePendingAttachment(attachment.id)} aria-label={`移除 ${attachment.original_filename}`}>
                       <X size={14} />
                     </button>
@@ -535,10 +535,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             />
           ) : null}
           {expandedPreview ? (
-            <div className="attachment-preview-dialog" role="dialog" aria-modal="true" aria-label={`${expandedPreview.filename} 预览`} onClick={() => setExpandedPreview(null)}>
-              <img src={expandedPreview.url} alt={`${expandedPreview.filename} 大图预览`} onClick={(event) => event.stopPropagation()} />
-              <button type="button" onClick={() => setExpandedPreview(null)} aria-label="关闭图片预览"><X size={18} /></button>
-            </div>
+            <AttachmentPreviewDialog key={expandedPreview.id} attachment={expandedPreview} localFile={props.localFiles[expandedPreview.id]} loadOriginal={props.onLoadAttachment} onClose={() => setExpandedPreview(null)} />
           ) : null}
         </div>
       </ThreadPrimitive.Root>
@@ -555,6 +552,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
         })}
         onClose={() => closeResearchDetails()}
       />
+      </AttachmentPreviewContext.Provider>
       </ResearchPanelActionsContext.Provider>
       <ConversationHistoryPanel
         conversations={props.conversations}
@@ -579,6 +577,9 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
   const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
   const [uploadingPreview, setUploadingPreview] = useState<{ filename: string; url: string } | null>(null);
   const previewUrlsRef = useRef<Record<string, string>>({});
+  const [localFiles, setLocalFiles] = useState<Record<string, File>>({});
+  const currentConversationRef = useRef(props.currentConversationId);
+  currentConversationRef.current = props.currentConversationId;
   const [visionAttachmentIds, setVisionAttachmentIds] = useState<string[]>([]);
   const localSearchDrafts = useRef(new Map<number, WebSearchOptions>());
   const searchDrafts = props.composerSearchDrafts ?? localSearchDrafts.current;
@@ -610,6 +611,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     previewUrlsRef.current = {};
     setPendingAttachments([]);
     setPreviewUrls({});
+    setLocalFiles({});
     setUploadingPreview(null);
     setVisionAttachmentIds([]);
   }, [props.currentConversationId]);
@@ -631,11 +633,16 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     if (previewUrl) setUploadingPreview({ filename: file.name || "粘贴的图片", url: previewUrl });
     try {
       const attachment = await props.onUploadAttachment(file);
+      if (currentConversationRef.current !== props.currentConversationId) {
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        return;
+      }
       if (previewUrl) {
         previewUrlsRef.current[attachment.id] = previewUrl;
         setPreviewUrls({ ...previewUrlsRef.current });
       }
       setPendingAttachments((current) => [...current, attachment]);
+      setLocalFiles(current => ({ ...current, [attachment.id]: file }));
       if (attachment.kind === "image") {
         setVisionAttachmentIds((current) => [...current, attachment.id]);
       }
@@ -656,6 +663,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
       setPreviewUrls({ ...previewUrlsRef.current });
     }
     setPendingAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId));
+    setLocalFiles(current => { const next = { ...current }; delete next[attachmentId]; return next; });
     setVisionAttachmentIds((current) => current.filter((id) => id !== attachmentId));
   }, [props]);
 
@@ -688,6 +696,10 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
         // Failed sends keep content and attachment IDs in retryDraft; do not
         // leave a second copy queued in the composer after a successful retry.
         setPendingAttachments([]);
+        setLocalFiles({});
+        Object.values(previewUrlsRef.current).forEach(url => URL.revokeObjectURL(url));
+        previewUrlsRef.current = {};
+        setPreviewUrls({});
         setVisionAttachmentIds([]);
       }
     },
@@ -709,6 +721,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
         {...props}
         pendingAttachments={pendingAttachments}
         previewUrls={previewUrls}
+        localFiles={localFiles}
         uploadingPreview={uploadingPreview}
         onUpload={uploadAttachment}
         onRemovePendingAttachment={removePendingAttachment}

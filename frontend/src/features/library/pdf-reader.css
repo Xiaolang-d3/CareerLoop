@@ -1,0 +1,7 @@
+.fl-pdf-reader { height: 100%; min-height: 400px; display: flex; flex-direction: column; }
+.fl-pdf-controls { display: flex; gap: 7px; align-items: center; justify-content: center; background: var(--fl-panel, white); border-bottom: 1px solid var(--fl-line); padding: 8px; flex: none; font-size: 12px; }
+.fl-pdf-controls button { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 28px; border-radius: 5px; }
+.fl-pdf-controls button:hover { background: var(--fl-soft); }
+.fl-pdf-pages { flex: 1; min-height: 0; overflow: auto; padding: 16px; position: relative; }
+.fl-pdf-pages canvas { display: block; margin: auto; background: var(--fl-panel, white); box-shadow: 0 2px 8px #20213a15; }
+.fl-pdf-status { position: absolute; top: 20px; left: 20px; padding: 10px; background: var(--fl-panel, white); font-size: 13px; color: var(--fl-muted, #706b85); z-index: 1; }

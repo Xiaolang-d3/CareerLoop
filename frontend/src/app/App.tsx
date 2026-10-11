@@ -168,7 +168,7 @@ export function App({
     homeAnalysisBusyRef.current = false;
     setConversationBusy(false);
   }, [fetchJson, userEmail, setConversationBusy]);
-  const { chatMessages, setChatMessages, chatBusy, setChatBusy, modelUnavailable, setModelUnavailable, retryChatDraft, setRetryChatDraft, chatAgentRef, taskCancelBusy, setTaskCancelBusy, chatAttachmentBusy, setChatAttachmentBusy, refreshChat, uploadChatAttachment, removeChatAttachment, sendChatMessage, stopChatGeneration, rewindChatToUserMessage, editChatMessage, regenerateChatMessage, cancelCurrentTask } = useChatRun({ apiBase, accessToken, fetchJson, currentConversationId, currentConversationIdRef, modelProfileId: conversations.find(item => item.id === currentConversationId)?.model_profile_id ?? null, setErrorMessage, setNoticeMessage, refreshConversations, onLibraryChanged: refreshLibrary });
+  const { chatMessages, setChatMessages, chatBusy, setChatBusy, modelUnavailable, setModelUnavailable, retryChatDraft, setRetryChatDraft, chatAgentRef, taskCancelBusy, setTaskCancelBusy, chatAttachmentBusy, setChatAttachmentBusy, refreshChat, uploadChatAttachment, loadChatAttachment, removeChatAttachment, sendChatMessage, stopChatGeneration, rewindChatToUserMessage, editChatMessage, regenerateChatMessage, cancelCurrentTask } = useChatRun({ apiBase, accessToken, fetchJson, currentConversationId, currentConversationIdRef, modelProfileId: conversations.find(item => item.id === currentConversationId)?.model_profile_id ?? null, setErrorMessage, setNoticeMessage, refreshConversations, onLibraryChanged: refreshLibrary });
   const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
   const [webSearchCapabilitiesBusy, setWebSearchCapabilitiesBusy] = useState(false);
   const [webSearchCapabilitiesError, setWebSearchCapabilitiesError] = useState("");
@@ -1194,6 +1194,7 @@ export function App({
             webSearchCapabilitiesError={webSearchCapabilitiesError}
             onRefreshWebSearchCapabilities={refreshCapabilities}
             onUploadAttachment={uploadChatAttachment}
+            onLoadAttachment={loadChatAttachment}
             onRemoveAttachment={removeChatAttachment}
             onAttachmentInvalid={setErrorMessage}
             onSuggestedAction={handleSuggestedAction}

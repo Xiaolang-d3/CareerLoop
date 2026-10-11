@@ -42,7 +42,31 @@ const assistantMessage: ChatMessage = { id: 12, role: "assistant", content: "测
 const snapshot = { careerLoop: { status: "done", userMessage, assistantMessage } };
 
 beforeEach(() => { client.runAgent.mockReset(); client.abortRun.mockReset(); });
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+describe("attachment original loading", () => {
+  it("authenticates original-file reads, forwards cancellation and loads historical Word text", async () => {
+    const { result, fetchJson } = setup();
+    const file = new Blob(["word bytes"]);
+    const fetch = vi.fn().mockResolvedValue({ ok: true, blob: async () => file });
+    vi.stubGlobal("fetch", fetch);
+    fetchJson.mockResolvedValue({ parsed_text: "Word 历史正文" });
+    const controller = new AbortController();
+    const data = await result.current.loadChatAttachment({ id: "word-id", kind: "document", original_filename: "报告.docx", parse_status: "parsed" }, controller.signal);
+    expect(data).toEqual({ file, parsedText: "Word 历史正文" });
+    expect(fetchJson).toHaveBeenCalledWith("/attachments/word-id", { signal: controller.signal });
+    expect(fetch).toHaveBeenCalledWith("/test-api/attachments/word-id/file", expect.objectContaining({ headers: { Authorization: "Bearer test-only-session" } }));
+    expect((fetch.mock.calls[0][1].signal as AbortSignal).aborted).toBe(false);
+  });
+
+  it("reports deleted files without modifying the conversation or attachments", async () => {
+    const { result, fetchJson } = setup();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404 }));
+    await expect(result.current.loadChatAttachment({ id: "missing", kind: "document", original_filename: "notes.txt", parse_status: "parsed" })).rejects.toThrow("附件原文件不存在");
+    expect(fetchJson).not.toHaveBeenCalled();
+    expect(result.current.chatMessages).toEqual([]);
+  });
+});
 
 describe("useChatRun stream reconciliation", () => {
   it("keeps all search options and the run ID after a failed stream, including a server-bound provider", async () => {

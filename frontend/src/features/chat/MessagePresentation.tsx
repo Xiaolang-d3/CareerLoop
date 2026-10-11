@@ -16,6 +16,7 @@ import { ChatWorkspaceMindmap } from "../../components/ChatWorkspaceMindmap";
 import { isMermaidMindmap } from "../../components/mindmap-source";
 import { searchMetadataFromAgent, type SearchMetadata } from "./searchMetadata";
 import { webSearchTopicLabels } from "./webSearchOptions";
+import { AttachmentPreviewContext } from "./AttachmentPreviewDialog";
 import { ActionBarPrimitive, ComposerPrimitive, MessagePrimitive, type AppendMessage, type MessageState } from "@assistant-ui/react";
 import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -832,6 +833,7 @@ function MessageModelDetails({ selection, messageId, metadata }: { selection?: M
 
 export function ChatTurn({ state, chatBusy, stopping = false }: { state: MessageState; chatBusy: boolean; stopping?: boolean }) {
   const researchPanel = useContext(ResearchPanelActionsContext);
+  const openAttachment = useContext(AttachmentPreviewContext);
   const source = state.metadata.custom.source as ChatMessage | undefined;
   if (!source) return null;
   const modelSelection = source.payload?.agent?.model_selection ?? source.payload?.model_selection;
@@ -872,11 +874,11 @@ export function ChatTurn({ state, chatBusy, stopping = false }: { state: Message
             {source.payload?.attachments?.length ? (
               <div className="message-attachments" aria-label="本轮已附加资料">
                 {source.payload.attachments.map((attachment) => (
-                  <span key={attachment.id}>
+                  <button type="button" key={attachment.id} onClick={() => openAttachment?.(attachment)} aria-label={`预览 ${attachment.original_filename}`}>
                     {attachment.kind === "document" ? <FileText size={12} /> : <ImagePlus size={12} />}
                     {attachment.original_filename}
                     {attachment.vision_status === "consented" ? <em>模型看图</em> : null}
-                  </span>
+                  </button>
                 ))}
               </div>
             ) : null}

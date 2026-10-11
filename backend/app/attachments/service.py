@@ -218,6 +218,34 @@ def get_attachment(
     return row_to_dict(row)
 
 
+def get_attachment_file(
+    attachment_id: str,
+    *,
+    db_path: str | Path | None = None,
+    store: AttachmentStore | None = None,
+) -> tuple[Path, str, str]:
+    attachment = get_attachment(attachment_id, db_path=db_path)
+    if attachment is None:
+        raise ValueError("附件不存在")
+    attachment_store = store or get_attachment_store()
+    root = attachment_store.local_root.resolve()
+    path = (root / attachment["object_key"]).resolve()
+    if root not in path.parents:
+        raise ValueError("附件文件路径无效")
+    if not path.is_file():
+        raise ValueError("附件原文件不存在，可能已被移除")
+    return path, attachment["original_filename"], attachment["content_type"]
+
+
+def get_attachment_metadata(
+    attachment_id: str, *, db_path: str | Path | None = None
+) -> dict[str, Any]:
+    attachment = get_attachment(attachment_id, db_path=db_path)
+    if attachment is None:
+        raise ValueError("附件不存在")
+    return _safe_attachment(attachment)
+
+
 def list_attachments(
     conversation_id: int, *, db_path: str | Path | None = None
 ) -> list[dict[str, Any]]:

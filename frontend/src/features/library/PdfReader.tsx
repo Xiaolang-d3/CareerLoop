@@ -7,6 +7,7 @@ import {
   type RenderTask
 } from "pdfjs-dist/legacy/build/pdf.mjs";
 import workerUrl from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
+import "./pdf-reader.css";
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 // Vite emits these files locally with hashed URLs. Documents and supporting

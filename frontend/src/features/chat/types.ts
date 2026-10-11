@@ -80,6 +80,8 @@ export type ChatAttachment = {
   kind: "image" | "document";
   original_filename: string;
   parse_status: "pending" | "parsed" | "failed";
+  content_type?: string;
+  size_bytes?: number;
   vision_status?: "not_requested" | "consented" | "failed";
   parsed_text?: string;
   redacted_text?: string;
@@ -189,6 +191,7 @@ export type ChatWorkspaceProps = {
   webSearchCapabilitiesError?: string;
   onRefreshWebSearchCapabilities?: () => Promise<unknown>;
   onUploadAttachment: (file: File) => Promise<ChatAttachment>;
+  onLoadAttachment?: (attachment: ChatAttachment, signal?: AbortSignal) => Promise<{ file: Blob; parsedText?: string }>;
   onRemoveAttachment: (attachmentId: string) => Promise<void>;
   onAttachmentInvalid: (message: string) => void;
   onSuggestedAction: () => void;

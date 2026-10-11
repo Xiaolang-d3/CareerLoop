@@ -128,6 +128,35 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
 }
 
 describe("ChatWorkspace", () => {
+  it("opens newly added text attachments locally without sending or removing them", async () => {
+    const p = renderChat([]);
+    p.onUploadAttachment.mockResolvedValue({ id: "local-doc", kind: "document", original_filename: "资料.txt", parse_status: "parsed" });
+    const file = Object.assign(new File(["待发送的原文"], "资料.txt", { type: "text/plain" }), { arrayBuffer: async () => new TextEncoder().encode("待发送的原文").buffer });
+    const picker = p.view.container.querySelector<HTMLInputElement>("input[type=file]")!;
+    fireEvent.change(picker, { target: { files: [file] } });
+    const preview = await screen.findByRole("button", { name: "预览 资料.txt" });
+    preview.focus();
+    fireEvent.click(preview);
+    expect(await screen.findByText("待发送的原文")).toBeInTheDocument();
+    expect(p.onSend).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "关闭附件预览" }));
+    expect(preview).toHaveFocus();
+    expect(screen.getByRole("button", { name: "移除 资料.txt" })).toBeInTheDocument();
+    expect(p.onRemoveAttachment).not.toHaveBeenCalled();
+  });
+
+  it("opens sent attachments through the authenticated loader and closes on conversation change", async () => {
+    const attached: ChatMessage = { ...message, payload: { attachments: [{ id: "history-doc", kind: "document", original_filename: "历史.txt", parse_status: "parsed" }] } };
+    const p = renderChat([attached]);
+    const load = vi.fn().mockResolvedValue({ file: { size: 10, arrayBuffer: async () => new TextEncoder().encode("历史原文").buffer } });
+    p.view.rerender(<ChatWorkspace {...p} onLoadAttachment={load} />);
+    fireEvent.click(screen.getByRole("button", { name: "预览 历史.txt" }));
+    expect(await screen.findByText("历史原文")).toBeInTheDocument();
+    expect(load.mock.calls[0][0].id).toBe("history-doc");
+    p.view.rerender(<ChatWorkspace {...p} onLoadAttachment={load} currentConversationId={2} />);
+    expect(screen.queryByRole("dialog", { name: "历史.txt 预览" })).not.toBeInTheDocument();
+  });
+
   it("restores search choices per conversation and resets them for a new account scope", () => {
     const map = new Map<number, WebSearchOptions>();
     const props = renderChat([message], { webSearchAvailable: true, composerSearchDrafts: map });

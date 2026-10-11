@@ -79,6 +79,20 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
     setNoticeMessage("附件已移除");
   }
 
+  async function loadChatAttachment(attachment: ChatAttachment, signal?: AbortSignal): Promise<{ file: Blob; parsedText?: string }> {
+    let parsedText = attachment.parsed_text;
+    if (/\.docx$/i.test(attachment.original_filename) && parsedText === undefined) {
+      const details = await fetchJson<ChatAttachment>(`/attachments/${encodeURIComponent(attachment.id)}`, { signal });
+      parsedText = details.parsed_text;
+    }
+    const response = await fetchWithTimeout(`${apiBase}/attachments/${encodeURIComponent(attachment.id)}/file`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal
+    });
+    if (!response.ok) throw new Error(response.status === 404 ? "附件原文件不存在，可能已被移除" : "附件读取失败，请重试");
+    return { file: await response.blob(), parsedText };
+  }
+
   async function sendChatMessage(...args: Parameters<typeof executeChatMessage>) {
     if (sendingRef.current || chatBusy) return false;
     sendingRef.current = true;
@@ -493,5 +507,5 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
     }
   }
   useEffect(() => () => chatAgentRef.current?.abortRun(), []);
-  return { chatMessages, setChatMessages, chatBusy, setChatBusy, modelUnavailable, setModelUnavailable, retryChatDraft, setRetryChatDraft, chatAgentRef, taskCancelBusy, setTaskCancelBusy, chatAttachmentBusy, setChatAttachmentBusy, refreshChat, uploadChatAttachment, removeChatAttachment, sendChatMessage, stopChatGeneration, rewindChatToUserMessage, editChatMessage, regenerateChatMessage, cancelCurrentTask };
+  return { chatMessages, setChatMessages, chatBusy, setChatBusy, modelUnavailable, setModelUnavailable, retryChatDraft, setRetryChatDraft, chatAgentRef, taskCancelBusy, setTaskCancelBusy, chatAttachmentBusy, setChatAttachmentBusy, refreshChat, uploadChatAttachment, loadChatAttachment, removeChatAttachment, sendChatMessage, stopChatGeneration, rewindChatToUserMessage, editChatMessage, regenerateChatMessage, cancelCurrentTask };
 }

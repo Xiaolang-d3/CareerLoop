@@ -118,13 +118,18 @@
   overflow-y: auto;
 }
 .chat-workspace .composer-file-attachment {
-  grid-template-columns: 30px minmax(0, 1fr) 28px;
+  grid-template-columns: minmax(0, 1fr) 28px;
   max-width: min(280px, 100%);
   min-width: 0;
   min-height: 48px;
   border-color: var(--color-border);
   background: var(--color-surface);
 }
+.chat-workspace .composer-file-preview-button { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 2px; border: 0; background: transparent; text-align: left; cursor: pointer; border-radius: 6px; }
+.chat-workspace .composer-file-preview-button > span:last-child { display: grid; gap: 3px; min-width: 0; }
+.chat-workspace .composer-file-preview-button > .composer-attachment-icon { flex: none; }
+.chat-workspace .composer-file-preview-button:hover strong { color: var(--color-brand-strong); }
+.chat-workspace .composer-file-preview-button:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
 .chat-workspace .composer-attachments strong { color: var(--color-text); font-size: 12px; }
 .chat-workspace .composer-attachments small { color: var(--color-text-muted); font-size: 11px; }
 .chat-workspace .composer-attachment-icon {
