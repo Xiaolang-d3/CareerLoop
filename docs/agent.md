@@ -372,3 +372,11 @@ macOS 单机网页和桌面的新密钥写入 Keychain；环境模式只读管�
 `ModelResponse.images` 中 Base64 是排除序列化且隐藏 repr 的 SecretStr；`output_blocks` 保留文本/图片顺序。最终图片由 `chat/image_assets.py` 校验并存入账户本地目录，运行/消息/SSE 只返回资产引用；没有文字的图片结果仍为合法完成。过程使用 image_generation 事件，输入框不新增重复状态区。
 
 v29 新增 chat_image_operations/chat_image_assets，保留旧表、消息与索引。操作以 runId 固定模型档案/连接版本，请求前提交 started；同操作完成重放复用结果，未知执行状态阻止自动重发，取消/超时/协议不支持不自动切换协议或重试。消息和图片关联在一个事务内保存；回退清理已绑定图片但保留尝试标记，删对话清理聊天资源，文件库图片副本独立保留。真实服务需要开放 image_generation；目录识别、vision 和客户端工具能力不证明生图可用。首期不支持图像编辑、联网后生图或落盘失败后的结果找回，详见 [实施记录](chat-results-implementation.md)。
+
+### 生图能力与执行错误隔离
+
+模型档案的 `capabilities.image_generation` 独立于 vision、tools、streaming，旧档案默认 unknown。冻结 execute 路由在发起请求、写入生图尝试标记前检查该项；明确 unsupported 时直接返回 `image_generation_unsupported`，不调用外部模型，普通文本任务不检查该能力。PATCH 模型档案可更新能力状态（需要 expected_revision），部分能力更新保留其他项。更换 API Key、网关地址、协议或模型 ID 后，旧生图状态恢复 unknown，并保存新档案版本；旧运行恢复仍读取其原版本。这里没有通过目录名称推断或自动计费探测生图能力。
+
+未被阻止的原生请求使用独立生图提示词、唯一 image_generation/action=generate 工具及 tool_choice=required。服务只返回文字时报告 `image_generation_not_executed`，保留真实 token 用量与响应 ID，不自动补发或切换接口；图片落盘之前不在消息区展示可能错误地声称成功的流式文字。
+
+持久化终态负责对话内的错误和重试入口。前端收到终态后忽略后续重复 RunError，不再创建输入框错误横幅，也不把生图/搜索错误当作整个模型不可用；没有持久化终态的连接中断仍保留输入、附件、搜索选项和同一 runId 重放入口。纯错误文字不提供成果清单；失败任务确有部分正文或图片时仍可存档并注明未完成。
