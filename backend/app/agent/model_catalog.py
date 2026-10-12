@@ -15,7 +15,7 @@ from ..secret_store import secret_backend_name, secret_storage_writable, SecretS
 from . import settings
 
 
-_CAPABILITY_NAMES = ("vision", "tools", "streaming")
+_CAPABILITY_NAMES = ("vision", "tools", "streaming", "image_generation")
 
 
 def connect(db_path):
@@ -289,6 +289,14 @@ def _updated_connection(conn, connection_id, values, db_path, candidates, model_
     if not updated["enabled"] and _profile(conn, default_id)["connection_id"] == connection_id:
         raise ValueError("请先选择其他默认模型，再停用当前默认连接")
     _write_connection(conn, updated)
+    if key or updated["effective_base_url"] != current["effective_base_url"] or updated["protocol"] != current["protocol"]:
+        # Image availability is specific to a service/account. Replacement
+        # credentials or gateways must not inherit an old service's denial.
+        for row in conn.execute("SELECT * FROM model_profiles WHERE connection_id=?", (connection_id,)).fetchall():
+            profile = _decode_profile(row)
+            if profile["capabilities"]["image_generation"] != "unknown":
+                profile["capabilities"]["image_generation"] = "unknown"
+                _write_profile(conn, {**profile, "revision": profile["revision"] + 1})
     return updated
 
 
@@ -373,7 +381,14 @@ def update_model_profile(profile_id: str, values: dict[str, Any], db_path: str |
         _check_revision(current, values)
         if "connection_id" in values and values["connection_id"] != current["connection_id"]:
             raise ValueError("模型档案不能改绑其他连接，请新建档案")
-        record = {**current, **_validated_profile(values, current), "revision": current["revision"] + 1}
+        changes = dict(values)
+        if changes.get("capabilities") is not None:
+            changes["capabilities"] = {**current["capabilities"], **changes["capabilities"]}
+        elif "capabilities" in changes:
+            changes.pop("capabilities")
+        if changes.get("model_name", current["model_name"]) != current["model_name"] and "image_generation" not in (values.get("capabilities") or {}):
+            changes["capabilities"] = {**current["capabilities"], **changes.get("capabilities", {}), "image_generation": "unknown"}
+        record = {**current, **_validated_profile(changes, current), "revision": current["revision"] + 1}
         if not record["enabled"] and conn.execute("SELECT default_model_profile_id FROM agent_settings WHERE id=1").fetchone()[0] == profile_id:
             raise ValueError("请先选择其他默认模型，再停用当前默认模型")
         _write_profile(conn, record)
@@ -417,8 +432,9 @@ def save_default_agent_settings(values: dict[str, Any], db_path: str | Path | No
         connection_changes = {key: values[key] for key in ("model_base_url", "model_protocol", "api_key") if key in values}
         if connection_changes and (values.get("api_key") or any(values.get(key) != row[key] for key in ("model_base_url", "model_protocol") if key in values)):
             _updated_connection(conn, profile["connection_id"], connection_changes, db_path, candidates, str(values.get("model_name", profile["model_name"])))
+            profile = _profile(conn, profile["id"])
         if "model_name" in values and values["model_name"] != profile["model_name"]:
-            profile = {**profile, **_validated_profile({"model_name": values["model_name"]}, profile), "revision": profile["revision"] + 1}
+            profile = {**profile, **_validated_profile({"model_name": values["model_name"], "capabilities": {**profile["capabilities"], "image_generation": "unknown"}}, profile), "revision": profile["revision"] + 1}
             _write_profile(conn, profile)
         for field in settings._SAVE_FIELDS:
             if field in {"model_name", "model_base_url", "model_protocol"} or field not in values:

@@ -16,6 +16,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
   const [chatBusy, setChatBusy] = useState(false);
 
   const [modelUnavailable, setModelUnavailable] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   const [retryChatDraft, setRetryChatDraft] = useState<ChatRetryDraft | null>(null);
 
@@ -25,6 +26,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
 
   const [chatAttachmentBusy, setChatAttachmentBusy] = useState(false);
   const sendingRef = useRef(false);
+  useEffect(() => { setSendError(null); }, [currentConversationId]);
 
   async function refreshChat(conversationId = currentConversationId) {
     if (!conversationId) return;
@@ -126,6 +128,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
     const webSearchTopic = webSearchTopicOverride ?? inheritedSearch?.topic ?? "auto";
     const webSearchSourcePreference = webSearchSourcePreferenceOverride ?? inheritedSearch?.source_preference ?? "none";
     setModelUnavailable(null);
+    setSendError(null);
     let boundSearchProvider = expectedWebSearchProvider;
     if (webSearch && expectedWebSearchProvider && !runIdOverride) {
       try {
@@ -135,7 +138,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
         const issue = webSearchConfigurationIssue({ version: 1, enabled: true, topic: webSearchTopic, source_preference: webSearchSourcePreference }, search);
         if (issue) throw new Error(issue);
       } catch (error) {
-        setModelUnavailable(error instanceof Error ? error.message : "无法核对原任务的搜索服务");
+        setSendError(error instanceof Error ? error.message : "无法核对原任务的搜索服务");
         setRetryChatDraft({ content, modelProfileId: selectedModelProfileId, attachmentIds, visionAttachmentIds, webSearch, webSearchTopic, webSearchSourcePreference,
           webSearchProvider: expectedWebSearchProvider, ...(runIdOverride ? { runId: runIdOverride } : {}), ...(rewindMessageId !== undefined ? { rewindMessageId } : {}), reason: "send_failed" });
         return false;
@@ -171,6 +174,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
     };
     setChatMessages((current) => [...current, optimisticMessage, optimisticAssistant]);
     let terminalReceived = false;
+    let streamError: string | null = null;
     const isCurrentRun = () => chatAgentRef.current === agent && currentConversationIdRef.current === conversationId;
     const acceptsStreamEvents = () => !terminalReceived && isCurrentRun();
 
@@ -238,7 +242,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
       if (terminalReceived) return;
       terminalReceived = true;
       if (!isCurrentRun()) return;
-      const { userMessage, assistantMessage, status } = snapshot.careerLoop;
+      const { userMessage, assistantMessage } = snapshot.careerLoop;
       if (currentConversationIdRef.current === conversationId) {
         setChatMessages((current) => [
           ...current.filter((message) => ![
@@ -258,22 +262,11 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
           setErrorMessage(error instanceof Error ? error.message : "资料库刷新失败");
         });
       }
-      const agentError = assistantMessage.payload?.agent?.error;
-      if (status === "failed") {
-        setModelUnavailable(agentError?.message || "本次执行失败，请重试。");
-        setRetryChatDraft({
-          content: userMessage.content,
-          modelProfileId: selectedModelProfileId,
-          attachmentIds,
-          visionAttachmentIds,
-          webSearch,
-          webSearchTopic,
-          webSearchSourcePreference,
-          ...(userMessage.payload?.web_search_options?.provider || boundSearchProvider ? { webSearchProvider: userMessage.payload?.web_search_options?.provider || boundSearchProvider } : {}),
-          rewindMessageId: userMessage.id,
-          reason: "send_failed"
-        });
-      }
+      // A persisted terminal answer owns its error and retry action. A failed
+      // image/search operation does not mean the chat model is unavailable.
+      setModelUnavailable(null);
+      setSendError(null);
+      setRetryChatDraft(null);
     };
 
     const agent = new HttpAgent({
@@ -400,7 +393,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
         handleTerminal(event.snapshot as Parameters<typeof handleTerminal>[0]);
       },
       onRunErrorEvent: ({ event }) => {
-        if (isCurrentRun()) setModelUnavailable(event.message || "流式执行失败");
+        if (acceptsStreamEvents()) streamError = event.message || "流式执行失败";
       }
     };
 
@@ -415,7 +408,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
         },
         subscriber
       );
-      if (!terminalReceived) throw new Error("AG-UI 消息流意外中断，请重试");
+      if (!terminalReceived) throw new Error(streamError || "AG-UI 消息流意外中断，请重试");
 
       void Promise.all([refreshConversations()]).catch((error: unknown) => {
         setErrorMessage(error instanceof Error ? error.message : "后台数据刷新失败");
@@ -426,8 +419,8 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
         setChatMessages((current) => current.filter((message) => ![optimisticId, optimisticAssistantId].includes(message.id)));
       }
       if (error instanceof DOMException && error.name === "AbortError") return;
-      const message = error instanceof Error ? error.message : "消息发送失败";
-      setModelUnavailable(message);
+      const message = streamError || (error instanceof Error ? error.message : "消息发送失败");
+      setSendError(message);
       setRetryChatDraft({
         content,
         modelProfileId: selectedModelProfileId,
@@ -507,5 +500,5 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
     }
   }
   useEffect(() => () => chatAgentRef.current?.abortRun(), []);
-  return { chatMessages, setChatMessages, chatBusy, setChatBusy, modelUnavailable, setModelUnavailable, retryChatDraft, setRetryChatDraft, chatAgentRef, taskCancelBusy, setTaskCancelBusy, chatAttachmentBusy, setChatAttachmentBusy, refreshChat, uploadChatAttachment, loadChatAttachment, removeChatAttachment, sendChatMessage, stopChatGeneration, rewindChatToUserMessage, editChatMessage, regenerateChatMessage, cancelCurrentTask };
+  return { chatMessages, setChatMessages, chatBusy, setChatBusy, modelUnavailable, setModelUnavailable, sendError, retryChatDraft, setRetryChatDraft, chatAgentRef, taskCancelBusy, setTaskCancelBusy, chatAttachmentBusy, setChatAttachmentBusy, refreshChat, uploadChatAttachment, loadChatAttachment, removeChatAttachment, sendChatMessage, stopChatGeneration, rewindChatToUserMessage, editChatMessage, regenerateChatMessage, cancelCurrentTask };
 }

@@ -119,7 +119,7 @@ describe("useChatRun stream reconciliation", () => {
     expect(fetchJson).toHaveBeenCalledOnce();
     expect(fetchJson).toHaveBeenCalledWith("/agent/capabilities");
     expect(client.runAgent).not.toHaveBeenCalled();
-    expect(result.current.modelUnavailable).toContain("历史消息已保留");
+    expect(result.current.sendError).toContain("历史消息已保留");
     expect(result.current.chatBusy).toBe(false);
   });
 
@@ -132,7 +132,7 @@ describe("useChatRun stream reconciliation", () => {
     expect(result.current.chatMessages).toEqual([original, assistantMessage]);
     expect(fetchJson).toHaveBeenCalledOnce();
     expect(client.runAgent).not.toHaveBeenCalled();
-    expect(result.current.modelUnavailable).toContain("不支持优先技术资料");
+    expect(result.current.sendError).toContain("不支持优先技术资料");
     expect(result.current.chatBusy).toBe(false);
   });
 
@@ -287,9 +287,32 @@ describe("useChatRun stream reconciliation", () => {
     const { result, setErrorMessage } = setup();
     client.runAgent.mockRejectedValueOnce(new Error("HTTP 500: Internal Server Error"));
     await act(() => result.current.sendChatMessage(userMessage.content));
-    expect(result.current.modelUnavailable).toBe("HTTP 500: Internal Server Error");
+    expect(result.current.sendError).toBe("HTTP 500: Internal Server Error");
+    expect(result.current.modelUnavailable).toBeNull();
     expect(result.current.retryChatDraft?.content).toBe(userMessage.content);
     expect(setErrorMessage.mock.calls.filter(([message]) => message)).toEqual([]);
+  });
+
+  it("preserves an unpersisted RunError and same-run replay without a model outage warning", async () => {
+    const { result } = setup();
+    client.runAgent.mockImplementationOnce(async () => emit("onRunErrorEvent", { event: { message: "请求被拒绝" } }));
+    await act(() => result.current.sendChatMessage(userMessage.content));
+    expect(result.current.sendError).toBe("请求被拒绝");
+    expect(result.current.modelUnavailable).toBeNull();
+    expect(result.current.retryChatDraft?.runId).toBe(client.runAgent.mock.calls[0][0].runId);
+    expect(result.current.retryChatDraft?.content).toBe(userMessage.content);
+  });
+
+  it("accepts a persisted terminal answer after an earlier RunError without keeping a stale warning", async () => {
+    const { result } = setup();
+    client.runAgent.mockImplementationOnce(async () => {
+      emit("onRunErrorEvent", { event: { message: "短暂错误" } });
+      emit("onStateSnapshotEvent", { event: { snapshot } });
+    });
+    await act(() => result.current.sendChatMessage(userMessage.content));
+    expect(result.current.chatMessages).toEqual([userMessage, assistantMessage]);
+    expect(result.current.sendError).toBeNull();
+    expect(result.current.retryChatDraft).toBeNull();
   });
 
   it("keeps cancellation in the persisted answer without a duplicate global notice", async () => {
@@ -309,11 +332,11 @@ describe("useChatRun stream reconciliation", () => {
     expect(setNoticeMessage.mock.calls.filter(([message]) => message)).toEqual([]);
   });
 
-  it("keeps the persisted failed turn and its retry target when the SDK also reports an error", async () => {
+  it.each(["model_service_error", "image_generation_not_executed", "image_generation_unsupported"])("keeps a persisted failed turn without a duplicate composer error (%s)", async (code) => {
     const { result, setErrorMessage } = setup();
     const failedMessage: ChatMessage = { ...assistantMessage, payload: { agent: {
       provider: "test", platform: "local", rounds: 1, status: "failed", events: [],
-      error: { code: "model_service_error", message: "服务暂时不可用", retryable: true }
+      error: { code, message: "服务暂时不可用", retryable: true }
     } } };
     client.runAgent.mockImplementationOnce(async () => {
       emit("onStateSnapshotEvent", { event: { snapshot: { careerLoop: { status: "failed", userMessage, assistantMessage: failedMessage } } } });
@@ -322,8 +345,9 @@ describe("useChatRun stream reconciliation", () => {
     });
     await act(() => result.current.sendChatMessage(userMessage.content));
     expect(result.current.chatMessages).toEqual([userMessage, failedMessage]);
-    expect(result.current.retryChatDraft).toMatchObject({ content: userMessage.content, rewindMessageId: userMessage.id });
-    expect(result.current.retryChatDraft?.runId).toBeUndefined();
+    expect(result.current.retryChatDraft).toBeNull();
+    expect(result.current.modelUnavailable).toBeNull();
+    expect(result.current.sendError).toBeNull();
     expect(setErrorMessage.mock.calls.filter(([message]) => message)).toEqual([]);
   });
 });

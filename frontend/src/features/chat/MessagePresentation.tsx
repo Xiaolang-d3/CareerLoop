@@ -289,7 +289,8 @@ export function RunProcess({ agent, streaming, stopping = false, content = "" }:
     (!streaming || entry.thought || entry.text !== title)
     && !(terminalError && !entry.thought && entry.text === terminalError)
   );
-  const outcome = !streaming ? agent?.status === "failed" ? "生成失败"
+  const imageFailure = agent?.events.some(event => event.tool_name === "image_generation") && !agent?.assets?.length;
+  const outcome = !streaming ? agent?.status === "failed" ? imageFailure ? "未生成图片" : "生成失败"
     : agent?.status === "cancelled" ? "已停止" : agent?.status === "waiting_user" ? "等待确认" : "" : "";
   if (!streaming && !entries.length && !outcome && elapsed === null) return null;
   return (
@@ -651,6 +652,7 @@ export function ChatTurn({ state, chatBusy, stopping = false }: { state: Message
   const isActiveAssistant = chatBusy && source.id < 0;
   const resultContent = resultOnlyContent(source.content, Boolean(thoughtEvent?.message));
   const failed = source.payload?.agent?.status === "failed";
+  const errorOnly = failed && Boolean(source.payload?.agent?.error?.message?.trim()) && resultContent.trim() === source.payload?.agent?.error?.message.trim();
   const assets = source.payload?.agent?.assets ?? [];
   const blocks = source.payload?.agent?.output_blocks ?? [];
   const seenAssets = new Set<string>();
@@ -678,7 +680,7 @@ export function ChatTurn({ state, chatBusy, stopping = false }: { state: Message
             </>}
             <ActionBarPrimitive.Root className="message-actions" hideWhenRunning>
               <MessageCopyButton content={resultContent} label="复制回答" />
-              {openResult && (resultContent || assets.length > 0) && source.id > 0 && source.payload?.agent?.status !== "waiting_user" ? <button type="button" className="message-icon-action" aria-label="查看与保存成果" title="独立阅读、下载或保存到文件库" onClick={() => openResult(source.id)}><FolderPlus size={14} aria-hidden="true" /><span>成果</span></button> : null}
+              {openResult && ((!errorOnly && resultContent) || assets.length > 0) && source.id > 0 && source.payload?.agent?.status !== "waiting_user" ? <button type="button" className="message-result-action" aria-label="查看与保存成果" title="独立阅读、下载或保存到文件库" onClick={() => openResult(source.id)}><FolderPlus size={14} aria-hidden="true" /><span>成果</span></button> : null}
               <ActionBarPrimitive.Reload className="message-icon-action" aria-label={failed ? "重试回答" : "重新生成回答"} title={failed ? "重试回答，将替换本轮及后续消息" : "重新生成，将替换本轮及后续消息"} aria-describedby={`regenerate-impact-${source.id}`}>
                 <RefreshCw size={14} aria-hidden="true" />
               </ActionBarPrimitive.Reload>

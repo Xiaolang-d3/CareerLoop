@@ -69,6 +69,7 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
   retryDraft?: ChatRetryDraft | null;
   modelChecking?: boolean;
   modelUnavailable?: string;
+  sendError?: string;
   modelConfigured?: boolean;
   currentModelName?: string;
   taskCancelBusy?: boolean;
@@ -88,6 +89,7 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
     density: extras.density,
     modelChecking: extras.modelChecking,
     modelUnavailable: extras.modelUnavailable,
+    sendError: extras.sendError,
     modelConfigured: extras.modelConfigured,
     currentModelName: extras.currentModelName,
     onOpenModelSettings: vi.fn(),
@@ -168,6 +170,33 @@ describe("ChatWorkspace", () => {
     renderChat([message, assistantMessage("生成中", -12)], { chatBusy: true, onLoadResults: load });
     expect(screen.queryByRole("button", { name: "查看与保存成果" })).not.toBeInTheDocument();
     expect(load).not.toHaveBeenCalled();
+  });
+
+  it("shows an image failure once, with a retry on the answer and no error-only artifact", () => {
+    const error = "当前连接暂不支持生成图片。你可以继续聊天。";
+    const failed = { ...assistantMessage(error), payload: { agent: {
+      provider: "responses", platform: "local", rounds: 1, status: "failed" as const,
+      error: { code: "image_generation_unsupported", message: error, retryable: false },
+      events: [{ round: 1, tool_name: "image_generation", tool_call_id: "image-test", status: "failed", message: error }]
+    } } };
+    renderChat([message, failed], { onLoadResults: vi.fn(), currentModelName: "grok-4.7" });
+    expect(screen.getAllByText(error)).toHaveLength(1);
+    expect(screen.getByText("未生成图片")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "查看与保存成果" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重试回答" })).toBeInTheDocument();
+    expect(screen.queryByText("服务不可用")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("消息发送失败")).not.toBeInTheDocument();
+  });
+
+  it("retains unpersisted send failures without marking the chat model unavailable", () => {
+    renderChat([message], { sendError: "消息流连接中断", currentModelName: "grok-4.7", retryDraft: {
+      content: "原始问题", attachmentIds: [], visionAttachmentIds: [], webSearch: false,
+      webSearchTopic: "auto", webSearchSourcePreference: "none", reason: "send_failed"
+    } });
+    expect(screen.getByLabelText("消息发送失败")).toHaveTextContent("消息流连接中断");
+    expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+    expect(screen.queryByText("服务不可用")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "去设置模型" })).not.toBeInTheDocument();
   });
 
   it.each(["page", "dock"] as const)("returns to latest from the message overlay without changing the %s composer draft", (density) => {

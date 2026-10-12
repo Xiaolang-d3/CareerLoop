@@ -164,6 +164,7 @@ export type ChatWorkspaceProps = ResultServices & {
   onModelProfileChange?: (profileId: string | null) => Promise<void>;
   modelChecking?: boolean;
   modelUnavailable?: string | null;
+  sendError?: string | null;
   onOpenModelSettings?: () => void;
   messages: ChatMessage[];
   hiddenMessageCount: number;

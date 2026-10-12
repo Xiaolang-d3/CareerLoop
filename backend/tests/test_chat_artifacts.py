@@ -38,6 +38,17 @@ def save(path, message_id, *, selector="answer", filename="回答.md", **changes
     return save_artifact(message_id, request, path)
 
 
+def test_error_only_answer_is_not_an_artifact_but_partial_work_is(archive):
+    path, _, message = archive
+    payload = {"agent": {"status": "failed", "events": [], "error": {"code": "image_generation_not_executed", "message": "未返回图片"}}}
+    error_id = message(content="未返回图片", payload=payload)
+    assert message_artifacts(error_id, path)["artifacts"] == []
+    partial_id = message(content="已整理的部分正文", payload=payload)
+    manifest = message_artifacts(partial_id, path)
+    assert manifest["incomplete"] and manifest["artifacts"][0]["kind"] == "answer"
+    assert "已整理的部分正文" in manifest["artifacts"][0]["content"]
+
+
 def test_markdown_sources_code_and_private_metadata(archive):
     path, _, message = archive
     mid = message(payload={"agent": {"status": "done", "model_selection": {"model_name": "test-model", "api_key": "do-not-export"}, "events": [

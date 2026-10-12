@@ -52,6 +52,7 @@ class ProfileUpdateIn(BaseModel):
     enabled: bool | None = None
     parameters: dict[str, float | int] | None = None
     context_limit: int | None = Field(default=None, ge=1)
+    capabilities: dict[Literal["vision", "tools", "streaming", "image_generation"], Literal["supported", "unsupported", "unknown"]] | None = None
 
 
 class DefaultProfileIn(BaseModel):

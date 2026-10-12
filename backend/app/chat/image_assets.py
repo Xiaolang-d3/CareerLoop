@@ -67,8 +67,11 @@ def _confined(root: Path, path: Path) -> Path:
 
 
 def persist_images(operation_id: str, response: ModelResponse, model_name: str, db_path=None) -> dict:
-    if not 1 <= len(response.images) <= 4:
-        raise ModelProviderError("image_generation_unavailable", "服务没有返回生成的图片，请确认当前 Grok 模型及中转服务支持 image_generation 工具")
+    if not response.images:
+        from ..models.openai_responses import IMAGE_NOT_EXECUTED_MESSAGE
+        raise ModelProviderError("image_generation_not_executed", IMAGE_NOT_EXECUTED_MESSAGE)
+    if len(response.images) > 4:
+        raise ModelProviderError("too_many_image_outputs", "服务返回的图片超过单次保存上限（4 张），不会自动重新生成")
     prepared = []
     seen: set[str] = set()
     try:

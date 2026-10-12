@@ -112,11 +112,15 @@ class ModelRouter:
             required.append("vision")
         if streaming:
             required.append("streaming")
+        if request.image_generation:
+            required.append("image_generation")
         capabilities = connection.get("capabilities", {})
+        if request.image_generation and capabilities.get("image_generation") == "unsupported":
+            raise ModelProviderError("image_generation_unsupported", "当前连接暂不支持生成图片。你可以继续聊天，或接入支持生图的模型后再试。")
         unknown = [capability for capability in required if capabilities.get(capability, "unknown") == "unknown"]
         unavailable = [capability for capability in required if capabilities.get(capability) == "unsupported"]
         if unavailable or (unknown and self._strict):
-            labels = {"tools": "工具调用", "vision": "图片输入", "streaming": "流式输出"}
+            labels = {"tools": "工具调用", "vision": "图片输入", "streaming": "流式输出", "image_generation": "图片生成"}
             detail = "、".join(labels[item] for item in unavailable or unknown)
             raise ModelProviderError("model_capability_unavailable", f"{stage} 阶段的模型不满足所需能力：{detail}" + ("（尚未验证）" if not unavailable else ""))
         # A conservative byte upper bound, including tool definitions, is used

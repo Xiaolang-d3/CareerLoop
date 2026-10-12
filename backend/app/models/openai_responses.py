@@ -25,6 +25,17 @@ _OPENAI_ERRORS = (
     APIStatusError,
 )
 
+IMAGE_NOT_EXECUTED_MESSAGE = (
+    "服务已返回响应，但没有返回生成的图片。请确认当前连接开放 Grok 生图工具；"
+    "可用的聊天模型不代表支持生图。"
+)
+
+IMAGE_GENERATION_INSTRUCTIONS = (
+    "你是灯灯的图片生成助手。用户已明确要求文字生图，请使用本轮提供的 image_generation 工具生成图片，"
+    "遵循用户指定的主题、风格和比例。不要以提示词、图片链接或文字描述替代真实工具输出，"
+    "不要编造图片或声称未执行的工具已经成功。若服务拒绝生成，请简短说明。"
+)
+
 
 class OpenAIResponsesProvider(OpenAICompatibleProvider):
     """OpenAI Responses API provider sharing the configured API root and key."""
@@ -33,16 +44,21 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         started_at = perf_counter()
+        result = None
         try:
             client = self._client.with_options(timeout=180, max_retries=0) if request.image_generation else self._client
             response = await client.responses.create(**self._request_arguments(request))
             result = self._response_from_response(response)
+            self._validate_image_response(request, result)
         except _OPENAI_ERRORS as exc:
             error = self._provider_error(exc)
             self._record_event("generate", started_at, error=error)
             raise error from exc
         except ModelProviderError as error:
-            self._record_event("generate", started_at, error=error)
+            self._record_event("generate", started_at, error=error,
+                               usage=result.usage if result else None,
+                               total_tokens=result.usage.total_tokens if result and result.usage else 0,
+                               response_id=result.provider_metadata.get("response_id", "") if result else "")
             raise
         except (ValueError, TypeError, AttributeError, json.JSONDecodeError) as exc:
             error = ModelProviderError("provider_error", "模型服务返回了无法解析的 Responses API 响应")
@@ -97,7 +113,16 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
         if finished_images:
             existing = {str(getattr(item, "id", "")) for item in completed_response.output}
             completed_response.output.extend(item for key, item in finished_images.items() if key not in existing)
-        result = self._response_from_response(completed_response)
+        result = None
+        try:
+            result = self._response_from_response(completed_response)
+            self._validate_image_response(request, result)
+        except ModelProviderError as error:
+            self._record_event("stream", started_at, error=error,
+                               usage=result.usage if result else None,
+                               total_tokens=result.usage.total_tokens if result and result.usage else 0,
+                               response_id=str(getattr(completed_response, "id", "") or ""))
+            raise
         self._record_event(
             "stream",
             started_at,
@@ -106,6 +131,11 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
             response_id=result.provider_metadata.get("response_id", ""),
         )
         yield ModelStreamEvent(type="completed", response=result)
+
+    @staticmethod
+    def _validate_image_response(request: ModelRequest, result: ModelResponse) -> None:
+        if request.image_generation and not result.images:
+            raise ModelProviderError("image_generation_not_executed", IMAGE_NOT_EXECUTED_MESSAGE)
 
     async def check_connection(self) -> None:
         started_at = perf_counter()
@@ -198,8 +228,12 @@ class OpenAIResponsesProvider(OpenAICompatibleProvider):
             ]
             arguments["tool_choice"] = request.tool_choice
         if request.image_generation:
+            # The ordinary workspace prompt is written for text/file tools.
+            # This explicit image request uses a dedicated prompt and one
+            # required native tool, rather than letting the model skip it.
+            arguments["instructions"] = IMAGE_GENERATION_INSTRUCTIONS
             arguments["tools"] = [{"type": "image_generation", "action": "generate"}]
-            arguments.pop("tool_choice", None)
+            arguments["tool_choice"] = "required"
         return arguments
 
     @staticmethod

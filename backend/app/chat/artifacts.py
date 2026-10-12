@@ -117,7 +117,9 @@ def _manifest(message: dict[str, Any], db_path: str | Path | None) -> dict[str, 
                 raise ValueError("图片不属于当前消息")
             images.append(asset)
             resources.append({"id": asset["id"], "sha256": asset["sha256"]})
-    if message["role"] == "assistant" and (message["content"].strip() or images):
+    error_message = str((agent.get("error") or {}).get("message") or "").strip()
+    error_only = status == "failed" and bool(error_message) and message["content"].strip() == error_message
+    if message["role"] == "assistant" and (message["content"].strip() or images) and not (error_only and not images):
         content = message["content"]
         if images:
             by_id = {asset["id"]: asset for asset in images}

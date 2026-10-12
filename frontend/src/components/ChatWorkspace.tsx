@@ -402,15 +402,15 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
           ) : null}
 
           {props.modelChecking ? <div className="chat-retry-prompt" role="status">正在检查模型服务…</div> : null}
-          {props.modelUnavailable || (props.retryDraft && !props.chatBusy) ? (
+          {props.modelUnavailable || props.sendError || (props.retryDraft && !props.chatBusy) ? (
             <section
               className="chat-retry-prompt"
-              role={props.modelUnavailable ? "alert" : undefined}
+              role={props.modelUnavailable || props.sendError ? "alert" : undefined}
               aria-label={props.modelUnavailable ? "模型服务不可用" : props.retryDraft?.reason === "interrupted" ? "任务恢复提示" : "消息发送失败"}
             >
               <TriangleAlert size={14} />
-              <span>{props.modelUnavailable
-                ? `${props.modelUnavailable}${props.retryDraft ? " 输入内容已保留。" : ""}`
+              <span>{props.modelUnavailable || props.sendError
+                ? `${props.modelUnavailable || props.sendError}${props.retryDraft ? " 输入内容已保留。" : ""}`
                 : props.retryDraft?.reason === "interrupted" ? "上次任务意外中断，可从最近检查点继续" : "上一条消息未发送成功"}</span>
               {props.modelUnavailable ? <button type="button" onClick={props.onOpenModelSettings}>去设置模型</button> : null}
               {props.retryDraft && !props.chatBusy ? <button type="button" onClick={() => {

@@ -36,6 +36,31 @@ def test_environment_rotation_changes_cache_and_blocks_old_restore(workspace):
     assert "synthetic-first-key" not in str(selection)
 
 
+def test_image_capability_is_independent_and_reset_when_connection_changes(workspace):
+    from app.agent.model_catalog import update_model_connection
+    path, config = workspace
+    config.openai_api_key = 'synthetic-image-test-key'
+    first = get_profile_connection(db_path=path)
+    profile = update_model_profile(first['profile_id'], {'capabilities': {'vision': 'supported', 'image_generation': 'unsupported'}}, path)
+    profile = update_model_profile(profile['id'], {'capabilities': {'image_generation': 'unsupported'}}, path)
+    assert profile['capabilities']['vision'] == 'supported'
+    blocked = get_profile_connection(db_path=path)
+    frozen = internal_model_selection(blocked)
+    update_model_connection(blocked['connection_id'], {'base_url': 'https://replacement.invalid/v1', 'api_key': 'synthetic-replacement-test-key', 'expected_revision': blocked['connection_revision']}, path)
+    refreshed = get_profile_connection(db_path=path)
+    assert refreshed['capabilities']['image_generation'] == 'unknown'
+    assert refreshed['profile_revision'] > blocked['profile_revision']
+    assert get_profile_connection(db_path=path, selection=frozen)['capabilities']['image_generation'] == 'unsupported'
+
+
+def test_profile_contract_accepts_image_capability_and_rejects_invalid_values():
+    from app.api.model_contracts import ProfileUpdateIn
+    from pydantic import ValidationError
+    assert ProfileUpdateIn(expected_revision=1, capabilities={'image_generation': 'unsupported'}).capabilities == {'image_generation': 'unsupported'}
+    with pytest.raises(ValidationError):
+        ProfileUpdateIn(expected_revision=1, capabilities={'image_generation': 'yes'})
+
+
 def test_legacy_binding_survives_migration_and_key_replacement(workspace, monkeypatch):
     path, _ = workspace
     with connect(path) as conn:

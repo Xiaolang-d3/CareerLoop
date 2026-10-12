@@ -1686,6 +1686,10 @@ class AgentRuntime:
                 raise ModelProviderError("image_conversation_required", "请在聊天对话中生成图片")
             if image_urls:
                 raise ModelProviderError("image_edit_not_supported", "当前支持文字生图；基于附件的图片编辑尚未接入")
+            image_request = ModelRequest(messages=[AgentMessage(role="user", content=prompt)], image_generation=True)
+            # Reject a known unsupported capability before marking a paid
+            # attempt as started and before any provider call.
+            self._select_stage_model(provider, "execute", image_request, streaming=callback is not None)
             cached = begin_generation(operation_id, conversation_id, public_model_selection(selection))
             if cached is None:
                 event = ToolEvent(round=1, tool_call_id=f"image-{operation_id}", tool_name="image_generation", status="running", message="正在生成图片")
@@ -1693,9 +1697,7 @@ class AgentRuntime:
                 await self._publish(callback, AgentStreamEvent(type="agent_event", event=event))
                 # Native generation may have completed upstream when a transport
                 # fails. Neither runtime retries nor protocol fallback are safe.
-                response = await self._await_with_cancellation(self._generate_response(provider, ModelRequest(
-                    messages=[AgentMessage(role="user", content=prompt)], image_generation=True,
-                ), callback), run_id)
+                response = await self._await_with_cancellation(self._generate_response(provider, image_request, callback), run_id)
                 cached = persist_images(operation_id, response, str(execute["model_name"]))
             event = ToolEvent(round=1, tool_call_id=f"image-{operation_id}", tool_name="image_generation", status="done", message=f"已生成 {len(cached['assets'])} 张图片")
             events.append(event)
@@ -1724,7 +1726,7 @@ class AgentRuntime:
         stream = getattr(provider, "stream", None)
         if event_callback is None or not callable(stream):
             response = await provider.generate(request)
-            if event_callback is not None and response.content:
+            if event_callback is not None and response.content and not request.image_generation:
                 await self._publish(
                     event_callback,
                     AgentStreamEvent(type="text_delta", delta=response.content),
@@ -1733,7 +1735,7 @@ class AgentRuntime:
 
         response: ModelResponse | None = None
         async for event in stream(request):
-            if event.type == "text_delta" and event.delta:
+            if event.type == "text_delta" and event.delta and not request.image_generation:
                 await self._publish(
                     event_callback,
                     AgentStreamEvent(type="text_delta", delta=event.delta),

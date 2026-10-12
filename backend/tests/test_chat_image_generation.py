@@ -3,7 +3,7 @@ import base64
 import json
 from io import BytesIO
 from types import SimpleNamespace as NS
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from PIL import Image
@@ -69,10 +69,72 @@ def test_provider_native_output_order_and_dedup():
     assert [b['type'] for b in parsed.output_blocks] == ['text', 'image', 'text']
     args = provider._request_arguments(ModelRequest(messages=[AgentMessage(role='user', content='画一只猫')], image_generation=True))
     assert args['tools'] == [{'type': 'image_generation', 'action': 'generate'}]
-    assert 'tool_choice' not in args
+    assert args['tool_choice'] == 'required'
+    assert 'image_generation 工具' in args['instructions']
+    assert '思维导图' not in args['instructions']
     item.status = 'in_progress'
     with pytest.raises(ModelProviderError, match='完整图片'):
         provider._response_from_response(raw)
+
+
+@pytest.mark.parametrize('streaming', [False, True])
+def test_native_text_only_response_is_image_failure_with_usage_preserved(streaming, monkeypatch):
+    monkeypatch.setattr('app.models.openai_responses.get_agent_settings', lambda: {})
+    provider = OpenAIResponsesProvider(api_key='test-key', model='grok-4.7', base_url='https://provider.invalid/v1')
+    provider._record_event = Mock()
+    raw = NS(id='response-text-only', status='completed', output=[NS(type='message', content=[NS(type='output_text', text='仅有文字')])],
+             usage=NS(input_tokens=2, output_tokens=3, total_tokens=5))
+    class Stream:
+        async def __aiter__(self):
+            yield NS(type='response.output_text.delta', delta='仅有文字')
+            yield NS(type='response.completed', response=raw)
+        async def close(self): pass
+    create = AsyncMock(return_value=Stream() if streaming else raw)
+    provider._client = NS(with_options=Mock(return_value=NS(responses=NS(create=create))))
+    request = ModelRequest(messages=[AgentMessage(role='user', content='画一只猫')], image_generation=True)
+    async def execute():
+        if streaming:
+            return [event async for event in provider.stream(request)]
+        return await provider.generate(request)
+    with pytest.raises(ModelProviderError) as caught:
+        asyncio.run(execute())
+    assert caught.value.code == 'image_generation_not_executed'
+    assert not caught.value.retryable
+    assert create.await_count == 1
+    record = provider._record_event.call_args.kwargs
+    assert record['error'].code == caught.value.code
+    assert record['total_tokens'] == 5 and record['response_id'] == raw.id
+
+
+def test_runtime_blocks_known_unsupported_images_before_provider_call(images):
+    from app.agent.model_router import ModelRouter
+    path, _ = images
+    provider = NS(name='fake', generate=AsyncMock(return_value=response()))
+    agent = runtime(provider)
+    selection = agent._current_model_selection()
+    connection = {**selection, 'capabilities': {'image_generation': 'unsupported'}}
+    agent._model_router = ModelRouter({'execute': connection}, {'execute': provider})
+    with use_workspace(1, path.parent):
+        init_db(); cid = create_conversation('不支持生图')['id']
+        result = asyncio.run(agent.run('帮我生成一张图片', conversation_id=cid, run_id='unsupported-image'))
+        assert result.error.code == 'image_generation_unsupported'
+        provider.generate.assert_not_awaited()
+        with connect() as conn:
+            assert conn.execute('SELECT COUNT(*) FROM chat_image_operations').fetchone()[0] == 0
+    actual, _ = agent._model_router.select('execute', ModelRequest(messages=[]))
+    assert actual is provider  # Text chat remains usable with the same profile.
+
+
+def test_runtime_waits_for_validated_image_before_publishing_caption():
+    async def stream(_request):
+        yield ModelStreamEvent(type='text_delta', delta='已经生成了图片')
+        yield ModelStreamEvent(type='completed', response=response('图片说明'))
+    provider = NS(name='fake', stream=stream)
+    events = []
+    async def publish(event): events.append(event)
+    result = asyncio.run(runtime(provider)._generate_response_unscoped(provider, ModelRequest(messages=[], image_generation=True), publish))
+    assert result.content == '图片说明'
+    assert not any(event.type == 'text_delta' for event in events)
 
 
 def test_native_stream_collects_final_item_without_base64_events():
