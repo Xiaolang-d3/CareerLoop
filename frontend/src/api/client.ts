@@ -5,7 +5,7 @@ type DesktopApiResponse = { status: number; body: string; bodyBase64?: string | 
 export const SESSION_EXPIRED_EVENT = "careerloop:session-expired";
 
 export class ApiError extends Error {
-  constructor(message: string, public readonly status: number, public readonly retryAfterSeconds = 0) {
+  constructor(message: string, public readonly status: number, public readonly retryAfterSeconds = 0, public readonly details: Record<string, unknown> | null = null) {
     super(message);
     this.name = "ApiError";
   }
@@ -177,6 +177,7 @@ export function createApiClient(apiBase: string, accessToken?: string) {
     if (!response.ok) {
       const body = await response.text().catch(() => "");
       let message = `${path} 请求失败（${response.status}） @ ${apiBase}`;
+      let details: Record<string, unknown> | null = null;
       try {
         const payload = JSON.parse(body) as {
           detail?: string | { message?: string } | ValidationErrorItem[];
@@ -187,6 +188,7 @@ export function createApiClient(apiBase: string, accessToken?: string) {
           message = formatValidationErrors(payload.detail) || message;
         } else if (payload.detail && typeof payload.detail === "object" && payload.detail.message) {
           message = payload.detail.message;
+          details = payload.detail as Record<string, unknown>;
         }
       } catch {
         // 未捕获异常会返回纯文本响应，附上正文片段比只给状态码更可诊断。
@@ -196,7 +198,7 @@ export function createApiClient(apiBase: string, accessToken?: string) {
         }
       }
       const retryAfter = Number(response.headers.get("Retry-After"));
-      throw new ApiError(message, response.status, Number.isFinite(retryAfter) && retryAfter > 0 ? Math.ceil(retryAfter) : 0);
+      throw new ApiError(message, response.status, Number.isFinite(retryAfter) && retryAfter > 0 ? Math.ceil(retryAfter) : 0, details);
     }
     if (response.status === 204) return undefined as T;
     return response.json() as Promise<T>;

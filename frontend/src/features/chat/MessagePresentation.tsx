@@ -678,6 +678,7 @@ export function ChatTurn({ state, chatBusy, stopping = false }: { state: Message
               {resultContent ? <section className="message-result message-dialog" aria-label="输出结果"><MarkdownContent sources={webSources} streaming={isActiveAssistant} onOpenSource={openResearch}>{resultContent}</MarkdownContent></section> : null}
               {assets.map(asset => imageBlock(asset.id))}
             </>}
+            {modelSelection?.fallback_used && modelSelection.answered_model_name ? <p className="message-model-selection">由备用模型 {modelSelection.answered_model_name} 回答</p> : null}
             <ActionBarPrimitive.Root className="message-actions" hideWhenRunning>
               <MessageCopyButton content={resultContent} label="复制回答" />
               {openResult && ((!errorOnly && resultContent) || assets.length > 0) && source.id > 0 && source.payload?.agent?.status !== "waiting_user" ? <button type="button" className="message-result-action" aria-label="查看与保存成果" title="独立阅读、下载或保存到文件库" onClick={() => openResult(source.id)}><FolderPlus size={14} aria-hidden="true" /><span>成果</span></button> : null}

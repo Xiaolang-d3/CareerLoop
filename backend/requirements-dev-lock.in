@@ -1,0 +1,4 @@
+# Runtime + development/test tools (dev.sh, CI tests). Same versions as the
+# runtime lock for every shared package.
+-r requirements-lock.in
+-r requirements-dev.txt

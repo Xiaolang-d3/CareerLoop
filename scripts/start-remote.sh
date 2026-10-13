@@ -33,11 +33,8 @@ echo "构建前端…"
   npm run build >/dev/null
 )
 
-if [ ! -d "$BACKEND_DIR/.venv" ]; then
-  python3 -m venv "$BACKEND_DIR/.venv"
-fi
-env -u PYTHONPATH -u VIRTUAL_ENV -u PYTHONHOME \
-  "$BACKEND_DIR/.venv/bin/pip" install -q -r "$BACKEND_DIR/requirements.txt"
+# Runtime dependencies only (no pytest/PyInstaller), from the hash-locked file.
+"$BACKEND_DIR/scripts/install_deps.sh" "$BACKEND_DIR/.venv" runtime
 
 : > "$LOG_DIR/remote-backend.log"
 : > "$REMOTE_LOG"

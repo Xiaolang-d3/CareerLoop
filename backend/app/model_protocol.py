@@ -60,6 +60,15 @@ def model_protocol_candidates(
     if protocol != "auto":
         return (primary,)
     normalized_url = base_url.strip().lower()
+    if any(
+        marker in normalized_url
+        for marker in ("anthropic.com", "generativelanguage.googleapis.com", "ollama", ":11434")
+    ):
+        return (primary,)
+    if primary == "openai":
+        # Some newer models are served only over the Responses API; auto mode
+        # retries there when Chat Completions is explicitly rejected.
+        return ("openai", "responses")
     if not normalized_url:
         return (primary,)
     if any(
@@ -98,3 +107,25 @@ def model_protocol_label(
     base_url: str = "",
 ) -> str:
     return PROTOCOL_LABELS[resolve_model_protocol(model_name, configured, base_url)]
+
+
+def normalize_detected_protocol(value: str | None) -> ResolvedModelProtocol | None:
+    """Return a concrete protocol remembered from negotiation, or None."""
+    normalized = (value or "").strip().lower()
+    return normalized if normalized in PROTOCOL_LABELS else None  # type: ignore[return-value]
+
+
+def connection_protocol_label(
+    configured: str | None,
+    detected: str | None = None,
+    model_name: str = "",
+    base_url: str = "",
+) -> str:
+    """Human label for a connection's protocol, including what auto mode settled on."""
+    protocol = normalize_model_protocol(configured)
+    if protocol != "auto":
+        return PROTOCOL_LABELS[protocol]
+    actual = normalize_detected_protocol(detected)
+    if actual:
+        return f"自动 · 实际使用 {PROTOCOL_LABELS[actual]}"
+    return f"自动 · 优先 {PROTOCOL_LABELS[resolve_model_protocol(model_name, 'auto', base_url)]}"

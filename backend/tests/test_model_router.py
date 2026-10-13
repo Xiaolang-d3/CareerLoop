@@ -206,3 +206,34 @@ def test_runtime_calls_three_roles_and_records_actual_stage(catalog, monkeypatch
     forged["stage_selections"]["plan"] = internal_model_selection(profiles["explicit"])
     with pytest.raises(ModelProviderError, match="阶段模型版本"):
         asyncio.run(restored.run("继续", model_selection=forged))
+
+
+def test_stage_provider_keeps_detected_protocol_reasoning_and_prices(catalog, monkeypatch):
+    _, profiles = catalog
+    connection = deepcopy(profiles["default"])
+    stage = {**profiles["plan"], "detected_protocol": "responses", "reasoning_effort": "high",
+             "price_per_million_input": 2, "price_per_million_output": 8}
+    connection["stage_connections"] = {"plan": stage}
+    constructed, requests = [], []
+
+    class Provider:
+        name = "responses"
+
+        async def generate(self, request):
+            requests.append(request)
+            return ModelResponse(content="ok")
+
+    def build(**kwargs):
+        constructed.append(kwargs)
+        return Provider()
+
+    monkeypatch.setattr(bootstrap, "build_model_provider", build)
+    runtime, _ = bootstrap._build_components(connection)
+    request = ModelRequest(messages=[AgentMessage(role="user", content="plan")])
+    provider, _ = runtime._model_router.select("plan", request)
+    asyncio.run(provider.generate(request))
+    assert requests[0].reasoning_effort == "high"
+    assert constructed[-1]["detected_protocol"] == "responses"
+    assert callable(constructed[-1]["on_protocol_detected"])
+    assert constructed[-1]["price_per_million_input"] == 2
+    assert constructed[-1]["price_per_million_output"] == 8

@@ -14,7 +14,7 @@ from app.chat.image_assets import (asset_file, asset_thumbnail, begin_generation
 from app.chat.artifacts import SaveArtifactIn, message_artifacts, save_artifact
 from app.chat.conversations import create_conversation
 from app.chat.service import save_stream_result
-from app.db import connect, init_db, json_dump
+from app.db import DB_SCHEMA_VERSION, connect, init_db, json_dump
 from app.domain import AgentMessage, AgentRunResult, ModelRequest, ModelResponse, ModelStreamEvent
 from app.domain.agent import ModelImageOutput
 from app.models import ModelProviderError, ModelProviderRegistry
@@ -293,13 +293,13 @@ def test_symlink_and_foreign_message_refs_are_rejected(images, tmp_path):
 def test_upgrade_28_creates_assets_without_changing_history(images):
     path, cid = images
     with connect(path) as conn:
-        conn.execute('DELETE FROM schema_migrations WHERE version=29')
+        conn.execute('DELETE FROM schema_migrations WHERE version>=29')
         conn.execute("INSERT INTO schema_migrations(version,name) VALUES (28,'old')")
         conn.execute('DROP TABLE chat_image_assets'); conn.execute('DROP TABLE chat_image_operations')
         mid = conn.execute("INSERT INTO chat_messages(conversation_id,role,content) VALUES (?,'assistant','旧回答')", (cid,)).lastrowid
     init_db(path)
     with connect(path) as conn:
-        assert conn.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0] == 29
+        assert conn.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0] == DB_SCHEMA_VERSION
         assert conn.execute('SELECT content FROM chat_messages WHERE id=?', (mid,)).fetchone()[0] == '旧回答'
         assert conn.execute('SELECT COUNT(*) FROM chat_image_assets').fetchone()[0] == 0
 

@@ -274,11 +274,15 @@ Agent 新知识写入 library_knowledge 的 pending 状态；用户确认后才�
 
 每次调用前检查图片、工具和流式需求。档案能力明确不支持时拒绝；未知默认允许尝试并记为 `unverified`，严格检查时拒绝未知能力。目录可见、客户端支持或模型名字推断均不自动成为已验证能力。当前严格检查依赖档案已登记的状态，尚未自动将所有诊断或调用证据归并到档案；因此新档案默认均为未知，严格模式会阻止未登记的工具或流式请求。
 
-配置文本上下文上限时，以序列化输入、工具定义、系统提示和人设的 UTF-8 字节作保守输入估算，并预留明确配置的输出长度；没有输出上限或包含无法可靠估算的图片时明确拒绝。此估算不是精确 Token 计费，也不声称已经实现金额预算。备用模型切换、健康冷却、预算及并行分析仍属后续 B4/B5，当前没有自动故障转移或并行写工具执行。
+配置文本上下文上限时，以序列化输入、工具定义、系统提示和人设的 UTF-8 字节作保守输入估算，并预留明确配置的输出长度；没有输出上限或包含无法可靠估算的图片时明确拒绝。此估算不是精确 Token 计费，也不声称已经实现金额预算。阶段模型选择仍固定在本轮版本；LiteLLM 模式下可另行启用备用模型与健康冷却。预算与并行分析尚未实现，写工具仍串行执行。
 
-模型连接支持 OpenAI 兼容 Chat Completions、OpenAI Responses、Anthropic Messages、Google Gemini `generateContent` 与 Ollama Chat。显式 `model_protocol` 永远优先；`auto` 会先识别官方域名和 Ollama 地址，再按模型家族选择协议（`claude-*` → Anthropic、`gemini-*` → Gemini，其他 → OpenAI 兼容）。自定义多协议网关上的 Claude/Gemini 会先调用原生协议；只有 404/405 路由不存在、HTTP 200 却无法解析为该协议等可证明的协议不匹配，才回退到 OpenAI 兼容，并按网关 + 模型 + 密钥指纹缓存成功协议。认证失败、限流、模型不可用、上游账户池耗尽和其他 5xx 都不得换协议重试；流式响应一旦输出任何事件也不得回退，以免重复正文。根地址回退到 OpenAI 兼容时会尝试标准 `/v1`，已带路径的自定义 API 根地址不改写。Responses 与非标准包装仍可在设置页显式选择。
+模型连接支持 OpenAI 兼容 Chat Completions、OpenAI Responses、Anthropic Messages、Google Gemini `generateContent` 与 Ollama Chat。显式 `model_protocol` 永远优先；`auto` 会先识别官方域名和 Ollama 地址，再按模型家族选择协议（`claude-*` → Anthropic、`gemini-*` → Gemini，其他 → OpenAI 兼容）。自定义多协议网关上的 Claude/Gemini 会先调用原生协议；只有 404/405 路由不存在、HTTP 200 却无法解析为该协议等可证明的协议不匹配，才回退到 OpenAI 兼容，并按网关 + 模型 + 密钥指纹缓存成功协议。认证失败、限流、模型不可用、上游账户池耗尽和其他 5xx 都不得换协议重试；流式响应一旦输出任何事件也不得回退，以免重复正文。根地址回退到 OpenAI 兼容时会尝试标准 `/v1`，已带路径的自定义 API 根地址不改写。OpenAI 家族模型在 `auto` 下的候选为 OpenAI 兼容 → Responses：上游明确拒绝 Chat Completions（`protocol_unsupported`，如「模型 grok-4.7 不支持 chat completions 协议」）时改用 Responses。Responses 与非标准包装仍可在设置页显式选择。
 
-模型能力主动检测分为图片、流式、工具三项，分别使用诊断总预算的三分之一，单项失败不跳过其他项。流式需要非空文本增量和正常完成结果；工具检测要求返回指定无副作用工具的名称与随机参数，仅验证返回值、不执行工具。错误/超时或未取得有效证据保留 unknown，逐项记录实际协议，避免把不同协议的探测结果误认为单一协议能力；GET 仍只做静态推断，探测结果未自动写入模型档案的路由能力声明。
+协商成功的协议除内存缓存外，还会按连接持久化到 `model_connections.detected_protocol`（schema v28）：`AutoNegotiatingModelProvider._remember` 通过 `on_protocol_detected` 回调写入，运行时、连接检测、模型发现和能力探测共用 `build_model_provider(detected_protocol=..., on_protocol_detected=...)`，重启后以已保存协议作为首个候选并预热缓存。写入以 `protocol='auto'`、`effective_base_url` 和 `secret_ref` 为条件，与编辑竞争时丢弃；修改地址、密钥或协议（或改为显式协议）会清空。连接 API 返回 `detected_protocol`、`detected_protocol_label` 与 `protocol_label`（「自动 · 实际使用 OpenAI Responses API」），监控快照与 `GET /agent/models/capabilities` 的 `protocol_label` 同样使用该标签。显式 `openai` 连接在检测或模型发现中遇到 `protocol_unsupported` 时，检测结果带 `suggested_protocol: "responses"`，模型发现的 400 `detail` 为 `{message, code, suggested_protocol}`；设置页据此提供一键改用 Responses 并重新检测。
+
+Responses 适配器保持 `store=False`，默认请求 `include=["reasoning.encrypted_content"]`，把输出中带加密内容的 `reasoning` 条目放入 `ModelResponse.provider_metadata["responses_reasoning_items"]`；runtime 将其写入带 `tool_calls` 的助手消息 `payload["responses_reasoning_items"]`（随运行检查点保存），下一轮在对应 `function_call` 之前原样回传。模型档案的 `reasoning_effort`（`low`/`medium`/`high`/空，schema v28 `model_profiles.reasoning_effort`）经 `ConfiguredModelProvider` 写入 `ModelRequest.reasoning_effort`，Responses 请求 `reasoning: {effort, summary: "auto"}`。上游以 400/422 明确拒绝 `include` 或 `reasoning` 时去掉该参数重试一次，并按 API 根地址 + 模型记住，后续请求不再携带。流式的 `response.reasoning_summary_text.delta` / `response.reasoning_text.delta` 转为 `ModelStreamEvent(type="reasoning_delta")` → `AgentStreamEvent(reasoning_delta)` → AG-UI `REASONING_*` 消息；完成后推理摘要另记为 `agent_thinking` 事件写入本轮结果。原生 Chat Completions 适配器暂不发送推理强度；LiteLLM 模式按模型能力映射该参数。
+
+模型能力主动检测分为图片、流式、工具三项，分别使用诊断总预算的三分之一，单项失败不跳过其他项。流式需要非空文本增量和正常完成结果；工具检测要求返回指定无副作用工具的名称与随机参数，仅验证返回值、不执行工具。错误/超时或未取得有效证据保留 unknown，逐项记录实际协议，避免把不同协议的探测结果误认为单一协议能力；GET 仍只做静态推断，已保存连接的视觉实测同时写入模型能力记录；流式与工具结果仍不自动修改模型档案的阶段路由声明。
 
 自动模式在提供 API 根地址且首选 Chat Completions 时，增加同根地址的 Responses 候选。明确的协议拒绝（包括 400 中英文“不支持 chat completions”）、缺失路由或无效响应允许回退；认证、限流、额度、普通参数错误不触发回退。流式事件已输出后不回退，成功协议按地址、模型与密钥指纹缓存在进程中；显式协议保持单一候选。该机制不能推断服务商未公开或不兼容的任意协议。
 
@@ -286,7 +290,10 @@ Base URL 视为对应协议的 API 根地址：显式 OpenAI 兼容客户端不�
 
 用户可配置人设（名称、角色、详略、补充指令）不能覆盖事实要求、工具权限和人工确认规则。模型名、Base URL 和协议保存在 `agent_settings`。新 API Key 不写 SQLite：macOS 单机网页和桌面默认使用 Keychain，与 `BIND_HOST` 监听地址无关；仅显式 `CAREERLOOP_DEPLOYMENT_MODE=hosted` 或 `CAREERLOOP_SECRET_BACKEND` 覆盖改变该选择。其他环境根据可写凭证服务能力处理；环境密钥只绑定环境提供的连接，不能用于用户修改后的任意地址。密钥采用不可变版本引用，数据库事务一次切换连接配置和引用，失败保留完整旧连接。发现历史明文密钥时仅在成功迁移后清空原字段；不同环境 Key 不代表迁移完成，失败保留旧值并告警。
 
-模型设置主界面仅显示 Base URL、API Key 与模型名称，支持目录选择及手动填写，字段无需先解锁；首次读取完整配置后才展示表单。修改为草稿，单次点击“保存并应用”才保存，并从下一次模型调用生效。保存期间禁用字段及取消操作，空密钥继续沿用已保存密钥；配置保存成功与连接检测失败分别反馈。接口协议、额度、能力探测及调用监控保留在默认折叠的高级设置，已有显式协议不被自动重置，能力读取/探测仅使用已保存连接。`features/settings/useModelDiscovery.ts` 取消旧请求并用序号屏蔽迟到结果；更改地址、密钥或协议清空目录，更改模型名称保留已加载目录并使旧请求失效。目录失败可重试，具体错误只在高级设置展示。详情见 [model-settings-qa.md](model-settings-qa.md)。
+**模型层（schema v30）**：默认通过 LiteLLM Python SDK 调用模型（`DENGDENG_MODEL_BACKEND=litellm`，`native` 回滚到上文的原生适配器）。`build_model_provider` 为每个候选协议构建 `LiteLLMProvider`，协商、`detected_protocol` 持久化、图片探测与监控不变；只有 `models/litellm_core.py` 导入 litellm（离线环境变量、懒加载、关闭遥测与回调）。Chat Completions 适配器在 LiteLLM 模式下也发送推理强度（`drop_params` 兜底）；Anthropic 带签名的 `thinking_blocks` 与 Responses 加密推理条目一样写入助手消息 payload 并在下一轮回传。配置了备用模型时，`bootstrap._with_fallbacks` 用 `RoutedModelProvider` 包装主模型（`litellm.Router`：通用/超长上下文/内容被拒回退、按错误类型重试、`allowed_fails` + `cooldown_time` 冷却），运行时缓存键包含策略版本；回答模型写入 `model_selection.fallback_used / answered_model_name`。能力报告按「手动 > 实测 > LiteLLM > 推测」合并，费用写入 `model_service_events.cost_usd`。完整说明、离线与依赖锁定、升级和回滚见 [model-layer.md](model-layer.md)。
+
+
+模型设置主界面显示当前模型与连接列表；配置弹窗集中填写 Base URL、API Key 与模型名称，支持目录选择及手动填写，首次读取完整配置后才允许编辑。修改为草稿，单次点击“保存并应用”才保存，并从下一次模型调用生效。保存期间禁用字段及取消操作，空密钥继续沿用已保存密钥；配置保存成功与连接检测失败分别反馈。接口协议保留在配置弹窗的折叠选项中；阶段路由、额度、能力探测及调用监控保留在页面默认折叠的高级设置，已有显式协议不被自动重置，能力读取/探测仅使用已保存连接。`features/settings/useModelDiscovery.ts` 取消旧请求并用序号屏蔽迟到结果；更改地址、密钥或协议清空目录，更改模型名称保留已加载目录并使旧请求失效。目录失败可重试，具体错误只在高级设置展示。详情见 [model-settings-qa.md](model-settings-qa.md)。
 
 联网研究默认关闭（`WEB_RESEARCH_ENABLED`）。即使服务端开启，`search_public_web` 仍要求本轮用户打开联网开关。
 
@@ -295,7 +302,7 @@ Base URL 视为对应协议的 API 根地址：显式 OpenAI 兼容客户端不�
 | 信号 | 位置 | 注意 |
 | --- | --- | --- |
 | 工具审计 | `observability/tool_call_audit.py` | 只记元数据（名称、状态、延迟、错误码），不存参数和结果；保留 30 天 |
-| 模型监控 | `observability/model_monitor.py` | 调用成败与用量 |
+| 模型监控 | `observability/model_monitor.py` | 调用成败、用量、估算费用（`cost_usd`）、模型层（`backend`）与备用回答（`fallback_from_profile_id`） |
 | 运营快照 | `agent/operations.py` + 设置页看板 | 路由分布、工具成功率、延迟 |
 | 运行事件 | `agent_execution_runs` / `agent_run_steps` | 任务、计划步骤与工具完成 |
 
@@ -322,7 +329,7 @@ Base URL 视为对应协议的 API 根地址：显式 OpenAI 兼容客户端不�
 cd backend && .venv/bin/python -m pytest tests -q
 ```
 
-路由、工具面、引用校验、模型重试、写工具不重放与 `ask_user` 均使用模拟模型和网络结果，不调用真实模型。离线评测保留退役请求作为负向契约，确保不会恢复旧工具；当前路由、计划、事实和 ask_user 契约纳入后端测试。可选仍可用 Promptfoo 做人工对比：
+路由、工具面、引用校验、模型重试、写工具不重放与 `ask_user` 均使用模拟模型和网络结果，不调用真实模型。旧测试固定 `DENGDENG_MODEL_BACKEND=native`（`tests/conftest.py`）；LiteLLM 层测试（`test_litellm_*.py`）用 `tests/fake_llm_server.py` 在 127.0.0.1 上模拟五种协议的真实报文。离线评测保留退役请求作为负向契约，确保不会恢复旧工具；当前路由、计划、事实和 ask_user 契约纳入后端测试。可选仍可用 Promptfoo 做人工对比：
 
 ```bash
 cd evals && PROMPTFOO_PYTHON=../backend/.venv/bin/python npx --yes promptfoo@0.118.0 eval --no-cache
@@ -380,3 +387,9 @@ v29 新增 chat_image_operations/chat_image_assets，保留旧表、消息与索
 未被阻止的原生请求使用独立生图提示词、唯一 image_generation/action=generate 工具及 tool_choice=required。服务只返回文字时报告 `image_generation_not_executed`，保留真实 token 用量与响应 ID，不自动补发或切换接口；图片落盘之前不在消息区展示可能错误地声称成功的流式文字。
 
 持久化终态负责对话内的错误和重试入口。前端收到终态后忽略后续重复 RunError，不再创建输入框错误横幅，也不把生图/搜索错误当作整个模型不可用；没有持久化终态的连接中断仍保留输入、附件、搜索选项和同一 runId 重放入口。纯错误文字不提供成果清单；失败任务确有部分正文或图片时仍可存档并注明未完成。
+
+## 待合并分支整合（2026-10-13）
+
+数据库统一升级至 v30（`unified_models_and_chat_assets`），兼容聊天成果分支与 LiteLLM 分支各自的 v29 布局。升级前备份至 `.upgrade-backups/before-schema-v30/`，保留历史消息、模型绑定与原迁移名称；已为两种 v29 和 v27/v28 的合成工作区快照补充升级、完整性与重复初始化测试。
+
+阶段适配器沿用所属档案的推理强度、实际协议与计价参数；运行时缓存同时包含凭证指纹、阶段策略与备用策略版本。生图请求经过 LiteLLM 包装时委托原生 Responses 适配器，绕过 Completion Router 和可选参数重试，保留图片输出和进度事件。当前用户连接已明确不支持生图，仍在请求前拦截，不因文本模型可用而推断生图可用。模型推理与工具过程共用对话内折叠区，备用回答仅补充实际回答模型提示，不恢复输入区重复状态。

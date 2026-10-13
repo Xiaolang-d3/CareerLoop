@@ -34,6 +34,8 @@ async def event_stream(queue, worker, ag_ui_input: RunAgentInput, accept: str | 
     assistant_message_id = f"{run_id}:assistant:{message_generation}"
     text_started = False
     started_tool_calls: set[str] = set()
+    reasoning_generation = 0
+    reasoning_message_id: str | None = None
 
     def encode(event: Any) -> str:
         return encoder.encode(event)
@@ -45,12 +47,39 @@ async def event_stream(queue, worker, ag_ui_input: RunAgentInput, accept: str | 
         text_started = True
         return encode(TextMessageStartEvent(messageId=assistant_message_id, role="assistant"))
 
+    def close_reasoning() -> list[str]:
+        nonlocal reasoning_message_id
+        if reasoning_message_id is None:
+            return []
+        message_id, reasoning_message_id = reasoning_message_id, None
+        return [
+            encode(ReasoningMessageEndEvent(messageId=message_id)),
+            encode(ReasoningEndEvent(messageId=message_id)),
+        ]
+
     try:
         while True:
             item = await queue.get()
             if item is None:
+                for chunk in close_reasoning():
+                    yield chunk
                 break
             event_name, data = item
+            if event_name == "reasoning_delta":
+                delta = data.get("delta", "")
+                if not delta:
+                    continue
+                if reasoning_message_id is None:
+                    reasoning_message_id = f"{run_id}:reasoning:{reasoning_generation}"
+                    reasoning_generation += 1
+                    yield encode(ReasoningStartEvent(messageId=reasoning_message_id))
+                    yield encode(ReasoningMessageStartEvent(messageId=reasoning_message_id, role="reasoning"))
+                yield encode(ReasoningMessageContentEvent(messageId=reasoning_message_id, delta=delta))
+                continue
+            # Model reasoning streams before its answer or tool calls; any other
+            # event ends the current reasoning message.
+            for chunk in close_reasoning():
+                yield chunk
             if event_name == "run_started":
                 yield encode(RunStartedEvent(threadId=thread_id, runId=run_id))
                 yield encode(CustomEvent(name="careerloop.user_message", value=data["user_message"]))
