@@ -1,4 +1,5 @@
 import { useModelCatalog } from "../features/settings/useModelCatalog";
+import { useComposerModelDiscovery } from "../features/chat/useComposerModelDiscovery";
 import { useModelDiscovery } from "../features/settings/useModelDiscovery";
 import { useTheme } from "../features/appearance/ThemeProvider";
 import { AppearanceSettingsPage } from "../features/settings/AppearanceSettingsPage";
@@ -14,7 +15,8 @@ import { AppSidebar, type ProductNavKey } from "../components/AppSidebar";
 import { AppIdentityMenu } from "../components/AppIdentityMenu";
 import { AppTopBar } from "../components/AppTopBar";
 import { ConversationDialog } from "../components/ConversationDialog";
-import type { AttachmentConfig, ChatAttachment, ChatComposerDraft } from "../features/chat/types";
+import type { AttachmentConfig, ChatAttachment, ChatComposerDraft, WebSearchOptions } from "../features/chat/types";
+import type { ArtifactManifest } from "../features/chat/result-types";
 import type { HomeReadableItem } from "../features/home/types";
 import { createHomeAnalysisConversation, homeAnalysisDraft } from "../features/home/analysis-draft";
 import { defaultAgentSettings, pageMeta, topbarSectionForPage } from "../constants";
@@ -91,6 +93,8 @@ const AccountSettingsPage = lazy(() => loadAccountSettingsPage().then((module) =
 })));
 
 const ModelConnectionManager = lazy(() => import("../features/settings/ModelConnectionManager").then((module) => ({ default: module.ModelConnectionManager })));
+const ModelRoutingPanel = lazy(() => import("../features/settings/ModelRoutingPanel").then((module) => ({ default: module.ModelRoutingPanel })));
+const ModelFallbackSettings = lazy(() => import("../features/settings/ModelFallbackSettings").then((module) => ({ default: module.ModelFallbackSettings })));
 
 const ModelSettingsPage = lazy(() => import("../features/settings/ModelSettingsPage").then((module) => ({
   default: module.ModelSettingsPage
@@ -152,9 +156,11 @@ export function App({
   const [noticeMessage, setNoticeMessage] = useState("");
   const { invalidateConversationReads, conversations, setConversations, currentConversationId, setCurrentConversationId, conversationBusy, setConversationBusy, conversationDialog, setConversationDialog, refreshConversations, createNewConversation, archiveConversation, renameConversation, removeConversation } = useConversations({ fetchJson, setActiveView, setErrorMessage, setNoticeMessage });
   const { libraryEditor, librarySources, libraryFolders, organizeLibrarySource, createLibraryFolder, loadLibraryOriginal, searchLibrarySources, confirmedKnowledgeCount, sourceCount, pendingKnowledge, libraryLoaded, libraryBusy, sourceImportBusy, enhancedDocumentParse, setLibraryEditor, setEnhancedDocumentParse, refreshLibrary, saveLibraryMetadata, importLibraryFiles, createPastedSource, updateLibrarySource, downloadLibrarySource, deleteLibrarySource } = useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, setNoticeMessage });
+  const [openLibraryResultId, setOpenLibraryResultId] = useState<number | null>(null);
   const [libraryAttachments, setLibraryAttachments] = useState<{ conversationId: number; attachments: ChatAttachment[] } | null>(null);
   const [homeComposerDraft, setHomeComposerDraft] = useState<ChatComposerDraft | null>(null);
   const composerDrafts = useMemo(() => new Map<number, string>(), [userEmail]);
+  const composerSearchDrafts = useMemo(() => new Map<number, WebSearchOptions>(), [userEmail]);
   const { migrateHomeTheme } = useTheme();
   useEffect(() => { migrateHomeTheme(userEmail); }, [migrateHomeTheme, userEmail]);
   const homeAnalysisBusyRef = useRef(false);
@@ -165,8 +171,10 @@ export function App({
     homeAnalysisBusyRef.current = false;
     setConversationBusy(false);
   }, [fetchJson, userEmail, setConversationBusy]);
-  const { chatMessages, setChatMessages, chatBusy, setChatBusy, modelUnavailable, setModelUnavailable, retryChatDraft, setRetryChatDraft, chatAgentRef, taskCancelBusy, setTaskCancelBusy, chatAttachmentBusy, setChatAttachmentBusy, refreshChat, uploadChatAttachment, removeChatAttachment, sendChatMessage, stopChatGeneration, rewindChatToUserMessage, editChatMessage, regenerateChatMessage, cancelCurrentTask } = useChatRun({ apiBase, accessToken, fetchJson, currentConversationId, currentConversationIdRef, modelProfileId: conversations.find(item => item.id === currentConversationId)?.model_profile_id ?? null, setErrorMessage, setNoticeMessage, refreshConversations, onLibraryChanged: refreshLibrary });
+  const { chatMessages, setChatMessages, chatBusy, setChatBusy, modelUnavailable, setModelUnavailable, sendError, retryChatDraft, setRetryChatDraft, chatAgentRef, taskCancelBusy, setTaskCancelBusy, chatAttachmentBusy, setChatAttachmentBusy, refreshChat, uploadChatAttachment, loadChatAttachment, removeChatAttachment, sendChatMessage, stopChatGeneration, rewindChatToUserMessage, editChatMessage, regenerateChatMessage, cancelCurrentTask } = useChatRun({ apiBase, accessToken, fetchJson, currentConversationId, currentConversationIdRef, modelProfileId: conversations.find(item => item.id === currentConversationId)?.model_profile_id ?? null, setErrorMessage, setNoticeMessage, refreshConversations, onLibraryChanged: refreshLibrary });
   const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
+  const [webSearchCapabilitiesBusy, setWebSearchCapabilitiesBusy] = useState(false);
+  const [webSearchCapabilitiesError, setWebSearchCapabilitiesError] = useState("");
   const [attachmentConfig, setAttachmentConfig] = useState<AttachmentConfig | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
@@ -225,9 +233,12 @@ export function App({
   const currentConversation = conversations.find((item) => item.id === currentConversationId) ?? null;
   const activeModelProfiles = modelCatalog.catalog.profiles.filter(profile => profile.enabled && modelCatalog.catalog.connections.some(connection => connection.id === profile.connection_id && connection.enabled));
   const selectedModelProfile = modelCatalog.catalog.profiles.find(profile => profile.id === currentConversation?.model_profile_id);
-  const defaultModelProfile = modelCatalog.catalog.profiles.find(profile => profile.id === modelCatalog.catalog.default_profile_id);
+  const defaultModelProfile = modelCatalog.catalog.profiles.find(profile => profile.id === (modelCatalog.catalog.effective_execution_profile_id || modelCatalog.catalog.default_profile_id));
   const currentModelName = selectedModelProfile?.model_name || defaultModelProfile?.model_name || capabilities?.active_model_name || (modelSettingsReady ? savedAgentSettings.model_name : "尚未配置");
   const modelProfileUnavailable = Boolean(currentConversation?.model_profile_id && selectedModelProfile && !activeModelProfiles.some(profile => profile.id === currentConversation.model_profile_id));
+  const composerConnection = modelCatalog.catalog.connections.find(connection => connection.id === (selectedModelProfile || defaultModelProfile)?.connection_id && connection.enabled);
+  const composerDiscovery = useComposerModelDiscovery({ fetchJson, scope: modelSettingsScope, connection: composerConnection });
+  const disabledServiceModels = new Set(modelCatalog.catalog.profiles.filter(profile => profile.connection_id === composerConnection?.id && !profile.enabled && !activeModelProfiles.some(active => active.connection_id === profile.connection_id && active.model_name === profile.model_name)).map(profile => profile.model_name));
   const defaultModelHasDraft = Boolean(agentSettings.api_key.trim()) || agentSettings.model_name !== savedAgentSettings.model_name
     || agentSettings.model_base_url !== savedAgentSettings.model_base_url || agentSettings.model_protocol !== savedAgentSettings.model_protocol;
 
@@ -431,6 +442,8 @@ export function App({
 
   async function refreshCapabilities() {
     const request = beginModelRequest("serviceCapabilities");
+    setWebSearchCapabilitiesBusy(true);
+    setWebSearchCapabilitiesError("");
     try {
       const next = await fetchJson<AgentCapabilities>("/agent/capabilities", { signal: request.signal });
       if (request.current()) setCapabilities(next);
@@ -438,10 +451,11 @@ export function App({
     } catch (error) {
       if (request.current()) {
         setCapabilities(null);
+        setWebSearchCapabilitiesError(error instanceof Error ? error.message : "无法读取服务能力");
         setErrorMessage(error instanceof Error ? `无法读取服务能力：${error.message}` : "无法读取服务能力");
       }
       return null;
-    } finally { request.finish(); }
+    } finally { if (request.current()) setWebSearchCapabilitiesBusy(false); request.finish(); }
   }
 
   async function refreshAttachmentConfig() {
@@ -712,10 +726,10 @@ export function App({
     }
   }
 
-  async function selectConversationModel(profileId: string | null) {
+  async function selectConversationModel(profileId: string | null, serviceModel?: { connectionId: string; modelName: string; revision: number }) {
     const conversationId = currentConversationId;
     if (!conversationId || chatBusy || modelSelectionBusy) return;
-    if (profileId && !activeModelProfiles.some(profile => profile.id === profileId)) return;
+    if (modelCatalog.busy || (profileId && !activeModelProfiles.some(profile => profile.id === profileId))) return;
     modelSelectionRequestRef.current.controller?.abort();
     const requestId = ++modelSelectionRequestRef.current.id;
     const controller = new AbortController();
@@ -724,6 +738,11 @@ export function App({
       && modelSettingsScopeRef.current === modelSettingsScope && currentConversationIdRef.current === conversationId;
     setModelSelectionBusy(true);
     try {
+      if (serviceModel) {
+        profileId = await modelCatalog.ensureProfile(serviceModel.connectionId, serviceModel.modelName, serviceModel.revision);
+        if (!current()) return;
+        if (!profileId) throw new Error("模型未确认保存，继续使用原模型；请重新打开列表或检查模型设置。");
+      }
       const updated = await fetchJson<Conversation>(`/conversations/${conversationId}`, {
         method: "PATCH", signal: controller.signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model_profile_id: profileId })
       });
@@ -1021,12 +1040,19 @@ export function App({
               ) : null}
               {appRoute.page === "library" ? (
                 <LibraryPage
+                  initialSourceId={openLibraryResultId}
+                  onInitialSourceConsumed={() => setOpenLibraryResultId(null)}
                   editor={libraryEditor}
                   sources={librarySources}
                   folders={libraryFolders}
                   onOrganizeSource={organizeLibrarySource}
                   onCreateFolder={createLibraryFolder}
                   onLoadOriginal={loadLibraryOriginal}
+                  onLoadAsset={async (sourceId, assetId, signal) => {
+                    const response = await fetchWithTimeout(`${apiBase}/library/sources/${sourceId}/assets/${encodeURIComponent(assetId)}/file`, { signal, headers: { Authorization: `Bearer ${accessToken}` } });
+                    if (!response.ok) throw new Error("存档图片读取失败");
+                    return response.blob();
+                  }}
                   onSearchSources={searchLibrarySources}
                   onUseForChat={useLibraryForChat}
                   busy={libraryBusy}
@@ -1057,14 +1083,18 @@ export function App({
               {appRoute.page === "model" ? (
                 modelSettingsReady ? (
                   <ModelSettingsPage
-                    connectionManager={<ModelConnectionManager
+                    error={errorMessage}
+                    routingManager={<ModelRoutingPanel key={userEmail} fetchJson={fetchJson} catalog={modelCatalog.catalog}
+                      disabled={agentSettingsBusy || modelCatalog.busy || Boolean(modelSaveUnknown)}
+                      onApplied={async () => { await modelCatalog.reload(); await refreshDefaultModelSelection(); }} />}
+                    connectionManager={<><ModelConnectionManager
                       fetchJson={fetchJson} catalog={modelCatalog.catalog} loading={modelCatalog.loading}
                       busy={modelCatalog.busy || agentSettingsBusy} error={modelCatalog.error}
                       secretWritable={savedAgentSettings.secret_storage_writable}
                       defaultLocked={defaultModelHasDraft || Boolean(modelSaveUnknown)}
                       onReload={modelCatalog.reload} onMutate={modelCatalog.mutate}
                       onDefaultChanged={refreshDefaultModelSelection}
-                    />}
+                    /><ModelFallbackSettings fetchJson={fetchJson} catalog={modelCatalog.catalog} busy={modelCatalog.busy || agentSettingsBusy} /></>}
                     settings={agentSettings}
                     savedSettings={savedAgentSettings}
                     editing={modelSettingsEditing}
@@ -1123,9 +1153,12 @@ export function App({
             conversationTitle={currentConversation?.title}
             currentModelName={currentModelName}
             defaultModelName={defaultModelProfile?.model_name || capabilities?.active_model_name}
-            modelProfiles={activeModelProfiles.map(profile => ({ id: profile.id, model_name: profile.model_name, connection_name: modelCatalog.catalog.connections.find(connection => connection.id === profile.connection_id)?.name || "模型连接" }))}
+            modelProfiles={activeModelProfiles.map(profile => ({ id: profile.id, model_name: profile.model_name, connection_id: profile.connection_id, connection_name: modelCatalog.catalog.connections.find(connection => connection.id === profile.connection_id)?.name || "模型连接" }))}
+            serviceModels={composerConnection ? { connection_id: composerConnection.id, connection_name: composerConnection.name || "当前服务", revision: composerConnection.revision, models: composerDiscovery.models.filter(name => !disabledServiceModels.has(name)), busy: composerDiscovery.busy, error: composerDiscovery.error } : undefined}
+            onDiscoverServiceModels={composerDiscovery.discover}
+            onServiceModelChange={async modelName => { if (composerConnection) await selectConversationModel(null, { connectionId: composerConnection.id, modelName, revision: composerConnection.revision }); }}
             selectedModelProfileId={currentConversation?.model_profile_id ?? null}
-            modelSelectionBusy={modelSelectionBusy}
+            modelSelectionBusy={modelSelectionBusy || modelCatalog.busy}
             modelProfileUnavailable={modelProfileUnavailable}
             modelConfigured={capabilities ? capabilities.configured !== false : undefined}
             onModelProfileChange={selectConversationModel}
@@ -1133,12 +1166,14 @@ export function App({
             hiddenMessageCount={hiddenMessageCount}
             chatBusy={chatBusy}
             modelUnavailable={modelUnavailable}
+            sendError={sendError}
             onOpenModelSettings={() => navigateRoute({ section: "settings", page: "model" })}
             currentConversationId={currentConversationId}
             libraryAttachments={libraryAttachments}
             onLibraryAttachmentsConsumed={() => setLibraryAttachments(null)}
             composerDraft={homeComposerDraft}
             composerDrafts={composerDrafts}
+            composerSearchDrafts={composerSearchDrafts}
             onComposerDraftConsumed={() => setHomeComposerDraft(null)}
             conversations={conversations}
             conversationBusy={conversationBusy}
@@ -1164,7 +1199,26 @@ export function App({
             attachmentBusy={chatAttachmentBusy}
             attachmentConfig={attachmentConfig}
             webSearchAvailable={Boolean(capabilities?.web_research?.enabled)}
+            webSearchProvider={capabilities?.web_research?.provider}
+            webSearchCapabilities={capabilities?.web_research}
+            webSearchCapabilitiesBusy={webSearchCapabilitiesBusy}
+            webSearchCapabilitiesError={webSearchCapabilitiesError}
+            onRefreshWebSearchCapabilities={refreshCapabilities}
             onUploadAttachment={uploadChatAttachment}
+            onLoadAttachment={loadChatAttachment}
+            onLoadAttachmentThumbnail={async (attachment, signal) => {
+              const response = await fetchWithTimeout(`${apiBase}/${attachment.origin === "generated" ? "chat-assets" : "attachments"}/${encodeURIComponent(attachment.id)}/thumbnail`, { signal, headers: { Authorization: `Bearer ${accessToken}` } });
+              if (!response.ok) throw new Error("缩略图读取失败");
+              return response.blob();
+            }}
+            resultFolders={libraryFolders}
+            onLoadResults={(messageId, signal) => fetchJson<ArtifactManifest>(`/chat/messages/${messageId}/artifacts`, { signal })}
+            onSaveResult={async (messageId, request, signal) => {
+              const result = await fetchJson<{ source: LibrarySourceDetail; reused: boolean }>(`/chat/messages/${messageId}/save-to-library`, { method: "POST", signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify(request) });
+              void refreshLibrary();
+              return result;
+            }}
+            onOpenSavedResult={sourceId => { setOpenLibraryResultId(sourceId); navigateRoute({ section: "settings", page: "library" }); }}
             onRemoveAttachment={removeChatAttachment}
             onAttachmentInvalid={setErrorMessage}
             onSuggestedAction={handleSuggestedAction}
@@ -1175,11 +1229,13 @@ export function App({
               draft.attachmentIds,
               draft.visionAttachmentIds,
               draft.webSearch,
-              draft.webSearchMode,
+              draft.webSearchTopic,
+              draft.webSearchSourcePreference,
               undefined,
               draft.runId,
               draft.rewindMessageId,
-              draft.modelProfileId
+              draft.modelProfileId,
+              draft.webSearchProvider
             )}
             onStop={stopChatGeneration}
             onEdit={editChatMessage}

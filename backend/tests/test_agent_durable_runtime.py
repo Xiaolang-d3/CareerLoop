@@ -4,6 +4,7 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from app.agent.run_store import AgentRunStore
 from app.agent.runtime import AgentRuntime, _tool_call_fingerprint
@@ -19,6 +20,7 @@ from app.domain import (
     ToolResult,
 )
 from app.models import ModelProviderRegistry
+from app.search_options import WebSearchOptions
 from app.tools import ToolContext, ToolRegistry
 
 
@@ -40,6 +42,51 @@ class AgentDurableRuntimeTest(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         self.temp_dir.cleanup()
 
+    async def test_legacy_checkpoint_cannot_grant_new_web_calls_from_allowed_tools(self) -> None:
+        tool = CountingTool("search_public_web")
+        tools = ToolRegistry()
+        tools.register_handler(tool)
+        snapshot = AgentRunSnapshot(resume_mode="checkpoint", route_kind="web_search", needs_plan=False,
+                                    allowed_tools=["search_public_web"], messages=[AgentMessage(role="user", content="研究公司")])
+        self.store.start_run("no-consent", conversation_id=self.conversation_id, task_id=self.task_id, user_content="研究公司")
+        self.store.checkpoint("no-consent", snapshot)
+        self.store.interrupt_active_runs()
+        events = [event async for event in self._runtime(ToolThenTextModel("search_public_web", {"query": "公司"}), tools).run_stream(
+            "研究公司", run_id="no-consent", conversation_id=self.conversation_id,
+            web_search_options=WebSearchOptions(enabled=True, topic="finance", provider="tavily"),
+        )]
+        self.assertEqual(tool.calls, 0)
+        self.assertEqual(events[-1].result.status, "failed")
+        self.assertEqual(events[-1].result.error.code, "web_search_not_allowed")
+        ledger = self.store.list_tool_executions("no-consent")
+        self.assertEqual(ledger[0]["status"], "blocked")
+        self.assertIsNotNone(ledger[0]["completed_at"])
+
+    async def test_same_run_id_uses_original_search_options_in_tool_context(self) -> None:
+        class CaptureTool(CountingTool):
+            async def execute(self, arguments, context):
+                self.options = context.web_search_options
+                return await super().execute(arguments, context)
+
+        tool = CaptureTool("search_public_web")
+        tools = ToolRegistry()
+        tools.register_handler(tool)
+        original = WebSearchOptions(enabled=True, topic="news", provider="tavily")
+        self.store.start_run("stable-search", conversation_id=self.conversation_id, task_id=self.task_id,
+                             user_content="原始任务", web_search_options=original)
+        self.store.checkpoint("stable-search", AgentRunSnapshot(
+            resume_mode="checkpoint", route_kind="conversation", needs_plan=False, allowed_tools=["search_public_web"],
+            messages=[AgentMessage(role="user", content="原始任务")], web_search_options=original,
+        ))
+        self.store.interrupt_active_runs()
+        events = [event async for event in self._runtime(ToolThenTextModel("search_public_web", {"query": "AI动态"}), tools).run_stream(
+            "新请求", run_id="stable-search", conversation_id=self.conversation_id,
+            web_search_options=WebSearchOptions(enabled=False, topic="finance"),
+        )]
+        self.assertEqual(events[-1].result.status, "done")
+        self.assertEqual(tool.calls, 1)
+        self.assertEqual(tool.options, original)
+
     async def test_terminal_run_id_replays_result_without_calling_model_again(self) -> None:
         class CountingModel:
             name = "counting"
@@ -54,20 +101,18 @@ class AgentDurableRuntimeTest(unittest.IsolatedAsyncioTestCase):
         model = CountingModel()
         runtime = self._runtime(model, ToolRegistry())
 
-        first = await self._collect(
-            runtime,
-            "你好",
-            run_id="same-run",
-        )
-        second = await self._collect(
-            runtime,
-            "你好",
-            run_id="same-run",
-        )
+        with patch("app.agent.run_store._utc_now", side_effect=[
+            "2026-10-11T00:00:00.125+00:00", "2026-10-11T00:00:02.625+00:00",
+        ]):
+            first = await self._collect(runtime, "你好", run_id="same-run")
+            second = await self._collect(runtime, "你好", run_id="same-run")
 
         self.assertEqual(model.calls, 1)
         self.assertEqual(first[-1].result.content, "持久化回答")
         self.assertEqual(second[-1].result.content, "持久化回答")
+        self.assertEqual(first[-1].result.duration_ms, 2500)
+        self.assertEqual(second[-1].result.duration_ms, 2500)
+        self.assertEqual(first[-1].result.started_at, "2026-10-11T00:00:00.125+00:00")
         self.assertTrue(any(event.type == "text_delta" for event in second))
         self.assertEqual(self.store.get_run("same-run")["status"], "completed")
 

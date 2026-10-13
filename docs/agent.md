@@ -2,7 +2,7 @@
 
 本文是灯灯**智能体层的维护文档**。代码是行为的事实来源；本文记录意图、边界和同步点。改智能体行为时必须在同一变更中更新本文。
 
-最近校准：2026-10-09（全局外观设置；开发者资讯首页与显式文件库/对话联动；灯灯品牌与公共产品演示；持久化运行 JSON 容错；删除退役求职实现；资料库与持久化独立；数据库版本 25）。
+最近校准：2026-10-09（多连接、会话选模与阶段模型路由；全局外观设置；开发者资讯首页与显式文件库/对话联动；灯灯品牌与公共产品演示；持久化运行 JSON 容错；资料库与持久化独立；数据库版本 27）。
 
 ## 定位
 
@@ -111,17 +111,41 @@ backend/app/
 └── observability/           工具审计、模型监控
 ```
 
-前端：`frontend/src/components/ChatWorkspace.tsx` 消费流式事件，并在同一个对话输入框提供联网开关、来源模式和回答内来源详情；`frontend/src/features/settings/AgentOperationsDashboard.tsx` 展示运营快照。
+前端：`frontend/src/components/ChatWorkspace.tsx` 消费流式事件，并在同一个对话输入框提供联网开关、搜索类别与来源偏好和回答内来源详情；`frontend/src/features/settings/AgentOperationsDashboard.tsx` 展示运营快照。
 
-输入框按内容自动增高，超过视口约 30% 或 240px 后内部滚动；桌面 Enter 发送、Shift+Enter 换行，触摸设备 Enter 换行、点击发送。单条输入上限与聊天 API 一致为 200000 字，附件处理中阻止按钮与表单发送。文字草稿按账号、对话保存在当前 App 内存，切换对话或离开工作区再返回可恢复；刷新、退出或关闭应用不持久保存。附件及联网选项仍按原规则在切换对话时重置，草稿恢复只恢复文字，不自动发送或重新上传资料。
+输入框按内容自动增高，超过视口约 30% 或 240px 后内部滚动；桌面 Enter 发送、Shift+Enter 换行，触摸设备 Enter 换行、点击发送。单条输入上限与聊天 API 一致为 200000 字，附件处理中阻止按钮与表单发送。文字与联网配置草稿按账号、对话保存在当前 App 内存，切换对话或离开工作区再返回可恢复；刷新、退出或关闭应用不持久保存。附件仍按原规则在切换对话时重置，草稿恢复不自动发送或重新上传资料。
 
-对话滚动由 `useConversationScroll` 统一管理，靠近底部时跟随输出，向上阅读时保留位置并提示新内容；加载更早消息补偿高度，切换对话定位末尾。`RunStatus` 根据现有活动摘要与流式正文显示阶段，超过 10 秒显示当前页面等待时长（不是服务端运行计时或预计完成时间），保留底部停止按钮。Markdown 代码块完整复制、超过 24 行可折叠，流式期间不折叠；Mermaid 图形继续使用专用渲染，宽表格在独立容器中滚动。
+待发送附件卡片与历史消息中的附件均可打开同一个预览弹窗，不触发发送或模型请求。当前选择的文件在浏览器内直接读取；历史附件通过带账号鉴权的 `GET /attachments/{id}/file` 读取原件，DOCX 摘要缺少正文时先用 `GET /attachments/{id}` 补齐元数据。后端按当前账户数据库与本地附件目录读取，拒绝越出目录的路径或符号链接，原件响应禁用缓存。PDF 复用文件库的本地 PDF.js 阅读器并按需加载；PNG/JPG/WEBP 支持缩放，TXT 支持 UTF-8 与 GB18030，Markdown 支持表格并忽略内嵌 HTML，DOCX 显示提取文字并说明排版需下载原文件查看。关闭或切换对话取消读取并释放预览 URL，键盘关闭恢复原焦点；下载保留完整文件名。原件不存在时提供明确错误与重试入口，不修改消息和附件记录。
 
-引用详情打开时暂停自动跟随，关闭恢复打开前的滚动位置及触发引用焦点；来源列表标题可查看完整提示，选中来源摘要优先展示。消息复制只复制用户文本或助手结果正文，失败显示可重试反馈。编辑输入上限与新消息相同；编辑重发/重新生成继续沿用既有删除消息尾部再发送的协议，会替换本轮及后续消息，编辑界面说明资料与联网选项不会自动沿用。对话记录仅在已加载列表内搜索标题/摘要，不额外请求服务端或读取消息全文。
+编辑区从 40px 起自适应高度，底部用固定发送列与可换行工具列，模型选择、图标附件入口和联网开关不会挤占正文。快捷键以键帽提示，编辑区或工具区聚焦时显示，空闲及生成期间淡出并保留提示行高度，避免界面跳动；输入仍有持续的无障碍说明。接近上限（180000 字）时计数始终可见，不依赖焦点。触摸设备显示回车换行与点击发送提示，并扩大工具和发送按钮。
 
-外部感知：`agent-search/` 是独立仓库，对话里的 `search_public_web` 会调用它。它不是灯灯 runtime 的一部分，`scripts/dev.sh` 不负责启动它。`search_public_web` 按 `category` 走 `general` / `news` / `company` 策略；用户选择“技术来源”时，工具会在 `general` 查询中优先加入官方文档、GitHub 与 Stack Overflow；“自动来源”只在识别到技术关键词时采用该策略。使用 company 搜索策略时，配套 AgentSearch 必须支持 `/search?...&mode=company`。AgentSearch 可配置 Brave / 博查作为主检索，未配置时仍走 SearXNG；中文查询会再融合国内搜索源。部署、环境变量和健康检查步骤见根目录 `README.md`。
+生成和窄屏时保留工具栏模型名称与联网文字，不再通过隐藏所有按钮内的 span 压缩工具栏；联网开关与搜索类别共享一个控件，开启后可选择自动、通用、新闻、金融，技术来源偏好收进模块内的搜索设置。运行中锁定这些选项，关闭联网后同一草稿保留选择。停止按钮使用中性样式，停止请求中禁用并显示“正在停止生成”。
 
-运行边界：AgentSearch 默认地址是 `http://127.0.0.1:3939`，由 `WEB_RESEARCH_ENABLED`、`AGENT_SEARCH_BASE_URL` 和可选的 `AGENT_SEARCH_TOKEN` 控制。单个上游引擎失败可以让 `/health` 显示 `degraded`，不能仅据此判定全部搜索不可用，应以实际 `/search` 结果为准。连接失败、超时或所有查询均失败时，工具必须返回“联网服务暂不可用”的可重试结论，不能把它解释为公司名称不完整、公司不存在或招聘平台没有岗位。
+对话滚动由 `useConversationScroll` 统一管理，靠近底部时跟随输出，向上阅读时保留位置并提示新内容；加载更早消息补偿高度，切换对话定位末尾。思考与执行过程只在当前助手消息正文前的 `RunProcess` 折叠区展示，取消输入框上方状态条、回答下“查看过程”入口和来源侧栏中的过程列表。运行时默认展开，阶段标题只出现一次；真实返回的思考文本按段落、工具活动按紧凑图标行显示，过滤本地路由概要，不展示原始参数对象或工具指纹。用户手动折叠后，流式更新不强制展开；终态自动收起、去掉加载动画，用同一标题行显示用时及“生成失败”“已停止”“等待确认”。终态以运行 status 为准，已恢复的单个工具失败不标记整个回答失败，缺少工具事件的失败仍有结果说明，保留已生成内容。停止按钮仍在输入框内。Markdown 代码块完整复制、超过 24 行可折叠，流式期间不折叠；Mermaid 图形继续使用专用渲染，宽表格在独立容器中滚动。
+
+「回到最新」入口位于消息区域的悬浮层，与实际滚动容器互为同层元素，不随消息内容滚走，也不占用输入框的一行。消息区域和输入框继续使用各自的网格行；输入框增高时，悬浮入口随消息区域底部移动。完整页和浮动面板共享同一布局，保留离开底部时暂停跟随、新内容提醒和点击恢复跟随的规则。
+
+用时来自 `AgentRunStore` 的真实运行起止时间。新运行记录 UTC 毫秒 `started_at`，结束时写入 `completed_at` 和非负 `duration_ms`，同一结果同时用于持久化及最终助手消息；重复回放不重新计时。AG-UI 在首条文本前发布 `careerloop.run_timing`，前端只接收当前 runId 的起点；运行时按该起点显示经过时间，终态及历史只使用已保存时长，不用页面挂载或消息创建时间估算。缺少时间的旧消息省略用时。
+
+`useChatRun` 在发送时同时创建用户消息和唯一助手占位，首 token 前也在对话内显示进度；服务端回填用户消息保留原位置。标准 reasoning 事件的 `reasoning:` 前缀映射回 CareerLoop 活动 ID，与自定义事件按 `tool_call_id` 原位合并，保持首次出现顺序，结束更新不会追加重复过程。只有当前运行、当前对话可更新流式消息；终态快照只接收一次，之后的正文、过程和用户消息事件不再创建临时消息。终态已落库后 SDK 再报错不会覆盖消息或重试目标，重试从该轮用户消息重新生成；未收到终态的断连仍使用原 `runId` 恢复。发送错误、重试和保留草稿合并为输入区的一条提示，不再额外发布同一发送错误的全局提示。
+
+引用详情打开时暂停自动跟随，关闭恢复打开前的滚动位置及触发引用焦点；来源列表标题可查看完整提示，选中来源摘要优先展示。侧栏仅展示来源，有公开来源时才显示“来源”入口，普通问候及无来源回答不展示空侧栏入口。消息操作使用图标，桌面悬停或键盘聚焦时显示，触摸设备持续可见；历史生成模型及路由信息收进同排的“回答详情”，支持 Escape 关闭并恢复焦点。当前待发送模型仍在输入框内切换。错误正文已包含的原因不在过程区再次显示。
+
+消息复制只复制用户文本或助手结果正文，复制反馈通过按钮提示和状态播报提供。编辑输入上限与新消息相同；编辑重发/重新生成继续沿用既有删除消息尾部再发送的协议，会替换本轮及后续消息，影响说明放在操作提示和无障碍描述中，不再常驻每条消息下方；联网配置沿用原轮，编辑资料仍按现有规则重新选择。对话记录仅在已加载列表内搜索标题/摘要，不额外请求服务端或读取消息全文。
+
+外部感知：对话里的 `search_public_web` 通过 `research/search.py` 选择搜索服务。`WEB_SEARCH_PROVIDER=auto` 时，有 `TAVILY_API_KEY` 就直接调用 Tavily 官方 HTTPS API，否则使用 AgentSearch；也可显式指定 `tavily` / `agent_search`。能力接口和工具结果报告实际配置的 provider，联网按钮提示当前服务，不返回密钥。显式选择 Tavily 却未配置密钥时返回 `tavily_not_configured`，鉴权、额度、超时或其他失败不得偷偷改用另一服务。
+
+每轮联网许可与偏好使用冻结的 `WebSearchOptions`：`enabled`、`topic=auto/general/news/finance`、`source_preference=none/technical`、版本及搜索服务标识。AG-UI 使用 `webSearchTopic` 和 `webSearchSourcePreference`，入口统一归一化后传递；旧 `webSearchMode` 兼容转换为类别与来源偏好，新字段优先。重试、编辑与重新生成携带 `webSearchProvider` 作为原服务的期望绑定，仅用于一致性校验，不能据此选择服务。用户显式类别不能被模型工具的 category 覆盖，模型仍可选择查询文本及研究任务线索。`company` 是任务场景，不是 Tavily 类别。
+
+Tavily 自动模式开启 `auto_parameters` 并省略 `topic`，显式固定 `search_depth=basic`；手动类别按 general、news、finance 原值发送并关闭自动参数。所有模式关闭服务端答案生成和图片返回，保留 Markdown 正文与已有数量上限。技术偏好通过 `include_domains` 加 `include_domains_mode=prefer` 优先查 GitHub、Stack Overflow、MDN 和 Python 文档，不再拼接 `site:`，也不宣称严格白名单。新闻不自动限制为过去 24 小时。结果保存请求类别、发送类别及服务返回的实际类别；实际类别只读取响应的 `auto_parameters.topic`，手动或自动模式缺少有效值时均为未知，不推断或伪造。元数据仅放入既有来源／回答详情，不增加重复进度区。
+
+将搜索摘要 `content` 与正文 `raw_content` 分开归一化；优先复用已返回正文，只为前四个结果中缺失正文的公开 URL 批量调用 Extract。结果过滤私有/本机地址、去重并限制数量，单次响应上限 3 MB、正文上限 5000 字符。HTTP 200 中的单页提取失败或提取请求失败均保留摘要并返回警告，不宣称正文已读取；不得将上游错误正文暴露为错误提示。网页及摘要仍是不可信外部内容，沿用同一证据分级、引用和工具权限边界。搜索鉴权、额度、限流、超时及网络错误分别返回 `tavily_*` 错误码；只有限流、服务端及网络错误可重试。basic 限制控制搜索调用深度，不代表 Extract 或整轮研究没有额外调用。
+
+`agent-search/` 是独立仓库，不是灯灯 runtime 的一部分，`scripts/dev.sh` 不负责启动它。选择 AgentSearch 后，自动类别按工具 `category` 走 general／news／company，手动通用或新闻优先，类别元数据记录实际发送的 `mode`；不支持金融及技术资料软偏好，前端禁用并说明，后端在请求前明确拒绝，不静默改为通用或换服务。使用 company 策略时，配套 AgentSearch 必须支持 `/search?...&mode=company`。AgentSearch 可配置 Brave / 博查作为主检索，未配置时仍走 SearXNG；中文查询会再融合国内搜索源。`web_research` 能力声明提供支持的类别、自动参数和技术偏好，表示适配器支持而非实时连接成功。部署、环境变量和健康检查步骤见根目录 `README.md`。
+
+用户消息 payload 和运行快照保存完整联网配置；首个正式检查点前，运行绑定也保存该配置。同 runId 的恢复使用原配置，不由当前输入框覆盖；断线恢复、失败重试和重新生成沿用原轮。等待确认默认继承原任务配置，用户明确改变时用新 runId 并重算路由与工具权限；关闭联网不能继续使用旧 allowed_tools。旧快照从原消息安全补齐，无可核验许可时不新增搜索，可重放已有结果。搜索服务变更时保留内容并明确要求重新发送，不悄悄切换 provider。密钥不进入消息或快照，无需新增 SQLite 列。
+
+运行边界：`WEB_RESEARCH_ENABLED` 控制是否允许联网；`WEB_SEARCH_PROVIDER` 控制服务选择，`TAVILY_API_KEY` 只用于 Tavily。AgentSearch 默认地址是 `http://127.0.0.1:3939`，其地址与令牌由 `AGENT_SEARCH_BASE_URL` 和可选的 `AGENT_SEARCH_TOKEN` 控制。单个上游引擎失败可以让 AgentSearch `/health` 显示 `degraded`，不能仅据此判定全部搜索不可用，应以实际 `/search` 结果为准。连接失败、超时或所有查询均失败时，工具必须返回“联网服务暂不可用”的可重试结论，不能把它解释为公司名称不完整、公司不存在或招聘平台没有岗位。
 
 ## 对话运行时
 
@@ -191,7 +215,7 @@ backend/app/
 - 只有 `read_only`、`derived_analysis`、`external_read` 工具会在明确返回 `retryable` 时安全重试一次；任何本地写工具都不会被 harness 自动重放。
 - 成功工具调用按“工具名 + 规范化参数”生成不透明指纹。同一任务第一次重复调用会被跳过并提示模型推进；再次重复则以 `tool_loop_detected` 终止。指纹和重复计数写入暂停快照，恢复任务也不会重复执行已经完成的副作用。
 
-`agent_loop_guard`、`model_provider`、`completion_validator`、`citation_validator` 都是系统活动，不算真实工具调用；前端只展示友好状态，详细信息仍可在研究详情中检查。
+`agent_loop_guard`、`model_provider`、`completion_validator`、`citation_validator` 都是系统活动，不算真实工具调用；前端只展示友好状态，过程简述集中在对话内折叠区。
 
 ## 持久化运行状态
 
@@ -228,7 +252,7 @@ runtime 在进入循环、完成每个工具轮、写入完成修复提示和引
 
 Agent 新知识写入 library_knowledge 的 pending 状态；用户确认后才进入 confirmed 上下文，否决或撤回内容不作为已确认事实。职业目标/策略不进入新知识库上下文。导入文档仅提取文本，不再推断求职方向、薪资或自动生成技能事实。
 
-当前附件 kind 使用 `document` / `image`，资料记忆开关使用 `library_memory_enabled`。升级将旧附件行、历史消息中的附件元数据和 `profile_memory_enabled` 设置转换到通用字段，保留原值语义。图片附件不强制进入岗位分析，模型看图仍由用户授权。短文本笔记不再沿用简历最低字数限制；删除原文件失败会回滚来源、证据和索引。知识写入工具成功后前端刷新待确认条目。前端资料库由 `features/library/useLibrary.ts` 管理来源及基本信息；聊天协议在 `features/chat/types.ts`，任务订阅与重试/取消在 `useChatRun.ts`，Markdown、来源和研究详情由 `MessagePresentation.tsx` 呈现。
+当前附件 kind 使用 `document` / `image`，资料记忆开关使用 `library_memory_enabled`。升级将旧附件行、历史消息中的附件元数据和 `profile_memory_enabled` 设置转换到通用字段，保留原值语义。图片附件不强制进入岗位分析，模型看图仍由用户授权。短文本笔记不再沿用简历最低字数限制；删除原文件失败会回滚来源、证据和索引。知识写入工具成功后前端刷新待确认条目。前端资料库由 `features/library/useLibrary.ts` 管理来源及基本信息；聊天协议在 `features/chat/types.ts`，任务订阅与重试/取消在 `useChatRun.ts`，Markdown、对话过程和来源详情由 `MessagePresentation.tsx` 呈现。
 
 ## 工作流阶段
 
@@ -236,13 +260,40 @@ Agent 新知识写入 library_knowledge 的 pending 状态；用户确认后才�
 
 ## 模型与配置
 
-模型连接支持 OpenAI 兼容 Chat Completions、OpenAI Responses、Anthropic Messages、Google Gemini `generateContent` 与 Ollama Chat。显式 `model_protocol` 永远优先；`auto` 会先识别官方域名和 Ollama 地址，再按模型家族选择协议（`claude-*` → Anthropic、`gemini-*` → Gemini，其他 → OpenAI 兼容）。自定义多协议网关上的 Claude/Gemini 会先调用原生协议；只有 404/405 路由不存在、HTTP 200 却无法解析为该协议等可证明的协议不匹配，才回退到 OpenAI 兼容，并按网关 + 模型 + 密钥指纹缓存成功协议。认证失败、限流、模型不可用、上游账户池耗尽和其他 5xx 都不得换协议重试；流式响应一旦输出任何事件也不得回退，以免重复正文。根地址回退到 OpenAI 兼容时会尝试标准 `/v1`，已带路径的自定义 API 根地址不改写。Responses 与非标准包装仍可在设置页显式选择。
+多连接和模型档案分别保存在 `model_connections` / `model_profiles`，稳定 ID 区分同协议、同名模型；独立目录和诊断使用所属连接凭证。会话可选择档案，发送时固定连接及档案版本，重试和恢复读取历史版本。运行与快照只保存引用和不可逆凭证指纹；环境密钥更换会使新调用使用新缓存，旧任务拒绝静默换用新密钥。历史明文迁移建立不可变凭证别名，替换或切换默认前必须保留旧凭证引用；安全存储不可用时保留原配置。
+
+输入框打开模型菜单时，`useComposerModelDiscovery` 使用当前会话档案所属连接（跟随默认时使用实际执行档案）的 `/agent/model-connections/{id}/discover`，合并目录模型与已保存档案，支持搜索和手动刷新。目录只读且不做逐模型调用；缓存按账号、连接 ID 和连接版本隔离，旧请求取消并屏蔽迟到结果。目录失败保留已知列表和已保存模型，目录可见不代表已验证权限或能力。已停用且没有同名启用档案的模型从服务选项中过滤。
+
+选择尚未保存的目录模型先通过 `POST /agent/model-connections/{id}/profiles/ensure` 以 `model_name` 和连接的 `expected_revision` 创建或复用启用档案，再 PATCH 当前会话的 `model_profile_id`；不切换全局默认，不复制其他模型参数或能力声明。工作区锁和事务保证重复选择复用同一档案，连接版本冲突返回 409，已停用档案不会被此接口重新启用。保存/绑定期间阻止发送；创建失败或切换会话后不继续绑定，发送仍走已有档案与阶段版本固定逻辑。
+
+档案的 `temperature` 和 `max_output_tokens` 映射到五种协议实际请求，生成与流式共用映射；请求只能缩小已绑定的输出上限。连接检查与图片探测保持独立的小额诊断参数。协议或模型不接受温度等参数时由服务返回真实错误，不静默丢弃配置。
+
+`agent/model_router.py` 独立选择模型，不参与 TaskRoute 的工具白名单或人工确认。`GET/PUT /agent/model-routing` 管理带版本的策略：`classify`（意图识别）、`plan`（规划和重规划）、`execute`（工具循环与回答）。新任务执行模型按会话明确选择 → 执行角色 → 账号默认决定；识别和规划按阶段角色 → 账号默认决定。配置入口在模型设置的高级区域，不增加侧栏子导航；主表单仍只有地址、密钥和模型。PUT 要求 `expected_version`，冲突返回 409，草稿保留，用户可重新读取。
+
+发送前在工作区配置锁内固定三个阶段的连接、档案版本、凭证指纹、策略版本和严格能力开关。每轮执行及重规划沿用已绑定角色，不自动换模型；恢复时读取版本表和原阶段绑定，不读取新策略。启用过阶段路由却丢失绑定的运行拒绝恢复；升级前没有阶段绑定的运行保留原单模型行为。消息模型详情显示阶段、模型、策略版本及选择原因，没有发生调用的阶段明确标记；监控按实际阶段身份记账。
+
+每次调用前检查图片、工具和流式需求。档案能力明确不支持时拒绝；未知默认允许尝试并记为 `unverified`，严格检查时拒绝未知能力。目录可见、客户端支持或模型名字推断均不自动成为已验证能力。当前严格检查依赖档案已登记的状态，尚未自动将所有诊断或调用证据归并到档案；因此新档案默认均为未知，严格模式会阻止未登记的工具或流式请求。
+
+配置文本上下文上限时，以序列化输入、工具定义、系统提示和人设的 UTF-8 字节作保守输入估算，并预留明确配置的输出长度；没有输出上限或包含无法可靠估算的图片时明确拒绝。此估算不是精确 Token 计费，也不声称已经实现金额预算。阶段模型选择仍固定在本轮版本；LiteLLM 模式下可另行启用备用模型与健康冷却。预算与并行分析尚未实现，写工具仍串行执行。
+
+模型连接支持 OpenAI 兼容 Chat Completions、OpenAI Responses、Anthropic Messages、Google Gemini `generateContent` 与 Ollama Chat。显式 `model_protocol` 永远优先；`auto` 会先识别官方域名和 Ollama 地址，再按模型家族选择协议（`claude-*` → Anthropic、`gemini-*` → Gemini，其他 → OpenAI 兼容）。自定义多协议网关上的 Claude/Gemini 会先调用原生协议；只有 404/405 路由不存在、HTTP 200 却无法解析为该协议等可证明的协议不匹配，才回退到 OpenAI 兼容，并按网关 + 模型 + 密钥指纹缓存成功协议。认证失败、限流、模型不可用、上游账户池耗尽和其他 5xx 都不得换协议重试；流式响应一旦输出任何事件也不得回退，以免重复正文。根地址回退到 OpenAI 兼容时会尝试标准 `/v1`，已带路径的自定义 API 根地址不改写。OpenAI 家族模型在 `auto` 下的候选为 OpenAI 兼容 → Responses：上游明确拒绝 Chat Completions（`protocol_unsupported`，如「模型 grok-4.7 不支持 chat completions 协议」）时改用 Responses。Responses 与非标准包装仍可在设置页显式选择。
+
+协商成功的协议除内存缓存外，还会按连接持久化到 `model_connections.detected_protocol`（schema v28）：`AutoNegotiatingModelProvider._remember` 通过 `on_protocol_detected` 回调写入，运行时、连接检测、模型发现和能力探测共用 `build_model_provider(detected_protocol=..., on_protocol_detected=...)`，重启后以已保存协议作为首个候选并预热缓存。写入以 `protocol='auto'`、`effective_base_url` 和 `secret_ref` 为条件，与编辑竞争时丢弃；修改地址、密钥或协议（或改为显式协议）会清空。连接 API 返回 `detected_protocol`、`detected_protocol_label` 与 `protocol_label`（「自动 · 实际使用 OpenAI Responses API」），监控快照与 `GET /agent/models/capabilities` 的 `protocol_label` 同样使用该标签。显式 `openai` 连接在检测或模型发现中遇到 `protocol_unsupported` 时，检测结果带 `suggested_protocol: "responses"`，模型发现的 400 `detail` 为 `{message, code, suggested_protocol}`；设置页据此提供一键改用 Responses 并重新检测。
+
+Responses 适配器保持 `store=False`，默认请求 `include=["reasoning.encrypted_content"]`，把输出中带加密内容的 `reasoning` 条目放入 `ModelResponse.provider_metadata["responses_reasoning_items"]`；runtime 将其写入带 `tool_calls` 的助手消息 `payload["responses_reasoning_items"]`（随运行检查点保存），下一轮在对应 `function_call` 之前原样回传。模型档案的 `reasoning_effort`（`low`/`medium`/`high`/空，schema v28 `model_profiles.reasoning_effort`）经 `ConfiguredModelProvider` 写入 `ModelRequest.reasoning_effort`，Responses 请求 `reasoning: {effort, summary: "auto"}`。上游以 400/422 明确拒绝 `include` 或 `reasoning` 时去掉该参数重试一次，并按 API 根地址 + 模型记住，后续请求不再携带。流式的 `response.reasoning_summary_text.delta` / `response.reasoning_text.delta` 转为 `ModelStreamEvent(type="reasoning_delta")` → `AgentStreamEvent(reasoning_delta)` → AG-UI `REASONING_*` 消息；完成后推理摘要另记为 `agent_thinking` 事件写入本轮结果。原生 Chat Completions 适配器暂不发送推理强度；LiteLLM 模式按模型能力映射该参数。
+
+模型能力主动检测分为图片、流式、工具三项，分别使用诊断总预算的三分之一，单项失败不跳过其他项。流式需要非空文本增量和正常完成结果；工具检测要求返回指定无副作用工具的名称与随机参数，仅验证返回值、不执行工具。错误/超时或未取得有效证据保留 unknown，逐项记录实际协议，避免把不同协议的探测结果误认为单一协议能力；GET 仍只做静态推断，已保存连接的视觉实测同时写入模型能力记录；流式与工具结果仍不自动修改模型档案的阶段路由声明。
+
+自动模式在提供 API 根地址且首选 Chat Completions 时，增加同根地址的 Responses 候选。明确的协议拒绝（包括 400 中英文“不支持 chat completions”）、缺失路由或无效响应允许回退；认证、限流、额度、普通参数错误不触发回退。流式事件已输出后不回退，成功协议按地址、模型与密钥指纹缓存在进程中；显式协议保持单一候选。该机制不能推断服务商未公开或不兼容的任意协议。
 
 Base URL 视为对应协议的 API 根地址：显式 OpenAI 兼容客户端不自动追加 `/v1`，Responses 请求 `/responses`，Anthropic 请求 `/v1/messages`，Gemini 请求 `/models/{model}:generateContent`，Ollama 请求 `/api/chat`。OpenAI 兼容调用还会验证响应中存在 `choices`，流式调用至少返回响应 ID、用量、结束原因、正文或工具调用之一；网页回退或空响应即使 HTTP 状态为 200 也会记为 `invalid_provider_response`，不得标记为健康。模型目录只证明名称可见，不证明当前账户可实际调用；设置页提示是否可用以连接检测为准，诊断区展示已保存连接的调用结果。本地 Ollama 可不配置 API Key；其他协议要求密钥。`GET /agent/capabilities` 在缺少密钥时返回 200 与 `configured: false`（可先配置再对话），真正运行 Agent 仍要求已配置密钥。runtime、模型发现、能力检测与健康监控使用同一协议解析结果。runtime 的 system 消息必须保持协议级 system 语义：Anthropic 合并到顶层 `system`，不能降级成 `user` 消息。系统提示在 `backend/app/models/openai_compatible.py`：中文、不编造经历与来源、只使用本轮实际提供的工具、不点名具体工具名、过程叙述交给界面。本轮工具清单由 runtime 注入。缺少关键信息或指代有歧义时必须调用 `ask_user`，不要猜测，也不要只在正文里提问。用户明确要求思维导图时可输出 Mermaid `mindmap` 代码块，界面渲染为可展开、缩放的交互导图；普通回答不主动生成图。
 
-用户可配置人设（名称、角色、详略、补充指令）不能覆盖事实要求、工具权限和人工确认规则。模型名、Base URL 和协议保存在 `agent_settings`。新 API Key 不写 SQLite：macOS 单机网页和桌面使用 Keychain，其他环境根据可写凭证服务能力处理；环境密钥只绑定环境提供的连接，不能用于用户修改后的任意地址。密钥采用不可变版本引用，数据库事务一次切换连接配置和引用，失败保留完整旧连接。发现历史明文密钥时仅在成功迁移后清空原字段；不同环境 Key 不代表迁移完成，失败保留旧值并告警。
+用户可配置人设（名称、角色、详略、补充指令）不能覆盖事实要求、工具权限和人工确认规则。模型名、Base URL 和协议保存在 `agent_settings`。新 API Key 不写 SQLite：macOS 单机网页和桌面默认使用 Keychain，与 `BIND_HOST` 监听地址无关；仅显式 `CAREERLOOP_DEPLOYMENT_MODE=hosted` 或 `CAREERLOOP_SECRET_BACKEND` 覆盖改变该选择。其他环境根据可写凭证服务能力处理；环境密钥只绑定环境提供的连接，不能用于用户修改后的任意地址。密钥采用不可变版本引用，数据库事务一次切换连接配置和引用，失败保留完整旧连接。发现历史明文密钥时仅在成功迁移后清空原字段；不同环境 Key 不代表迁移完成，失败保留旧值并告警。
 
-模型设置主界面仅显示 Base URL、API Key 与模型名称，支持目录选择及手动填写，字段无需先解锁；首次读取完整配置后才展示表单。修改为草稿，单次点击“保存并应用”才保存，并从下一次模型调用生效。保存期间禁用字段及取消操作，空密钥继续沿用已保存密钥；配置保存成功与连接检测失败分别反馈。接口协议、额度、能力探测及调用监控保留在默认折叠的高级设置，已有显式协议不被自动重置，能力读取/探测仅使用已保存连接。`features/settings/useModelDiscovery.ts` 取消旧请求并用序号屏蔽迟到结果；更改地址、密钥或协议清空目录，更改模型名称保留已加载目录并使旧请求失效。目录失败可重试，具体错误只在高级设置展示。详情见 [model-settings-qa.md](model-settings-qa.md)。
+**模型层（schema v30）**：默认通过 LiteLLM Python SDK 调用模型（`DENGDENG_MODEL_BACKEND=litellm`，`native` 回滚到上文的原生适配器）。`build_model_provider` 为每个候选协议构建 `LiteLLMProvider`，协商、`detected_protocol` 持久化、图片探测与监控不变；只有 `models/litellm_core.py` 导入 litellm（离线环境变量、懒加载、关闭遥测与回调）。Chat Completions 适配器在 LiteLLM 模式下也发送推理强度（`drop_params` 兜底）；Anthropic 带签名的 `thinking_blocks` 与 Responses 加密推理条目一样写入助手消息 payload 并在下一轮回传。配置了备用模型时，`bootstrap._with_fallbacks` 用 `RoutedModelProvider` 包装主模型（`litellm.Router`：通用/超长上下文/内容被拒回退、按错误类型重试、`allowed_fails` + `cooldown_time` 冷却），运行时缓存键包含策略版本；回答模型写入 `model_selection.fallback_used / answered_model_name`。能力报告按「手动 > 实测 > LiteLLM > 推测」合并，费用写入 `model_service_events.cost_usd`。完整说明、离线与依赖锁定、升级和回滚见 [model-layer.md](model-layer.md)。
+
+
+模型设置主界面显示当前模型与连接列表；配置弹窗集中填写 Base URL、API Key 与模型名称，支持目录选择及手动填写，首次读取完整配置后才允许编辑。修改为草稿，单次点击“保存并应用”才保存，并从下一次模型调用生效。保存期间禁用字段及取消操作，空密钥继续沿用已保存密钥；配置保存成功与连接检测失败分别反馈。接口协议保留在配置弹窗的折叠选项中；阶段路由、额度、能力探测及调用监控保留在页面默认折叠的高级设置，已有显式协议不被自动重置，能力读取/探测仅使用已保存连接。`features/settings/useModelDiscovery.ts` 取消旧请求并用序号屏蔽迟到结果；更改地址、密钥或协议清空目录，更改模型名称保留已加载目录并使旧请求失效。目录失败可重试，具体错误只在高级设置展示。详情见 [model-settings-qa.md](model-settings-qa.md)。
 
 联网研究默认关闭（`WEB_RESEARCH_ENABLED`）。即使服务端开启，`search_public_web` 仍要求本轮用户打开联网开关。
 
@@ -251,7 +302,7 @@ Base URL 视为对应协议的 API 根地址：显式 OpenAI 兼容客户端不�
 | 信号 | 位置 | 注意 |
 | --- | --- | --- |
 | 工具审计 | `observability/tool_call_audit.py` | 只记元数据（名称、状态、延迟、错误码），不存参数和结果；保留 30 天 |
-| 模型监控 | `observability/model_monitor.py` | 调用成败与用量 |
+| 模型监控 | `observability/model_monitor.py` | 调用成败、用量、估算费用（`cost_usd`）、模型层（`backend`）与备用回答（`fallback_from_profile_id`） |
 | 运营快照 | `agent/operations.py` + 设置页看板 | 路由分布、工具成功率、延迟 |
 | 运行事件 | `agent_execution_runs` / `agent_run_steps` | 任务、计划步骤与工具完成 |
 
@@ -278,7 +329,7 @@ Base URL 视为对应协议的 API 根地址：显式 OpenAI 兼容客户端不�
 cd backend && .venv/bin/python -m pytest tests -q
 ```
 
-路由、工具面、引用校验、模型重试、写工具不重放与 `ask_user` 均使用模拟模型和网络结果，不调用真实模型。离线评测保留退役请求作为负向契约，确保不会恢复旧工具；当前路由、计划、事实和 ask_user 契约纳入后端测试。可选仍可用 Promptfoo 做人工对比：
+路由、工具面、引用校验、模型重试、写工具不重放与 `ask_user` 均使用模拟模型和网络结果，不调用真实模型。旧测试固定 `DENGDENG_MODEL_BACKEND=native`（`tests/conftest.py`）；LiteLLM 层测试（`test_litellm_*.py`）用 `tests/fake_llm_server.py` 在 127.0.0.1 上模拟五种协议的真实报文。离线评测保留退役请求作为负向契约，确保不会恢复旧工具；当前路由、计划、事实和 ask_user 契约纳入后端测试。可选仍可用 Promptfoo 做人工对比：
 
 ```bash
 cd evals && PROMPTFOO_PYTHON=../backend/.venv/bin/python npx --yes promptfoo@0.118.0 eval --no-cache
@@ -288,7 +339,7 @@ cd evals && PROMPTFOO_PYTHON=../backend/.venv/bin/python npx --yes promptfoo@0.1
 
 ### 对话展示方式
 
-普通页面不再显示常驻对话栏或右下角悬浮按钮；内容创作通过 AI 工作区中的起草入口完成。`#/chat` 使用完整主内容区域。同一 ChatWorkspace 保持挂载，收起不清空草稿、不取消任务，两种展示共享当前会话。
+普通页面不再显示常驻对话栏或右下角悬浮按钮；内容创作通过 AI 工作区中的起草入口完成。`#/chat` 使用完整主内容区域，仅显示对话自身的标题，不再增加重复的模块标题与欢迎语；浮动面板保留面板页头和关闭、独立页面入口。同一 ChatWorkspace 保持挂载，收起不清空草稿、不取消任务，两种展示共享当前会话。
 
 首次启动尚无账号时，只初始化认证库，跳过业务任务恢复；创建用户工作区后才初始化业务表，后续启动按用户工作区恢复中断任务。
 
@@ -312,3 +363,33 @@ macOS 单机网页和桌面的新密钥写入 Keychain；环境模式只读管�
 - 当前评测与测试使用合成资料并模拟外部模型/搜索。真实后端 E2E 保留账户、API、SQLite、五工具与 runtime 执行，只替换模型生成。桌面 smoke 使用打包可执行文件与临时数据；原生窗口交互、真实模型质量、外部搜索服务和未验证平台仍需发布验证。
 
 这些兼容项的退役条件记录在 `docs/refactoring-plan.md`；删除历史数据或结束旧版本升级支持需另行明确范围。
+
+### v28 模型运行绑定迁移
+
+曾有 v27 工作区在模型绑定字段引入前已标记升级完成。v28 显式重新执行幂等的增量字段/表迁移，补齐 `agent_execution_runs.model_selection_json` 等模型元数据。旧运行的模型绑定默认为空 JSON，不虚构历史模型；v27 升级不重建资料索引，历史消息和运行记录保留。版本号必须随持久化结构变更递增。
+
+### 聊天成果归档边界
+
+`chat/artifacts.py` 提供持久化回答、闭合代码围栏和原附件的只读清单，以及用户主动调用的 `save-to-library` 接口。它不注册 Agent 工具，保留 classify/plan/execute 角色与旧恢复快照；Grok 文字生图通过下述独立分支接入。存档默认 enabled=false，只在用户勾选且有可读正文时索引脱敏文本，生成来源和未完成状态保存在 metadata 中；不自动确认知识。保存验证账户、终态、消息/资源快照与原件哈希，归档副本不随聊天回退/删除而删除。接口和验证见 [实施记录](chat-results-implementation.md)。
+
+### v29 Grok 文字生图
+
+明确的当轮文字生图指令进入 Grok 4.7 原生 Responses 分支，只使用冻结 execute 模型；文档、旧消息和询问生图原理不授权原生工具。非 Grok 4.7 或手动选择其他协议时在请求前失败，不能把文字回答当成已生图。`ModelRequest.image_generation` 与 function tools 分开，原生请求仅允许 action=generate；不改变三个模型阶段，不与本地搜索工具混用。
+
+`ModelResponse.images` 中 Base64 是排除序列化且隐藏 repr 的 SecretStr；`output_blocks` 保留文本/图片顺序。最终图片由 `chat/image_assets.py` 校验并存入账户本地目录，运行/消息/SSE 只返回资产引用；没有文字的图片结果仍为合法完成。过程使用 image_generation 事件，输入框不新增重复状态区。
+
+v29 新增 chat_image_operations/chat_image_assets，保留旧表、消息与索引。操作以 runId 固定模型档案/连接版本，请求前提交 started；同操作完成重放复用结果，未知执行状态阻止自动重发，取消/超时/协议不支持不自动切换协议或重试。消息和图片关联在一个事务内保存；回退清理已绑定图片但保留尝试标记，删对话清理聊天资源，文件库图片副本独立保留。真实服务需要开放 image_generation；目录识别、vision 和客户端工具能力不证明生图可用。首期不支持图像编辑、联网后生图或落盘失败后的结果找回，详见 [实施记录](chat-results-implementation.md)。
+
+### 生图能力与执行错误隔离
+
+模型档案的 `capabilities.image_generation` 独立于 vision、tools、streaming，旧档案默认 unknown。冻结 execute 路由在发起请求、写入生图尝试标记前检查该项；明确 unsupported 时直接返回 `image_generation_unsupported`，不调用外部模型，普通文本任务不检查该能力。PATCH 模型档案可更新能力状态（需要 expected_revision），部分能力更新保留其他项。更换 API Key、网关地址、协议或模型 ID 后，旧生图状态恢复 unknown，并保存新档案版本；旧运行恢复仍读取其原版本。这里没有通过目录名称推断或自动计费探测生图能力。
+
+未被阻止的原生请求使用独立生图提示词、唯一 image_generation/action=generate 工具及 tool_choice=required。服务只返回文字时报告 `image_generation_not_executed`，保留真实 token 用量与响应 ID，不自动补发或切换接口；图片落盘之前不在消息区展示可能错误地声称成功的流式文字。
+
+持久化终态负责对话内的错误和重试入口。前端收到终态后忽略后续重复 RunError，不再创建输入框错误横幅，也不把生图/搜索错误当作整个模型不可用；没有持久化终态的连接中断仍保留输入、附件、搜索选项和同一 runId 重放入口。纯错误文字不提供成果清单；失败任务确有部分正文或图片时仍可存档并注明未完成。
+
+## 待合并分支整合（2026-10-13）
+
+数据库统一升级至 v30（`unified_models_and_chat_assets`），兼容聊天成果分支与 LiteLLM 分支各自的 v29 布局。升级前备份至 `.upgrade-backups/before-schema-v30/`，保留历史消息、模型绑定与原迁移名称；已为两种 v29 和 v27/v28 的合成工作区快照补充升级、完整性与重复初始化测试。
+
+阶段适配器沿用所属档案的推理强度、实际协议与计价参数；运行时缓存同时包含凭证指纹、阶段策略与备用策略版本。生图请求经过 LiteLLM 包装时委托原生 Responses 适配器，绕过 Completion Router 和可选参数重试，保留图片输出和进度事件。当前用户连接已明确不支持生图，仍在请求前拦截，不因文本模型可用而推断生图可用。模型推理与工具过程共用对话内折叠区，备用回答仅补充实际回答模型提示，不恢复输入区重复状态。

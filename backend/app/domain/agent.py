@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
+
+from ..search_options import WebSearchOptions
 
 
 class ToolDefinition(BaseModel):
@@ -52,6 +54,21 @@ class ModelRequest(BaseModel):
     tools: list[ToolDefinition] = Field(default_factory=list)
     tool_choice: Literal["auto", "required", "none"] = "auto"
     parameters: dict[str, float | int] = Field(default_factory=dict)
+    image_generation: bool = False
+    # Optional per-profile reasoning effort for providers that support it.
+    reasoning_effort: Literal["low", "medium", "high"] | None = None
+    # Structured output (OpenAI ``response_format`` shape, e.g. json_schema);
+    # translated per protocol by the model layer.
+    response_format: dict[str, Any] | None = None
+    # Mark the static system prompt cacheable where the protocol needs an
+    # explicit marker (Anthropic); other providers cache automatically.
+    prompt_cache: bool = True
+
+
+class ModelImageOutput(BaseModel):
+    item_id: str
+    # Binary results are transient, never part of a checkpoint, log or SSE payload.
+    base64_data: SecretStr = Field(exclude=True, repr=False)
 
 
 class ModelResponse(BaseModel):
@@ -59,10 +76,12 @@ class ModelResponse(BaseModel):
     tool_calls: list[ToolCall] = Field(default_factory=list)
     usage: ModelUsage | None = None
     provider_metadata: dict[str, Any] = Field(default_factory=dict)
+    images: list[ModelImageOutput] = Field(default_factory=list, exclude=True, repr=False)
+    output_blocks: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ModelStreamEvent(BaseModel):
-    type: Literal["text_delta", "completed"]
+    type: Literal["text_delta", "reasoning_delta", "completed", "image_progress"]
     delta: str = ""
     response: ModelResponse | None = None
 
@@ -111,6 +130,7 @@ class AgentClarification(BaseModel):
 class AgentRunSnapshot(BaseModel):
     # Internal immutable identity only. Credentials are resolved from versioned storage.
     model_selection: dict[str, Any] = Field(default_factory=dict)
+    web_search_options: WebSearchOptions | None = None
     resume_mode: Literal["waiting_user", "checkpoint"] = "waiting_user"
     route_kind: str
     needs_plan: bool
@@ -133,12 +153,17 @@ class AgentRunResult(BaseModel):
     platform: str
     rounds: int
     model_selection: dict[str, Any] = Field(default_factory=dict)
+    assets: list[dict[str, Any]] = Field(default_factory=list)
+    output_blocks: list[dict[str, Any]] = Field(default_factory=list)
     status: Literal["done", "failed", "waiting_user", "cancelled"] = "done"
     error: ToolError | None = None
     events: list[ToolEvent] = Field(default_factory=list)
     plan: AgentPlan | None = None
     snapshot: AgentRunSnapshot | None = None
     stop_reason: str = ""
+    started_at: str | None = None
+    completed_at: str | None = None
+    duration_ms: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def infer_stop_reason(self) -> "AgentRunResult":
@@ -163,6 +188,7 @@ class AgentStreamEvent(BaseModel):
         "run_started",
         "text_reset",
         "text_delta",
+        "reasoning_delta",
         "agent_event",
         "waiting_user",
         "completed",

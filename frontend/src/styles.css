@@ -690,7 +690,6 @@ button:active:not(:disabled) { transform: translateY(0) scale(.98); }
 
 @media (max-width: 600px) {
   .composer-shortcuts button { padding-inline: 8px; }
-  .composer-shortcuts button span { display: none; }
 }
 
 /* Task-first interaction pass: clearer hierarchy, touch-safe actions and a compact mobile shell. */

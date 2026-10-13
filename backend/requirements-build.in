@@ -1,0 +1,5 @@
+# Desktop build tool only. Installed on top of requirements-lock.txt so the
+# environment PyInstaller bundles from holds runtime packages + PyInstaller,
+# never pytest or other dev tools.
+-c requirements-dev-lock.txt
+pyinstaller==6.16.0

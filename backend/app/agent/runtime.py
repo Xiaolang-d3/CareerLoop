@@ -26,9 +26,11 @@ from ..domain import (
     ToolResult,
 )
 from ..models import ModelProviderError, ModelProviderRegistry
+from ..search_options import WebSearchOptions, legacy_web_search_mode, web_search_options_from_payload
 from ..tools import ToolContext, ToolRegistry
 from ..observability.model_context import model_call_scope
 from .model_binding import internal_model_selection, is_bound_selection, is_legacy_selection, selection_identity
+from .model_router import ModelRouter
 from .completion import validate_completion
 from .orchestration import (
     INTERRUPT_TOOLS,
@@ -135,6 +137,7 @@ class AgentRuntime:
         max_tool_retries: int = 1,
         run_store: AgentRunStore | None = None,
         model_selection: dict[str, Any] | None = None,
+        model_router: ModelRouter | None = None,
     ) -> None:
         self._models = models
         self._tools = tools
@@ -145,8 +148,10 @@ class AgentRuntime:
         self._max_tool_retries = max(0, max_tool_retries)
         self._run_store = run_store
         self._model_selection = internal_model_selection(model_selection)
+        self._model_router = model_router
         self._selection_context: ContextVar[dict[str, Any]] = ContextVar(f"selection-{id(self)}", default={})
         self._run_context: ContextVar[str] = ContextVar(f"run-{id(self)}", default="")
+        self._search_context: ContextVar[WebSearchOptions | None] = ContextVar(f"search-{id(self)}", default=None)
         self._tool_executor = ToolExecutor(tools, tool_timeout_seconds)
 
     @property
@@ -159,10 +164,28 @@ class AgentRuntime:
     def _validate_model_binding(self, selection: dict[str, Any]) -> None:
         if not is_bound_selection(selection) and not is_legacy_selection(selection):
             raise ModelProviderError("model_selection_unavailable", "运行的模型绑定信息不完整，无法恢复")
-        if is_bound_selection(selection) and selection_identity(selection) != selection_identity(self._model_selection):
+        if is_bound_selection(selection) and (
+            selection_identity(selection) != selection_identity(self._model_selection)
+            or (selection.get("credential_fingerprint") and
+                selection["credential_fingerprint"] != self._model_selection.get("credential_fingerprint"))
+        ):
             raise ModelProviderError(
                 "model_selection_unavailable", "运行绑定的模型版本与当前执行器不一致，请使用原配置版本恢复",
             )
+        stored_stages = selection.get("stage_selections")
+        if is_bound_selection(selection) and stored_stages is None and self._model_selection.get("stage_selections"):
+            raise ModelProviderError("model_selection_unavailable", "运行的阶段模型绑定缺失，无法恢复")
+        if stored_stages is not None:
+            expected_stages = self._model_selection.get("stage_selections", {})
+            if (set(stored_stages) != set(expected_stages)
+                or selection.get("policy_version") != self._model_selection.get("policy_version")
+                or selection.get("strict_capabilities", False) != self._model_selection.get("strict_capabilities", False)):
+                raise ModelProviderError("model_selection_unavailable", "运行的阶段路由与原配置不一致，无法恢复")
+            for stage, stored in stored_stages.items():
+                expected = expected_stages[stage]
+                if (selection_identity(stored) != selection_identity(expected)
+                    or (stored.get("credential_fingerprint") and stored["credential_fingerprint"] != expected.get("credential_fingerprint"))):
+                    raise ModelProviderError("model_selection_unavailable", "运行的阶段模型版本不一致，无法恢复")
 
     async def run(
         self,
@@ -175,6 +198,7 @@ class AgentRuntime:
         image_urls: list[str] | None = None,
         routing_content: str | None = None,
         web_search_mode: str = "auto",
+        web_search_options: WebSearchOptions | None = None,
         resume: AgentRunSnapshot | None = None,
         run_id: str | None = None,
         model_selection: dict[str, Any] | None = None,
@@ -192,6 +216,26 @@ class AgentRuntime:
         ):
             # Do not revive retired career tools from a persisted checkpoint.
             resume = None
+        options = web_search_options
+        if resume is not None:
+            inherited = resume.web_search_options
+            if inherited is None:
+                original_user = next((message for message in reversed(resume.messages) if message.role == "user"), None)
+                inherited = web_search_options_from_payload(original_user.payload if original_user is not None else None)
+            if resume.resume_mode == "checkpoint" or options is None:
+                options = inherited
+            elif options != inherited:
+                # A confirmation with changed consent is a fresh plan with fresh
+                # tool permissions; completed context is preserved for the model.
+                original_content = "\n".join(message.content for message in resume.messages if message.role == "user")
+                history = [*resume.messages]
+                routing_content = original_content + "\n" + user_content
+                resume = None
+        if options is not None:
+            web_search_mode = legacy_web_search_mode(options)
+            routing_content = (routing_content or user_content).replace("[系统可信开关：本轮允许联网搜索]", "")
+            if options.enabled:
+                routing_content += "\n[系统可信开关：本轮允许联网搜索]"
         selection = internal_model_selection(model_selection or self._model_selection)
         if resume is not None:
             # A legacy checkpoint has no evidence about its previous model.
@@ -204,8 +248,15 @@ class AgentRuntime:
                 **{key: value for key, value in selection.items()
                    if key in {"selection_reason", "policy_version", "capability_status", "stage_selections"}},
             }
+            if self._model_selection.get("stage_selections"):
+                selection["stage_selections"] = {
+                    stage: {**value, **{key: item for key, item in selection.get("stage_selections", {}).get(stage, {}).items()
+                                       if key in {"selection_reason", "capability_status"}}}
+                    for stage, value in self._model_selection["stage_selections"].items()
+                }
         selection_token = self._selection_context.set(selection)
         run_token = self._run_context.set(str(run_id or ""))
+        search_token = self._search_context.set(options)
         try:
             result = await self._run(
                 user_content, platform_name=platform_name, history=history,
@@ -218,6 +269,7 @@ class AgentRuntime:
         finally:
             self._run_context.reset(run_token)
             self._selection_context.reset(selection_token)
+            self._search_context.reset(search_token)
 
     async def _run(
         self,
@@ -235,6 +287,9 @@ class AgentRuntime:
     ) -> AgentRunResult:
         provider = self._models.get(self._model_provider)
         selected_platform = platform_name or self._platform_name
+        from ..chat.image_assets import image_generation_intent
+        if resume is None and image_generation_intent(user_content):
+            return await self._generate_image_run(provider, user_content, selected_platform, conversation_id, event_callback, run_id, image_urls)
         if resume is not None:
             return await self._resume_run(
                 provider=provider,
@@ -250,6 +305,9 @@ class AgentRuntime:
             )
         routing_text = routing_content or user_content
         available_tools = set(self._tools.names())
+        options = self._search_context.get()
+        if options is not None and not options.enabled:
+            available_tools -= WEB_RESEARCH_TOOLS
         tool_specs = {spec.name: spec for spec in self._tools.specs()}
         route = route_task(
             routing_text,
@@ -271,6 +329,9 @@ class AgentRuntime:
                     classified,
                     tool_specs=tool_specs,
                 )
+            except ModelProviderError as exc:
+                if exc.code in {"model_capability_unavailable", "model_context_limit", "model_not_configured"}:
+                    raise
             except Exception:
                 pass
         plan = None
@@ -604,6 +665,7 @@ class AgentRuntime:
     ) -> AgentRunSnapshot:
         return AgentRunSnapshot(
             model_selection=self._current_model_selection(),
+            web_search_options=self._search_context.get(),
             resume_mode=resume_mode,
             route_kind=route.kind,
             needs_plan=route.needs_plan,
@@ -938,13 +1000,23 @@ class AgentRuntime:
                     events=events,
                     plan=plan,
                 )
+            assistant_payload: dict[str, Any] = {
+                "tool_calls": [call.model_dump(mode="json") for call in response.tool_calls]
+            }
+            reasoning_items = response.provider_metadata.get("responses_reasoning_items")
+            if isinstance(reasoning_items, list) and reasoning_items:
+                # Replayed to Responses API on the next turn (store=False keeps nothing upstream).
+                assistant_payload["responses_reasoning_items"] = reasoning_items
+            thinking_blocks = response.provider_metadata.get("thinking_blocks")
+            if isinstance(thinking_blocks, list) and thinking_blocks:
+                # Anthropic requires the signed thinking blocks back with the
+                # tool results to continue extended thinking across tool turns.
+                assistant_payload["thinking_blocks"] = thinking_blocks
             messages.append(
                 AgentMessage(
                     role="assistant",
                     content=response.content,
-                    payload={
-                        "tool_calls": [call.model_dump(mode="json") for call in response.tool_calls]
-                    },
+                    payload=assistant_payload,
                 )
             )
             round_error: ToolError | None = None
@@ -1024,6 +1096,7 @@ class AgentRuntime:
                             task_id=task_id,
                             user_content=user_content,
                             web_search_mode=web_search_mode,
+                            web_search_options=self._search_context.get(),
                         ),
                         round_number=round_number,
                         conversation_id=conversation_id,
@@ -1237,6 +1310,14 @@ class AgentRuntime:
                 if decision.result is None:
                     raise RuntimeError("持久化工具决策缺少结果")
                 return decision.result
+        if (tool_call.name in WEB_RESEARCH_TOOLS and context.web_search_options is not None
+                and not context.web_search_options.enabled):
+            message = "本轮未获得联网许可，不能新增搜索；请开启联网后重新发送。"
+            blocked = ToolResult(ok=False, status="blocked", message=message,
+                                 error=ToolError(code="web_search_not_allowed", message=message))
+            if self._run_store is not None and run_id is not None and fingerprint is not None:
+                self._run_store.record_tool_result(run_id, fingerprint, blocked)
+            return blocked
         for retry_number in range(self._max_tool_retries + 1):
             result = await self._await_with_cancellation(
                 self._tool_executor.execute(
@@ -1455,6 +1536,7 @@ class AgentRuntime:
         image_urls: list[str] | None = None,
         routing_content: str | None = None,
         web_search_mode: str = "auto",
+        web_search_options: WebSearchOptions | None = None,
         resume: AgentRunSnapshot | None = None,
         run_id: str | None = None,
         model_selection: dict[str, Any] | None = None,
@@ -1462,6 +1544,7 @@ class AgentRuntime:
         execution_id = run_id or f"agent-{uuid.uuid4().hex}"
         effective_content = user_content
         effective_resume = resume
+        effective_options = web_search_options
         effective_selection = internal_model_selection(model_selection or self._model_selection)
         if resume is not None:
             effective_selection = internal_model_selection(resume.model_selection)
@@ -1479,6 +1562,8 @@ class AgentRuntime:
             else:
                 if existing is not None:
                     effective_selection = internal_model_selection(existing.get("model_selection"))
+                    # Reconnecting a run never accepts current composer values.
+                    effective_options = existing.get("web_search_options") or WebSearchOptions()
                 if (
                     existing is not None
                     and existing["status"] == "interrupted"
@@ -1486,7 +1571,8 @@ class AgentRuntime:
                     effective_content = str(existing.get("user_content") or user_content)
                     if existing.get("checkpoint") is not None:
                         effective_resume = existing["checkpoint"].model_copy(
-                            update={"resume_mode": "checkpoint"}
+                            update={"resume_mode": "checkpoint",
+                                    "web_search_options": effective_options}
                         )
                 self._run_store.start_run(
                     execution_id,
@@ -1494,6 +1580,7 @@ class AgentRuntime:
                     task_id=task_id,
                     user_content=effective_content,
                     model_selection=effective_selection,
+                    web_search_options=effective_options,
                 )
         queue: asyncio.Queue[AgentStreamEvent | None] = asyncio.Queue()
 
@@ -1520,6 +1607,7 @@ class AgentRuntime:
                         image_urls=image_urls,
                         routing_content=routing_content,
                         web_search_mode=web_search_mode,
+                        web_search_options=effective_options,
                         resume=effective_resume,
                         run_id=execution_id,
                         model_selection=effective_selection,
@@ -1576,11 +1664,67 @@ class AgentRuntime:
             await asyncio.gather(task, return_exceptions=True)
 
     async def _generate_for_stage(self, provider, stage: str, request: ModelRequest) -> ModelResponse:
-        with model_call_scope(self._current_model_selection(), self._run_context.get(), stage=stage):
+        provider, selection = self._select_stage_model(provider, stage, request)
+        with model_call_scope(selection, self._run_context.get(), stage=stage):
             return await provider.generate(request)
 
+    def _select_stage_model(self, provider, stage: str, request: ModelRequest, *, streaming: bool = False):
+        if self._model_router is None:
+            return provider, self._current_model_selection()
+        provider, selection = self._model_router.select(stage, request, streaming=streaming)
+        current = self._current_model_selection()
+        current["stage_selections"][stage] = selection
+        if stage == "execute":
+            current["capability_status"] = selection["capability_status"]
+        self._selection_context.set(current)
+        return provider, selection
+
+    async def _generate_image_run(self, provider, prompt, platform, conversation_id, callback, run_id, image_urls) -> AgentRunResult:
+        from ..chat.image_assets import begin_generation, persist_images
+        from ..observability.model_context import public_model_selection
+
+        events: list[ToolEvent] = []
+        selection = self._current_model_selection()
+        execute = selection.get("stage_selections", {}).get("execute") or selection
+        operation_id = run_id or f"image-{uuid.uuid4().hex}"
+        try:
+            if not re.match(r"^grok-4\.7(?:[-.]|$)", str(execute.get("model_name", "")), re.I):
+                raise ModelProviderError("image_model_required", "当前生图接入支持 Grok 4.7；请在输入框选择该模型，并确认服务开放生图工具")
+            if execute.get("model_protocol", "auto") not in {"auto", "responses"}:
+                raise ModelProviderError("image_generation_protocol", "Grok 生图需要 Responses 接口，请在模型配置中使用自动识别或 Responses")
+            if conversation_id is None:
+                raise ModelProviderError("image_conversation_required", "请在聊天对话中生成图片")
+            if image_urls:
+                raise ModelProviderError("image_edit_not_supported", "当前支持文字生图；基于附件的图片编辑尚未接入")
+            image_request = ModelRequest(messages=[AgentMessage(role="user", content=prompt)], image_generation=True)
+            # Reject a known unsupported capability before marking a paid
+            # attempt as started and before any provider call.
+            self._select_stage_model(provider, "execute", image_request, streaming=callback is not None)
+            cached = begin_generation(operation_id, conversation_id, public_model_selection(selection))
+            if cached is None:
+                event = ToolEvent(round=1, tool_call_id=f"image-{operation_id}", tool_name="image_generation", status="running", message="正在生成图片")
+                events.append(event)
+                await self._publish(callback, AgentStreamEvent(type="agent_event", event=event))
+                # Native generation may have completed upstream when a transport
+                # fails. Neither runtime retries nor protocol fallback are safe.
+                response = await self._await_with_cancellation(self._generate_response(provider, image_request, callback), run_id)
+                cached = persist_images(operation_id, response, str(execute["model_name"]))
+            event = ToolEvent(round=1, tool_call_id=f"image-{operation_id}", tool_name="image_generation", status="done", message=f"已生成 {len(cached['assets'])} 张图片")
+            events.append(event)
+            await self._publish(callback, AgentStreamEvent(type="agent_event", event=event))
+            return AgentRunResult(**cached, provider=self._model_provider, platform=platform, rounds=1, events=events)
+        except _RunCancellationRequested:
+            return self._cancelled_run_result(platform, 1, events, None)
+        except ModelProviderError as exc:
+            event = ToolEvent(round=1, tool_call_id=f"image-{operation_id}", tool_name="image_generation", status="failed", message=str(exc))
+            events.append(event)
+            await self._publish(callback, AgentStreamEvent(type="agent_event", event=event))
+            return AgentRunResult(content=str(exc), provider=self._model_provider, platform=platform, rounds=1,
+                                  status="failed", error=ToolError(code=exc.code, message=str(exc), retryable=False), events=events)
+
     async def _generate_response(self, provider, request: ModelRequest, event_callback: StreamCallback | None) -> ModelResponse:
-        with model_call_scope(self._current_model_selection(), self._run_context.get(), stage="execute"):
+        provider, selection = self._select_stage_model(provider, "execute", request, streaming=event_callback is not None)
+        with model_call_scope(selection, self._run_context.get(), stage="execute"):
             return await self._generate_response_unscoped(provider, request, event_callback)
 
     async def _generate_response_unscoped(
@@ -1592,7 +1736,7 @@ class AgentRuntime:
         stream = getattr(provider, "stream", None)
         if event_callback is None or not callable(stream):
             response = await provider.generate(request)
-            if event_callback is not None and response.content:
+            if event_callback is not None and response.content and not request.image_generation:
                 await self._publish(
                     event_callback,
                     AgentStreamEvent(type="text_delta", delta=response.content),
@@ -1600,21 +1744,62 @@ class AgentRuntime:
             return response
 
         response: ModelResponse | None = None
+        reasoning_parts: list[str] = []
         async for event in stream(request):
-            if event.type == "text_delta" and event.delta:
+            if event.type == "text_delta" and event.delta and not request.image_generation:
                 await self._publish(
                     event_callback,
                     AgentStreamEvent(type="text_delta", delta=event.delta),
                 )
+            elif event.type == "reasoning_delta" and event.delta:
+                reasoning_parts.append(event.delta)
+                await self._publish(
+                    event_callback,
+                    AgentStreamEvent(type="reasoning_delta", delta=event.delta),
+                )
             elif event.type == "completed":
                 response = event.response
+            elif event.type == "image_progress" and request.image_generation:
+                await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=ToolEvent(
+                    round=1, tool_call_id=f"image-{self._run_context.get()}", tool_name="image_generation",
+                    status="running", message="正在生成图片" if event.delta != "completed" else "正在保存图片",
+                )))
         if response is None:
             raise ModelProviderError(
                 "empty_stream",
                 "模型流已结束，但没有返回完整响应",
                 retryable=True,
             )
+        if reasoning_parts:
+            metadata = dict(response.provider_metadata)
+            metadata["reasoning_summary"] = "".join(reasoning_parts).strip() or metadata.get("reasoning_summary", "")
+            metadata["reasoning_streamed"] = True
+            response = response.model_copy(update={"provider_metadata": metadata})
         return response
+
+    async def _record_reasoning(
+        self,
+        response: ModelResponse,
+        event_callback: StreamCallback | None,
+        *,
+        events: list[ToolEvent],
+        round_number: int,
+    ) -> None:
+        """Keep the model's reasoning summary visible in the saved run timeline."""
+        summary = str(response.provider_metadata.get("reasoning_summary") or "").strip()
+        if not summary:
+            return
+        event = ToolEvent(
+            round=round_number,
+            tool_call_id=f"model-reasoning-{round_number}",
+            tool_name="agent_thinking",
+            status="done",
+            message=summary[:4000],
+            data={"source": "model_reasoning"},
+        )
+        events.append(event)
+        if not response.provider_metadata.get("reasoning_streamed"):
+            await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
 
     async def _generate_response_with_retry(
         self,
@@ -1647,6 +1832,10 @@ class AgentRuntime:
                         event_callback,
                         AgentStreamEvent(type="agent_event", event=event),
                     )
+                await self._record_reasoning(
+                    response, event_callback, events=events, round_number=round_number,
+                )
+                self._note_answering_model(response)
                 return response
             except ModelProviderError as exc:
                 if not exc.retryable or retry_number >= self._max_model_retries:
@@ -1670,6 +1859,17 @@ class AgentRuntime:
                 )
                 await self._publish(event_callback, AgentStreamEvent(type="text_reset"))
         raise AssertionError("unreachable model retry state")
+
+    def _note_answering_model(self, response: ModelResponse) -> None:
+        """Record on the run's model selection when a router fallback answered."""
+        metadata = response.provider_metadata
+        selection = self._selection_context.get()
+        if not isinstance(selection, dict) or not selection or not metadata.get("routed"):
+            return
+        if metadata.get("fallback_from_profile_id"):
+            selection["fallback_used"] = True
+            selection["answered_profile_id"] = str(metadata.get("answered_profile_id") or "")
+            selection["answered_model_name"] = str(metadata.get("answered_model_name") or "")
 
     @staticmethod
     async def _publish(

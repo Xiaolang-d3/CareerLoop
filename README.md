@@ -20,7 +20,7 @@
 - 前端：React 19、TypeScript、Vite、Vitest、Playwright
 - 后端：Python 3.11+、FastAPI、Pydantic、OpenAI Python SDK
 - 数据：SQLite、sqlite-vec、本地检索（可选 FastEmbed 向量）、本地附件；可选 MinIO
-- 可选联网搜索：独立部署的 [AgentSearch](https://github.com/brcrusoe72/agent-search) 服务
+- 可选联网搜索：[Tavily](https://docs.tavily.com/documentation/api-reference/endpoint/search) API 或独立部署的 [AgentSearch](https://github.com/brcrusoe72/agent-search) 服务
 
 ## 运行要求
 
@@ -41,6 +41,7 @@ CareerLoop/
 │   ├── .env.example
 │   ├── requirements-dev.txt
 │   ├── requirements.txt
+│   ├── requirements-lock.txt # 运行时依赖的哈希锁定文件；开发用 requirements-dev-lock.txt，桌面构建加 requirements-build-lock.txt（见 docs/model-layer.md）
 │   └── requirements-optional.txt # 增强解析、语义向量与 OCR
 ├── frontend/
 │   ├── src/
@@ -101,7 +102,7 @@ loopback sidecar 运行；每次启动使用动态端口，并在显示窗口前
 ```bash
 cd desktop
 npm install
-../backend/.venv/bin/pip install -r ../backend/requirements-dev.txt
+../backend/scripts/install_deps.sh ../backend/.venv dev   # 运行时 + 测试依赖，按哈希安装
 npm run package-sidecar
 ../backend/.venv/bin/python scripts/smoke-sidecar.py
 npm run build
@@ -131,7 +132,21 @@ cd backend
 
 ## 可选：启用联网搜索
 
-灯灯默认不依赖联网搜索即可运行。对话中的公司研究和公开网页搜索需要额外部署 AgentSearch；`scripts/dev.sh` 不会自动启动它。
+灯灯默认不依赖联网搜索即可运行。启用后，可直接使用 Tavily API，也可连接独立部署的 AgentSearch。
+
+使用 Tavily 时，在本地 `backend/.env` 配置并重启后端：
+
+```dotenv
+WEB_RESEARCH_ENABLED=true
+WEB_SEARCH_PROVIDER=auto
+TAVILY_API_KEY=你的搜索密钥
+```
+
+`auto` 会在配置了 `TAVILY_API_KEY` 时选择 Tavily，无需启动本地 AgentSearch。也可用 `WEB_SEARCH_PROVIDER=tavily` / `agent_search` 显式指定服务；指定 Tavily 却没有密钥时会提示配置错误。模型 API Key 与搜索 API Key 分开使用。密钥只由本地后端读取，不返回浏览器。网络、鉴权或额度错误不会自动切换到另一个服务。
+
+Tavily 使用 basic 搜索，新闻查询使用 news 类别，公司及普通查询使用 general 类别。优先读取搜索返回的正文，只对前四个结果中缺失正文的网页批量补充提取；提取失败保留摘要并标明原因，回答仍须引用来源。
+
+选择 AgentSearch 时，需要单独启动它；`scripts/dev.sh` 不会自动启动它。
 
 灯灯会使用 `general`、`news` 和 `company` 搜索策略。对话输入框可在“自动来源”“技术来源”和“通用来源”之间选择；技术来源会优先检索官方文档、GitHub 与 Stack Overflow。启用前请确认所部署的 AgentSearch 版本支持：
 
@@ -146,6 +161,7 @@ curl "http://127.0.0.1:3939/search?q=OpenAI&count=2&mode=company"
 
 ```dotenv
 AGENT_SEARCH_BASE_URL=http://127.0.0.1:3939
+WEB_SEARCH_PROVIDER=agent_search
 # AGENT_SEARCH_TOKEN=
 WEB_RESEARCH_ENABLED=true
 ```
@@ -158,7 +174,7 @@ WEB_RESEARCH_ENABLED=true
 
 ```bash
 cd backend
-.venv/bin/python -m pip install -r requirements-dev.txt
+scripts/install_deps.sh .venv dev   # 运行时 + 测试依赖，按哈希安装（部署用 runtime，只装运行时锁）
 ```
 
 ```bash

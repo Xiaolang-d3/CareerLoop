@@ -52,6 +52,16 @@ async function preview() {
 }
 describe("file library", () => {
   afterEach(cleanup);
+  it("opens a saved result directly and consumes the initial source once", async () => {
+    const p = props(), consumed = vi.fn();
+    const view = render(<LibraryPage {...p} initialSourceId={7} onInitialSourceConsumed={consumed} />);
+    await screen.findByText("问题 reader@example.com");
+    expect(screen.getByRole("button", { name: "返回文件库" })).toBeInTheDocument();
+    expect(p.onLoadSource).toHaveBeenCalledWith(7);
+    expect(consumed).toHaveBeenCalledOnce();
+    view.rerender(<LibraryPage {...p} initialSourceId={null} onInitialSourceConsumed={consumed} />);
+    expect(p.onLoadSource).toHaveBeenCalledOnce();
+  });
   it("keeps categories in the module and protects AI text", async () => {
     const p = props();
     render(<LibraryPage {...p} />);

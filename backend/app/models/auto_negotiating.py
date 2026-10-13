@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from hashlib import sha256
 from typing import Any
 
@@ -9,7 +9,7 @@ from ..model_protocol import normalize_model_protocol, resolve_model_protocol
 from .base import ModelProviderError
 
 
-FALLBACK_ERROR_CODES = frozenset({"route_not_found", "invalid_provider_response"})
+FALLBACK_ERROR_CODES = frozenset({"route_not_found", "invalid_provider_response", "protocol_unsupported"})
 _SUCCESSFUL_PROTOCOLS: dict[str, str] = {}
 
 
@@ -47,15 +47,29 @@ def get_negotiated_model_protocol(
 class AutoNegotiatingModelProvider:
     """Try a native protocol first and fall back only for proven route mismatches."""
 
-    def __init__(self, providers: list[tuple[str, Any]], cache_key: str) -> None:
+    def __init__(
+        self,
+        providers: list[tuple[str, Any]],
+        cache_key: str,
+        *,
+        preferred: str | None = None,
+        on_protocol_detected: Callable[[str], None] | None = None,
+    ) -> None:
         if not providers:
             raise ValueError("自动协议匹配至少需要一个 Provider")
+        names = {name for name, _ in providers}
+        # A durable detection (persisted per connection) seeds the in-memory
+        # cache so a restarted backend starts on the protocol that worked.
+        if preferred in names and cache_key not in _SUCCESSFUL_PROTOCOLS:
+            _SUCCESSFUL_PROTOCOLS[cache_key] = str(preferred)
         cached = _SUCCESSFUL_PROTOCOLS.get(cache_key)
         if cached:
             providers.sort(key=lambda item: item[0] != cached)
         self._providers = providers
         self._cache_key = cache_key
         self._active_index = 0
+        self._persisted = preferred if preferred in names else None
+        self._on_protocol_detected = on_protocol_detected
 
     @property
     def name(self) -> str:
@@ -66,12 +80,34 @@ class AutoNegotiatingModelProvider:
         return str(self._active_provider.models_url)
 
     @property
+    def negotiated(self) -> bool:
+        """True once a protocol for this connection is known (remembered or persisted)."""
+        return self._cache_key in _SUCCESSFUL_PROTOCOLS
+
+    @property
+    def active_provider(self) -> Any:
+        """The provider for the protocol auto mode currently uses."""
+        cached = _SUCCESSFUL_PROTOCOLS.get(self._cache_key)
+        for name, provider in self._providers:
+            if name == cached:
+                return provider
+        return self._active_provider
+
+    @property
     def _active_provider(self) -> Any:
         return self._providers[self._active_index][1]
 
     def _remember(self, index: int) -> None:
         self._active_index = index
-        _SUCCESSFUL_PROTOCOLS[self._cache_key] = self._providers[index][0]
+        protocol = str(self._providers[index][0])
+        _SUCCESSFUL_PROTOCOLS[self._cache_key] = protocol
+        if self._on_protocol_detected is not None and protocol != self._persisted:
+            try:
+                self._on_protocol_detected(protocol)
+                self._persisted = protocol
+            except Exception:
+                # Persisting the detection is an optimization; never fail a call.
+                pass
 
     def _candidate_indexes(self) -> list[int]:
         return [self._active_index, *[index for index in range(len(self._providers)) if index != self._active_index]]
@@ -95,6 +131,12 @@ class AutoNegotiatingModelProvider:
         raise RuntimeError("自动协议匹配没有可用候选")
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
+        if request.image_generation:
+            provider = next((provider for protocol, provider in self._providers if protocol == "responses"), None)
+            if provider is None:
+                raise ModelProviderError("image_generation_protocol", "Grok 生图需要 Responses 接口，请检查模型连接")
+            # A billed native tool cannot be retried through a different protocol.
+            return await provider.generate(request)
         return await self._call("generate", request)
 
     async def check_connection(self) -> None:
@@ -107,6 +149,13 @@ class AutoNegotiatingModelProvider:
         return await self._call("probe_vision")
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
+        if request.image_generation:
+            provider = next((provider for protocol, provider in self._providers if protocol == "responses"), None)
+            if provider is None:
+                raise ModelProviderError("image_generation_protocol", "Grok 生图需要 Responses 接口，请检查模型连接")
+            async for event in provider.stream(request):
+                yield event
+            return
         candidates = self._candidate_indexes()
         for position, index in enumerate(candidates):
             provider = self._providers[index][1]

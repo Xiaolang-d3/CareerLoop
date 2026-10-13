@@ -1,1 +1,1 @@
-"""Research domain: public web research via AgentSearch and company cache."""
+"""Research domain: public web research via Tavily or AgentSearch."""

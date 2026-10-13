@@ -1,0 +1,66 @@
+.chat-attachment-backdrop {
+  position: fixed;
+  z-index: 160;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(18, 17, 32, .48);
+  backdrop-filter: blur(3px);
+}
+.chat-attachment-dialog {
+  --fl-panel: var(--color-surface);
+  --fl-line: var(--color-border);
+  --fl-soft: var(--color-surface-subtle);
+  --fl-muted: var(--color-text-muted);
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 1020px);
+  height: min(840px, calc(100dvh - 48px));
+  min-height: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 18px;
+  color: var(--color-text);
+  background: var(--color-surface);
+  box-shadow: 0 24px 72px rgba(16, 13, 40, .2);
+  overflow: hidden;
+}
+.chat-attachment-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px; border-bottom: 1px solid var(--color-border); flex: none; }
+.chat-attachment-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.chat-attachment-title > svg { flex: none; color: var(--color-brand-strong); }
+.chat-attachment-title > div { min-width: 0; }
+.chat-attachment-title h2 { margin: 0; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-attachment-title p { margin: 4px 0 0; color: var(--color-text-muted); font-size: 11px; }
+.chat-attachment-actions { display: flex; gap: 8px; align-items: center; flex: none; }
+.chat-attachment-dialog button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 6px 10px; border: 1px solid var(--color-border); border-radius: 8px; color: var(--color-text-secondary); background: var(--color-surface); font: inherit; font-size: 12px; cursor: pointer; }
+.chat-attachment-dialog button:hover:not(:disabled) { background: var(--color-surface-subtle); color: var(--color-text); }
+.chat-attachment-dialog button:disabled { opacity: .45; cursor: not-allowed; }
+.chat-attachment-dialog button:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+.chat-attachment-dialog .chat-attachment-close { padding: 6px; width: 34px; border-color: transparent; }
+.chat-attachment-note { margin: 0; padding: 10px 20px; font-size: 12px; color: var(--color-text-muted); background: var(--color-surface-subtle); border-bottom: 1px solid var(--color-border); }
+.chat-attachment-body { flex: 1; min-height: 0; overflow: auto; background: var(--color-surface-subtle); }
+.chat-attachment-empty { display: flex; min-height: 200px; align-items: center; justify-content: center; flex-direction: column; gap: 12px; margin: 0; padding: 24px; text-align: center; color: var(--color-text-muted); font-size: 13px; }
+.chat-attachment-empty p { margin: 0; }
+.chat-attachment-dialog .fl-pdf-reader { min-height: 0; }
+.chat-attachment-dialog .fl-empty { padding: 28px; text-align: center; color: var(--color-text-muted); font-size: 13px; }
+.chat-attachment-text, .chat-attachment-markdown { box-sizing: border-box; width: min(100%, 820px); min-height: 100%; margin: 0 auto; padding: 28px 32px; color: var(--color-text); background: var(--color-surface); font-size: 14px; line-height: 1.85; overflow-wrap: anywhere; }
+.chat-attachment-text { white-space: pre-wrap; font-family: inherit; }
+.chat-attachment-markdown > :first-child { margin-top: 0; }
+.chat-attachment-markdown a { color: var(--color-brand-strong); }
+.chat-attachment-markdown pre { overflow: auto; padding: 12px; border-radius: 8px; background: var(--color-surface-subtle); }
+.chat-attachment-markdown table { display: block; overflow: auto; border-collapse: collapse; }
+.chat-attachment-markdown td, .chat-attachment-markdown th { padding: 6px 10px; border: 1px solid var(--color-border); }
+.chat-attachment-markdown img { max-width: 100%; }
+.chat-image-controls { display: flex; justify-content: center; align-items: center; gap: 8px; padding: 8px; border-bottom: 1px solid var(--color-border); }
+.chat-image-frame { box-sizing: border-box; min-height: 100%; padding: 24px; margin: 0 auto; display: flex; align-items: center; justify-content: center; }
+.chat-image-frame img { display: block; max-width: 100%; max-height: none; object-fit: contain; border-radius: 6px; }
+@media (max-width: 600px) {
+  .chat-attachment-backdrop { padding: 0; }
+  .chat-attachment-dialog { width: 100%; height: 100dvh; border: 0; border-radius: 0; }
+  .chat-attachment-heading { padding: 12px; gap: 8px; }
+  .chat-attachment-title { gap: 8px; }
+  .chat-attachment-actions { gap: 4px; }
+  .chat-attachment-title h2 { font-size: 13px; }
+  .chat-attachment-text, .chat-attachment-markdown { padding: 20px 16px; }
+  .chat-image-frame { padding: 12px; }
+}

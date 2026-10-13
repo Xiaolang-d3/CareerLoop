@@ -12,12 +12,17 @@ from .contracts import ChatMessageIn
 from ..workspace import current_user_id
 from .conversations import end_active_task, ensure_active_task, maybe_title_from_first_message
 from ..db import connect, json_dump, row_to_dict
+from ..config import get_settings
 from ..domain import AgentRunResult, ToolError, ToolEvent
 from ..agent.resume_policy import should_abandon_snapshot
 from ..agent.snapshots import clear_run_snapshot, load_run_snapshot
-from ..agent.run_store import AgentRunStore
+from ..agent.run_store import AgentRunStore, REPLAYABLE_RUN_STATUSES
 from ..agent.model_binding import internal_model_selection, is_bound_selection, is_legacy_selection
 from ..observability.model_context import public_model_selection
+from ..secret_store import SecretStoreUnavailable
+from ..search_options import WebSearchOptions, legacy_web_search_mode, normalize_web_search_options
+from ..research.search import validate_search_options
+from ..research.web import WebResearchError
 from .service import (
     agent_history as _agent_history,
     attachment_context as _attachment_context,
@@ -113,6 +118,7 @@ def _durable_run_payload(run: dict[str, Any]) -> dict[str, Any]:
         "created_at": run.get("created_at"),
         "updated_at": run.get("updated_at"),
         "completed_at": run.get("completed_at"),
+        "web_search_options": run["web_search_options"].model_dump() if run.get("web_search_options") is not None else None,
     }
 
 
@@ -149,6 +155,8 @@ def require_configured_runtime(profile_id: str | None = None, *, selection: dict
         if profile_id is not None:
             return get_agent_runtime(profile_id)
         return get_agent_runtime()
+    except SecretStoreUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         detail = str(exc)
         if "必须先配置模型服务 API Key" in detail or "API Key" in detail:
@@ -220,20 +228,69 @@ async def stream_chat_response(
             ).fetchone()
         if bound_user is not None:
             recovered_user_message = row_to_dict(bound_user)
+    recovering_terminal_result = bool(
+        cached_execution is None and recovered_user_message is not None and persisted_run is not None
+        and persisted_run.get("status") in REPLAYABLE_RUN_STATUSES and persisted_run.get("result") is not None
+    )
 
+    # Same-run recovery uses that run's own checkpoint in the durable runtime.
+    # A conversation's waiting snapshot belongs to a separate confirmation turn.
+    resume_snapshot = load_run_snapshot(conversation_id) if cached_execution is None and persisted_run is None else None
+    fields = payload.model_fields_set
+    inherited_options = resume_snapshot.web_search_options if resume_snapshot is not None else None
+    if persisted_run is not None:
+        # A run ID names an immutable turn, even if a reconnect submits changes.
+        search_options = persisted_run.get("web_search_options") or WebSearchOptions()
+    else:
+        search_options = normalize_web_search_options(
+            enabled=payload.web_search if "web_search" in fields else None,
+            topic=payload.web_search_topic if "web_search_topic" in fields else None,
+            source_preference=payload.web_search_source_preference if "web_search_source_preference" in fields else None,
+            legacy_mode=payload.web_search_mode if "web_search_mode" in fields else None,
+            base=inherited_options,
+            provider=payload.web_search_provider if inherited_options is None or inherited_options.provider is None else None,
+        )
     trusted_routing_content = payload.content.replace("[系统可信开关：本轮允许联网搜索]", "")
-    if payload.web_search:
+    if search_options.enabled:
         trusted_routing_content += "\n[系统可信开关：本轮允许联网搜索]"
-    resume_snapshot = load_run_snapshot(conversation_id) if cached_execution is None else None
     abandon_snapshot = bool(resume_snapshot is not None and should_abandon_snapshot(
         payload.content, resume_snapshot, routing_text=trusted_routing_content,
     ))
     if abandon_snapshot:
         resume_snapshot = None
+        if persisted_run is None:
+            # A new topic must not inherit consent/preferences from an abandoned task.
+            search_options = normalize_web_search_options(
+                enabled=payload.web_search if "web_search" in fields else None,
+                topic=payload.web_search_topic if "web_search_topic" in fields else None,
+                source_preference=payload.web_search_source_preference if "web_search_source_preference" in fields else None,
+                legacy_mode=payload.web_search_mode if "web_search_mode" in fields else None,
+                provider=payload.web_search_provider,
+            )
+            trusted_routing_content = payload.content.replace("[系统可信开关：本轮允许联网搜索]", "")
+            if search_options.enabled:
+                trusted_routing_content += "\n[系统可信开关：本轮允许联网搜索]"
+
+    if cached_execution is None and not recovering_terminal_result:
+        search_provider = get_settings().resolved_web_search_provider
+        try:
+            if search_options.enabled:
+                validate_search_options(search_options, search_provider)
+                if persisted_run is None and payload.web_search_provider is not None:
+                    validate_search_options(
+                        normalize_web_search_options(base=search_options, provider=payload.web_search_provider),
+                        search_provider,
+                    )
+        except WebResearchError as exc:
+            raise HTTPException(status_code=409 if exc.code == "web_search_provider_changed" else 422, detail=str(exc)) from exc
+        if search_options.provider is None:
+            search_options = normalize_web_search_options(base=search_options, provider=search_provider)
 
     runtime = None
     model_selection: dict[str, Any] = {}
-    if cached_execution is None:
+    if recovering_terminal_result:
+        model_selection = internal_model_selection(persisted_run.get("model_selection"))
+    elif cached_execution is None:
         persisted_selection = persisted_run.get("model_selection") if persisted_run is not None else None
         if persisted_run is not None and persisted_run.get("status") == "interrupted":
             historical_selection = persisted_selection
@@ -259,7 +316,7 @@ async def stream_chat_response(
                 if is_bound_selection(model_selection):
                     model_selection["selection_reason"] = (
                         "explicit_profile" if "model_profile_id" in payload.model_fields_set and profile_id is not None
-                        else "conversation_profile" if profile_id is not None else "default_profile"
+                        else "conversation_profile" if profile_id is not None else model_selection.get("selection_reason", "default_profile")
                     )
         if abandon_snapshot:
             clear_run_snapshot(conversation_id)
@@ -282,9 +339,7 @@ async def stream_chat_response(
         user_payload: dict[str, Any] = {}
         if attachment_summaries:
             user_payload["attachments"] = attachment_summaries
-        if payload.web_search:
-            user_payload["web_search"] = True
-            user_payload["web_search_mode"] = payload.web_search_mode
+        user_payload["web_search_options"] = search_options.model_dump()
         agent_input = payload.content
         if attachment_context:
             agent_input += (
@@ -298,6 +353,7 @@ async def stream_chat_response(
                 task_id=task_id,
                 user_content=agent_input,
                 model_selection=model_selection,
+                web_search_options=search_options,
             )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -322,7 +378,14 @@ async def stream_chat_response(
         streamed_events: dict[str, ToolEvent] = {}
         current_task = asyncio.current_task()
         try:
-            await queue.put(("run_started", {"user_message": user_message}))
+            run = run_store.get_run(ag_ui_input.run_id)
+            await queue.put(("run_started", {
+                "user_message": user_message,
+                "timing": {
+                    "run_id": ag_ui_input.run_id,
+                    "started_at": run.get("started_at") if run is not None else None,
+                },
+            }))
             if cached_execution is not None:
                 result = cached_execution["result"]
                 await queue.put(("text_reset", {}))
@@ -338,6 +401,17 @@ async def stream_chat_response(
                     )
                 )
                 return
+            if recovering_terminal_result:
+                # The result was committed before its chat row. Backfill it
+                # without model/search requests or current provider validation.
+                result = persisted_run["result"]
+                await queue.put(("text_reset", {}))
+                if result.content:
+                    await queue.put(("text_delta", {"delta": result.content}))
+                completed = _save_stream_result(conversation_id, task_id, user_message, result)
+                run_store.bind_messages(ag_ui_input.run_id, assistant_message_id=int(completed["assistant_message"]["id"]))
+                await queue.put(("completed", completed))
+                return
             result = None
             if resume_snapshot is not None:
                 run_store.link_waiting_resume(
@@ -351,7 +425,8 @@ async def stream_chat_response(
                 task_id=task_id,
                 image_urls=image_urls,
                 routing_content=trusted_routing_content,
-                web_search_mode=payload.web_search_mode,
+                web_search_mode=legacy_web_search_mode(search_options),
+                web_search_options=search_options,
                 resume=resume_snapshot,
                 run_id=ag_ui_input.run_id,
                 model_selection=model_selection,
@@ -359,6 +434,9 @@ async def stream_chat_response(
                 if stream_event.type == "text_delta":
                     partial_content += stream_event.delta
                     await queue.put(("text_delta", {"delta": stream_event.delta}))
+                elif stream_event.type == "reasoning_delta":
+                    if stream_event.delta:
+                        await queue.put(("reasoning_delta", {"delta": stream_event.delta}))
                 elif stream_event.type == "text_reset":
                     partial_content = ""
                     await queue.put(("text_reset", {}))

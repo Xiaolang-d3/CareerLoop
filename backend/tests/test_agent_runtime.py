@@ -4,7 +4,8 @@ import unittest
 
 from app.agent.orchestration import route_task
 from app.agent.runtime import AgentRuntime
-from app.domain import AgentMessage, ModelResponse, ModelStreamEvent, ToolCall, ToolDefinition, ToolError, ToolResult
+from app.domain import AgentMessage, AgentRunSnapshot, AgentClarification, ClarificationOption, ModelResponse, ModelStreamEvent, ToolCall, ToolDefinition, ToolError, ToolResult
+from app.search_options import WebSearchOptions
 from app.models import ModelProviderError, ModelProviderRegistry
 from app.tools import AskUserTool, ToolContext, ToolRegistry
 
@@ -96,6 +97,42 @@ class CurrentRoutePolicyTest(unittest.TestCase):
 
 
 class CurrentRuntimeTest(unittest.IsolatedAsyncioTestCase):
+    async def test_confirmation_without_options_inherits_original_search_configuration(self) -> None:
+        class CaptureTool(CountingTool):
+            async def execute(self, arguments, context):
+                self.options = context.web_search_options
+                return await super().execute(arguments, context)
+        original = WebSearchOptions(enabled=True, topic="finance", source_preference="technical", provider="tavily")
+        snapshot = AgentRunSnapshot(
+            route_kind="conversation", needs_plan=False, allowed_tools=["search_public_web"],
+            web_search_options=original, messages=[AgentMessage(role="user", content="研究公司")],
+            clarification=AgentClarification(question="要研究哪家？", options=[ClarificationOption(label="这家")]),
+        )
+        tool = CaptureTool("search_public_web")
+        model = ScriptedModel([
+            ModelResponse(tool_calls=[ToolCall(id="research", name="search_public_web", arguments={"query": "这家"})]),
+            ModelResponse(content="已研究。[来源](https://example.com/source)"),
+        ])
+        result = await runtime_for(model, tool).run("这家", resume=snapshot)
+        self.assertEqual(result.status, "done")
+        self.assertEqual(tool.options, original)
+
+    async def test_confirmation_explicitly_closing_search_recomputes_tool_permissions(self) -> None:
+        original = WebSearchOptions(enabled=True, topic="news", provider="tavily")
+        snapshot = AgentRunSnapshot(
+            route_kind="web_search", needs_plan=True, allowed_tools=["search_public_web"], required_tools=["search_public_web"],
+            web_search_options=original, messages=[AgentMessage(role="user", content="联网研究公司")],
+            clarification=AgentClarification(question="要研究哪家？", options=[ClarificationOption(label="这家")]),
+        )
+        tool = CountingTool("search_public_web")
+        model = ScriptedModel([ModelResponse(tool_calls=[ToolCall(id="forbidden", name="search_public_web", arguments={})])])
+        result = await runtime_for(model, tool).run("这家", resume=snapshot, run_id="new-confirmation",
+                                                  web_search_options=WebSearchOptions(enabled=False, topic="news", provider="tavily"))
+        self.assertEqual(tool.calls, 0)
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.error.code, "tool_not_planned")
+        self.assertNotIn("search_public_web", [definition.name for definition in model.requests[-1].tools])
+
     async def test_planned_library_read_executes_and_completes(self) -> None:
         model = ScriptedModel([
             ModelResponse(content='{"goal":"读取资料","steps":[{"tool_name":"get_library_context","title":"读取知识库"}]}'),

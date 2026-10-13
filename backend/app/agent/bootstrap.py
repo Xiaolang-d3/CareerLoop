@@ -3,10 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 from .model_binding import internal_model_selection
+from .model_router import ModelRouter, bind_model_stages, get_routing_policy
 from ..observability.model_context import public_model_selection
 from ..config import get_settings
 from ..models import ModelProviderRegistry, build_model_provider
 from ..model_protocol import protocol_requires_api_key
+from ..research.search import public_search_capabilities
 from ..tools import AskUserTool, SearchPublicWebTool, ToolRegistry
 from ..tools.library import GetLibraryContextTool, SearchLibraryTool, ProposeLibraryKnowledgeTool
 from .runtime import AgentRuntime
@@ -25,11 +27,31 @@ def get_profile_connection(profile_id: str | None = None, *, selection: dict[str
     return resolve_profile(profile_id, selection=selection)
 
 
+def _routing_revision() -> int:
+    from ..models.factory import model_backend
+    from .model_routing import get_fallback_policy
+
+    if model_backend() != "litellm":
+        return -1
+    try:
+        return int(get_fallback_policy()["revision"])
+    except Exception:
+        return 0
+
+
 def _runtime_cache_key(connection: dict[str, Any]) -> tuple[Any, ...]:
+    from ..models.factory import model_backend
+
     return (
         current_user_id(), connection.get("profile_id"), connection.get("profile_revision"),
         connection.get("connection_id"), connection.get("connection_revision"),
         connection["model_name"], connection["model_base_url"], connection.get("model_protocol", "auto"),
+        connection.get("credential_fingerprint"),
+        connection.get("policy_version"), connection.get("strict_capabilities", False),
+        tuple((stage, value.get("profile_id"), value.get("profile_revision"),
+               value.get("connection_id"), value.get("connection_revision"), value.get("credential_fingerprint"), value.get("selection_reason"))
+              for stage, value in sorted(connection.get("stage_connections", {}).items())),
+        model_backend(), _routing_revision(),
     )
 
 
@@ -60,6 +82,7 @@ def _capabilities_payload(
     configured: bool,
     setup_message: str | None = None,
 ) -> dict[str, Any]:
+    search_provider = settings.resolved_web_search_provider if settings.web_research_enabled else "disabled"
     payload: dict[str, Any] = {
         "configured": configured,
         "active_model_provider": active_model_provider,
@@ -78,7 +101,8 @@ def _capabilities_payload(
         },
         "web_research": {
             "enabled": settings.web_research_enabled,
-            "provider": "agent_search" if settings.web_research_enabled else "disabled",
+            "provider": search_provider,
+            **public_search_capabilities(search_provider),
         },
     }
     if setup_message:
@@ -102,6 +126,7 @@ def _build_unconfigured_capabilities(model_connection: dict[str, Any]) -> dict[s
 
 def _build_components(model_connection: dict[str, Any]) -> tuple[AgentRuntime, dict[str, Any]]:
     from ..models.configured import configure_model_provider
+    from .model_catalog import detected_protocol_recorder
 
     settings = get_settings()
 
@@ -115,10 +140,40 @@ def _build_components(model_connection: dict[str, Any]) -> tuple[AgentRuntime, d
         base_url=model_connection["model_base_url"] or None,
         timeout_seconds=settings.model_timeout_seconds,
         protocol=model_connection.get("model_protocol", "auto"),
+        detected_protocol=model_connection.get("detected_protocol"),
+        on_protocol_detected=detected_protocol_recorder(model_connection),
+        price_per_million_input=model_connection.get("price_per_million_input"),
+        price_per_million_output=model_connection.get("price_per_million_output"),
     )
-    model = configure_model_provider(model, model_connection.get("parameters", {}))
+    model = _with_fallbacks(model, model_connection, settings.model_timeout_seconds)
+    model = configure_model_provider(
+        model, model_connection.get("parameters", {}), model_connection.get("reasoning_effort"),
+    )
     model_alias = str(model_connection.get("profile_id") or model.name)
     models.register(model_alias, model)
+
+    stage_connections = model_connection.get("stage_connections", {})
+    stage_providers = {}
+    for stage, connection in stage_connections.items():
+        if not _model_is_configured(connection):
+            continue
+        if (connection.get("profile_id"), connection.get("profile_revision"), connection.get("connection_revision"), connection.get("credential_fingerprint")) == (
+            model_connection.get("profile_id"), model_connection.get("profile_revision"), model_connection.get("connection_revision"), model_connection.get("credential_fingerprint"),
+        ):
+            stage_providers[stage] = model
+        else:
+            provider = build_model_provider(
+                api_key=connection["api_key"], model=connection["model_name"],
+                base_url=connection["model_base_url"] or None,
+                timeout_seconds=settings.model_timeout_seconds, protocol=connection.get("model_protocol", "auto"),
+                detected_protocol=connection.get("detected_protocol"),
+                on_protocol_detected=detected_protocol_recorder(connection),
+                price_per_million_input=connection.get("price_per_million_input"),
+                price_per_million_output=connection.get("price_per_million_output"),
+            )
+            provider = _with_fallbacks(provider, connection, settings.model_timeout_seconds)
+            stage_providers[stage] = configure_model_provider(provider, connection.get("parameters", {}), connection.get("reasoning_effort"))
+    model_router = ModelRouter(stage_connections, stage_providers, strict_capabilities=model_connection.get("strict_capabilities", False)) if stage_connections else None
 
     tools = _build_tool_registry(settings)
 
@@ -127,6 +182,7 @@ def _build_components(model_connection: dict[str, Any]) -> tuple[AgentRuntime, d
         tools=tools,
         model_provider=model_alias,
         model_selection=internal_model_selection(model_connection),
+        model_router=model_router,
         platform_name="manual",
         max_tool_rounds=settings.model_max_tool_rounds,
         tool_timeout_seconds=settings.tool_execution_timeout_seconds,
@@ -145,6 +201,24 @@ def _build_components(model_connection: dict[str, Any]) -> tuple[AgentRuntime, d
     return runtime, capabilities
 
 
+def _with_fallbacks(model: Any, model_connection: dict[str, Any], timeout_seconds: float) -> Any:
+    """Route through litellm.Router when the user configured fallback models."""
+    from ..models.factory import model_backend
+    from .model_routing import get_fallback_policy, policy_has_fallbacks
+
+    if model_backend() != "litellm" or not model_connection.get("profile_id"):
+        return model
+    policy = get_fallback_policy()
+    if not policy_has_fallbacks(policy):
+        return model
+    from ..models.litellm_router import build_routed_provider
+
+    return build_routed_provider(
+        model, model_connection, policy, timeout_seconds=timeout_seconds,
+        load_profile=lambda profile_id: get_profile_connection(profile_id),
+    )
+
+
 def _cached_components(model_connection: dict[str, Any]) -> tuple[AgentRuntime, dict[str, Any]]:
     key = _runtime_cache_key(model_connection)
     cached = _components.get(key)
@@ -156,13 +230,27 @@ def _cached_components(model_connection: dict[str, Any]) -> tuple[AgentRuntime, 
 
 def get_agent_runtime(profile_id: str | None = None, *, selection: dict[str, Any] | None = None) -> AgentRuntime:
     # Resolve exactly once, before caching; restoring never consults a mutable default.
-    connection = get_profile_connection(profile_id, selection=selection)
+    from .settings import _settings_lock
+
+    with _settings_lock(None):
+        connection = get_profile_connection(profile_id, selection=selection)
+        connection = bind_model_stages(
+            connection, explicit_profile=profile_id is not None, selection=selection,
+            resolve=get_profile_connection, policy=get_routing_policy() if selection is None else None,
+        )
     runtime, _ = _cached_components(connection)
     return runtime
 
 
 def get_agent_capabilities() -> dict[str, Any]:
-    model_connection = get_profile_connection()
+    from .settings import _settings_lock
+
+    with _settings_lock(None):
+        model_connection = get_profile_connection()
+        model_connection = bind_model_stages(
+            model_connection, explicit_profile=False, selection=None,
+            resolve=get_profile_connection, policy=get_routing_policy(),
+        )
     if not _model_is_configured(model_connection):
         return _build_unconfigured_capabilities(model_connection)
     _, capabilities = _cached_components(model_connection)

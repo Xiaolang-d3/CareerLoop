@@ -73,6 +73,10 @@ class ModelCapabilityInferenceTest(unittest.TestCase):
 
 class ModelCapabilitiesApiTest(unittest.TestCase):
     def setUp(self) -> None:
+        for method in ("probe_streaming", "probe_tools"):
+            patcher = patch(f"app.models.capability_probe.{method}", new=AsyncMock(return_value={"status": "supported", "source": "probe", "detail": "verified"}))
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.original_db_path = db.DB_PATH
         db.DB_PATH = Path(self.temp_dir.name) / "capabilities.db"
@@ -142,8 +146,11 @@ class ModelCapabilitiesApiTest(unittest.TestCase):
                 json={"model_name": "gpt-4o", "api_key": "sk-test", "probe": True},
             )
         payload = response.json()
-        self.assertFalse(payload["probed"])
-        self.assertEqual(payload["vision"]["source"], "model_id")
+        self.assertTrue(payload["probed"])
+        self.assertEqual(payload["vision"]["source"], "probe")
+        self.assertEqual(payload["vision"]["status"], "unknown")
+        self.assertEqual(payload["streaming"]["status"], "supported")
+        self.assertEqual(payload["tools"]["status"], "supported")
         self.assertIn("无法连接", payload["probe_error"])
 
 

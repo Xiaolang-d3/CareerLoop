@@ -6,15 +6,19 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from app import db
 import app.api.attachments as resources_module
 import app.chat.execution as main_module
 from app.agent.snapshots import load_run_snapshot, save_run_snapshot
+from app.agent.run_store import AgentRunStore
 from app.chat.conversations import create_conversation, ensure_active_task
 from app.domain import AgentClarification, AgentRunResult, AgentRunSnapshot, AgentStreamEvent, ClarificationOption, ToolError
 from app.main import app
+from app.search_options import WebSearchOptions
 from app.chat.execution import _active_chat_runs, _chat_run_key, cancel_current_agent_task
+from app.chat.service import save_chat_message
 from api_client import create_authenticated_client
 
 
@@ -31,11 +35,11 @@ class ChatStreamingApiTest(unittest.TestCase):
         db.DB_PATH = self.original_db_path
         self.temp_dir.cleanup()
 
-    def run_ag_ui(self, conversation_id: int, content: str, run_id: str) -> list[dict]:
+    def run_ag_ui(self, conversation_id: int, content: str, run_id: str, *, forwarded: dict | None = None) -> list[dict]:
         with self.client.stream("POST", "/ag-ui", json={
             "threadId": str(conversation_id), "runId": run_id, "state": {},
             "messages": [{"id": f"user-{run_id}", "role": "user", "content": content}],
-            "tools": [], "context": [], "forwardedProps": {},
+            "tools": [], "context": [], "forwardedProps": forwarded or {},
         }) as response:
             self.assertEqual(response.status_code, 200)
             return [json.loads(line.removeprefix("data: ")) for line in response.iter_lines() if line.startswith("data: ")]
@@ -47,6 +51,98 @@ class ChatStreamingApiTest(unittest.TestCase):
             return action()
         finally:
             main_module.get_agent_runtime = original
+
+    def test_ag_ui_rejects_invalid_search_contract_values_with_422(self) -> None:
+        conversation = self.client.post("/conversations", json={"title": "参数校验"}).json()
+        for fields in [{"webSearch": "true"}, {"webSearchTopic": "company"}, {"webSearchProvider": "unknown"},
+                       {"webSearchSourcePreference": "official"}, {"webSearchMode": "finance"}]:
+            with self.subTest(fields=fields):
+                response = self.client.post("/ag-ui", json={
+                    "threadId": str(conversation["id"]), "runId": "invalid-search", "state": {},
+                    "messages": [{"id": "user", "role": "user", "content": "问题"}],
+                    "tools": [], "context": [], "forwardedProps": fields,
+                })
+                self.assertEqual(response.status_code, 422)
+
+    def test_confirmation_inherits_search_options_and_explicit_false_is_preserved(self) -> None:
+        conversation = self.client.post("/conversations", json={"title": "搜索配置继承"}).json()
+        original = WebSearchOptions(enabled=True, topic="finance", source_preference="technical", provider="tavily")
+        captured = []
+        class Runtime:
+            async def run_stream(self, *args, **kwargs):
+                captured.append(kwargs["web_search_options"])
+                yield AgentStreamEvent(type="completed", result=AgentRunResult(
+                    content="完成", provider="test", platform="manual", rounds=1,
+                ))
+        def pause():
+            save_run_snapshot(conversation["id"], AgentRunSnapshot(
+                route_kind="web_search", needs_plan=True, allowed_tools=["search_public_web"], web_search_options=original,
+                clarification=AgentClarification(question="继续？", options=[ClarificationOption(label="继续")]),
+            ))
+        with patch.object(main_module, "get_settings", return_value=SimpleNamespace(resolved_web_search_provider="tavily")):
+            pause()
+            self.with_runtime(Runtime(), lambda: self.run_ag_ui(conversation["id"], "继续", "inherited-search"))
+            self.assertEqual(captured[-1], original)
+            pause()
+            self.with_runtime(Runtime(), lambda: self.run_ag_ui(conversation["id"], "继续", "disabled-search",
+                              forwarded={"webSearch": False, "webSearchTopic": "auto", "webSearchSourcePreference": "none"}))
+        self.assertFalse(captured[-1].enabled)
+        self.assertEqual((captured[-1].topic, captured[-1].source_preference), ("auto", "none"))
+        messages = self.client.get(f"/chat/messages?conversation_id={conversation['id']}").json()
+        self.assertEqual(messages[-2]["payload"]["web_search_options"], captured[-1].model_dump())
+
+    def test_provider_change_and_unsupported_capability_fail_before_new_messages(self) -> None:
+        conversation = self.client.post("/conversations", json={"title": "服务能力校验"}).json()
+        save_run_snapshot(conversation["id"], AgentRunSnapshot(
+            route_kind="web_search", needs_plan=True, allowed_tools=["search_public_web"],
+            web_search_options=WebSearchOptions(enabled=True, topic="news", provider="tavily"),
+        ))
+        with patch.object(main_module, "get_settings", return_value=SimpleNamespace(resolved_web_search_provider="agent_search")):
+            response = self.client.post("/ag-ui", json={
+                "threadId": str(conversation["id"]), "runId": "changed-provider", "state": {},
+                "messages": [{"id": "user", "role": "user", "content": "继续"}],
+                "tools": [], "context": [], "forwardedProps": {},
+            })
+            self.assertEqual(response.status_code, 409)
+            self.assertIn("搜索服务", response.json()["detail"])
+            response = self.client.post("/ag-ui", json={
+                "threadId": str(conversation["id"]), "runId": "unsupported-finance", "state": {},
+                "messages": [{"id": "user", "role": "user", "content": "换个话题，查金融市场"}],
+                "tools": [], "context": [], "forwardedProps": {"webSearch": True, "webSearchTopic": "finance"},
+            })
+            self.assertEqual(response.status_code, 422)
+        messages = self.client.get(f"/chat/messages?conversation_id={conversation['id']}").json()
+        self.assertEqual(messages, [])
+
+    def test_terminal_result_backfill_does_not_require_current_provider_or_model(self) -> None:
+        conversation = self.client.post("/conversations", json={"title": "结果补写"}).json()
+        options = WebSearchOptions(enabled=True, topic="finance", provider="tavily")
+        user = save_chat_message("user", "原任务", {"web_search_options": options.model_dump()}, conversation["id"])
+        store = AgentRunStore()
+        store.start_run("terminal-backfill", conversation_id=conversation["id"], task_id=None,
+                        user_content="原任务", web_search_options=options)
+        store.bind_messages("terminal-backfill", user_message_id=user["id"])
+        store.finish("terminal-backfill", AgentRunResult(content="已完成原搜索", provider="test", platform="manual", rounds=1))
+        with patch.object(main_module, "get_settings", return_value=SimpleNamespace(resolved_web_search_provider="agent_search")), \
+             patch.object(main_module, "get_agent_runtime", side_effect=AssertionError("已完成结果不应初始化模型")):
+            events = self.run_ag_ui(conversation["id"], "重连", "terminal-backfill", forwarded={"webSearch": False})
+        self.assertEqual("".join(event["delta"] for event in events if event["type"] == "TEXT_MESSAGE_CONTENT"), "已完成原搜索")
+        messages = self.client.get(f"/chat/messages?conversation_id={conversation['id']}").json()
+        self.assertEqual(len(messages), 2)
+        self.assertEqual(messages[0]["payload"]["web_search_options"], options.model_dump())
+
+    def test_new_retry_expected_provider_cannot_silently_switch_services(self) -> None:
+        conversation = self.client.post("/conversations", json={"title": "重试绑定"}).json()
+        with patch.object(main_module, "get_settings", return_value=SimpleNamespace(resolved_web_search_provider="agent_search")):
+            response = self.client.post("/ag-ui", json={
+                "threadId": str(conversation["id"]), "runId": "retry-new-id", "state": {},
+                "messages": [{"id": "user", "role": "user", "content": "原任务"}],
+                "tools": [], "context": [], "forwardedProps": {
+                    "webSearch": True, "webSearchTopic": "general", "webSearchProvider": "tavily",
+                },
+            })
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.client.get(f"/chat/messages?conversation_id={conversation['id']}").json(), [])
 
     def test_ag_ui_emits_lifecycle_text_state_and_persists_messages(self) -> None:
         conversation = self.client.post("/conversations", json={"title": "流式测试"}).json()
@@ -70,6 +166,36 @@ class ChatStreamingApiTest(unittest.TestCase):
         self.assertEqual(text, "基于本地资料完成回答。")
         messages = self.client.get(f"/chat/messages?conversation_id={conversation['id']}").json()
         self.assertEqual([message["role"] for message in messages], ["user", "assistant"])
+
+    def test_ag_ui_emits_server_start_before_text_and_persists_terminal_duration(self) -> None:
+        conversation = self.client.post("/conversations", json={"title": "运行用时"}).json()
+
+        class Runtime:
+            async def run_stream(self, *args, **kwargs):
+                yield AgentStreamEvent(type="text_delta", delta="回答")
+                yield AgentStreamEvent(type="completed", result=AgentRunResult(
+                    content="回答", provider="test", platform="manual", rounds=1,
+                ))
+
+        started_at = "2026-10-11T00:00:00.125+00:00"
+        completed_at = "2026-10-11T00:06:29.125+00:00"
+        with patch("app.agent.run_store._utc_now", side_effect=[started_at, completed_at]):
+            first = self.with_runtime(Runtime(), lambda: self.run_ag_ui(conversation["id"], "计时", "run-timing"))
+        timing_index = next(index for index, event in enumerate(first) if event.get("name") == "careerloop.run_timing")
+        text_index = next(index for index, event in enumerate(first) if event["type"] == "TEXT_MESSAGE_CONTENT")
+        self.assertLess(timing_index, text_index)
+        self.assertEqual(first[timing_index]["value"], {"run_id": "run-timing", "started_at": started_at})
+        snapshot = next(event["snapshot"] for event in first if event["type"] == "STATE_SNAPSHOT")
+        agent = snapshot["careerLoop"]["assistantMessage"]["payload"]["agent"]
+        self.assertEqual(agent["started_at"], started_at)
+        self.assertEqual(agent["completed_at"], completed_at)
+        self.assertEqual(agent["duration_ms"], 389000)
+        messages = self.client.get(f"/chat/messages?conversation_id={conversation['id']}").json()
+        self.assertEqual(messages[-1]["payload"]["agent"]["duration_ms"], 389000)
+
+        second = self.run_ag_ui(conversation["id"], "计时", "run-timing")
+        replay = next(event["snapshot"] for event in second if event["type"] == "STATE_SNAPSHOT")
+        self.assertEqual(replay["careerLoop"]["assistantMessage"]["payload"]["agent"]["duration_ms"], 389000)
 
     def test_ag_ui_requires_user_text(self) -> None:
         conversation = self.client.post("/conversations", json={"title": "空输入"}).json()

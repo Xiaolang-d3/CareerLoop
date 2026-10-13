@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { createApiClient } from "../../api/client";
+import { ApiError, type createApiClient } from "../../api/client";
 import type { ModelCatalog } from "../../types";
 import { ModelConnectionManager } from "./ModelConnectionManager";
 
@@ -26,6 +26,7 @@ describe("ModelConnectionManager", () => {
     const page = props();
     render(<ModelConnectionManager {...page} />);
     fireEvent.click(screen.getByRole("button", { name: "添加连接" }));
+    expect(screen.getByRole("dialog", { name: "添加连接" })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("连接 Base URL"), { target: { value: "https://new.example.test/v1" } });
     fireEvent.change(screen.getByLabelText(/^连接 API Key/), { target: { value: "test-only-new-key" } });
     fireEvent.change(screen.getByLabelText("首个模型名称"), { target: { value: "new-model" } });
@@ -57,7 +58,7 @@ describe("ModelConnectionManager", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "编辑连接" })[1]);
     fireEvent.change(screen.getByLabelText(/^连接 API Key/), { target: { value: "test-only-key" } });
     fireEvent.click(screen.getByRole("button", { name: "保存连接" }));
-    await screen.findByText(/密钥输入已清除/);
+    expect(screen.getByRole("dialog")).toContainElement(await screen.findByText(/密钥输入已清除/));
     expect(screen.getByLabelText(/^连接 API Key/)).toHaveValue("");
     fireEvent.change(screen.getByLabelText(/^连接 API Key/), { target: { value: "test-only-cancel-key" } });
     fireEvent.click(screen.getByRole("button", { name: "取消编辑" }));
@@ -110,5 +111,56 @@ describe("ModelConnectionManager", () => {
     await screen.findByText(/已读取 1 个模型/);
     expect(fetchJson).toHaveBeenCalledWith("/agent/model-connections/c2/discover", expect.objectContaining({ method: "POST", signal: expect.any(AbortSignal) }));
     expect(fetchJson.mock.calls[0][1]?.body).toBeUndefined();
+  });
+  it("shows the protocol auto mode actually uses for a connection", () => {
+    const detected: ModelCatalog = { ...catalog, connections: [{ ...catalog.connections[0], detected_protocol: "responses" }, catalog.connections[1]] };
+    render(<ModelConnectionManager {...props({ catalog: detected })} />);
+    expect(screen.getByText("接口协议：自动 · 实际使用 OpenAI Responses API")).toBeInTheDocument();
+    expect(screen.getByText("接口协议：OpenAI 兼容 Chat Completions")).toBeInTheDocument();
+  });
+
+  it("saves a per-model reasoning effort with the profile revision", async () => {
+    const page = props();
+    render(<ModelConnectionManager {...page} />);
+    const select = screen.getByLabelText("second-model 推理强度");
+    expect(select).toHaveValue("");
+    expect(Array.from((select as HTMLSelectElement).options).map(option => option.textContent)).toEqual(["默认", "低", "中", "高"]);
+    fireEvent.change(select, { target: { value: "high" } });
+    await waitFor(() => expect(page.onMutate).toHaveBeenCalledWith("/agent/model-profiles/p2", "PATCH", { reasoning_effort: "high", expected_revision: 2 }));
+    const withEffort: ModelCatalog = { ...catalog, profiles: [catalog.profiles[0], { ...catalog.profiles[1], reasoning_effort: "high", revision: 3 }] };
+    cleanup();
+    const next = props({ catalog: withEffort });
+    render(<ModelConnectionManager {...next} />);
+    fireEvent.change(screen.getByLabelText("second-model 推理强度"), { target: { value: "" } });
+    await waitFor(() => expect(next.onMutate).toHaveBeenCalledWith("/agent/model-profiles/p2", "PATCH", { reasoning_effort: null, expected_revision: 3 }));
+  });
+
+  it("offers a one-click switch to the Responses API when the check rejects Chat Completions", async () => {
+    const fetchJson = vi.fn<ReturnType<typeof createApiClient>>()
+      .mockResolvedValueOnce({ available: false, check_error_message: "模型不支持 Chat Completions 协议", suggested_protocol: "responses" })
+      .mockResolvedValueOnce({ available: true, check_error_message: null, suggested_protocol: null });
+    const page = props({ fetchJson });
+    const view = render(<ModelConnectionManager {...page} />);
+    fireEvent.click(screen.getByRole("button", { name: /备用连接/ }));
+    fireEvent.click(screen.getByRole("button", { name: "检测此连接" }));
+    expect(await screen.findByText("该模型不支持 Chat Completions，改用 OpenAI Responses API")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "改用 Responses 并重新检测" }));
+    await waitFor(() => expect(page.onMutate).toHaveBeenCalledWith("/agent/model-connections/c2", "PATCH", { model_protocol: "responses", expected_revision: 2 }));
+    const switched: ModelCatalog = { ...catalog, connections: [catalog.connections[0], { ...catalog.connections[1], model_protocol: "responses", revision: 3 }] };
+    view.rerender(<ModelConnectionManager {...page} catalog={switched} />);
+    await screen.findByText("连接检测成功。");
+    expect(fetchJson).toHaveBeenCalledTimes(2);
+    expect(fetchJson.mock.calls[1][0]).toBe("/agent/model-connections/c2/check");
+    expect(screen.queryByText("该模型不支持 Chat Completions，改用 OpenAI Responses API")).not.toBeInTheDocument();
+  });
+
+  it("shows the switch hint when model discovery carries a suggested protocol", async () => {
+    const fetchJson = vi.fn<ReturnType<typeof createApiClient>>().mockRejectedValue(
+      new ApiError("模型不支持 Chat Completions 协议", 400, 0, { message: "模型不支持 Chat Completions 协议", suggested_protocol: "responses" })
+    );
+    render(<ModelConnectionManager {...props({ fetchJson })} />);
+    fireEvent.click(screen.getByRole("button", { name: /备用连接/ }));
+    fireEvent.click(screen.getByRole("button", { name: "读取模型列表" }));
+    expect(await screen.findByRole("button", { name: "改用 Responses 并重新检测" })).toBeInTheDocument();
   });
 });

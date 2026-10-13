@@ -10,12 +10,13 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from ..model_connection import normalize_api_root, resolve_model_connection
-from ..model_protocol import normalize_model_protocol, resolve_model_protocol
+from ..model_protocol import PROTOCOL_LABELS, connection_protocol_label, normalize_detected_protocol, normalize_model_protocol, resolve_model_protocol
 from ..secret_store import secret_backend_name, secret_storage_writable, SecretStoreUnavailable
 from . import settings
 
 
-_CAPABILITY_NAMES = ("vision", "tools", "streaming")
+_CAPABILITY_NAMES = ("vision", "tools", "streaming", "image_generation")
+REASONING_EFFORTS = ("low", "medium", "high")
 
 
 def connect(db_path):
@@ -33,12 +34,19 @@ def _decode_profile(row: Any) -> dict[str, Any]:
     result["enabled"] = bool(result["enabled"])
     result["parameters"] = json.loads(result.pop("parameters_json", "{}"))
     result["capabilities"] = {name: "unknown" for name in _CAPABILITY_NAMES} | json.loads(result.pop("capabilities_json", "{}"))
+    result["reasoning_effort"] = normalize_reasoning_effort(result.get("reasoning_effort"))
     return result
+
+
+def normalize_reasoning_effort(value: Any) -> str | None:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in REASONING_EFFORTS else None
 
 
 def _decode_connection(row: Any) -> dict[str, Any]:
     result = dict(row)
     result["enabled"] = bool(result["enabled"])
+    result["detected_protocol"] = normalize_detected_protocol(result.get("detected_protocol"))
     return result
 
 
@@ -78,7 +86,17 @@ def _secret(connection: dict[str, Any], model_name: str, db_path) -> tuple[str, 
     if reference.startswith("legacy:"):
         # Only the existing v26 field may contain a pending old plaintext key;
         # no new connection/profile/version table copies that credential.
-        value = str(settings._row(db_path).get("model_api_key") or "")
+        with connect(db_path) as conn:
+            alias = conn.execute("SELECT secret_ref FROM model_credential_aliases WHERE reference = ?", (reference,)).fetchone()
+        if alias:
+            value = settings.get_secret(alias[0], db_path)
+            if not value:
+                raise SecretStoreUnavailable("历史模型凭证暂不可读取，无法恢复原配置")
+            return value, alias[0].partition(":")[0], ""
+        row = settings._row(db_path)
+        if row["connection_id"] != connection["id"] or row.get("model_secret_ref"):
+            raise SecretStoreUnavailable("历史模型凭证尚未迁移，无法恢复原配置")
+        value = str(row.get("model_api_key") or "")
         return value, "legacy" if value else "none", "旧密钥尚未迁入安全存储，原字段已保留"
     value = settings.get_secret(reference, db_path)
     if not value:
@@ -92,6 +110,9 @@ def _public_connection(connection: dict[str, Any], db_path) -> dict[str, Any]:
         value, source, warning = _secret(connection, "", db_path)
     except SecretStoreUnavailable as exc:
         value, source, warning = "", "none", str(exc)
+    detected = normalize_detected_protocol(connection.get("detected_protocol")) if normalize_model_protocol(connection["protocol"]) == "auto" else None
+    result.update(detected_protocol=detected, detected_protocol_label=PROTOCOL_LABELS[detected] if detected else None,
+                  protocol_label=connection_protocol_label(connection["protocol"], detected, "", connection.get("effective_base_url") or ""))
     result.update(model_base_url=connection["base_url"], model_protocol=connection["protocol"], api_key_configured=bool(value), api_key_source=source, secret_storage=secret_backend_name(), secret_storage_writable=secret_storage_writable(), secret_migration_warning=warning)
     return result
 
@@ -101,6 +122,8 @@ def _ensure_catalog(db_path) -> None:
         row = settings._initialize_connection(db_path)
         with connect(db_path) as conn:
             if row.get("default_model_profile_id") and conn.execute("SELECT 1 FROM model_profiles WHERE id = ?", (row["default_model_profile_id"],)).fetchone():
+                if row.get("model_api_key") and not row.get("model_secret_ref"):
+                    settings._credential(row, db_path)
                 return
         key, _, _ = settings._credential(row, db_path)
         row = settings._row(db_path)
@@ -131,7 +154,9 @@ def get_model_catalog(db_path: str | Path | None = None) -> dict[str, Any]:
         connections = [_decode_connection(row) for row in conn.execute("SELECT * FROM model_connections ORDER BY created_at, id")]
         profiles = [_decode_profile(row) for row in conn.execute("SELECT * FROM model_profiles ORDER BY created_at, id")]
         row = conn.execute("SELECT default_model_profile_id, config_revision FROM agent_settings WHERE id = 1").fetchone()
-    return {"connections": [_public_connection(item, db_path) for item in connections], "profiles": profiles, "default_profile_id": row["default_model_profile_id"], "config_revision": row["config_revision"]}
+        policy = conn.execute("SELECT payload_json FROM model_routing_policy WHERE id=1").fetchone()
+        execution_profile = json.loads(policy[0]).get("roles", {}).get("execute") or row["default_model_profile_id"]
+    return {"connections": [_public_connection(item, db_path) for item in connections], "profiles": profiles, "default_profile_id": row["default_model_profile_id"], "effective_execution_profile_id": execution_profile, "config_revision": row["config_revision"]}
 
 
 def get_profile_connection(profile_id: str | None = None, db_path: str | Path | None = None, selection: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -160,10 +185,57 @@ def get_profile_connection(profile_id: str | None = None, db_path: str | Path | 
         if profile["connection_id"] != connection["id"]:
             raise ValueError("运行快照中的模型连接不匹配")
         config_revision = conn.execute("SELECT config_revision FROM agent_settings WHERE id = 1").fetchone()[0]
+        live = _connection(conn, connection["id"])
+    # Detection is runtime state, not configuration: use the live value only
+    # while the wire-relevant fields still match the bound connection version.
+    detected = None
+    if normalize_model_protocol(connection["protocol"]) == "auto" and all(
+        live.get(key) == connection.get(key) for key in ("effective_base_url", "protocol", "secret_ref")
+    ):
+        detected = normalize_detected_protocol(live.get("detected_protocol"))
     api_key, source, warning = _secret(connection, profile["model_name"], db_path)
+    credential_fingerprint = hashlib.sha256(api_key.encode()).hexdigest()
+    if requested.get("credential_fingerprint") and not hmac.compare_digest(requested["credential_fingerprint"], credential_fingerprint):
+        raise SecretStoreUnavailable("运行绑定的模型凭证已改变，无法恢复原配置；请新建任务")
     resolved = resolve_model_connection({"model_name": profile["model_name"], "model_base_url": connection["effective_base_url"], "model_protocol": connection["protocol"], "api_key": api_key})
-    resolved.update(profile_id=profile["id"], connection_id=connection["id"], profile_revision=profile["revision"], connection_revision=connection["revision"], secret_ref=connection["secret_ref"], data_boundary=connection["data_boundary"], parameters=profile["parameters"], capabilities=profile["capabilities"], context_limit=profile["context_limit"], price_per_million_input=profile["price_per_million_input"], price_per_million_output=profile["price_per_million_output"], config_revision=config_revision, connection_configured_base_url=connection["base_url"], api_key_source=source if resolved["api_key"] else "none", secret_migration_warning=warning)
+    resolved.update(profile_id=profile["id"], connection_id=connection["id"], profile_revision=profile["revision"], connection_revision=connection["revision"], secret_ref=connection["secret_ref"], credential_fingerprint=credential_fingerprint, data_boundary=connection["data_boundary"], parameters=profile["parameters"], capabilities=profile["capabilities"], context_limit=profile["context_limit"], price_per_million_input=profile["price_per_million_input"], price_per_million_output=profile["price_per_million_output"], config_revision=config_revision, connection_configured_base_url=connection["base_url"], api_key_source=source if resolved["api_key"] else "none", secret_migration_warning=warning)
+    resolved.update(connection_effective_base_url=connection["effective_base_url"], detected_protocol=detected, reasoning_effort=normalize_reasoning_effort(profile.get("reasoning_effort")))
     return resolved
+
+
+def record_detected_protocol(connection: dict[str, Any], protocol: str, db_path: str | Path | None = None) -> bool:
+    """Durably remember which protocol auto negotiation settled on for a connection.
+
+    The write is guarded by the wire-relevant fields so a detection that raced
+    with an edit of the address, key or protocol is discarded.
+    """
+    detected = normalize_detected_protocol(protocol)
+    connection_id = str(connection.get("connection_id") or "")
+    if not detected or not connection_id or normalize_model_protocol(connection.get("model_protocol")) != "auto":
+        return False
+    with connect(db_path) as conn:
+        cursor = conn.execute(
+            """UPDATE model_connections SET detected_protocol = ?
+               WHERE id = ? AND protocol = 'auto' AND effective_base_url = ? AND secret_ref = ?
+                 AND COALESCE(detected_protocol, '') != ?""",
+            (detected, connection_id, connection.get("connection_effective_base_url", connection.get("model_base_url")) or "", connection.get("secret_ref") or "none", detected),
+        )
+        return cursor.rowcount > 0
+
+
+def detected_protocol_recorder(connection: dict[str, Any], db_path: str | Path | None = None):
+    """Callback for AutoNegotiatingModelProvider; None when the connection is not auto."""
+    if not connection.get("connection_id") or normalize_model_protocol(connection.get("model_protocol")) != "auto":
+        return None
+    snapshot = dict(connection)
+    from ..workspace import resolve_db_path
+
+    db_path = resolve_db_path(db_path)
+
+    def remember(protocol: str) -> None:
+        record_detected_protocol(snapshot, protocol, db_path)
+
+    return remember
 
 
 def _candidate(value: str, connection_id: str, db_path, candidates: list[str]) -> str:
@@ -179,11 +251,19 @@ def _check_revision(record: dict[str, Any], values: dict[str, Any]) -> None:
         raise settings.AgentSettingsConflict("配置已在其他页面更新，请重新读取后保存")
 
 
-def _bridge(conn) -> None:
+def _bridge(conn, db_path, candidates: list[str]) -> None:
     row = dict(conn.execute("SELECT * FROM agent_settings WHERE id = 1").fetchone())
     profile = _profile(conn, row["default_model_profile_id"])
     connection = _connection(conn, profile["connection_id"])
     reference = connection["secret_ref"]
+    legacy_reference = f"legacy:{row['connection_id']}"
+    if row.get("model_api_key") and not row.get("model_secret_ref") and reference != legacy_reference:
+        # Switching defaults or replacing a pending key must preserve the old
+        # version first. Never point its legacy reference at the new credential.
+        if not conn.execute("SELECT 1 FROM model_credential_aliases WHERE reference = ?", (legacy_reference,)).fetchone():
+            preserved = _candidate(row["model_api_key"], row["connection_id"], db_path, candidates)
+            conn.execute("INSERT INTO model_credential_aliases (reference, secret_ref) VALUES (?, ?)", (legacy_reference, preserved))
+        conn.execute("UPDATE agent_settings SET model_api_key = '' WHERE id = 1")
     # Keep a pending old key until its safe migration has actually completed.
     if reference.startswith("legacy:"):
         reference = ""
@@ -210,7 +290,7 @@ def _mutate(action: str, values: dict[str, Any], db_path, operation: Callable) -
                         replay = True
                 if not replay:
                     result = operation(conn, candidates)
-                    _bridge(conn)
+                    _bridge(conn, db_path, candidates)
                     revision = conn.execute("SELECT config_revision FROM agent_settings WHERE id = 1").fetchone()[0]
                     conn.execute("UPDATE agent_settings SET last_save_request_id = ? WHERE id = 1", (request_id,))
                     if request_id:
@@ -223,10 +303,12 @@ def _mutate(action: str, values: dict[str, Any], db_path, operation: Callable) -
 
 
 def _write_connection(conn, record: dict[str, Any]) -> None:
-    conn.execute("""INSERT INTO model_connections (id, name, base_url, effective_base_url, protocol, secret_ref, data_boundary, enabled, revision)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, base_url=excluded.base_url,
+    record = {**record, "detected_protocol": normalize_detected_protocol(record.get("detected_protocol"))}
+    conn.execute("""INSERT INTO model_connections (id, name, base_url, effective_base_url, protocol, secret_ref, data_boundary, enabled, revision, detected_protocol)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, base_url=excluded.base_url,
         effective_base_url=excluded.effective_base_url, protocol=excluded.protocol, secret_ref=excluded.secret_ref,
-        data_boundary=excluded.data_boundary, enabled=excluded.enabled, revision=excluded.revision, updated_at=CURRENT_TIMESTAMP""", tuple(record[key] for key in ("id", "name", "base_url", "effective_base_url", "protocol", "secret_ref", "data_boundary", "enabled", "revision")))
+        data_boundary=excluded.data_boundary, enabled=excluded.enabled, revision=excluded.revision,
+        detected_protocol=excluded.detected_protocol, updated_at=CURRENT_TIMESTAMP""", tuple(record[key] for key in ("id", "name", "base_url", "effective_base_url", "protocol", "secret_ref", "data_boundary", "enabled", "revision", "detected_protocol")))
     _version(conn, "connection", _connection(conn, record["id"]))
 
 
@@ -260,10 +342,21 @@ def _updated_connection(conn, connection_id, values, db_path, candidates, model_
     elif not resolved["api_key"]:
         reference = "none"
     updated = {**current, "name": str(values.get("name", current["name"])).strip(), "base_url": str(values.get("base_url", values.get("model_base_url", current["base_url"])) or "").strip(), "effective_base_url": resolved["model_base_url"], "protocol": resolved["model_protocol"], "secret_ref": reference, "data_boundary": str(values.get("data_boundary", current["data_boundary"])), "enabled": bool(values.get("enabled", current["enabled"])), "revision": current["revision"] + 1}
+    # A remembered negotiation result only describes the old address/key/protocol.
+    if updated["protocol"] != "auto" or any(updated[key] != current[key] for key in ("base_url", "effective_base_url", "protocol", "secret_ref")):
+        updated["detected_protocol"] = None
     default_id = conn.execute("SELECT default_model_profile_id FROM agent_settings WHERE id = 1").fetchone()[0]
     if not updated["enabled"] and _profile(conn, default_id)["connection_id"] == connection_id:
         raise ValueError("请先选择其他默认模型，再停用当前默认连接")
     _write_connection(conn, updated)
+    if key or updated["effective_base_url"] != current["effective_base_url"] or updated["protocol"] != current["protocol"]:
+        # Image availability is specific to a service/account. Replacement
+        # credentials or gateways must not inherit an old service's denial.
+        for row in conn.execute("SELECT * FROM model_profiles WHERE connection_id=?", (connection_id,)).fetchall():
+            profile = _decode_profile(row)
+            if profile["capabilities"]["image_generation"] != "unknown":
+                profile["capabilities"]["image_generation"] = "unknown"
+                _write_profile(conn, {**profile, "revision": profile["revision"] + 1})
     return updated
 
 
@@ -295,16 +388,19 @@ def _validated_profile(values, current=None):
         price = result.get(key)
         if price is not None and (isinstance(price, bool) or not isinstance(price, (float, int)) or not math.isfinite(price) or price < 0):
             raise ValueError("模型价格需要为非负数或空值")
-    return {"model_name": model_name, "name": str(result.get("name") or model_name), "enabled": bool(result.get("enabled", True)), "parameters": parameters, "capabilities": capabilities, "context_limit": context_limit, "price_per_million_input": result.get("price_per_million_input"), "price_per_million_output": result.get("price_per_million_output")}
+    effort = result.get("reasoning_effort")
+    if effort is not None and (not isinstance(effort, str) or effort.strip().lower() not in REASONING_EFFORTS):
+        raise ValueError("reasoning_effort 需要为 low、medium、high 或空值")
+    return {"model_name": model_name, "name": str(result.get("name") or model_name), "enabled": bool(result.get("enabled", True)), "parameters": parameters, "capabilities": capabilities, "context_limit": context_limit, "price_per_million_input": result.get("price_per_million_input"), "price_per_million_output": result.get("price_per_million_output"), "reasoning_effort": normalize_reasoning_effort(effort)}
 
 
 def _write_profile(conn, record):
-    conn.execute("""INSERT INTO model_profiles (id, connection_id, model_name, name, enabled, revision, parameters_json, capabilities_json, context_limit, price_per_million_input, price_per_million_output)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET model_name=excluded.model_name,
+    conn.execute("""INSERT INTO model_profiles (id, connection_id, model_name, name, enabled, revision, parameters_json, capabilities_json, context_limit, price_per_million_input, price_per_million_output, reasoning_effort)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET model_name=excluded.model_name,
         name=excluded.name, enabled=excluded.enabled, revision=excluded.revision, parameters_json=excluded.parameters_json,
         capabilities_json=excluded.capabilities_json, context_limit=excluded.context_limit, price_per_million_input=excluded.price_per_million_input,
-        price_per_million_output=excluded.price_per_million_output, updated_at=CURRENT_TIMESTAMP""",
-        (record["id"], record["connection_id"], record["model_name"], record["name"], record["enabled"], record["revision"], _json(record["parameters"]), _json(record["capabilities"]), record["context_limit"], record["price_per_million_input"], record["price_per_million_output"]))
+        price_per_million_output=excluded.price_per_million_output, reasoning_effort=excluded.reasoning_effort, updated_at=CURRENT_TIMESTAMP""",
+        (record["id"], record["connection_id"], record["model_name"], record["name"], record["enabled"], record["revision"], _json(record["parameters"]), _json(record["capabilities"]), record["context_limit"], record["price_per_million_input"], record["price_per_million_output"], normalize_reasoning_effort(record.get("reasoning_effort"))))
     _version(conn, "profile", _profile(conn, record["id"]))
 
 
@@ -319,13 +415,43 @@ def add_model_profile(values: dict[str, Any], db_path: str | Path | None = None)
     return _mutate("add_profile", values, db_path, operation)
 
 
+def ensure_service_model_profile(connection_id: str, values: dict[str, Any], db_path: str | Path | None = None) -> dict[str, Any]:
+    """Reuse a saved model or materialize a service model without changing defaults."""
+    def operation(conn, _candidates):
+        connection = _connection(conn, connection_id)
+        _check_revision(connection, values)
+        if not connection["enabled"]:
+            raise ValueError("连接已停用")
+        model_name = _validated_profile(values)["model_name"]
+        matches = [_decode_profile(row) for row in conn.execute(
+            "SELECT * FROM model_profiles WHERE connection_id = ? AND model_name = ? ORDER BY created_at, id",
+            (connection_id, model_name),
+        )]
+        existing = next((profile for profile in matches if profile["enabled"]), None)
+        if existing:
+            return existing
+        if matches:
+            raise ValueError("此模型已停用，请在模型设置中启用")
+        record = {"id": str(uuid4()), "connection_id": connection_id, "revision": 1, **_validated_profile({"model_name": model_name})}
+        _write_profile(conn, record)
+        return _profile(conn, record["id"])
+    return _mutate(f"ensure_service_profile:{connection_id}", values, db_path, operation)
+
+
 def update_model_profile(profile_id: str, values: dict[str, Any], db_path: str | Path | None = None) -> dict[str, Any]:
     def operation(conn, _candidates):
         current = _profile(conn, profile_id)
         _check_revision(current, values)
         if "connection_id" in values and values["connection_id"] != current["connection_id"]:
             raise ValueError("模型档案不能改绑其他连接，请新建档案")
-        record = {**current, **_validated_profile(values, current), "revision": current["revision"] + 1}
+        changes = dict(values)
+        if changes.get("capabilities") is not None:
+            changes["capabilities"] = {**current["capabilities"], **changes["capabilities"]}
+        elif "capabilities" in changes:
+            changes.pop("capabilities")
+        if changes.get("model_name", current["model_name"]) != current["model_name"] and "image_generation" not in (values.get("capabilities") or {}):
+            changes["capabilities"] = {**current["capabilities"], **changes.get("capabilities", {}), "image_generation": "unknown"}
+        record = {**current, **_validated_profile(changes, current), "revision": current["revision"] + 1}
         if not record["enabled"] and conn.execute("SELECT default_model_profile_id FROM agent_settings WHERE id=1").fetchone()[0] == profile_id:
             raise ValueError("请先选择其他默认模型，再停用当前默认模型")
         _write_profile(conn, record)
@@ -369,8 +495,9 @@ def save_default_agent_settings(values: dict[str, Any], db_path: str | Path | No
         connection_changes = {key: values[key] for key in ("model_base_url", "model_protocol", "api_key") if key in values}
         if connection_changes and (values.get("api_key") or any(values.get(key) != row[key] for key in ("model_base_url", "model_protocol") if key in values)):
             _updated_connection(conn, profile["connection_id"], connection_changes, db_path, candidates, str(values.get("model_name", profile["model_name"])))
+            profile = _profile(conn, profile["id"])
         if "model_name" in values and values["model_name"] != profile["model_name"]:
-            profile = {**profile, **_validated_profile({"model_name": values["model_name"]}, profile), "revision": profile["revision"] + 1}
+            profile = {**profile, **_validated_profile({"model_name": values["model_name"], "capabilities": {**profile["capabilities"], "image_generation": "unknown"}}, profile), "revision": profile["revision"] + 1}
             _write_profile(conn, profile)
         for field in settings._SAVE_FIELDS:
             if field in {"model_name", "model_base_url", "model_protocol"} or field not in values:
@@ -393,7 +520,9 @@ def public_default_agent_settings(db_path: str | Path | None = None) -> dict[str
     except SecretStoreUnavailable as exc:
         key, source, warning = "", "none", str(exc)
     effective = resolve_model_connection({"model_name": profile["model_name"], "model_base_url": connection["effective_base_url"], "model_protocol": connection["protocol"], "api_key": key})
-    from ..models.auto_negotiating import get_effective_model_protocol
+    from ..models.auto_negotiating import get_negotiated_model_protocol
+    detected = normalize_detected_protocol(connection.get("detected_protocol")) if normalize_model_protocol(connection["protocol"]) == "auto" else None
+    actual = get_negotiated_model_protocol(effective["model_name"], effective["model_protocol"], effective["model_base_url"], effective["api_key"]) or detected
 
     result = {name: value for name, value in row.items() if name not in {"model_api_key", "model_secret_ref", "model_config_initialized"}}
     if result.get("display_name") in {"CareerLoop", "BossCopilot"}:
@@ -407,6 +536,7 @@ def public_default_agent_settings(db_path: str | Path | None = None) -> dict[str
         result[field] = bool(result[field])
     result.update(model_name=profile["model_name"], model_base_url=connection["base_url"], configured_model_base_url=connection["base_url"], model_protocol=connection["protocol"],
         profile_id=profile["id"], connection_id=connection["id"], profile_revision=profile["revision"], connection_revision=connection["revision"],
-        predicted_model_protocol=effective["resolved_model_protocol"], resolved_model_protocol=get_effective_model_protocol(effective["model_name"], effective["model_protocol"], effective["model_base_url"], effective["api_key"]),
+        predicted_model_protocol=effective["resolved_model_protocol"], resolved_model_protocol=actual or effective["resolved_model_protocol"], detected_model_protocol=actual,
+        model_protocol_label=connection_protocol_label(connection["protocol"], actual, profile["model_name"], effective["model_base_url"]),
         api_key_configured=bool(effective["api_key"]), api_key_source=source if effective["api_key"] else "none", secret_storage=secret_backend_name(), secret_storage_writable=secret_storage_writable(), secret_migration_warning=warning)
     return result

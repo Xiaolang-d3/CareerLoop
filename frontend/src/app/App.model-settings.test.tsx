@@ -100,6 +100,13 @@ function mockApi(settingsResult: Promise<AgentSettings> = Promise.resolve(savedS
 function appElement(accessToken = "test-only-session", apiBase = "/test-api", email = "developer@example.test") {
   return <ThemeProvider><App apiBase={apiBase} accessToken={accessToken} onLogout={vi.fn()} user={{ email, has_avatar: false }} updateSession={vi.fn()} /></ThemeProvider>;
 }
+async function modelField(label: string) {
+  await act(async () => {});
+  if (!screen.queryByLabelText(label)) {
+    fireEvent.click(await screen.findByRole("button", { name: "配置模型" }));
+  }
+  return screen.findByLabelText(label);
+}
 function renderApp() { return render(appElement()); }
 function navigate(hash: string) {
   act(() => {
@@ -146,19 +153,19 @@ describe("App model settings", () => {
     expect(api.fetchJson.mock.calls.some(([path, options]) => path === "/agent/settings" && options?.method === "PUT")).toBe(false);
 
     await act(async () => { initialSettings.resolve(savedSettings); });
-    expect(await screen.findByLabelText("Base URL")).toHaveValue(savedSettings.model_base_url);
-    expect(screen.getByLabelText("模型名称")).toHaveValue(savedSettings.model_name);
+    expect(await modelField("Base URL")).toHaveValue(savedSettings.model_base_url);
+    expect(await modelField("模型名称")).toHaveValue(savedSettings.model_name);
 
     fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "https://new.example.test/v1" } });
     fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "test-only-new-key" } });
-    fireEvent.change(screen.getByLabelText("模型名称"), { target: { value: "new-model" } });
+    fireEvent.change(await modelField("模型名称"), { target: { value: "new-model" } });
     fireEvent.click(screen.getByRole("button", { name: "保存并应用" }));
 
     await waitFor(() => expect(api.fetchJson.mock.calls.some(([path, options]) => path === "/agent/settings" && options?.method === "PUT")).toBe(true));
     const saveBody = JSON.parse(String(api.fetchJson.mock.calls.find(([path, options]) => path === "/agent/settings" && options?.method === "PUT")?.[1]?.body));
     expect(saveBody).toEqual({ ...savedSettings, model_base_url: "https://new.example.test/v1", api_key: "test-only-new-key", model_name: "new-model", expected_revision: 1, request_id: expect.any(String) });
     expect(await screen.findByText("设置已保存，连接检测成功")).toBeInTheDocument();
-    expect(screen.getByLabelText("API Key")).toHaveValue("");
+    expect(await modelField("API Key")).toHaveValue("");
     expect(screen.getByRole("button", { name: "保存并应用" })).toBeDisabled();
     expect(window.confirm).not.toHaveBeenCalled();
   });
@@ -166,10 +173,10 @@ describe("App model settings", () => {
   it("reads diagnostics from the saved connection and probes its explicit protocol after cancelling a draft", async () => {
     mockApi();
     renderApp();
-    await screen.findByLabelText("Base URL");
+    await modelField("Base URL");
     await waitFor(() => expect(api.fetchJson).toHaveBeenCalledWith("/agent/models/capabilities", expect.objectContaining({ signal: expect.any(AbortSignal) })));
 
-    fireEvent.change(screen.getByLabelText("模型名称"), { target: { value: "unsaved-model" } });
+    fireEvent.change(await modelField("模型名称"), { target: { value: "unsaved-model" } });
     openAdvancedSettings();
     expect(screen.getByRole("button", { name: "检测" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "立即检测" })).toBeDisabled();
@@ -185,12 +192,13 @@ describe("App model settings", () => {
       window.history.replaceState(null, "", "#/settings/model");
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
-    expect(await screen.findByLabelText("模型名称")).toHaveValue("unsaved-model");
+    expect(await modelField("模型名称")).toHaveValue("unsaved-model");
     await waitFor(() => expect(api.fetchJson.mock.calls.filter(([path, options]) => path === "/agent/models/capabilities" && options?.method !== "POST")).toHaveLength(2));
     expect(api.fetchJson.mock.calls.some(([path]) => path.startsWith("/agent/models/capabilities?"))).toBe(false);
 
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
-    expect(screen.getByLabelText("模型名称")).toHaveValue(savedSettings.model_name);
+    expect(await modelField("模型名称")).toHaveValue(savedSettings.model_name);
+    fireEvent.click(screen.getByRole("button", { name: "关闭模型设置" }));
     openAdvancedSettings();
     fireEvent.click(screen.getByRole("button", { name: "检测" }));
 
@@ -210,17 +218,17 @@ describe("App model settings", () => {
     replaceApi((path, options) => path === "/agent/settings" && options?.method !== "PUT"
       ? (++reads === 1 ? Promise.resolve(savedSettings) : oldRead.promise) : undefined);
     renderApp();
-    await screen.findByLabelText("模型名称");
+    await modelField("模型名称");
     vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
     navigate("#/settings/appearance");
     await screen.findByRole("heading", { name: "外观" });
     navigate("#/settings/model");
     await waitFor(() => expect(reads).toBe(2));
-    fireEvent.change(screen.getByLabelText("模型名称"), { target: { value: "new-model" } });
+    fireEvent.change(await modelField("模型名称"), { target: { value: "new-model" } });
     fireEvent.click(screen.getByRole("button", { name: "保存并应用" }));
     await screen.findByText("设置已保存，连接检测成功");
     await act(async () => { oldRead.resolve(savedSettings); });
-    expect(screen.getByLabelText("模型名称")).toHaveValue("new-model");
+    expect(await modelField("模型名称")).toHaveValue("new-model");
     expect(screen.getByText("当前模型：new-model")).toBeInTheDocument();
   });
 
@@ -229,18 +237,18 @@ describe("App model settings", () => {
     mockApi();
     replaceApi((path) => path === "/agent/model-monitor/check" ? check.promise : undefined);
     renderApp();
-    await screen.findByLabelText("模型名称");
-    fireEvent.change(screen.getByLabelText("模型名称"), { target: { value: "new-model" } });
+    await modelField("模型名称");
+    fireEvent.change(await modelField("模型名称"), { target: { value: "new-model" } });
     fireEvent.click(screen.getByRole("button", { name: "保存并应用" }));
     await screen.findByText("设置已保存，正在检测连接");
-    expect(screen.getByLabelText("模型名称")).toBeEnabled();
-    expect(screen.getByLabelText("API Key")).toBeEnabled();
+    expect(await modelField("模型名称")).toBeEnabled();
+    expect(await modelField("API Key")).toBeEnabled();
     expect(screen.queryByRole("button", { name: "保存中…" })).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("模型名称"), { target: { value: "another-model" } });
+    fireEvent.change(await modelField("模型名称"), { target: { value: "another-model" } });
     expect(screen.getByRole("button", { name: "保存并应用" })).toBeEnabled();
     await act(async () => { check.resolve({ ...monitor, available: false, check_error_message: "暂时不可用" }); });
-    expect(screen.getByText("配置已保存，但连接检测失败：暂时不可用")).toBeInTheDocument();
-    expect(screen.getByLabelText("模型名称")).toHaveValue("another-model");
+    expect(screen.getAllByText("配置已保存，但连接检测失败：暂时不可用").length).toBeGreaterThan(0);
+    expect(await modelField("模型名称")).toHaveValue("another-model");
   });
 
   it("shows probe failures and allows retry without an unhandled rejection", async () => {
@@ -248,12 +256,12 @@ describe("App model settings", () => {
     replaceApi((path, options) => path === "/agent/models/capabilities" && options?.method === "POST"
       ? Promise.reject(new Error("检测请求超时")) : undefined);
     renderApp();
-    await screen.findByLabelText("模型名称");
+    await modelField("模型名称");
     openAdvancedSettings();
     const probe = screen.getByRole("button", { name: "检测" });
     await waitFor(() => expect(probe).toBeEnabled());
     fireEvent.click(probe);
-    expect(await screen.findByText("模型能力检测失败：检测请求超时")).toBeInTheDocument();
+    expect((await screen.findAllByText("模型能力检测失败：检测请求超时")).length).toBeGreaterThan(0);
     expect(probe).toBeEnabled();
   });
 
@@ -266,7 +274,7 @@ describe("App model settings", () => {
     await screen.findByRole("heading", { name: "无法读取模型配置" });
     expect(screen.queryByLabelText("API Key")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
-    expect(await screen.findByLabelText("模型名称")).toHaveValue(savedSettings.model_name);
+    expect(await modelField("模型名称")).toHaveValue(savedSettings.model_name);
     expect(api.fetchJson.mock.calls.some(([path, options]) => path === "/agent/settings" && options?.method === "PUT")).toBe(false);
   });
 
@@ -281,28 +289,28 @@ describe("App model settings", () => {
     replaceApi((path, options) => path === "/agent/settings" && options?.method !== "PUT"
       ? (++reads === 1 ? Promise.resolve(savedSettings) : latest.promise) : undefined);
     const { rerender } = renderApp();
-    await screen.findByLabelText("API Key");
+    await modelField("API Key");
     fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "test-only-draft" } });
     rerender(appElement(token, base, email));
     expect(screen.queryByLabelText("API Key")).not.toBeInTheDocument();
     await waitFor(() => expect(reads).toBe(2));
     await act(async () => { latest.resolve({ ...savedSettings, model_name: "scope-model" }); });
-    expect(await screen.findByLabelText("模型名称")).toHaveValue("scope-model");
-    expect(screen.getByLabelText("API Key")).toHaveValue("");
+    expect(await modelField("模型名称")).toHaveValue("scope-model");
+    expect(await modelField("API Key")).toHaveValue("");
     expect(screen.getByRole("button", { name: "保存并应用" })).toBeDisabled();
   });
 
   it("does not carry a saved key to a changed address on blur or explicit refresh", async () => {
     mockApi();
     renderApp();
-    await screen.findByLabelText("Base URL");
+    await modelField("Base URL");
     await waitFor(() => expect(api.fetchJson.mock.calls.some(([path]) => path === "/agent/models/discover")).toBe(true));
     const requests = api.fetchJson.mock.calls.filter(([path]) => path === "/agent/models/discover").length;
     fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "test-only-old-address-draft" } });
     fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "https://different.example.test/v1" } });
     fireEvent.blur(screen.getByLabelText("Base URL"));
     fireEvent.click(screen.getByRole("button", { name: "刷新列表" }));
-    expect(screen.getByLabelText("API Key")).toHaveValue("");
+    expect(await modelField("API Key")).toHaveValue("");
     expect(screen.getByText("服务地址已更改，请填写该服务的密钥；不会复用旧地址的密钥。")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "保存并应用" })).toBeDisabled();
     expect(api.fetchJson.mock.calls.filter(([path]) => path === "/agent/models/discover")).toHaveLength(requests);
@@ -322,11 +330,11 @@ describe("App model settings", () => {
       return Promise.resolve(++reads === 1 ? savedSettings : { ...savedSettings, config_revision: 2, custom_instructions: "另一页面的最新偏好" });
     });
     renderApp();
-    await screen.findByLabelText("模型名称");
-    fireEvent.change(screen.getByLabelText("模型名称"), { target: { value: "my-draft-model" } });
+    await modelField("模型名称");
+    fireEvent.change(await modelField("模型名称"), { target: { value: "my-draft-model" } });
     fireEvent.click(screen.getByRole("button", { name: "保存并应用" }));
-    await screen.findByText(/配置已在其他页面更新/);
-    expect(screen.getByLabelText("模型名称")).toHaveValue("my-draft-model");
+    await screen.findAllByText(/配置已在其他页面更新/);
+    expect(await modelField("模型名称")).toHaveValue("my-draft-model");
     await waitFor(() => expect(screen.getByRole("button", { name: "保存并应用" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "保存并应用" }));
     await screen.findByText("设置已保存，连接检测成功");
@@ -348,11 +356,11 @@ describe("App model settings", () => {
       return Promise.resolve(lastRequestId ? { ...savedSettings, model_name: "saved-after-timeout", config_revision: 2, last_save_request_id: lastRequestId } : savedSettings);
     });
     renderApp();
-    await screen.findByLabelText("模型名称");
-    fireEvent.change(screen.getByLabelText("模型名称"), { target: { value: "saved-after-timeout" } });
+    await modelField("模型名称");
+    fireEvent.change(await modelField("模型名称"), { target: { value: "saved-after-timeout" } });
     fireEvent.click(screen.getByRole("button", { name: "保存并应用" }));
     await screen.findByText("设置已保存，连接检测成功");
-    expect(screen.getByLabelText("模型名称")).toHaveValue("saved-after-timeout");
+    expect(await modelField("模型名称")).toHaveValue("saved-after-timeout");
     expect(api.fetchJson.mock.calls.filter(([path, options]) => path === "/agent/settings" && options?.method === "PUT")).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "重新确认保存结果" })).not.toBeInTheDocument();
   });
@@ -371,15 +379,15 @@ describe("App model settings", () => {
       return Promise.resolve({ ...savedSettings, model_name: "unknown-draft", last_save_request_id: lastRequestId });
     });
     renderApp();
-    await screen.findByLabelText("模型名称");
-    fireEvent.change(screen.getByLabelText("模型名称"), { target: { value: "unknown-draft" } });
+    await modelField("模型名称");
+    fireEvent.change(await modelField("模型名称"), { target: { value: "unknown-draft" } });
     fireEvent.click(screen.getByRole("button", { name: "保存并应用" }));
     const confirm = await screen.findByRole("button", { name: "重新确认保存结果" });
-    expect(screen.getByLabelText("模型名称")).toBeDisabled();
+    expect(await modelField("模型名称")).toBeDisabled();
     expect(screen.queryByRole("button", { name: "保存并应用" })).not.toBeInTheDocument();
     fireEvent.click(confirm);
     await screen.findByText("设置已保存，连接检测成功");
-    expect(screen.getByLabelText("模型名称")).toHaveValue("unknown-draft");
+    expect(await modelField("模型名称")).toHaveValue("unknown-draft");
     expect(api.fetchJson.mock.calls.filter(([path, options]) => path === "/agent/settings" && options?.method === "PUT")).toHaveLength(1);
   });
 
@@ -397,8 +405,8 @@ describe("App model settings", () => {
       return undefined;
     });
     renderApp();
-    await screen.findByLabelText("模型名称");
-    fireEvent.change(screen.getByLabelText("模型名称"), { target: { value: "new-model" } });
+    await modelField("模型名称");
+    fireEvent.change(await modelField("模型名称"), { target: { value: "new-model" } });
     fireEvent.click(screen.getByRole("button", { name: "保存并应用" }));
     await screen.findByText("设置已保存，连接检测成功");
     openAdvancedSettings();
@@ -418,16 +426,16 @@ describe("App model settings", () => {
     mockApi();
     replaceApi(path => path === "/agent/model-monitor/check" ? (++checks === 1 ? oldCheck.promise : Promise.resolve({ ...monitor, available: true })) : undefined);
     renderApp();
-    await screen.findByLabelText("模型名称");
-    fireEvent.change(screen.getByLabelText("模型名称"), { target: { value: "first-model" } });
+    await modelField("模型名称");
+    fireEvent.change(await modelField("模型名称"), { target: { value: "first-model" } });
     fireEvent.click(screen.getByRole("button", { name: "保存并应用" }));
     await screen.findByText("设置已保存，正在检测连接");
-    fireEvent.change(screen.getByLabelText("模型名称"), { target: { value: "second-model" } });
+    fireEvent.change(await modelField("模型名称"), { target: { value: "second-model" } });
     fireEvent.click(screen.getByRole("button", { name: "保存并应用" }));
     await screen.findByText("设置已保存，连接检测成功");
     await act(async () => { oldCheck.resolve({ ...monitor, available: false, check_error_message: "旧连接失败" }); });
     expect(screen.queryByText(/旧连接失败/)).not.toBeInTheDocument();
-    expect(screen.getByLabelText("模型名称")).toHaveValue("second-model");
+    expect(await modelField("模型名称")).toHaveValue("second-model");
   });
 
   it("ignores a response from a superseded authentication client even if it ignores cancellation", async () => {
@@ -439,9 +447,9 @@ describe("App model settings", () => {
     const { rerender } = renderApp();
     await screen.findByText("正在读取模型配置…");
     rerender(appElement("new-session"));
-    expect(await screen.findByLabelText("模型名称")).toHaveValue("new-session-model");
+    expect(await modelField("模型名称")).toHaveValue("new-session-model");
     await act(async () => { oldRead.resolve({ ...savedSettings, model_name: "old-session-model" }); });
-    expect(screen.getByLabelText("模型名称")).toHaveValue("new-session-model");
+    expect(await modelField("模型名称")).toHaveValue("new-session-model");
   });
 
   it("uses the historical receipt when another save has replaced the last request ID", async () => {
@@ -455,11 +463,11 @@ describe("App model settings", () => {
       return Promise.resolve(requestId ? newest : savedSettings);
     });
     renderApp();
-    await screen.findByLabelText("模型名称");
-    fireEvent.change(screen.getByLabelText("模型名称"), { target: { value: "my-committed-model" } });
+    await modelField("模型名称");
+    fireEvent.change(await modelField("模型名称"), { target: { value: "my-committed-model" } });
     fireEvent.click(screen.getByRole("button", { name: "保存并应用" }));
     await screen.findByText("此前保存已提交，当前配置已由后续更新覆盖。当前显示服务端最新配置。");
-    expect(screen.getByLabelText("模型名称")).toHaveValue("later-update-model");
+    expect(await modelField("模型名称")).toHaveValue("later-update-model");
     expect(api.fetchJson.mock.calls.filter(([path, options]) => path === "/agent/settings" && options?.method === "PUT")).toHaveLength(1);
   });
 
@@ -477,15 +485,15 @@ describe("App model settings", () => {
       return Promise.resolve(saves ? latest : savedSettings);
     });
     renderApp();
-    await screen.findByLabelText("模型名称");
-    fireEvent.change(screen.getByLabelText("模型名称"), { target: { value: "pending-draft" } });
+    await modelField("模型名称");
+    fireEvent.change(await modelField("模型名称"), { target: { value: "pending-draft" } });
     fireEvent.click(screen.getByRole("button", { name: "保存并应用" }));
     const resume = await screen.findByRole("button", { name: "读取最新配置并继续编辑" });
     await waitFor(() => expect(resume).toBeEnabled());
     fireEvent.click(resume);
     await screen.findByText(/已读取最新配置，可以继续编辑/);
-    expect(screen.getByLabelText("模型名称")).toHaveValue("pending-draft");
-    expect(screen.getByLabelText("模型名称")).toBeEnabled();
+    expect(await modelField("模型名称")).toHaveValue("pending-draft");
+    expect(await modelField("模型名称")).toBeEnabled();
     expect(saves).toBe(1);
     fireEvent.click(screen.getByRole("button", { name: "保存并应用" }));
     await screen.findByText("设置已保存，连接检测成功");
@@ -516,11 +524,12 @@ describe("App model settings", () => {
     });
     renderApp();
     await screen.findByRole("heading", { name: "连接与模型" });
-    expect(screen.getByLabelText("模型名称")).toHaveValue(savedSettings.model_name);
+    expect(screen.getByText(savedSettings.model_name, { selector: ".model-current-summary strong" })).toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: "设为默认" })[1]);
-    await waitFor(() => expect(screen.getByLabelText("模型名称")).toHaveValue("second-model"));
+    await waitFor(() => expect(screen.getByText("second-model", { selector: ".model-current-summary strong" })).toBeInTheDocument());
+    await modelField("模型名称");
     expect(screen.getByLabelText("Base URL")).toHaveValue("https://second.example.test/v1");
-    expect(screen.getByLabelText("API Key")).toHaveValue("");
+    expect(await modelField("API Key")).toHaveValue("");
     expect(api.fetchJson.mock.calls.some(([path, options]) => path === "/agent/settings" && options?.method === "PUT")).toBe(false);
   });
 

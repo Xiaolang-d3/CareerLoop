@@ -31,4 +31,25 @@ describe("original versus AI text", () => {
     expect(screen.getByText(/校正后的文字/)).toHaveTextContent("[邮箱已隐藏]");
     expect(load).toHaveBeenCalledOnce();
   });
+  it("reads a saved Markdown original with headings and tables without executing embedded HTML", async () => {
+    const load = vi.fn().mockResolvedValue({ text: async () => "# 成果标题\n\n|名称|状态|\n|---|---|\n|报告|保存|\n\n<script>untrusted()</script>" } as Blob);
+    const view = render(<FilePreview source={{ ...source, original_filename: "报告.md", mime_type: "text/markdown" }} mode="original" loadOriginal={load} />);
+    expect(await screen.findByRole("heading", { name: "成果标题" })).toBeInTheDocument();
+    expect(screen.getByRole("table")).toHaveTextContent("报告保存");
+    expect(view.container.querySelector("script")).toBeNull();
+  });
+});
+
+it("reads archived local images through the private loader and releases URLs", async () => {
+  const { waitFor } = await import("@testing-library/react");
+  vi.stubGlobal("URL", Object.assign(class extends URL {}, { createObjectURL: vi.fn().mockReturnValue("blob:private-image"), revokeObjectURL: vi.fn() }));
+  const id = "a".repeat(32);
+  const loadAsset = vi.fn().mockResolvedValue(new Blob(["image"], { type: "image/png" }));
+  const source = { id: 22, title: "生图成果", original_filename: "回答.md", mime_type: "text/markdown", file_available: true, content: "" } as LibrarySourceDetail;
+  const view = render(<FilePreview source={source} mode="original" loadOriginal={vi.fn().mockResolvedValue({ text: async () => `# 生图成果\n\n![生成图片](assets/${id}.png)` } as Blob)} loadAsset={loadAsset} />);
+  await waitFor(() => expect(screen.getByRole("img", { name: "生成图片" })).toHaveAttribute("src", "blob:private-image"));
+  expect(loadAsset).toHaveBeenCalledWith(22, id, expect.any(AbortSignal));
+  view.unmount();
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:private-image");
+  vi.unstubAllGlobals();
 });

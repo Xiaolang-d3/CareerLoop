@@ -5,9 +5,10 @@ import type { ModelCatalog } from "../../types";
 type Client = ReturnType<typeof createApiClient>;
 function publicCatalog(catalog: ModelCatalog): ModelCatalog {
   return {
-    connections: catalog.connections.map(({ id, name, model_base_url, model_protocol, api_key_configured, enabled, revision }) => ({ id, name, model_base_url, model_protocol, api_key_configured, enabled, revision })),
-    profiles: catalog.profiles.map(({ id, connection_id, model_name, enabled, revision, parameters, capabilities, context_limit }) => ({ id, connection_id, model_name, enabled, revision, parameters, capabilities, context_limit })),
-    default_profile_id: catalog.default_profile_id
+    connections: catalog.connections.map(({ id, name, model_base_url, model_protocol, detected_protocol, protocol_label, api_key_configured, enabled, revision }) => ({ id, name, model_base_url, model_protocol, detected_protocol, protocol_label, api_key_configured, enabled, revision })),
+    profiles: catalog.profiles.map(({ id, connection_id, model_name, enabled, revision, parameters, capabilities, context_limit, reasoning_effort }) => ({ id, connection_id, model_name, enabled, revision, parameters, capabilities, context_limit, reasoning_effort })),
+    default_profile_id: catalog.default_profile_id,
+    effective_execution_profile_id: catalog.effective_execution_profile_id
   };
 }
 const emptyCatalog: ModelCatalog = { connections: [], profiles: [], default_profile_id: null };
@@ -49,8 +50,8 @@ export function useModelCatalog({ fetchJson, scope, enabled, refreshKey }: { fet
       task.finish();
     }
   }
-  async function mutate(path: string, method: "POST" | "PATCH" | "DELETE", body?: Record<string, unknown>) {
-    if (!owner.active || ownerRef.current !== owner || owner.writing) return false;
+  async function write(path: string, method: "POST" | "PATCH" | "DELETE", body?: Record<string, unknown>): Promise<ModelCatalog | null> {
+    if (!owner.active || ownerRef.current !== owner || owner.writing) return null;
     owner.writing = true;
     invalidate();
     const task = request();
@@ -59,11 +60,12 @@ export function useModelCatalog({ fetchJson, scope, enabled, refreshKey }: { fet
     setError("");
     try {
       const catalog = await fetchJson<ModelCatalog>(path, { method, signal: task.signal, headers: { "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
-      if (!task.current()) return false;
-      setSnapshot({ owner, catalog: publicCatalog(catalog) });
-      return true;
+      if (!task.current()) return null;
+      const safe = publicCatalog(catalog);
+      setSnapshot({ owner, catalog: safe });
+      return safe;
     } catch (reason) {
-      if (!task.current()) return false;
+      if (!task.current()) return null;
       const conflict = typeof reason === "object" && reason !== null && "status" in reason && Number(reason.status) === 409;
       setError(conflict ? "此连接已更新，正在读取最新版本；请检查后重新编辑。" : reason instanceof Error ? reason.message : "更新模型连接失败");
       if (conflict) {
@@ -72,11 +74,18 @@ export function useModelCatalog({ fetchJson, scope, enabled, refreshKey }: { fet
           if (task.current()) setSnapshot({ owner, catalog: publicCatalog(catalog) });
         } catch { /* Retain the visible conflict until a later reload succeeds. */ }
       }
-      return false;
+      return null;
     } finally {
       if (task.current()) { owner.writing = false; setBusy(false); }
       task.finish();
     }
+  }
+  async function mutate(path: string, method: "POST" | "PATCH" | "DELETE", body?: Record<string, unknown>) {
+    return Boolean(await write(path, method, body));
+  }
+  async function ensureProfile(connectionId: string, modelName: string, revision: number): Promise<string | null> {
+    const catalog = await write(`/agent/model-connections/${encodeURIComponent(connectionId)}/profiles/ensure`, "POST", { model_name: modelName, expected_revision: revision });
+    return catalog?.profiles.find(profile => profile.connection_id === connectionId && profile.model_name === modelName && profile.enabled)?.id ?? null;
   }
 
   useEffect(() => {
@@ -88,5 +97,5 @@ export function useModelCatalog({ fetchJson, scope, enabled, refreshKey }: { fet
     return () => { owner.active = false; owner.writing = false; invalidate(); };
   }, [owner, enabled, refreshKey]);
 
-  return { catalog: snapshot?.owner === owner ? snapshot.catalog : emptyCatalog, loading, busy, error, reload, mutate };
+  return { catalog: snapshot?.owner === owner ? snapshot.catalog : emptyCatalog, loading, busy, error, reload, mutate, ensureProfile };
 }

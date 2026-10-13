@@ -242,7 +242,8 @@
 .model-quota-remaining span { color: var(--color-text-secondary, #50516a); font-size: 12px; }
 .model-quota-empty span { color: var(--color-text-muted, #84859a); font-size: 12px; line-height: 1.5; }
 .model-quota-remaining strong { color: var(--color-text, #20213a); font-size: 22px; letter-spacing: -.03em; }
-.model-quota-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.model-quota-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.model-monitor-fallback { margin-left: 6px; padding: 0 5px; border: 1px solid var(--color-warning); border-radius: 999px; color: var(--color-warning); font-size: 10px; font-style: normal; font-weight: 600; }
 
 .model-capability-row {
   display: grid;
@@ -309,4 +310,45 @@
 @media (max-width: 420px) {
   .model-settings-actions > p { flex-basis: 100%; }
   .model-advanced-settings > summary > span { display: none; }
+}
+
+.model-current-summary { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.model-current-summary h3 { margin: 0 0 8px; font-size: 13px; color: var(--color-text-muted); }
+.model-current-summary strong { font-size: 18px; overflow-wrap: anywhere; }
+.model-current-summary p { margin: 6px 0 0; font-size: 12px; color: var(--color-text-muted); overflow-wrap: anywhere; }
+.model-current-summary > div { min-width: 0; }
+.model-current-summary > button { flex-shrink: 0; }
+.model-dialog-backdrop { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 20px; background: rgb(15 18 30 / 45%); }
+.model-settings-dialog { max-width: 600px; max-height: calc(100dvh - 40px); overflow: hidden; padding: 0; grid-template-rows: auto minmax(0, 1fr); gap: 0; border: 1px solid var(--color-border); border-radius: 18px; background: var(--color-surface); color: var(--color-text); box-shadow: 0 20px 70px rgb(0 0 0 / 20%); }
+.model-dialog-heading { padding: 20px 22px 16px; border-bottom: 1px solid var(--color-border); display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.model-dialog-heading h2 { margin: 0; font-size: 18px; }
+.model-dialog-heading button { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 8px; background: var(--color-surface-subtle); color: var(--color-text-secondary); cursor: pointer; }
+.model-dialog-heading button:disabled { opacity: .45; cursor: default; }
+.model-settings-dialog .model-connection-card { padding: 0; border: 0; box-shadow: none; }
+.model-dialog-protocol > summary { cursor: pointer; font-size: 12px; color: var(--color-text-secondary); }
+.model-dialog-protocol .model-protocol-card { margin-top: 10px; padding: 12px; }
+.model-settings-dialog .model-settings-actions { position: sticky; bottom: -20px; margin-top: 4px; padding-block: 14px; border-top: 1px solid var(--color-border); background: var(--color-surface); }
+@media (max-width: 520px) {
+  .model-dialog-backdrop { padding: 10px; }
+  .model-settings-dialog { max-height: calc(100dvh - 20px); }
+  .model-current-summary { flex-wrap: wrap; }
+}
+
+.model-dialog-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 20px 22px; display: grid; gap: 14px; }
+.model-dialog-intro { margin: 0; color: var(--color-text-muted); font-size: 13px; line-height: 1.6; }
+.model-key-field { display: grid; gap: 7px; }
+.model-key-field > small { color: var(--color-text-muted); font-size: 12px; line-height: 1.5; }
+.model-key-badge { padding: 2px 7px; border-radius: 5px; color: var(--color-text-secondary); background: var(--color-surface-subtle); font-size: 11px; }
+.model-key-input { position: relative; }
+.model-key-input input { padding-right: 44px; }
+.model-key-input button { position: absolute; right: 4px; top: 4px; bottom: 4px; width: 34px; display: grid; place-items: center; border: 0; border-radius: 6px; color: var(--color-text-muted); background: transparent; cursor: pointer; }
+.model-key-input button:disabled { opacity: .4; cursor: default; }
+.model-key-input button:focus-visible { outline: 2px solid var(--color-brand); }
+.model-settings-dialog .model-settings-actions > p { flex-basis: 100%; }
+.model-settings-dialog .model-settings-actions > button:first-of-type { margin-left: auto; }
+@media (max-width: 520px) {
+  .model-dialog-heading { padding: 16px; }
+  .model-dialog-body { padding: 16px; }
+  .model-settings-dialog .model-settings-actions { bottom: -16px; }
+  .model-settings-dialog .model-settings-actions > button { flex: 1; min-height: 40px; }
 }

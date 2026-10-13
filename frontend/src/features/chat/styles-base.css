@@ -117,6 +117,10 @@
 .message-attachments { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
 .message-attachments span { display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px; border: 1px solid #dce8e1; border-radius: 7px; color: #5e7066; background: #f7faf8; font-size: 13px; }
 .message-attachments em { color: #187552; font-style: normal; font-weight: 700; }
+.message-attachments button { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 6px 8px; border: 1px solid var(--color-border); border-radius: 8px; color: var(--color-text-secondary); background: var(--color-surface); font: inherit; font-size: 12px; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.message-attachments button:hover { color: var(--color-brand-strong); background: var(--color-brand-soft); }
+.message-attachments button:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+.message-attachments button > svg { flex: none; }
 
 @media (max-width: 600px) {
   .chat-welcome { padding-bottom: 34px; }
@@ -770,14 +774,8 @@
   padding-bottom: 3px;
 }
 
-.chat-workspace.is-running .composer-shortcuts button span,
 .chat-workspace.is-running .send-button span {
   display: none;
-}
-
-.chat-workspace.is-running .composer-shortcuts button {
-  min-width: 30px;
-  padding-inline: 7px;
 }
 
 @media (max-width: 700px) {

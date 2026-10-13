@@ -54,7 +54,6 @@
 .assistant-popup .conversation-history-panel.drawer-open { position: absolute; inset: 0; width: 100%; height: 100%; max-width: 100%; box-sizing: border-box; border-radius: 0; z-index: 10; }
 .assistant-popup .research-panel-backdrop { display: none; }
 .assistant-page .chat-workspace { --chat-column: 760px; }
-.assistant-page .chat-dock-header { padding-inline: 28px; }
 @media (max-width: 600px) {
   .chat-dock.assistant-popup { inset: 62px 8px calc(8px + env(safe-area-inset-bottom)) 8px; width: auto; height: auto; border-radius: 16px; }
   .assistant-surface > .chat-dock-header { padding: 10px 14px; min-height: 58px; }

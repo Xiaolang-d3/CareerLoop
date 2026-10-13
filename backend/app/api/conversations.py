@@ -52,6 +52,8 @@ def conversations_delete(conversation_id: int) -> dict[str, Any]:
     require_conversation(conversation_id)
     try:
         delete_conversation_attachments(conversation_id)
+        from ..chat.image_assets import delete_images
+        delete_images(conversation_id)
     except RuntimeError as exc:
         raise HTTPException(
             status_code=503,

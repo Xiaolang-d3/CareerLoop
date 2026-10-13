@@ -168,6 +168,16 @@ def library_source_file_get(source_id: int) -> FileResponse:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.get("/library/sources/{source_id}/assets/{asset_id}/file")
+def library_image_file_get(source_id: int, asset_id: str) -> FileResponse:
+    from ..library.sources import get_source_asset
+    try:
+        path, filename, mime = get_source_asset(source_id, asset_id)
+        return FileResponse(path, filename=filename, media_type=mime, headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.patch("/library/sources/{source_id}")
 def library_source_patch(source_id: int, payload: LibrarySourceUpdateIn) -> dict[str, Any]:
     try:

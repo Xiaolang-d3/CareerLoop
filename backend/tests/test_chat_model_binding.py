@@ -11,6 +11,7 @@ from app.chat import execution
 from app.db import connect
 from app.domain import AgentClarification, AgentRunResult, AgentRunSnapshot, AgentStreamEvent, ClarificationOption
 from app.main import app
+from app.secret_store import SecretStoreUnavailable
 from api_client import create_authenticated_client
 
 
@@ -113,3 +114,10 @@ class ChatModelBindingTest(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         messages = self.client.get(f"/chat/messages?conversation_id={self.conversation['id']}").json()
         self.assertEqual(messages, [])
+
+    def test_unavailable_historical_credential_has_actionable_http_error(self):
+        with patch.object(execution, "get_agent_runtime", side_effect=SecretStoreUnavailable("运行绑定的模型凭证已改变，无法恢复原配置")):
+            response = self.stream("missing-credential")
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("凭证已改变", response.json()["detail"])
+        self.assertEqual(self.client.get(f"/chat/messages?conversation_id={self.conversation['id']}").json(), [])

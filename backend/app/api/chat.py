@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from ag_ui.core import RunAgentInput
 from fastapi import HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse, Response
 from pydantic import ValidationError
 from .dependencies import require_conversation
 from ..chat.contracts import ChatMessageIn
@@ -17,9 +17,48 @@ from ..chat.service import (
 from fastapi import APIRouter
 from ..chat import execution
 from ..chat.execution import stream_chat_response, is_chat_running
+from ..chat.artifacts import ArtifactConflict, SaveArtifactIn, message_artifacts, save_artifact
 
 
 router = APIRouter()
+
+
+@router.get("/chat-assets/{asset_id}/file")
+def generated_image_file(asset_id: str):
+    from ..chat.image_assets import asset_file
+    try:
+        path, filename, mime = asset_file(asset_id)
+        return FileResponse(path, filename=filename, media_type=mime, headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/chat-assets/{asset_id}/thumbnail")
+def generated_image_thumbnail(asset_id: str):
+    from ..chat.image_assets import asset_thumbnail
+    try:
+        return Response(asset_thumbnail(asset_id), media_type="image/webp", headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=404, detail="生成图片预览不可用") from exc
+
+
+@router.get("/chat/messages/{message_id}/artifacts")
+def chat_message_artifacts(message_id: int) -> dict[str, Any]:
+    try:
+        return message_artifacts(message_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409 if isinstance(exc, ArtifactConflict) else 404, detail=str(exc)) from exc
+
+
+@router.post("/chat/messages/{message_id}/save-to-library")
+def chat_message_save(message_id: int, payload: SaveArtifactIn) -> dict[str, Any]:
+    try:
+        return save_artifact(message_id, payload)
+    except ValueError as exc:
+        code = 409 if isinstance(exc, ArtifactConflict) else 404 if str(exc) == "消息不存在" else 422
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail="本地文件保存失败，请检查磁盘空间后重试") from exc
 
 
 @router.get("/chat/messages")
@@ -51,6 +90,8 @@ def rewind_chat_messages(message_id: int, conversation_id: int | None = None) ->
             raise HTTPException(status_code=404, detail="消息不存在")
         if message["role"] != "user":
             raise HTTPException(status_code=400, detail="只能从用户消息开始回退")
+        from ..chat.image_assets import delete_images
+        delete_images(resolved_id, message_cutoff=message_id)
         deleted = conn.execute(
             "DELETE FROM chat_messages WHERE conversation_id = ? AND id >= ?",
             (resolved_id, message_id),
@@ -110,20 +151,19 @@ def _ag_ui_vision_attachment_ids(payload: RunAgentInput) -> list[str]:
     return raw_ids[:4]
 
 
-def _ag_ui_web_search(payload: RunAgentInput) -> bool:
+def _ag_ui_web_search_fields(payload: RunAgentInput) -> dict[str, Any]:
     forwarded = payload.forwarded_props or {}
-    value = forwarded.get("webSearch", False) if isinstance(forwarded, dict) else False
-    if not isinstance(value, bool):
-        raise HTTPException(status_code=422, detail="webSearch 必须是布尔值")
-    return value
-
-
-def _ag_ui_web_search_mode(payload: RunAgentInput) -> str:
-    forwarded = payload.forwarded_props or {}
-    value = forwarded.get("webSearchMode", "auto") if isinstance(forwarded, dict) else "auto"
-    if value not in {"auto", "technical", "general"}:
-        raise HTTPException(status_code=422, detail="webSearchMode 必须是 auto、technical 或 general")
-    return value
+    if not isinstance(forwarded, dict):
+        return {}
+    mapping = {
+        "webSearch": "web_search",
+        "webSearchMode": "web_search_mode",
+        "webSearchTopic": "web_search_topic",
+        "webSearchSourcePreference": "web_search_source_preference",
+        "webSearchProvider": "web_search_provider",
+    }
+    # Omitting a key must remain distinguishable from choosing false/auto/none.
+    return {field: forwarded[key] for key, field in mapping.items() if key in forwarded}
 
 
 @router.post("/ag-ui")
@@ -147,16 +187,19 @@ async def run_ag_ui(payload: dict[str, Any], request: Request) -> StreamingRespo
         if selected is not None and (not isinstance(selected, str) or not selected.strip() or len(selected) > 120):
             raise HTTPException(status_code=422, detail="modelProfileId 必须是模型档案 ID 或 null")
         model_selection["model_profile_id"] = selected
-    return await stream_chat_response(
-        ChatMessageIn(
+    try:
+        chat_input = ChatMessageIn(
             content=content,
             conversation_id=conversation_id,
             attachment_ids=_ag_ui_attachment_ids(ag_ui_input),
             vision_attachment_ids=_ag_ui_vision_attachment_ids(ag_ui_input),
-            web_search=_ag_ui_web_search(ag_ui_input),
-            web_search_mode=_ag_ui_web_search_mode(ag_ui_input),
+            **_ag_ui_web_search_fields(ag_ui_input),
             **model_selection,
-        ),
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors(include_url=False)) from exc
+    return await stream_chat_response(
+        chat_input,
         ag_ui_input=ag_ui_input,
         accept=request.headers.get("accept"),
     )

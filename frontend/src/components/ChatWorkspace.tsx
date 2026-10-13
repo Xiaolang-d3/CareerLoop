@@ -1,9 +1,15 @@
 import { useConversationScroll } from "../features/chat/useConversationScroll";
-import { RunStatus } from "../features/chat/RunStatus";
 import { ComposerModelPicker } from "../features/chat/ComposerModelPicker";
-import { textFromAppendMessage, WebSource, webSourcesFromAgent, ResearchPanelActionsContext, EditMessageComposer, thinkingHeaderCopy, ComposerClarification, StarterPromptList, ChatContextChips, ResearchPanel, ChatTurn } from "../features/chat/MessagePresentation";
+import { ComposerWebSearch } from "../features/chat/ComposerWebSearch";
+import { AttachmentPreviewDialog, AttachmentPreviewContext } from "../features/chat/AttachmentPreviewDialog";
+import { AssetOriginalContext } from "../features/chat/GeneratedImage";
+import { ResultDialog } from "../features/chat/ResultDialog";
+import { ResultActionsContext } from "../features/chat/result-types";
+import { AttachmentThumbnailContext } from "../features/chat/HistoryAttachment";
+import { defaultWebSearchOptions, pendingWebSearchOptions, webSearchConfigurationIssue } from "../features/chat/webSearchOptions";
+import { textFromAppendMessage, WebSource, webSourcesFromAgent, ResearchPanelActionsContext, EditMessageComposer, RunProcess, ComposerClarification, StarterPromptList, ChatContextChips, ResearchPanel, ChatTurn } from "../features/chat/MessagePresentation";
 
-import type { AgentRunResult, ChatMessage, ChatAttachment, WebSearchMode, ChatClarificationOption, ChatClarification, ChatWorkspaceProps } from "../features/chat/types";
+import type { AgentRunResult, ChatMessage, ChatAttachment, WebSearchOptions, ChatClarificationOption, ChatClarification, ChatWorkspaceProps } from "../features/chat/types";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from "react";
 
@@ -17,7 +23,7 @@ import { AssistantRuntimeProvider, ComposerPrimitive, ThreadPrimitive, type Thre
 
 import { useAui, useAuiState } from "@assistant-ui/store";
 
-import { ArrowUpRight, FileText, History, ImagePlus, LoaderCircle, PanelRight, Pencil, Plus, RefreshCw, Search, Send, Square, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, ArrowUpRight, FileText, History, ImagePlus, LoaderCircle, PanelRight, Paperclip, Pencil, Plus, RefreshCw, Square, TriangleAlert, X } from "lucide-react";
 
 function asClarificationOption(value: unknown, index: number): ChatClarificationOption | null {
   if (!value || typeof value !== "object") return null;
@@ -51,13 +57,13 @@ export function clarificationFromAgent(run?: AgentRunResult): ChatClarification 
 type ChatWorkspaceContentProps = ChatWorkspaceProps & {
   pendingAttachments: ChatAttachment[];
   previewUrls: Record<string, string>;
+  localFiles: Record<string, File>;
   uploadingPreview: { filename: string; url: string } | null;
   onUpload: (file?: File) => Promise<void>;
   onRemovePendingAttachment: (attachmentId: string) => Promise<void>;
-  webSearchSelected: boolean;
-  webSearchMode: WebSearchMode;
-  onToggleWebSearch: () => void;
-  onWebSearchModeChange: (mode: WebSearchMode) => void;
+  webSearchOptions: WebSearchOptions;
+  webSearchInherited: boolean;
+  onWebSearchOptionsChange: (options: WebSearchOptions) => void;
 };
 
 function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
@@ -65,6 +71,9 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   const researchToggleRef = useRef<HTMLButtonElement>(null);
   const aui = useAui();
   const composerText = useAuiState((state) => state.composer.text);
+  const [composerFocused, setComposerFocused] = useState(false);
+  const showComposerHint = (!props.chatBusy && composerFocused) || composerText.length >= 180_000;
+  const searchIssue = webSearchConfigurationIssue(props.webSearchOptions, props.webSearchCapabilities);
   const localDrafts = useRef(new Map<number, string>());
   const drafts = props.composerDrafts ?? localDrafts.current;
   useLayoutEffect(() => {
@@ -83,7 +92,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
     if (!input) return;
     const resize = () => {
       const style = window.getComputedStyle(input);
-      const min = Number.parseFloat(style.minHeight) || 52;
+      const min = Number.parseFloat(style.minHeight) || 40;
       const max = Number.parseFloat(style.maxHeight) || Math.min(240, window.innerHeight * .3);
       input.style.height = "0px";
       const height = Math.max(min, input.scrollHeight);
@@ -101,12 +110,12 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
     return () => { observer.disconnect(); window.removeEventListener("resize", resize); };
   }, [composerText, props.chatInputRef]);
   const appliedDraftId = useRef<string | null>(null);
-  const placeholderThinking = thinkingHeaderCopy(props.latestAgent, true);
-  const generatingReply = props.messages.some((message) => message.id < 0 && message.role === "assistant" && message.content.trim())
-    && !props.latestAgent?.events.some((event) => event.status === "running" && event.tool_name !== "agent_thinking");
   const clarification = clarificationFromAgent(props.latestAgent);
   const [isDraggingAttachment, setIsDraggingAttachment] = useState(false);
-  const [expandedPreview, setExpandedPreview] = useState<{ filename: string; url: string } | null>(null);
+  const [expandedPreview, setExpandedPreview] = useState<ChatAttachment | null>(null);
+  const [resultSelection, setResultSelection] = useState<{ messageId: number; selector?: string; saving?: boolean } | null>(null);
+  const generatedGallery = expandedPreview?.origin === "generated" ? props.messages.find(message => message.payload?.agent?.assets?.some(asset => asset.id === expandedPreview.id))?.payload?.agent?.assets ?? [] : null;
+  const gallery = expandedPreview?.kind === "image" ? (generatedGallery ?? props.messages.find(message => message.payload?.attachments?.some(attachment => attachment.id === expandedPreview.id))?.payload?.attachments ?? props.pendingAttachments).filter(item => item.kind === "image") : [];
   const [conversationListOpen, setConversationListOpen] = useState(false);
   const [researchPanelOpen, setResearchPanelOpen] = useState(false);
   const scrolling = useConversationScroll(props.currentConversationId, props.messages, researchPanelOpen);
@@ -150,8 +159,8 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   }
 
   function fillComposer(draft: string, enableWebSearch = false) {
-    if (enableWebSearch && props.webSearchAvailable && !props.webSearchSelected) {
-      props.onToggleWebSearch();
+    if (enableWebSearch && props.webSearchAvailable && !props.webSearchOptions.enabled) {
+      props.onWebSearchOptionsChange({ ...props.webSearchOptions, enabled: true });
     }
     aui.composer().setText(draft);
     window.requestAnimationFrame(() => {
@@ -185,6 +194,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
 
   useEffect(() => {
     setExpandedPreview(null);
+    setResultSelection(null);
     setConversationListOpen(false);
     setResearchPanelOpen(false);
     setResearchSelection(null);
@@ -258,6 +268,10 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   return (
     <section className={`chat-workspace ${props.density === "dock" ? "is-dock" : "is-page"} ${props.focused ? "is-focused" : ""} ${props.messages.length ? "has-history" : "is-empty"} ${props.chatBusy ? "is-running" : ""} ${researchPanelOpen ? "has-research-panel" : ""}`}>
       <ResearchPanelActionsContext.Provider value={{ openDetails: openResearchDetails }}>
+      <AttachmentPreviewContext.Provider value={setExpandedPreview}>
+      <AssetOriginalContext.Provider value={props.onLoadAttachment}>
+      <AttachmentThumbnailContext.Provider value={props.onLoadAttachmentThumbnail}>
+      <ResultActionsContext.Provider value={props.onLoadResults ? (messageId, selector, saving) => setResultSelection({ messageId, selector, saving }) : null}>
       <ThreadPrimitive.Root className="chat-main">
         <header
           className={`chat-session-header${isFreshUntitled ? " is-untitled" : " has-session"}`}
@@ -284,19 +298,19 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             )}
           </div>
           <div className="chat-session-tools" role="toolbar" aria-label="对话操作">
-            {props.messages.length || props.chatBusy ? (
+            {researchPanelOpen || defaultResearchSources.length > 0 ? (
               <button
                 ref={researchToggleRef}
                 className={`chat-session-tool chat-research-toggle${researchPanelOpen ? " is-open" : ""}`}
                 type="button"
                 onClick={() => researchPanelOpen ? closeResearchDetails(false) : openResearchDetails()}
-                aria-label="研究详情"
+                aria-label="来源详情"
                 aria-expanded={researchPanelOpen}
                 aria-controls="chat-research-panel"
-                title="查看搜索过程与引用来源"
+                title="查看引用来源"
               >
                 <PanelRight size={15} />
-                <span>研究详情</span>
+                <span>来源</span>
                 {defaultResearchSources.length ? <em>{defaultResearchSources.length}</em> : null}
               </button>
             ) : null}
@@ -323,6 +337,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             </button>
           </div>
         </header>
+        <div className="chat-thread-surface">
         <ThreadPrimitive.Viewport ref={scrolling.viewportRef} onScroll={scrolling.onScroll} autoScroll={false} scrollToBottomOnInitialize={false} scrollToBottomOnThreadSwitch={false} scrollToBottomOnRunStart={false} className="chat-thread" role="log" aria-live="polite" aria-relevant="additions">
           <div ref={scrolling.contentRef} className="chat-thread-content">
           {props.messages.length === 0 && props.density === "dock" ? (
@@ -338,17 +353,22 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             <ThreadPrimitive.Messages>
               {({ message }) => message.composer.isEditing
                 ? <EditMessageComposer />
-                : <ChatTurn state={message} chatBusy={props.chatBusy} />}
+                : <ChatTurn state={message} chatBusy={props.chatBusy} stopping={props.taskCancelBusy} />}
             </ThreadPrimitive.Messages>
           )}
+
+          {props.chatBusy && (!props.messages.length || props.messages.at(-1)?.role === "user")
+            && !props.messages.some((message) => message.role === "assistant" && message.id < 0) ? (
+            <div className="message assistant"><div className="message-content"><RunProcess streaming stopping={props.taskCancelBusy} /></div></div>
+          ) : null}
 
           <div ref={props.chatEndRef} />
           </div>
         </ThreadPrimitive.Viewport>
+        {scrolling.away ? <button type="button" className="chat-jump-latest" onClick={scrolling.jumpToLatest}>{scrolling.unread ? "有新内容 · 回到最新 ↓" : "回到最新 ↓"}</button> : null}
+        </div>
 
         <div className="chat-composer">
-          {scrolling.away ? <button type="button" className="chat-jump-latest" onClick={scrolling.jumpToLatest}>{scrolling.unread ? "有新内容 · 回到最新 ↓" : "回到最新 ↓"}</button> : null}
-          {props.chatBusy ? <RunStatus key={props.currentConversationId} title={generatingReply ? "正在生成回复" : placeholderThinking.title} task={placeholderThinking.currentTask} /> : null}
           {props.messages.length === 0 && props.density !== "dock" ? (
             <div className="chat-welcome">
               <h2>你想完成什么？</h2>
@@ -359,7 +379,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             <ComposerClarification
               clarification={clarification}
               busy={props.taskCancelBusy}
-              onChoose={(text) => { void props.onSend(text); }}
+              onChoose={(text) => { if (!searchIssue) void props.onSend(text, [], [], props.webSearchOptions.enabled, props.webSearchOptions.topic, props.webSearchOptions.source_preference); }}
               onCancel={props.onCancelTask}
             />
           ) : props.waitingForUser ? (
@@ -382,30 +402,27 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
           ) : null}
 
           {props.modelChecking ? <div className="chat-retry-prompt" role="status">正在检查模型服务…</div> : null}
-          {props.modelUnavailable ? (
-            <section className="chat-retry-prompt" role="alert" aria-label="模型服务不可用">
-              <TriangleAlert size={14} />
-              <span>{props.modelUnavailable} 输入内容已保留。</span>
-              <button type="button" onClick={props.onOpenModelSettings}>去设置模型</button>
-              {props.retryDraft ? <details><summary>查看保留的内容</summary><p style={{ whiteSpace: "pre-wrap" }}>{props.retryDraft.content}</p></details> : null}
-            </section>
-          ) : null}
-          {props.retryDraft && !props.chatBusy ? (
+          {props.modelUnavailable || props.sendError || (props.retryDraft && !props.chatBusy) ? (
             <section
               className="chat-retry-prompt"
-              aria-label={props.retryDraft.reason === "interrupted" ? "任务恢复提示" : "消息发送失败"}
+              role={props.modelUnavailable || props.sendError ? "alert" : undefined}
+              aria-label={props.modelUnavailable ? "模型服务不可用" : props.retryDraft?.reason === "interrupted" ? "任务恢复提示" : "消息发送失败"}
             >
               <TriangleAlert size={14} />
-              <span>{props.retryDraft.reason === "interrupted" ? "上次任务意外中断，可从最近检查点继续" : "上一条消息未发送成功"}</span>
-              <button onClick={() => {
+              <span>{props.modelUnavailable || props.sendError
+                ? `${props.modelUnavailable || props.sendError}${props.retryDraft ? " 输入内容已保留。" : ""}`
+                : props.retryDraft?.reason === "interrupted" ? "上次任务意外中断，可从最近检查点继续" : "上一条消息未发送成功"}</span>
+              {props.modelUnavailable ? <button type="button" onClick={props.onOpenModelSettings}>去设置模型</button> : null}
+              {props.retryDraft && !props.chatBusy ? <button type="button" onClick={() => {
                 const draft = props.retryDraft;
                 if (!draft) return;
                 if (props.onRetry) {
                   void props.onRetry(draft);
                   return;
                 }
-                void props.onSend(draft.content, draft.attachmentIds, draft.visionAttachmentIds, draft.webSearch, draft.webSearchMode);
-              }}><RefreshCw size={12} />{props.retryDraft.reason === "interrupted" ? "继续执行" : "重试"}</button>
+                void props.onSend(draft.content, draft.attachmentIds, draft.visionAttachmentIds, draft.webSearch, draft.webSearchTopic, draft.webSearchSourcePreference);
+              }}><RefreshCw size={12} />{props.retryDraft.reason === "interrupted" ? "继续执行" : "重试"}</button> : null}
+              {props.retryDraft ? <details><summary>查看保留的内容</summary><p style={{ whiteSpace: "pre-wrap" }}>{props.retryDraft.content}</p></details> : null}
             </section>
           ) : null}
 
@@ -447,16 +464,13 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                       ? <button
                         type="button"
                         className="composer-attachment-preview-button"
-                        onClick={() => setExpandedPreview({ filename: attachment.original_filename, url: props.previewUrls[attachment.id] })}
+                        onClick={() => setExpandedPreview(attachment)}
                         aria-label={`查看 ${attachment.original_filename}`}
                       ><img className="composer-attachment-preview" src={props.previewUrls[attachment.id]} alt={`${attachment.original_filename} 预览`} /></button>
-                      : <span className="composer-attachment-icon">
-                        {attachment.kind === "document" ? <FileText size={15} /> : <ImagePlus size={15} />}
-                      </span>}
-                    {attachment.kind === "document" ? <span>
-                      <strong>{attachment.original_filename}</strong>
-                      <small>随本轮消息发送</small>
-                    </span> : null}
+                      : <button type="button" className="composer-file-preview-button" onClick={() => setExpandedPreview(attachment)} aria-label={`预览 ${attachment.original_filename}`} title={`预览 ${attachment.original_filename}`}>
+                        <span className="composer-attachment-icon">{attachment.kind === "document" ? <FileText size={15} /> : <ImagePlus size={15} />}</span>
+                        <span><strong>{attachment.original_filename}</strong><small>点击预览 · 随本轮发送</small></span>
+                      </button>}
                     <button className="composer-attachment-remove" type="button" onClick={() => void props.onRemovePendingAttachment(attachment.id)} aria-label={`移除 ${attachment.original_filename}`}>
                       <X size={14} />
                     </button>
@@ -464,25 +478,33 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                 ))}
               </div>
             ) : null}
-            <ComposerPrimitive.Root className="composer-input composer-input--enhanced" onSubmit={(event) => { if (props.attachmentBusy || props.modelSelectionBusy || props.modelProfileUnavailable) event.preventDefault(); }}>
+            <ComposerPrimitive.Root
+              className="composer-input composer-input--enhanced"
+              onFocusCapture={() => setComposerFocused(true)}
+              onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setComposerFocused(false); }}
+              onSubmit={(event) => { if (props.attachmentBusy || props.modelSelectionBusy || props.modelProfileUnavailable || searchIssue) event.preventDefault(); }}
+            >
               <ComposerPrimitive.Input
                 ref={props.chatInputRef}
                 rows={1}
                 maxLength={200_000}
                 aria-label="输入消息"
                 aria-describedby="composer-input-hint"
-                placeholder={clarification ? "回答上面的问题，或直接说下一件…" : "描述任务，或添加一份资料…"}
+                placeholder={clarification ? "回答上面的问题，或直接说下一件…" : "输入你的问题或任务…"}
                 submitMode="enter"
                 unstable_insertNewlineOnTouchEnter
                 onPaste={handleComposerPaste}
               />
               <div className="composer-bottom-row">
-              <div className="composer-shortcuts" aria-label="添加资料">
+              <div className="composer-shortcuts" role="group" aria-label="输入选项">
                   <ComposerModelPicker
                     configured={props.modelConfigured !== false}
                     currentModelName={props.currentModelName}
                     defaultModelName={props.defaultModelName}
                     profiles={props.modelProfiles ?? []}
+                    serviceModels={props.serviceModels}
+                    onDiscover={props.onDiscoverServiceModels}
+                    onServiceChange={props.onServiceModelChange}
                     selectedProfileId={props.selectedModelProfileId ?? null}
                     profileDisabled={Boolean(props.modelProfileUnavailable)}
                     serviceUnavailable={Boolean(props.modelUnavailable)}
@@ -491,49 +513,32 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                     onChange={(profileId) => props.onModelProfileChange?.(profileId)}
                     onOpenSettings={props.onOpenModelSettings}
                   />
-                  <button type="button" onClick={() => attachmentInputRef.current?.click()} disabled={props.attachmentBusy} title="上传图片或文档，也可直接粘贴图片">
-                    {props.attachmentBusy ? <LoaderCircle className="spinning" size={15} /> : <ImagePlus size={15} />}
-                    <span>{props.attachmentBusy ? "处理中…" : "资料"}</span>
+                  <button className="composer-tool composer-attachment-tool" type="button" aria-label={props.attachmentBusy ? "附件处理中" : "添加附件"} onClick={() => attachmentInputRef.current?.click()} disabled={props.attachmentBusy} title={props.attachmentBusy ? "正在处理附件" : "添加图片或文档，也可粘贴图片或拖入文件"}>
+                    {props.attachmentBusy ? <LoaderCircle className="spinning" size={16} aria-hidden="true" /> : <Paperclip size={17} aria-hidden="true" />}
                   </button>
-                  <button
-                    type="button"
-                    className={`web-search-toggle ${props.webSearchSelected ? "active" : ""} ${!props.webSearchAvailable ? "unavailable" : ""}`.trim()}
-                    onClick={props.onToggleWebSearch}
-                    disabled={props.chatBusy}
-                    aria-pressed={props.webSearchSelected}
-                    aria-label="联网搜索"
-                    title={props.webSearchAvailable ? "为下一条消息补充公开信息" : "可以选中；发送后会提示配置 AgentSearch"}
-                  >
-                    <Search size={15} />
-                    <span>联网</span>
-                  </button>
-                  {props.webSearchSelected ? (
-                    <select
-                      className="web-search-mode"
-                      aria-label="联网搜索模式"
-                      value={props.webSearchMode}
-                      disabled={props.chatBusy}
-                      onChange={(event) => props.onWebSearchModeChange(event.target.value as WebSearchMode)}
-                    >
-                      <option value="auto">自动来源</option>
-                      <option value="technical">技术来源</option>
-                      <option value="general">通用来源</option>
-                    </select>
-                  ) : null}
+                  <ComposerWebSearch options={props.webSearchOptions} onChange={props.onWebSearchOptionsChange}
+                    capabilities={props.webSearchCapabilities} available={props.webSearchAvailable} provider={props.webSearchProvider}
+                    busy={props.chatBusy || props.taskCancelBusy} capabilitiesBusy={props.webSearchCapabilitiesBusy}
+                    capabilitiesError={props.webSearchCapabilitiesError} onRefresh={props.onRefreshWebSearchCapabilities} inherited={props.webSearchInherited} />
                   <ChatContextChips context={props.sessionContext} onOpenLibrary={props.onOpenLibrary} />
                 </div>
                 {props.chatBusy ? (
-                  <ComposerPrimitive.Cancel className="send-button stop-button" disabled={props.taskCancelBusy} aria-label="停止">
-                    <Square size={14} fill="currentColor" /><span>停止</span>
+                  <ComposerPrimitive.Cancel className="send-button stop-button" disabled={props.taskCancelBusy} aria-label={props.taskCancelBusy ? "正在停止生成" : "停止生成"} title={props.taskCancelBusy ? "正在停止生成" : "停止生成"}>
+                    <Square size={12} fill="currentColor" aria-hidden="true" /><span>停止</span>
                   </ComposerPrimitive.Cancel>
                 ) : (
-                  <ComposerPrimitive.Send className="send-button" aria-label="发送" disabled={props.attachmentBusy || props.modelSelectionBusy || props.modelProfileUnavailable} title={props.attachmentBusy ? "资料处理完成后即可发送" : props.modelSelectionBusy ? "模型选择保存后即可发送" : props.modelProfileUnavailable ? "当前模型已停用，请切换模型" : "发送消息"}>
-                    <Send size={16} /><span>发送</span>
+                  <ComposerPrimitive.Send className="send-button" aria-label="发送" disabled={props.attachmentBusy || props.modelSelectionBusy || props.modelProfileUnavailable || Boolean(searchIssue)} title={searchIssue || (props.attachmentBusy ? "资料处理完成后即可发送" : props.modelSelectionBusy ? "模型选择保存后即可发送" : props.modelProfileUnavailable ? "当前模型已停用，请切换模型" : "发送消息")}>
+                    <ArrowUp size={18} aria-hidden="true" /><span>发送</span>
                   </ComposerPrimitive.Send>
                 )}
               </div>
             </ComposerPrimitive.Root>
-            <div className="composer-input-hint" id="composer-input-hint"><span className="composer-keyboard-hint">Enter 发送 · Shift + Enter 换行</span><span className="composer-touch-hint">支持多行输入，点击按钮发送</span>{composerText.length >= 180_000 && <span role="status">{composerText.length.toLocaleString()} / 200,000 字</span>}</div>
+            <span id="composer-input-hint" className="sr-only"><span className="composer-keyboard-hint">Enter 发送 · Shift + Enter 换行</span><span className="composer-touch-hint">回车换行，点击发送按钮发送</span></span>
+            <div className={`composer-input-hint${showComposerHint ? " is-active" : ""}`} aria-hidden={!showComposerHint}>
+              <span className="composer-keyboard-hint" aria-hidden="true"><kbd>Enter</kbd><span>发送</span><span className="composer-hint-divider">·</span><kbd>Shift</kbd><span>+</span><kbd>Enter</kbd><span>换行</span></span>
+              <span className="composer-touch-hint" aria-hidden="true">回车换行 · 点击 <ArrowUp size={12} /> 发送</span>
+              {composerText.length >= 180_000 && <span className="composer-character-count" role="status">{composerText.length.toLocaleString()} / 200,000 字</span>}
+            </div>
             {isDraggingAttachment ? <div className="composer-drop-hint" aria-live="polite">松开即可添加图片或文档</div> : null}
           </div>
           {showStarters ? (
@@ -543,10 +548,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             />
           ) : null}
           {expandedPreview ? (
-            <div className="attachment-preview-dialog" role="dialog" aria-modal="true" aria-label={`${expandedPreview.filename} 预览`} onClick={() => setExpandedPreview(null)}>
-              <img src={expandedPreview.url} alt={`${expandedPreview.filename} 大图预览`} onClick={(event) => event.stopPropagation()} />
-              <button type="button" onClick={() => setExpandedPreview(null)} aria-label="关闭图片预览"><X size={18} /></button>
-            </div>
+            <AttachmentPreviewDialog attachment={expandedPreview} localFile={props.localFiles[expandedPreview.id]} loadOriginal={props.onLoadAttachment} gallery={gallery} onNavigate={setExpandedPreview} onClose={() => setExpandedPreview(null)} />
           ) : null}
         </div>
       </ThreadPrimitive.Root>
@@ -563,6 +565,11 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
         })}
         onClose={() => closeResearchDetails()}
       />
+      {resultSelection ? <ResultDialog key={resultSelection.messageId} {...resultSelection} services={props} onClose={() => setResultSelection(null)} /> : null}
+      </ResultActionsContext.Provider>
+      </AttachmentThumbnailContext.Provider>
+      </AssetOriginalContext.Provider>
+      </AttachmentPreviewContext.Provider>
       </ResearchPanelActionsContext.Provider>
       <ConversationHistoryPanel
         conversations={props.conversations}
@@ -577,7 +584,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
         onRemove={props.onRemoveConversation}
       />
       {conversationListOpen ? <button className="conversation-history-backdrop" type="button" aria-label="关闭对话记录" onClick={() => setConversationListOpen(false)} /> : null}
-      {researchPanelOpen ? <button className="research-panel-backdrop" type="button" aria-label="关闭研究详情" onClick={() => closeResearchDetails()} /> : null}
+      {researchPanelOpen ? <button className="research-panel-backdrop" type="button" aria-label="关闭来源详情" onClick={() => closeResearchDetails()} /> : null}
     </section>
   );
 }
@@ -587,19 +594,43 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
   const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
   const [uploadingPreview, setUploadingPreview] = useState<{ filename: string; url: string } | null>(null);
   const previewUrlsRef = useRef<Record<string, string>>({});
+  const [localFiles, setLocalFiles] = useState<Record<string, File>>({});
+  const currentConversationRef = useRef(props.currentConversationId);
+  currentConversationRef.current = props.currentConversationId;
   const [visionAttachmentIds, setVisionAttachmentIds] = useState<string[]>([]);
-  const [webSearchSelected, setWebSearchSelected] = useState(false);
-  const [webSearchMode, setWebSearchMode] = useState<WebSearchMode>("auto");
+  const localSearchDrafts = useRef(new Map<number, WebSearchOptions>());
+  const searchDrafts = props.composerSearchDrafts ?? localSearchDrafts.current;
+  const [webSearchOptions, setWebSearchOptions] = useState<WebSearchOptions>(() => props.currentConversationId ? searchDrafts.get(props.currentConversationId) ?? defaultWebSearchOptions() : defaultWebSearchOptions());
+  const [webSearchInherited, setWebSearchInherited] = useState(false);
+  const inheritedMessageId = useRef<number | null>(null);
+  const updateWebSearchOptions = useCallback((options: WebSearchOptions) => {
+    setWebSearchOptions(options);
+    setWebSearchInherited(false);
+    if (props.currentConversationId) searchDrafts.set(props.currentConversationId, options);
+  }, [props.currentConversationId, searchDrafts]);
+  useLayoutEffect(() => {
+    setWebSearchOptions(props.currentConversationId ? searchDrafts.get(props.currentConversationId) ?? defaultWebSearchOptions() : defaultWebSearchOptions());
+    inheritedMessageId.current = null;
+    setWebSearchInherited(false);
+  }, [props.currentConversationId, searchDrafts]);
+  useEffect(() => {
+    const last = props.messages.at(-1);
+    const inherited = pendingWebSearchOptions(props.messages);
+    if (!inherited || !last || inheritedMessageId.current === last.id) return;
+    inheritedMessageId.current = last.id;
+    setWebSearchOptions(inherited);
+    setWebSearchInherited(true);
+    if (props.currentConversationId) searchDrafts.set(props.currentConversationId, inherited);
+  }, [props.messages, props.currentConversationId, searchDrafts]);
 
   useEffect(() => {
     Object.values(previewUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
     previewUrlsRef.current = {};
     setPendingAttachments([]);
     setPreviewUrls({});
+    setLocalFiles({});
     setUploadingPreview(null);
     setVisionAttachmentIds([]);
-    setWebSearchSelected(false);
-    setWebSearchMode("auto");
   }, [props.currentConversationId]);
 
   useEffect(() => {
@@ -619,11 +650,16 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     if (previewUrl) setUploadingPreview({ filename: file.name || "粘贴的图片", url: previewUrl });
     try {
       const attachment = await props.onUploadAttachment(file);
+      if (currentConversationRef.current !== props.currentConversationId) {
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        return;
+      }
       if (previewUrl) {
         previewUrlsRef.current[attachment.id] = previewUrl;
         setPreviewUrls({ ...previewUrlsRef.current });
       }
       setPendingAttachments((current) => [...current, attachment]);
+      setLocalFiles(current => ({ ...current, [attachment.id]: file }));
       if (attachment.kind === "image") {
         setVisionAttachmentIds((current) => [...current, attachment.id]);
       }
@@ -644,6 +680,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
       setPreviewUrls({ ...previewUrlsRef.current });
     }
     setPendingAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId));
+    setLocalFiles(current => { const next = { ...current }; delete next[attachmentId]; return next; });
     setVisionAttachmentIds((current) => current.filter((id) => id !== attachmentId));
   }, [props]);
 
@@ -663,19 +700,24 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     onNew: async (message) => {
       const content = textFromAppendMessage(message);
       if (content) {
-        await props.onSend(
+        if (webSearchConfigurationIssue(webSearchOptions, props.webSearchCapabilities)) return;
+        const sent = await props.onSend(
           content,
           pendingAttachments.map((attachment) => attachment.id),
           visionAttachmentIds,
-          webSearchSelected,
-          webSearchMode,
+          webSearchOptions.enabled,
+          webSearchOptions.topic,
+          webSearchOptions.source_preference,
         );
+        if (sent === false) return;
         // Failed sends keep content and attachment IDs in retryDraft; do not
         // leave a second copy queued in the composer after a successful retry.
         setPendingAttachments([]);
+        setLocalFiles({});
+        Object.values(previewUrlsRef.current).forEach(url => URL.revokeObjectURL(url));
+        previewUrlsRef.current = {};
+        setPreviewUrls({});
         setVisionAttachmentIds([]);
-        setWebSearchSelected(false);
-        setWebSearchMode("auto");
       }
     },
     onEdit: async (message) => {
@@ -696,13 +738,13 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
         {...props}
         pendingAttachments={pendingAttachments}
         previewUrls={previewUrls}
+        localFiles={localFiles}
         uploadingPreview={uploadingPreview}
         onUpload={uploadAttachment}
         onRemovePendingAttachment={removePendingAttachment}
-        webSearchSelected={webSearchSelected}
-        webSearchMode={webSearchMode}
-        onToggleWebSearch={() => setWebSearchSelected((selected) => !selected)}
-        onWebSearchModeChange={setWebSearchMode}
+        webSearchOptions={webSearchOptions}
+        webSearchInherited={webSearchInherited}
+        onWebSearchOptionsChange={updateWebSearchOptions}
       />
     </AssistantRuntimeProvider>
   );

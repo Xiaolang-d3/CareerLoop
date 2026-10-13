@@ -55,6 +55,8 @@ class Settings(BaseModel):
     attachment_vision_enabled: bool = False
     attachment_vision_url_ttl_seconds: int = Field(default=300, ge=60, le=3600)
     web_research_enabled: bool = False
+    web_search_provider: Literal["auto", "tavily", "agent_search"] = "auto"
+    tavily_api_key: str | None = Field(default=None, repr=False)
     agent_search_base_url: str = "http://127.0.0.1:3939"
     agent_search_token: str | None = None
     web_research_timeout_seconds: float = Field(default=25, gt=0, le=120)
@@ -63,6 +65,12 @@ class Settings(BaseModel):
     @property
     def is_loopback_only(self) -> bool:
         return _is_loopback(self.bind_host)
+
+    @property
+    def resolved_web_search_provider(self) -> Literal["tavily", "agent_search"]:
+        if self.web_search_provider != "auto":
+            return self.web_search_provider
+        return "tavily" if (self.tavily_api_key or "").strip() else "agent_search"
 
 
 def _int_env(name: str, default: int) -> int:
@@ -117,6 +125,8 @@ def get_settings() -> Settings:
         attachment_vision_enabled=os.getenv("ATTACHMENT_VISION_ENABLED", "false").lower() == "true",
         attachment_vision_url_ttl_seconds=os.getenv("ATTACHMENT_VISION_URL_TTL_SECONDS", "300"),
         web_research_enabled=os.getenv("WEB_RESEARCH_ENABLED", "false").lower() == "true",
+        web_search_provider=os.getenv("WEB_SEARCH_PROVIDER", "auto").strip().lower(),
+        tavily_api_key=(os.getenv("TAVILY_API_KEY") or "").strip() or None,
         agent_search_base_url=os.getenv("AGENT_SEARCH_BASE_URL", "http://127.0.0.1:3939"),
         agent_search_token=os.getenv("AGENT_SEARCH_TOKEN") or None,
         web_research_timeout_seconds=os.getenv("WEB_RESEARCH_TIMEOUT_SECONDS", "25"),

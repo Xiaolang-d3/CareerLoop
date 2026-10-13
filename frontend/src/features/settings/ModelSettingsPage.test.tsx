@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { cleanup, fireEvent, render as baseRender, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultAgentSettings } from "../../constants";
 import type { AgentSettings, ModelCapabilityReport, ModelServiceMonitor } from "../../types";
@@ -83,7 +84,15 @@ function props(overrides: Partial<Parameters<typeof ModelSettingsPage>[0]> = {})
   };
 }
 
+function render(ui: ReactElement) {
+  const result = baseRender(ui);
+  if (!screen.queryByRole("dialog")) fireEvent.click(screen.getByRole("button", { name: "配置模型" }));
+  return result;
+}
+
 function openAdvancedSettings() {
+  const protocol = screen.queryByText("接口选项")?.closest("details");
+  if (protocol) protocol.open = true;
   const summary = screen.getByText("高级设置");
   fireEvent.click(summary);
   const details = summary.closest("details");
@@ -96,13 +105,96 @@ describe("ModelSettingsPage", () => {
     vi.unstubAllGlobals();
   });
 
+  it("keeps fields in a dialog and restores focus after cancel", () => {
+    const onCancelEdit = vi.fn();
+    baseRender(<ModelSettingsPage {...props({ onCancelEdit })} />);
+    expect(screen.queryByLabelText("API Key")).not.toBeInTheDocument();
+    const trigger = screen.getByRole("button", { name: "配置模型" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    expect(screen.getByRole("dialog", { name: "配置模型" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Base URL")).toHaveFocus();
+    fireEvent.keyDown(screen.getByLabelText("Base URL"), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(onCancelEdit).toHaveBeenCalledOnce();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("keeps a failed save open and closes only after editing finishes", () => {
+    const page = props({ editing: true });
+    const { rerender } = baseRender(<ModelSettingsPage {...page} />);
+    rerender(<ModelSettingsPage {...page} busy />);
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(page.onCancelEdit).not.toHaveBeenCalled();
+    rerender(<ModelSettingsPage {...page} />);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    rerender(<ModelSettingsPage {...page} editing={false} />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("traps keyboard focus and shows save errors inside the dialog", () => {
+    baseRender(<ModelSettingsPage {...props({ editing: true, error: "保存失败，请重试" })} />);
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toContainElement(screen.getByRole("alert"));
+    const close = screen.getByRole("button", { name: "关闭模型设置" });
+    const save = screen.getByRole("button", { name: "保存并应用" });
+    save.focus();
+    fireEvent.keyDown(save, { key: "Tab" });
+    expect(close).toHaveFocus();
+    fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
+    expect(save).toHaveFocus();
+    fireEvent.mouseDown(dialog.parentElement!);
+    expect(dialog).toBeInTheDocument();
+  });
+
+  it("reveals only a newly entered key and hides it again after clearing", () => {
+    const page = props({ editing: true });
+    const { rerender } = render(<ModelSettingsPage {...page} />);
+    expect(screen.getByRole("button", { name: "显示本次输入的密钥" })).toBeDisabled();
+    rerender(<ModelSettingsPage {...page} settings={{ ...settings, api_key: "test-only-draft" }} />);
+    fireEvent.click(screen.getByRole("button", { name: "显示本次输入的密钥" }));
+    expect(screen.getByLabelText("API Key")).toHaveAttribute("type", "text");
+    rerender(<ModelSettingsPage {...page} />);
+    expect(screen.getByLabelText("API Key")).toHaveAttribute("type", "password");
+    expect(screen.getByRole("button", { name: "显示本次输入的密钥" })).toBeDisabled();
+  });
+
+  it("filters a large catalog while preserving the selected model", () => {
+    const onSettingsChange = vi.fn();
+    render(<ModelSettingsPage {...props({ availableModels: ["gpt-5.5", ...Array.from({ length: 10 }, (_, i) => `custom-${i}`)], onSettingsChange })} />);
+    fireEvent.change(screen.getByLabelText("搜索模型"), { target: { value: "CUSTOM-8" } });
+    const select = screen.getByLabelText("模型名称") as HTMLSelectElement;
+    expect(Array.from(select.options).map(item => item.value)).toEqual(["gpt-5.5", "custom-8"]);
+    fireEvent.change(select, { target: { value: "custom-8" } });
+    expect(onSettingsChange).toHaveBeenCalledWith(expect.objectContaining({ model_name: "custom-8" }));
+    fireEvent.change(screen.getByLabelText("搜索模型"), { target: { value: "missing" } });
+    expect(screen.getByText("没有匹配的模型，可修改搜索词或手动填写。")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "手动填写" }));
+    expect(screen.queryByLabelText("搜索模型")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("模型名称")).toHaveAttribute("placeholder", "输入模型名称");
+  });
+
+  it("explains why saving is unavailable when a new service needs a key", () => {
+    render(<ModelSettingsPage {...props({ editing: true, settings: { ...settings, model_base_url: "https://new.example.test" } })} />);
+    expect(screen.getByText("请填写当前服务的 API Key")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "保存并应用" })).toBeDisabled();
+  });
+
+  it("prevents dismissal while a save result is unknown", () => {
+    baseRender(<ModelSettingsPage {...props({ saveUnknown: true })} />);
+    expect(screen.getByRole("button", { name: "关闭模型设置" })).toBeDisabled();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
   it("shows editable connection fields and keeps technical settings collapsed initially", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
     render(<ModelSettingsPage {...props()} />);
 
-    expect(screen.getByRole("heading", { name: "连接你的模型" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "配置模型" })).toBeInTheDocument();
     expect(screen.getByLabelText(/^Base URL/)).toHaveValue("https://api.openai.com/v1");
     expect(screen.getByLabelText(/^Base URL/)).not.toBeDisabled();
     expect(screen.getByLabelText(/^Base URL/)).not.toHaveAttribute("readonly");
@@ -111,7 +203,7 @@ describe("ModelSettingsPage", () => {
     expect(screen.getByLabelText("模型名称")).toHaveValue("gpt-5.5");
     expect(screen.getByLabelText("模型名称")).not.toBeDisabled();
     expect(screen.getByRole("button", { name: "保存并应用" })).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "取消" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "取消" })).toBeEnabled();
     expect(screen.queryByText("已锁定")).not.toBeInTheDocument();
     expect(screen.queryByRole("table", { name: "模型列表", hidden: true })).not.toBeInTheDocument();
     expect(screen.getByText("高级设置").closest("details")).not.toHaveAttribute("open");
@@ -323,10 +415,16 @@ describe("ModelSettingsPage", () => {
 
   it("explains a managed read-only credential without asking to repair a keychain", () => {
     render(<ModelSettingsPage {...props({ savedSettings: { ...settings, secret_storage_writable: false, api_key_source: "environment" } })} />);
-    expect(screen.getByText("当前密钥由服务部署环境提供，页面无法修改；请由服务部署配置更新密钥。")).toBeInTheDocument();
+    expect(screen.getByText("当前使用只读环境变量密钥，页面无法更换；本地 macOS 可使用系统钥匙串保存个人密钥。")).toBeInTheDocument();
     expect(screen.getByLabelText("API Key")).toBeDisabled();
     expect(screen.getByLabelText("模型名称")).toBeEnabled();
     expect(screen.queryByText(/修复系统钥匙串/)).not.toBeInTheDocument();
+  });
+
+  it("allows replacing an environment key when local keychain storage is writable", () => {
+    render(<ModelSettingsPage {...props({ editing: true, savedSettings: { ...settings, secret_storage: "keyring", secret_storage_writable: true, api_key_source: "environment" } })} />);
+    expect(screen.getByLabelText("API Key")).toBeEnabled();
+    expect(screen.queryByText(/当前使用只读环境变量密钥/)).not.toBeInTheDocument();
   });
 
   it("shows the negotiated protocol for the saved connection and a prediction for a draft", () => {
@@ -350,4 +448,38 @@ describe("ModelSettingsPage", () => {
     expect(onResumeEditing).toHaveBeenCalledOnce();
   });
 
+  it("labels the protocol auto mode actually uses in the protocol and monitor cards", () => {
+    const detectedSettings: AgentSettings = { ...settings, model_name: "grok-4.7", detected_model_protocol: "responses", resolved_model_protocol: "responses" };
+    render(<ModelSettingsPage {...props({
+      settings: detectedSettings,
+      savedSettings: detectedSettings,
+      monitor: { ...monitor, model_name: "grok-4.7", protocol: "responses", detected_protocol: "responses", protocol_label: "自动 · 实际使用 OpenAI Responses API" }
+    })} />);
+    openAdvancedSettings();
+    expect(screen.getByText("自动 · 实际使用 OpenAI Responses API", { selector: ".model-detected-protocol" })).toBeInTheDocument();
+    expect(screen.getByText(/^自动 · 实际使用 OpenAI Responses API · /)).toBeInTheDocument();
+  });
+
+  it("shows estimated cost, per-call cost and fallback answers in the monitor", () => {
+    render(<ModelSettingsPage {...props({
+      monitor: {
+        ...monitor,
+        summary: { ...monitor.summary, estimated_cost_usd: 0.0123, priced_requests: 8, unpriced_requests: 2, fallback_requests: 1 },
+        recent_events: [{ id: 1, request_kind: "stream", status: "success", error_code: "", error_message: "", latency_ms: 420, total_tokens: 30, model_name: "claude-sonnet-4-5", base_url: "", protocol: "anthropic", created_at: "2026-08-14T04:00:00Z", cost_usd: 0.00042, backend: "litellm", fallback_from_profile_id: "p1" }]
+      },
+      capabilities: { ...capabilities, merged: {
+        profile_id: "p1", model_name: "gpt-5.5", protocol: "openai",
+        capabilities: { reasoning: { status: "supported", source: "litellm", detail: "", label: "推理", overridden: false, probe_status: null, litellm_status: "supported" } } as never,
+        context_window: { tokens: 400000, source: "litellm" }, max_output_tokens: { tokens: 128000, source: "litellm" },
+        litellm_known: true, pricing: { input_per_million_usd: null, output_per_million_usd: null }
+      } }
+    })} />);
+    openAdvancedSettings();
+    expect(screen.getByText("近 24h 估算费用")).toBeInTheDocument();
+    expect(screen.getByText("$0.01")).toBeInTheDocument();
+    expect(screen.getByText("8 次有价格数据，2 次未计价")).toBeInTheDocument();
+    expect(screen.getByText("420 ms · $0.0004")).toBeInTheDocument();
+    expect(screen.getByText("备用")).toBeInTheDocument();
+    expect(screen.getByText(/上下文长度 400K · 最大输出 128K · 推理 支持（LiteLLM）/)).toBeInTheDocument();
+  });
 });

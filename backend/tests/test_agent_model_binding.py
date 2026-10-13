@@ -129,7 +129,7 @@ class AgentModelBindingTest(unittest.IsolatedAsyncioTestCase):
 def test_same_protocol_profiles_have_stable_independent_aliases():
     profiles = {name: connection(name) for name in ("profile-one", "profile-two")}
     bootstrap.reload_agent_components()
-    with patch.object(bootstrap, "get_profile_connection", side_effect=lambda profile_id=None, **kwargs: profiles[profile_id]), patch.object(bootstrap, "build_model_provider", side_effect=lambda **kwargs: RecordingModel()):
+    with patch.object(bootstrap, "get_routing_policy", return_value={"roles": {}, "version": 1, "strict_capabilities": False}), patch.object(bootstrap, "get_profile_connection", side_effect=lambda profile_id=None, **kwargs: profiles[profile_id or "profile-one"]), patch.object(bootstrap, "build_model_provider", side_effect=lambda **kwargs: RecordingModel()):
         first = bootstrap.get_agent_runtime("profile-one")
         second = bootstrap.get_agent_runtime("profile-two")
         assert first is bootstrap.get_agent_runtime("profile-one")

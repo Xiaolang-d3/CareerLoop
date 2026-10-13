@@ -39,11 +39,8 @@ fi
 if lsof -tiTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
   echo "Backend already listening on port 8000"
 else
-  if [ ! -d "$BACKEND_DIR/.venv" ]; then
-    python3 -m venv "$BACKEND_DIR/.venv"
-  fi
-  env -u PYTHONPATH -u VIRTUAL_ENV -u PYTHONHOME \
-    "$BACKEND_DIR/.venv/bin/pip" install -q -r "$BACKEND_DIR/requirements.txt"
+  # Runtime + test dependencies, all from the hash-locked dev lock.
+  "$BACKEND_DIR/scripts/install_deps.sh" "$BACKEND_DIR/.venv" dev
   # env -u clears any inherited PYTHONPATH/VIRTUAL_ENV that would shadow .venv.
   screen -dmS careerloop-backend zsh -lc \
     "cd '$BACKEND_DIR' && env -u PYTHONPATH -u VIRTUAL_ENV -u PYTHONHOME .venv/bin/uvicorn app.main:app --host '$BIND_HOST' --port 8000 > '$LOG_DIR/backend.log' 2>&1"

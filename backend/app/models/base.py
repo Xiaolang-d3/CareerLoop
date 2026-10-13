@@ -5,13 +5,24 @@ from typing import Protocol
 
 from ..domain import ModelRequest, ModelResponse, ModelStreamEvent
 from ..registry import NamedRegistry
+from ..redaction import redact_secrets
 
 
 class ModelProviderError(RuntimeError):
+    """Model failure shown to users and stored in the monitor.
+
+    Messages are always passed through credential-pattern redaction; use
+    :meth:`redact` to also mask the exact key of the failing connection.
+    """
+
     def __init__(self, code: str, message: str, retryable: bool = False) -> None:
-        super().__init__(message)
+        super().__init__(redact_secrets(message))
         self.code = code
         self.retryable = retryable
+
+    def redact(self, *secrets: str | None) -> "ModelProviderError":
+        self.args = (redact_secrets(str(self), secrets),)
+        return self
 
 
 class ModelProvider(Protocol):
