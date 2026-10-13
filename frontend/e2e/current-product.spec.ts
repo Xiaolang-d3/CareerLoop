@@ -120,7 +120,9 @@ test("AI workspace keeps one reading axis and switches history rail by breakpoin
     // Pixel baselines are macOS-specific. Linux still checks geometry and
     // interactions and emits the same screenshots for review.
     if (process.platform === "darwin") {
-      await expect(page).toHaveScreenshot(`chat-workspace-${viewport.width}.png`, {
+      // Collect every breakpoint's diff in one run; any mismatch still fails
+      // the test and the required CI gate.
+      await expect.soft(page).toHaveScreenshot(`chat-workspace-${viewport.width}.png`, {
         animations: "disabled",
         maxDiffPixelRatio: 0.01
       });
