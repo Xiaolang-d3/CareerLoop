@@ -8,6 +8,7 @@ from .repository import get_metadata
 from .knowledge import list_knowledge
 from .sources import enabled_source_details, list_sources
 from .organization import list_folders
+from .collections import list_collections
 from ..agent.settings import get_agent_settings
 from ..privacy import scan_and_redact
 
@@ -20,6 +21,7 @@ def get_library(db_path: str | Path | None = None) -> dict[str, Any]:
                   and fact["category"] not in {"career_goal", "career_strategy", "job_preference"}],
         "sources": list_sources(db_path),
         "folders": list_folders(db_path),
+        "collections": list_collections(db_path),
     }
 
 

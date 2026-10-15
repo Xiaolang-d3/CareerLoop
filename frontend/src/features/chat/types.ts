@@ -49,6 +49,9 @@ export type AgentRunResult = {
     tool_name: string;
     status: string;
     message: string;
+    started_at?: string | null;
+    completed_at?: string | null;
+    duration_ms?: number | null;
     data?: Record<string, unknown>;
   }>;
   plan?: {

@@ -1,7 +1,7 @@
 import {
-  Folder,
   ChevronsLeft,
   ChevronsRight,
+  Folder,
   Home,
   MessageCircle,
   Settings
@@ -11,7 +11,7 @@ import { sidebarHighlightForView, type SidebarHighlight } from "../constants";
 import type { ViewKey } from "../types";
 import type { SettingsPage } from "../routing";
 
-export type ProductNavKey = "dashboard" | "library" | "chat" | "settings";
+export type ProductNavKey = "dashboard" | "chat" | "library" | "settings";
 
 type PrefetchPage = "chat" | "library" | "dashboard" | "settings";
 
@@ -31,11 +31,12 @@ type AppSidebarProps = {
   onGoHome: () => void;
   onPrefetchPage: (page: PrefetchPage) => void;
   settingsPage?: SettingsPage;
+  libraryOpen?: boolean;
   onSelectNav: (key: ProductNavKey) => void;
   identity?: ReactNode;
 };
 
-const MOBILE_KEYS: ProductNavKey[] = ["dashboard", "library", "chat", "settings"];
+const MOBILE_KEYS: ProductNavKey[] = ["dashboard", "chat", "library", "settings"];
 
 export function AppSidebar({
   collapsed,
@@ -44,16 +45,17 @@ export function AppSidebar({
   onGoHome,
   onPrefetchPage,
   settingsPage,
+  libraryOpen,
   onSelectNav,
   identity
 }: AppSidebarProps) {
-  const highlighted = sidebarHighlightForView(activeView, { settingsPage });
+  const highlighted = sidebarHighlightForView(activeView, { settingsPage, libraryOpen });
   const isActive = (key: SidebarHighlight) => highlighted === key;
 
   const primaryItems: SidebarItem[] = [
     { key: "dashboard", label: "首页", icon: <Home size={18} />, active: isActive("dashboard"), prefetch: "dashboard", onClick: () => onSelectNav("dashboard") },
-    { key: "library", label: "文件库", icon: <Folder size={18} />, active: isActive("library"), prefetch: "library", onClick: () => onSelectNav("library") },
-    { key: "chat", label: "AI 工作区", icon: <MessageCircle size={18} />, active: isActive("chat"), prefetch: "chat", onClick: () => onSelectNav("chat") }
+    { key: "chat", label: "AI 工作区", icon: <MessageCircle size={18} />, active: isActive("chat"), prefetch: "chat", onClick: () => onSelectNav("chat") },
+    { key: "library", label: "文件库", icon: <Folder size={18} />, active: isActive("library"), prefetch: "library", onClick: () => onSelectNav("library") }
   ];
 
   const secondaryItems: SidebarItem[] = [

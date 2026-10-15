@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime
+from unittest.mock import patch
 
 from app.agent.orchestration import route_task
 from app.agent.runtime import AgentRuntime
@@ -97,6 +99,37 @@ class CurrentRoutePolicyTest(unittest.TestCase):
 
 
 class CurrentRuntimeTest(unittest.IsolatedAsyncioTestCase):
+    async def test_call_timing_and_safe_input_survive_the_terminal_snapshot(self) -> None:
+        model = ScriptedModel([
+            ModelResponse(content='{"goal":"查资料","steps":[{"tool_name":"search_library","title":"检索资料"}]}'),
+            ModelResponse(tool_calls=[ToolCall(id="read-1", name="search_library", arguments={"query": "任务恢复", "api_key": "do-not-copy"})]),
+            ModelResponse(content="已基于资料回答。"),
+        ])
+        streamed = []
+
+        async def capture(event):
+            if event.event is not None:
+                streamed.append(event.event.model_dump(mode="json"))
+
+        tool = CountingTool("search_library", fail_once=True)
+        with patch("app.agent.runtime.perf_counter", side_effect=[10.0, 10.8]):
+            result = await runtime_for(model, tool).run(
+                "根据我的知识库回答", event_callback=capture,
+            )
+        final = next(event for event in result.events if event.tool_call_id == "read-1" and event.status == "done")
+        progress = next(event for event in streamed if event["tool_call_id"] == "read-1" and event["status"] == "running")
+        self.assertEqual(tool.calls, 2)
+        self.assertEqual(final.duration_ms, 800)
+        retry = next(event for event in streamed if event.get("data", {}).get("retry_number") == 1)
+        self.assertEqual(retry["started_at"], progress["started_at"])
+        self.assertEqual(final.started_at, progress["started_at"])
+        self.assertGreaterEqual(datetime.fromisoformat(final.completed_at), datetime.fromisoformat(final.started_at))
+        self.assertEqual(final.data["arguments"], {"query": "任务恢复"})
+        restored = type(result).model_validate(result.model_dump(mode="json"))
+        persisted = next(event for event in restored.events if event.tool_call_id == "read-1" and event.status == "done")
+        self.assertEqual(persisted.duration_ms, 800)
+        self.assertEqual(persisted.started_at, final.started_at)
+
     async def test_confirmation_without_options_inherits_original_search_configuration(self) -> None:
         class CaptureTool(CountingTool):
             async def execute(self, arguments, context):

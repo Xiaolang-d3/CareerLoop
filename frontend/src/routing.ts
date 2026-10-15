@@ -4,7 +4,7 @@ export type SettingsPage = "overview" | "account" | "library" | "model" | "agent
 
 export type AppRoute =
   | { section: "dashboard" }
-  | { section: "chat"; conversationId?: number }
+  | { section: "chat"; conversationId?: number; page?: "library" }
   | { section: "settings"; page: SettingsPage };
 
 export function routeForSection(section: ViewKey): AppRoute {
@@ -16,7 +16,8 @@ export function parseAppHash(hash: string): AppRoute | null {
   const [rawPath] = value.split("?", 2);
   const path = rawPath.replace(/^\//, "").replace(/\/$/, "");
   if (path === "home" || path === "dashboard") return { section: "dashboard" };
-  if (path === "library") return { section: "settings", page: "library" };
+  if (path === "library" || path === "chat/library") return { section: "chat", page: "library" };
+  if (path === "settings/library") return { section: "settings", page: "library" };
   if (path === "chat") return { section: "chat" };
   const chatRoute = path.match(/^chat\/(\d+)$/);
   if (chatRoute) return { section: "chat", conversationId: Number(chatRoute[1]) };
@@ -36,8 +37,7 @@ export function initialAppRoute(hash: string): AppRoute {
 
 export function appRouteHash(route: AppRoute): string {
   if (route.section === "dashboard") return "#/home";
-  if (route.section === "chat") return route.conversationId ? `#/chat/${route.conversationId}` : "#/chat";
+  if (route.section === "chat") return route.page === "library" ? "#/chat/library" : route.conversationId ? `#/chat/${route.conversationId}` : "#/chat";
   if (route.page === "overview") return "#/settings";
-  if (route.page === "library") return "#/library";
   return `#/settings/${route.page}`;
 }

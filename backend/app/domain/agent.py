@@ -93,6 +93,9 @@ class ToolEvent(BaseModel):
     status: str
     message: str
     data: dict[str, Any] = Field(default_factory=dict)
+    started_at: str | None = None
+    completed_at: str | None = None
+    duration_ms: int | None = Field(default=None, ge=0)
 
 
 class AgentPlanStep(BaseModel):

@@ -3,6 +3,7 @@ import { createApiClient, fetchWithTimeout } from "../../api/client";
 import { emptyLibraryEditor } from "../../constants";
 import type {
   LibraryBundle,
+  LibraryCollection,
   LibraryFolder,
   LibraryOrganization,
   LibrarySource,
@@ -22,8 +23,10 @@ export function useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, s
 
   const [librarySources, setLibrarySources] = useState<LibrarySource[]>([]);
   const [libraryFolders, setLibraryFolders] = useState<LibraryFolder[]>([]);
+  const [libraryCollections, setLibraryCollections] = useState<LibraryCollection[]>([]);
 
-  const [confirmedKnowledgeCount, setConfirmedKnowledgeCount] = useState(0);
+  const [confirmedKnowledge, setConfirmedKnowledge] = useState<LibraryBundle["facts"]>([]);
+  const confirmedKnowledgeCount = confirmedKnowledge.length;
 
   const [sourceCount, setSourceCount] = useState(0);
 
@@ -51,10 +54,11 @@ export function useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, s
       const bundle = await fetchJson<LibraryBundle>("/library");
       const confirmedFacts = bundle.facts.filter((fact) => fact.status === "confirmed");
       const pendingFacts = bundle.facts.filter((fact) => fact.status === "pending");
-      setConfirmedKnowledgeCount(confirmedFacts.length);
+      setConfirmedKnowledge(confirmedFacts);
       setSourceCount(bundle.sources.filter((source) => !source.trashed_at).length);
       setLibrarySources(bundle.sources);
       setLibraryFolders(bundle.folders || []);
+      setLibraryCollections(bundle.collections || []);
       setPendingKnowledge(
         pendingFacts.map((fact) => ({
           id: fact.id,
@@ -99,7 +103,7 @@ export function useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, s
     }
   }
 
-  async function importLibraryFiles(files: File[], folderId?: number | null) {
+  async function importLibraryFiles(files: File[], folderId?: number | null, collectionId?: number | null) {
     if (!files.length) return;
     setSourceImportBusy(true);
     setErrorMessage("");
@@ -108,6 +112,7 @@ export function useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, s
       files.forEach((file) => form.append("files", file));
       form.append("mode", enhancedDocumentParse ? "enhanced" : "fast");
       form.append("privacy_mode", "redacted");
+      form.append("enabled", "false");
       const response = await fetchJson<{
         results: Array<{ filename: string; ok: boolean; error?: string; source?: LibrarySource }>;
       }>("/library/sources/import", {
@@ -125,6 +130,10 @@ export function useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, s
               });
           }
         }
+        if (collectionId) {
+          const ids = response.results.filter((item) => item.ok && item.source).map((item) => item.source!.id);
+          if (ids.length) await mutateCollectionSources(collectionId, ids, "add");
+        }
       } finally {
         await refreshLibrary();
       }
@@ -134,7 +143,7 @@ export function useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, s
           `${response.results.length - failures.length} 个文件已导入，${failures.length} 个失败：${failures.map((item) => item.filename).join("、")}`
         );
       } else {
-        setNoticeMessage(`${response.results.length} 个来源已独立导入`);
+        setNoticeMessage(`${response.results.length} 个文件已存档，可带入对话或开启长期使用`);
       }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "资料解析失败");
@@ -148,12 +157,13 @@ export function useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, s
     title: string,
     content: string,
     privacyMode: "redacted" | "original",
-    folderId?: number | null
+    folderId?: number | null,
+    collectionId?: number | null
   ) {
     const response = await fetchJson<{ source: LibrarySource }>("/library/sources", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, content, privacy_mode: privacyMode })
+      body: JSON.stringify({ title, content, privacy_mode: privacyMode, enabled: false })
     });
     try {
       if (folderId)
@@ -162,10 +172,11 @@ export function useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, s
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ folder_id: folderId })
         });
+      if (collectionId) await mutateCollectionSources(collectionId, [response.source.id], "add");
     } finally {
       await refreshLibrary();
     }
-    setNoticeMessage("文本来源已创建");
+    setNoticeMessage("笔记已存档，可带入对话或开启长期使用");
   }
 
   async function updateLibrarySource(
@@ -221,6 +232,39 @@ export function useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, s
     await refreshLibrary();
   }
 
+  async function createLibraryCollection(name: string, sourceIds: number[] = []) {
+    await fetchJson("/library/collections", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, source_ids: sourceIds })
+    });
+    await refreshLibrary();
+  }
+
+  async function renameLibraryCollection(id: number, name: string) {
+    await fetchJson(`/library/collections/${id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name })
+    });
+    await refreshLibrary();
+  }
+
+  async function deleteLibraryCollection(id: number) {
+    await fetchJson(`/library/collections/${id}`, { method: "DELETE" });
+    await refreshLibrary();
+    setNoticeMessage("主题集合已删除，文件仍保留在文件库中");
+  }
+
+  async function mutateCollectionSources(id: number, sourceIds: number[], action: "add" | "remove") {
+    await fetchJson(`/library/collections/${id}/sources`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_ids: sourceIds, action })
+    });
+  }
+
+  async function updateLibraryCollectionSources(id: number, sourceIds: number[], action: "add" | "remove") {
+    await mutateCollectionSources(id, sourceIds, action);
+    await refreshLibrary();
+    setNoticeMessage(action === "add" ? "文件已加入主题集合，AI 使用设置保持不变" : "文件已移出主题集合，原件仍保留");
+  }
+
   async function searchLibrarySources(query: string) {
     return fetchJson<LibrarySource[]>(`/library/sources?q=${encodeURIComponent(query)}`);
   }
@@ -235,10 +279,16 @@ export function useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, s
     libraryEditor,
     librarySources,
     libraryFolders,
+    libraryCollections,
+    createLibraryCollection,
+    renameLibraryCollection,
+    deleteLibraryCollection,
+    updateLibraryCollectionSources,
     loadLibraryOriginal,
     organizeLibrarySource,
     createLibraryFolder,
     searchLibrarySources,
+    confirmedKnowledge,
     confirmedKnowledgeCount,
     sourceCount,
     pendingKnowledge,

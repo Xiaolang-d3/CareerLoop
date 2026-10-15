@@ -9,7 +9,7 @@ function renderSidebar(
   identity?: ReactNode,
   collapsed = false,
   activeView: ViewKey = "chat",
-  extras: { settingsPage?: SettingsPage } = {}
+  extras: { settingsPage?: SettingsPage; libraryOpen?: boolean } = {}
 ) {
   const props = {
     collapsed,
@@ -66,8 +66,8 @@ describe("AppSidebar", () => {
     const desktopNav = screen.getByRole("navigation", { name: "主导航" });
     expect(within(desktopNav).getAllByRole("button").map((item) => item.getAttribute("aria-label"))).toEqual([
       "首页",
-      "文件库",
       "AI 工作区",
+      "文件库",
       "设置"
     ]);
     expect(screen.queryByText("快速搜索…")).not.toBeInTheDocument();
@@ -78,23 +78,23 @@ describe("AppSidebar", () => {
   it("opens home, library, the AI workspace, and settings from the sidebar", () => {
     const props = renderSidebar();
     fireEvent.click(screen.getAllByRole("button", { name: "首页" })[0]);
-    fireEvent.click(screen.getAllByRole("button", { name: "文件库" })[0]);
     fireEvent.click(screen.getAllByRole("button", { name: "AI 工作区" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "文件库" })[0]);
     fireEvent.click(screen.getAllByRole("button", { name: "设置" })[0]);
     expect(props.onSelectNav).toHaveBeenCalledWith("dashboard");
-    expect(props.onSelectNav).toHaveBeenCalledWith("library");
     expect(props.onSelectNav).toHaveBeenCalledWith("chat");
+    expect(props.onSelectNav).toHaveBeenCalledWith("library");
     expect(props.onSelectNav).toHaveBeenCalledWith("settings");
   });
 
   it("prefetches a module when its navigation item is hovered", () => {
     const props = renderSidebar();
     fireEvent.mouseEnter(screen.getAllByRole("button", { name: "首页" })[0]);
-    fireEvent.mouseEnter(screen.getAllByRole("button", { name: "文件库" })[0]);
     fireEvent.mouseEnter(screen.getAllByRole("button", { name: "AI 工作区" })[0]);
+    fireEvent.mouseEnter(screen.getAllByRole("button", { name: "文件库" })[0]);
     expect(props.onPrefetchPage).toHaveBeenCalledWith("dashboard");
-    expect(props.onPrefetchPage).toHaveBeenCalledWith("library");
     expect(props.onPrefetchPage).toHaveBeenCalledWith("chat");
+    expect(props.onPrefetchPage).toHaveBeenCalledWith("library");
   });
 
   it("shows primary destinations in the mobile navigation", () => {
@@ -104,19 +104,26 @@ describe("AppSidebar", () => {
     expect(within(mobile).getByRole("button", { name: "文件库" })).toBeInTheDocument();
     expect(within(mobile).getByRole("button", { name: "AI 工作区" })).toHaveAttribute("aria-current", "page");
     expect(within(mobile).getByRole("button", { name: "设置" })).toBeInTheDocument();
-    fireEvent.click(within(mobile).getByRole("button", { name: "文件库" }));
-    expect(props.onSelectNav).toHaveBeenCalledWith("library");
+    fireEvent.click(within(mobile).getByRole("button", { name: "AI 工作区" }));
+    expect(props.onSelectNav).toHaveBeenCalledWith("chat");
   });
 
   it("highlights library, the AI workspace, and settings on matching pages", () => {
     renderSidebar(undefined, false, "settings", { settingsPage: "library" });
     const libraryNav = screen.getByRole("navigation", { name: "主导航" });
-    expect(within(libraryNav).getByRole("button", { name: "文件库" })).toHaveAttribute("aria-current", "page");
+    expect(within(libraryNav).getByRole("button", { name: "设置" })).toHaveAttribute("aria-current", "page");
+    expect(within(libraryNav).getByRole("button", { name: "文件库" })).not.toHaveAttribute("aria-current");
     cleanup();
 
     renderSidebar(undefined, false, "chat");
     const workspaceNav = screen.getByRole("navigation", { name: "主导航" });
     expect(within(workspaceNav).getByRole("button", { name: "AI 工作区" })).toHaveAttribute("aria-current", "page");
+    cleanup();
+
+    renderSidebar(undefined, false, "chat", { libraryOpen: true });
+    const filesNav = screen.getByRole("navigation", { name: "主导航" });
+    expect(within(filesNav).getByRole("button", { name: "文件库" })).toHaveAttribute("aria-current", "page");
+    expect(within(filesNav).getByRole("button", { name: "AI 工作区" })).not.toHaveAttribute("aria-current");
     cleanup();
 
     renderSidebar(undefined, false, "settings", { settingsPage: "overview" });

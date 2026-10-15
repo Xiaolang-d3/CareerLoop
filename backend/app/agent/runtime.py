@@ -8,6 +8,8 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextvars import ContextVar
 from copy import deepcopy
+from datetime import datetime, timezone
+from time import perf_counter
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
@@ -1080,20 +1082,18 @@ class AgentRuntime:
                 ) if plan is not None else None
                 if plan_step is not None:
                     plan_step.status = "running"
-                await self._publish(
-                    event_callback,
-                    AgentStreamEvent(
-                        type="agent_event",
-                        event=ToolEvent(
-                            round=round_number,
-                            tool_call_id=tool_call.id,
-                            tool_name=tool_call.name,
-                            status="running",
-                            message=tool_progress_message(tool_call.name, tool_call.arguments),
-                            data={"arguments": tool_call.arguments},
-                        ),
-                    ),
+                tool_started_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+                tool_started_clock = perf_counter()
+                progress = ToolEvent(
+                    round=round_number,
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    status="running",
+                    message=tool_progress_message(tool_call.name, tool_call.arguments),
+                    data={"arguments": tool_call.arguments},
+                    started_at=tool_started_at,
                 )
+                await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=progress))
                 try:
                     result = await self._execute_tool_with_retry(
                         tool_call,
@@ -1112,6 +1112,7 @@ class AgentRuntime:
                         events=events,
                         run_id=run_id,
                         fingerprint=fingerprint,
+                        started_at=tool_started_at,
                     )
                 except _RunCancellationRequested:
                     return self._cancelled_run_result(
@@ -1123,7 +1124,14 @@ class AgentRuntime:
                     tool_name=tool_call.name,
                     status=result.status,
                     message=result.message,
-                    data=result.data,
+                    # Persist only useful input fields for historical call details.
+                    data={**result.data, "arguments": {
+                        key: tool_call.arguments[key]
+                        for key in ("query", "company_name") if key in tool_call.arguments
+                    }},
+                    started_at=tool_started_at,
+                    completed_at=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                    duration_ms=max(0, round((perf_counter() - tool_started_clock) * 1000)),
                 )
                 events.append(event)
                 await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
@@ -1303,6 +1311,7 @@ class AgentRuntime:
         events: list[ToolEvent],
         run_id: str | None = None,
         fingerprint: str | None = None,
+        started_at: str | None = None,
     ) -> ToolResult:
         """Retry only side-effect-free tools when their error is explicitly retryable."""
         safe_risks = {"read_only", "derived_analysis", "external_read"}
@@ -1364,6 +1373,7 @@ class AgentRuntime:
                 tool_name=tool_call.name,
                 status="running",
                 message=f"{spec.title}暂时失败，正在安全重试",
+                started_at=started_at,
                 data={
                     "retry_number": retry_number + 1,
                     "error_code": result.error.code,

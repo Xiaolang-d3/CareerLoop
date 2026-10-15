@@ -30,8 +30,8 @@ describe("SettingsOverview", () => {
     expect(screen.getByText("账号与安全")).toBeInTheDocument();
     expect(screen.getByText("小林")).toBeInTheDocument();
     expect(screen.getByText("owner@example.com")).toBeInTheDocument();
-    expect(screen.getByText("资料库")).toBeInTheDocument();
-    expect(screen.getByText("资料库里的名字")).toBeInTheDocument();
+    expect(screen.getByText("文件库管理")).toBeInTheDocument();
+    expect(screen.getByText("文件、主题集合与知识")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "了解 灯灯" })).toHaveAttribute("href", "#/about");
 
     fireEvent.click(screen.getByRole("button", { name: /账号与安全/ }));
@@ -59,42 +59,20 @@ describe("SettingsOverview", () => {
     expect(onOpen).toHaveBeenCalledWith("model");
   });
 
-  it("shows 资料已就绪 when the library page would look filled", () => {
-    renderOverview({
-      library: {
-        ...emptyLibraryEditor,
-        name: "小林",
-
-      },
-      libraryReady: isLibraryReady("小林", 1)
-    });
-
-    expect(screen.getByText("资料已就绪")).toBeInTheDocument();
+  it("opens file management even without a profile name or enabled material", () => {
+    const { onOpen } = renderOverview({ library: emptyLibraryEditor, libraryReady: false, fileCount: 0 });
+    expect(screen.getByText("暂无文件，可随时添加")).toBeInTheDocument();
     expect(screen.queryByText("待完善")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /文件库管理/ }));
+    expect(onOpen).toHaveBeenCalledWith("library");
   });
 
-  it("keeps 待完善 only when the editor is still empty from the user's view", () => {
-    renderOverview({
-      library: emptyLibraryEditor,
-      libraryReady: isLibraryReady(emptyLibraryEditor.name, 0)
-    });
-
-    expect(screen.getByText("待完善")).toBeInTheDocument();
-    expect(screen.queryByText("资料已就绪")).not.toBeInTheDocument();
-    expect(screen.getByText("尚未填写称呼")).toBeInTheDocument();
-    expect(screen.getByText("尚未保存资料")).toBeInTheDocument();
+  it("shows a file count and makes the shared workspace library explicit", () => {
+    renderOverview({ fileCount: 3 });
+    expect(screen.getByText("共 3 个文件")).toBeInTheDocument();
+    expect(screen.getByText("与 AI 工作区共用同一文件库")).toBeInTheDocument();
   });
 
-  it("does not flash 待完善 while career library is still loading", () => {
-    renderOverview({
-      library: emptyLibraryEditor,
-      libraryReady: null
-    });
-
-    expect(screen.getByText("检查中")).toBeInTheDocument();
-    expect(screen.queryByText("待完善")).not.toBeInTheDocument();
-    expect(screen.queryByText("资料已就绪")).not.toBeInTheDocument();
-  });
 });
 
 describe("SettingsWorkspace", () => {
@@ -121,7 +99,7 @@ describe("SettingsWorkspace", () => {
     }
   });
 
-  it("keeps the library as a first-class page instead of nesting it under settings", () => {
+  it("includes file management in the settings path", () => {
     const onBack = vi.fn();
     render(
       <SettingsWorkspace page="library" onBack={onBack}>
@@ -129,8 +107,9 @@ describe("SettingsWorkspace", () => {
       </SettingsWorkspace>
     );
 
-    expect(screen.queryByRole("navigation", { name: "设置路径" })).not.toBeInTheDocument();
-    expect(onBack).not.toHaveBeenCalled();
+    expect(screen.getByRole("navigation", { name: "设置路径" })).toHaveTextContent("文件库管理");
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    expect(onBack).toHaveBeenCalledOnce();
   });
 });
 

@@ -27,9 +27,11 @@ export type LibraryBundle = {
   }>;
   sources: LibrarySource[];
   folders?: LibraryFolder[];
+  collections?: LibraryCollection[];
 };
 
 export type LibraryFolder = { id: number; name: string; created_at?: string };
+export type LibraryCollection = { id: number; name: string; source_ids: number[]; file_count: number; created_at?: string };
 export type LibraryOrganization = { folder_id?: number | null; favorite?: boolean; trashed?: boolean; opened?: boolean };
 
 export type LibrarySource = {
