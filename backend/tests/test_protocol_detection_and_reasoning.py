@@ -363,7 +363,6 @@ def test_runtime_persists_reasoning_items_and_streams_reasoning():
         def __init__(self) -> None:
             self.requests = []
             self.responses = [
-                ModelResponse(content='{"goal":"读取资料","steps":[{"tool_name":"get_library_context","title":"读取知识库"}]}'),
                 ModelResponse(tool_calls=[ToolCall(id="call-1", name="get_library_context", arguments={})],
                               provider_metadata={"responses_reasoning_items": items}),
                 ModelResponse(content="完成"),

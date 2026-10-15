@@ -188,7 +188,7 @@ def test_runtime_calls_three_roles_and_records_actual_stage(catalog, monkeypatch
             calls.append((self.model, current_model_call(), [tool.name for tool in request.tools]))
             return ModelResponse(content='{"kind":"conversation"}' if self.model == "classify" else '{"steps":[]}' if self.model == "plan" else "最终回答")
     monkeypatch.setattr(bootstrap, "build_model_provider", lambda **kwargs: RecordingProvider(kwargs["model"]))
-    with patch("app.agent.runtime.should_classify_kind", return_value=True), patch("app.agent.runtime.refine_route_from_classifier", side_effect=lambda route, *args, **kwargs: route), patch("app.agent.runtime.route_task", return_value=TaskRoute("conversation", True, ())):
+    with patch("app.agent.runtime.should_classify_kind", return_value=True), patch("app.agent.runtime.refine_route_from_classifier", side_effect=lambda route, *args, **kwargs: route), patch("app.agent.runtime.route_task", return_value=TaskRoute("library_search", True, ("get_library_context", "search_public_web"))):
         runtime = bootstrap.get_agent_runtime()
         result = asyncio.run(runtime.run("你好", run_id="roles-run"))
     assert result.status == "done"
@@ -196,7 +196,8 @@ def test_runtime_calls_three_roles_and_records_actual_stage(catalog, monkeypatch
     assert [item[1]["stage"] for item in calls] == ["classify", "plan", "execute"]
     assert [item[1]["profile_id"] for item in calls] == [profiles[stage]["profile_id"] for stage in ("classify", "plan", "execute")]
     assert all(item[1]["run_id"] == "roles-run" for item in calls)
-    assert calls[0][2] == [] and calls[1][2] == [] and calls[2][2] == ["ask_user"]
+    assert calls[0][2] == [] and calls[1][2] == []
+    assert sorted(calls[2][2]) == ["ask_user", "get_library_context", "search_public_web"]
     selection = internal_model_selection(runtime.model_selection)
     save_routing_policy({"roles": {}, "expected_version": 2}, path)
     restored = bootstrap.get_agent_runtime(selection=selection)
