@@ -95,7 +95,7 @@ ChatRuntime ─► ConfiguredModelProvider (档案参数 / 推理强度)
 
 当前 schema 为 v30：统一合入阶段路由、聊天图片成果和 LiteLLM 模型层。两个开发分支曾分别使用 v29，新增字段不同；启动时从任一 v29 补齐另一侧的表与列，从 v27/v28 也可直接升级。原记录与迁移名称保留，升级前自动备份到 `.upgrade-backups/before-schema-v30/`，不重新索引既有 v27 及以后的资料。
 
-生图请求走原生 Responses 的图片专用路径，保留图片与进度事件，绕过 Completion Router 和参数重试；文本调用继续使用 LiteLLM、推理参数和备用模型。阶段路由独立设置模型时，也沿用该档案的实际协议、推理强度与自定义计价。
+生图请求走原生 Responses 的图片专用路径，保留图片与进度事件，绕过 Completion Router 和参数重试；文本调用继续使用 LiteLLM、推理参数和备用模型。阶段路由独立设置模型时，也沿用该档案的实际协议、推理强度与自定义计价。Packy `images` 协议同样绕过 Completion Router：`litellm_router.route_target_for_connection` 显式拒绝把图片模型注册为聊天备用模型，图片请求由原生 `OpenAIImagesProvider` 处理（见 `docs/image-generation.md`）。
 
 ## 回滚
 
