@@ -85,6 +85,8 @@ def test_selected_conversation_uses_privacy_snapshot_and_deduplicates(library):
     assert "other@example.com" in snapshots[1]["parsed_text"]
     assert all(item["parse_status"] == "parsed" for item in snapshots)
     assert all("object_key" not in item for item in result["attachments"])
+    assert snapshots[0]["metadata"]["library_source_title"] == private["title"]
+    assert len(snapshots[0]["metadata"]["library_snapshot_hash"]) == 64
     update_source(private["id"], content="后来校正", db_path=library)
     assert "后来校正" not in get_attachment(snapshots[0]["id"], db_path=library)["parsed_text"]
     with connect(library) as conn:
@@ -112,6 +114,19 @@ def test_conversation_failure_cleans_created_files_and_records(library, monkeypa
         assert conn.execute("SELECT COUNT(*) FROM attachments").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 1
     assert not [p for p in (library.parent / "attachments").rglob("*") if p.is_file()]
+
+
+def test_archive_conversation_does_not_enable_source_and_rejects_unusable_batch(library):
+    source = create_text_source(title="仅存档", content="本次对话资料", enabled=False, db_path=library)
+    result = prepare_conversation([source["id"]], library)
+    assert result["attachments"] and not get_source(source["id"], library)["enabled"]
+    with connect(library) as conn:
+        count = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+    for ids in ([], [source["id"]] * 9):
+        with pytest.raises(ValueError, match="1–8"):
+            prepare_conversation(ids, library)
+    with connect(library) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == count
 
 
 def test_v24_migration_preserves_sources_and_adds_folders(library):
@@ -165,5 +180,31 @@ def test_file_organization_is_account_local(tmp_path, monkeypatch):
         with register_authenticated_client(app, email="other@example.test") as other:
             assert other.get("/library/folders").json() == []
             assert other.get("/library/sources").json() == []
+            assert other.get("/library/sources?q=所有者").json() == []
             assert other.patch(f"/library/sources/{source['id']}/organization", json={"favorite": True}).status_code == 404
         assert not owner.get(f"/library/sources/{source['id']}").json()["favorite"]
+
+
+def test_file_search_matches_unicode_and_body_without_reading_each_detail(library, monkeypatch):
+    from contextlib import contextmanager
+    from app.library import sources
+
+    first = create_text_source(title="阅读笔记", content="Straße 的海王星资料", db_path=library)
+    second = create_text_source(title="另一份资料", content="不相关内容", db_path=library)
+    original_connect = sources.connect
+    reads = []
+
+    @contextmanager
+    def traced_connect(path):
+        with original_connect(path) as conn:
+            conn.set_trace_callback(reads.append)
+            yield conn
+
+    monkeypatch.setattr(sources, "connect", traced_connect)
+    result = sources.list_sources(library, query=" STRASSE ")
+    assert [item["id"] for item in result] == [first["id"]]
+    assert "content" not in result[0] and "redacted_content" not in result[0]
+    assert len([sql for sql in reads if sql.lstrip().upper().startswith("SELECT")]) == 1
+    assert sources.list_sources(library, query="海王星")[0]["id"] == first["id"]
+    assert sources.list_sources(library, query="%") == []
+    assert [item["id"] for item in sources.list_sources(library, query="  ")] == [second["id"], first["id"]]

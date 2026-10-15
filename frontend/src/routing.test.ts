@@ -7,7 +7,7 @@ describe("primary route", () => {
     expect(initialAppRoute("#")).toEqual({ section: "dashboard" });
     expect(parseAppHash("#/home")).toEqual({ section: "dashboard" });
     expect(parseAppHash("#/dashboard")).toEqual({ section: "dashboard" });
-    expect(parseAppHash("#/library")).toEqual({ section: "settings", page: "library" });
+    expect(parseAppHash("#/library")).toEqual({ section: "chat", page: "library" });
     expect(appRouteHash({ section: "dashboard" })).toBe("#/home");
     expect(routeForSection("dashboard")).toEqual({ section: "dashboard" });
   });
@@ -38,6 +38,11 @@ describe("retired product routes", () => {
 });
 
 describe("conversation route", () => {
+  it("keeps workspace files separate from settings management and accepts legacy links", () => {
+    expect(parseAppHash("#/chat/library")).toEqual({ section: "chat", page: "library" });
+    expect(appRouteHash({ section: "chat", page: "library" })).toBe("#/chat/library");
+    expect(parseAppHash("#/settings/library")).toEqual({ section: "settings", page: "library" });
+  });
   it("keeps a specific conversation addressable", () => {
     expect(parseAppHash("#/chat/42")).toEqual({ section: "chat", conversationId: 42 });
     expect(appRouteHash({ section: "chat", conversationId: 42 })).toBe("#/chat/42");
@@ -48,8 +53,8 @@ describe("account settings route", () => {
   it("keeps account settings distinct from the library", () => {
     expect(parseAppHash("#/settings/account")).toEqual({ section: "settings", page: "account" });
     expect(appRouteHash({ section: "settings", page: "account" })).toBe("#/settings/account");
-    expect(parseAppHash("#/library?return=workbench")).toEqual({ section: "settings", page: "library" });
-    expect(appRouteHash({ section: "settings", page: "library" })).toBe("#/library");
+    expect(parseAppHash("#/library?return=workbench")).toEqual({ section: "chat", page: "library" });
+    expect(appRouteHash({ section: "settings", page: "library" })).toBe("#/settings/library");
   });
 });
 

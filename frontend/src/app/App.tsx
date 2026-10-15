@@ -11,6 +11,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { createApiClient, fetchWithTimeout } from "../api/client";
 import type { AuthUser } from "../components/AuthGate";
 import { AssistantSurface } from "../components/AssistantSurface";
+import { AIWorkspaceModules } from "../features/chat/AIWorkspaceModules";
 import { AppSidebar, type ProductNavKey } from "../components/AppSidebar";
 import { AppIdentityMenu } from "../components/AppIdentityMenu";
 import { AppTopBar } from "../components/AppTopBar";
@@ -150,12 +151,13 @@ export function App({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readPreference("careerloop-sidebar", userEmail) === "collapsed");
   const [appRoute, setAppRoute] = useState<AppRoute>(() => initialAppRoute(window.location.hash));
   const activeView: ViewKey = appRoute.section;
+  const workspaceLibraryOpen = appRoute.section === "chat" && appRoute.page === "library";
   const currentConversationIdRef = useRef<number | null>(null);
   const [visibleMessageCount, setVisibleMessageCount] = useState(12);
   const [errorMessage, setErrorMessage] = useState("");
   const [noticeMessage, setNoticeMessage] = useState("");
   const { invalidateConversationReads, conversations, setConversations, currentConversationId, setCurrentConversationId, conversationBusy, setConversationBusy, conversationDialog, setConversationDialog, refreshConversations, createNewConversation, archiveConversation, renameConversation, removeConversation } = useConversations({ fetchJson, setActiveView, setErrorMessage, setNoticeMessage });
-  const { libraryEditor, librarySources, libraryFolders, organizeLibrarySource, createLibraryFolder, loadLibraryOriginal, searchLibrarySources, confirmedKnowledgeCount, sourceCount, pendingKnowledge, libraryLoaded, libraryBusy, sourceImportBusy, enhancedDocumentParse, setLibraryEditor, setEnhancedDocumentParse, refreshLibrary, saveLibraryMetadata, importLibraryFiles, createPastedSource, updateLibrarySource, downloadLibrarySource, deleteLibrarySource } = useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, setNoticeMessage });
+  const { libraryEditor, librarySources, libraryFolders, libraryCollections, createLibraryCollection, renameLibraryCollection, deleteLibraryCollection, updateLibraryCollectionSources, organizeLibrarySource, createLibraryFolder, loadLibraryOriginal, searchLibrarySources, confirmedKnowledge, confirmedKnowledgeCount, sourceCount, pendingKnowledge, libraryLoaded, libraryBusy, sourceImportBusy, enhancedDocumentParse, setLibraryEditor, setEnhancedDocumentParse, refreshLibrary, saveLibraryMetadata, importLibraryFiles, createPastedSource, updateLibrarySource, downloadLibrarySource, deleteLibrarySource } = useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, setNoticeMessage });
   const [openLibraryResultId, setOpenLibraryResultId] = useState<number | null>(null);
   const [libraryAttachments, setLibraryAttachments] = useState<{ conversationId: number; attachments: ChatAttachment[] } | null>(null);
   const [homeComposerDraft, setHomeComposerDraft] = useState<ChatComposerDraft | null>(null);
@@ -227,7 +229,7 @@ export function App({
   const routeDataCacheRef = useRef(createRouteDataCache<RouteDataKey>(30_000));
   const modelCatalog = useModelCatalog({
     fetchJson, scope: modelSettingsScope,
-    enabled: databaseReady && (appRoute.section === "chat" || (appRoute.section === "settings" && appRoute.page === "model")),
+    enabled: databaseReady && ((appRoute.section === "chat" && !workspaceLibraryOpen) || (appRoute.section === "settings" && appRoute.page === "model")),
     refreshKey: savedAgentSettings.config_revision
   });
   const currentConversation = conversations.find((item) => item.id === currentConversationId) ?? null;
@@ -356,7 +358,7 @@ export function App({
   }, []);
 
   useEffect(() => {
-    if (appRoute.section !== "chat" || !currentConversationId || !conversations.length) return;
+    if (appRoute.section !== "chat" || appRoute.page === "library" || !currentConversationId || !conversations.length) return;
     const requestedConversationId = appRoute.conversationId;
     if (requestedConversationId && conversations.some((item) => item.id === requestedConversationId)) {
       if (requestedConversationId !== currentConversationId) setCurrentConversationId(requestedConversationId);
@@ -880,13 +882,13 @@ export function App({
       overview: pageMeta.settings,
       appearance: { title: "外观", description: "统一设置所有模块的主题" },
       account: { title: "账号与安全", description: "管理跟随登录账号的昵称、头像和密码" },
-      library: { title: "文件库", description: "整理文件、阅读原件，选取资料用于对话" },
+      library: { title: "文件库管理", description: "整理文件、阅读原件，选取资料用于对话" },
       model: { title: "模型设置", description: "填写服务地址、API Key，选择使用的模型" },
       agent: { title: "Agent 执行记录", description: "查看 Agent 已完成的任务、工具使用和异常原因" }
     }[appRoute.page]
     : pageMeta[appRoute.section];
 
-  const documentPageTitle = appRoute.section === "chat"
+  const documentPageTitle = workspaceLibraryOpen ? "文件库｜AI 工作区" : appRoute.section === "chat"
     ? currentConversation?.title || "新对话"
     : routePageMeta.title;
   const topbarTitle = appTopBarShowsTitle(appRoute) ? documentPageTitle : undefined;
@@ -913,8 +915,8 @@ export function App({
 
   function selectProductNav(key: ProductNavKey) {
     if (key === "dashboard") navigateRoute({ section: "dashboard" });
-    else if (key === "library") navigateRoute({ section: "settings", page: "library" });
     else if (key === "chat") navigateRoute({ section: "chat", conversationId: currentConversationId ?? undefined });
+    else if (key === "library") navigateRoute({ section: "chat", page: "library" });
     else if (key === "settings") navigateRoute({ section: "settings", page: "overview" });
   }
 
@@ -957,6 +959,57 @@ export function App({
     }
   }
 
+  const libraryModule = (
+    <Suspense fallback={<PageLoading label="正在加载文件库…" />}>
+      <LibraryPage
+        initialSourceId={openLibraryResultId}
+        onInitialSourceConsumed={() => setOpenLibraryResultId(null)}
+        editor={libraryEditor}
+        sources={librarySources}
+        folders={libraryFolders}
+        collections={libraryCollections}
+        onCreateCollection={createLibraryCollection}
+        onRenameCollection={renameLibraryCollection}
+        onDeleteCollection={deleteLibraryCollection}
+        onUpdateCollectionSources={updateLibraryCollectionSources}
+        onOrganizeSource={organizeLibrarySource}
+        onCreateFolder={createLibraryFolder}
+        onLoadOriginal={loadLibraryOriginal}
+        onLoadAsset={async (sourceId, assetId, signal) => {
+          const response = await fetchWithTimeout(`${apiBase}/library/sources/${sourceId}/assets/${encodeURIComponent(assetId)}/file`, { signal, headers: { Authorization: `Bearer ${accessToken}` } });
+          if (!response.ok) throw new Error("存档图片读取失败");
+          return response.blob();
+        }}
+        onSearchSources={searchLibrarySources}
+        onUseForChat={useLibraryForChat}
+        busy={libraryBusy}
+        sourceBusy={sourceImportBusy}
+        enhancedParse={enhancedDocumentParse}
+        pendingFacts={pendingKnowledge}
+        confirmedFacts={confirmedKnowledge}
+        onChange={(editor: LibraryEditor) => setLibraryEditor(editor)}
+        onEnhancedParseChange={setEnhancedDocumentParse}
+        onImportFiles={importLibraryFiles}
+        onCreateText={createPastedSource}
+        onLoadSource={(sourceId) => fetchJson<LibrarySourceDetail>(`/library/sources/${sourceId}`)}
+        onUpdateSource={updateLibrarySource}
+        onDownloadSource={downloadLibrarySource}
+        onDeleteSource={deleteLibrarySource}
+        onReviewFact={async (factId, action) => {
+          await fetchJson(`/library/facts/${factId}/review`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action })
+          });
+          await refreshLibrary();
+        }}
+        onSave={async () => {
+          return saveLibraryMetadata();
+        }}
+      />
+    </Suspense>
+  );
+
   return (
     <main className={`app-shell has-chat-dock shell-light${activeView === "chat" ? " chat-focused" : ""}${activeView === "dashboard" ? " developer-home-shell" : ""}`}>
       <AppSidebar
@@ -966,6 +1019,7 @@ export function App({
         onGoHome={() => navigateRoute({ section: "dashboard" })}
         onPrefetchPage={(page) => void pagePrefetcher.prefetch(page)}
         settingsPage={appRoute.section === "settings" ? appRoute.page : undefined}
+        libraryOpen={workspaceLibraryOpen}
         onSelectNav={selectProductNav}
         identity={identityMenu}
       />
@@ -975,23 +1029,6 @@ export function App({
           section={topbarSection}
           title={topbarTitle}
         /> : null}
-
-        {errorMessage ? (
-          <div className="feedback-banner error-banner global-error-toast"><TriangleAlert size={16} /><span>{errorMessage}</span><button onClick={() => setErrorMessage("")} aria-label="关闭错误提示"><X size={15} /></button></div>
-        ) : null}
-
-        {conversationDialog ? (
-          <ConversationDialog
-            dialog={conversationDialog}
-            busy={conversationBusy}
-            onClose={() => setConversationDialog(null)}
-            onRename={(conversation, title) => void renameConversation(conversation, title)}
-            onDelete={(conversation) => void removeConversation(conversation)}
-          />
-        ) : null}
-        {noticeMessage ? (
-          <div className="feedback-banner notice-banner global-notice-toast" role="status" aria-live="polite"><CheckCircle2 size={16} /><span>{noticeMessage}</span></div>
-        ) : null}
 
         {activeView === "dashboard" ? (
           <Suspense fallback={<PageLoading label="正在加载首页…" />}>
@@ -1017,6 +1054,7 @@ export function App({
                   library={libraryEditor}
                   libraryReady={libraryReady}
                   sourceTitle={librarySources.find(source => !source.trashed_at)?.title}
+                  fileCount={sourceCount}
                   accountEmail={user.email}
                   accountName={user.display_name}
                   modelName={savedAgentSettings.model_name}
@@ -1038,48 +1076,7 @@ export function App({
                   onPasswordChanged={updateSession}
                 />
               ) : null}
-              {appRoute.page === "library" ? (
-                <LibraryPage
-                  initialSourceId={openLibraryResultId}
-                  onInitialSourceConsumed={() => setOpenLibraryResultId(null)}
-                  editor={libraryEditor}
-                  sources={librarySources}
-                  folders={libraryFolders}
-                  onOrganizeSource={organizeLibrarySource}
-                  onCreateFolder={createLibraryFolder}
-                  onLoadOriginal={loadLibraryOriginal}
-                  onLoadAsset={async (sourceId, assetId, signal) => {
-                    const response = await fetchWithTimeout(`${apiBase}/library/sources/${sourceId}/assets/${encodeURIComponent(assetId)}/file`, { signal, headers: { Authorization: `Bearer ${accessToken}` } });
-                    if (!response.ok) throw new Error("存档图片读取失败");
-                    return response.blob();
-                  }}
-                  onSearchSources={searchLibrarySources}
-                  onUseForChat={useLibraryForChat}
-                  busy={libraryBusy}
-                  sourceBusy={sourceImportBusy}
-                  enhancedParse={enhancedDocumentParse}
-                  pendingFacts={pendingKnowledge}
-                  onChange={(editor: LibraryEditor) => setLibraryEditor(editor)}
-                  onEnhancedParseChange={setEnhancedDocumentParse}
-                  onImportFiles={importLibraryFiles}
-                  onCreateText={createPastedSource}
-                  onLoadSource={(sourceId) => fetchJson<LibrarySourceDetail>(`/library/sources/${sourceId}`)}
-                  onUpdateSource={updateLibrarySource}
-                  onDownloadSource={downloadLibrarySource}
-                  onDeleteSource={deleteLibrarySource}
-                  onReviewFact={async (factId, action) => {
-                    await fetchJson(`/library/facts/${factId}/review`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ action })
-                    });
-                    await refreshLibrary();
-                  }}
-                  onSave={async () => {
-                    return saveLibraryMetadata();
-                  }}
-                />
-              ) : null}
+              {appRoute.page === "library" ? libraryModule : null}
               {appRoute.page === "model" ? (
                 modelSettingsReady ? (
                   <ModelSettingsPage
@@ -1146,10 +1143,12 @@ export function App({
 
       <AssistantSurface page={activeView === "chat"} open={assistantOpen} busy={chatBusy} onClose={() => setAssistantOpen(false)} onExpand={() => { setAssistantOpen(false); navigateRoute({ section: "chat", conversationId: currentConversationId ?? undefined }); }}>
 
+        <AIWorkspaceModules active={activeView === "chat"} libraryOpen={workspaceLibraryOpen}
+          library={libraryModule}>
         <Suspense fallback={<PageLoading label="正在加载对话…" />}>
           <ChatWorkspace
             density={activeView === "chat" ? "page" : "dock"}
-            focused={activeView === "chat"}
+            focused={activeView === "chat" && !workspaceLibraryOpen}
             conversationTitle={currentConversation?.title}
             currentModelName={currentModelName}
             defaultModelName={defaultModelProfile?.model_name || capabilities?.active_model_name}
@@ -1218,7 +1217,7 @@ export function App({
               void refreshLibrary();
               return result;
             }}
-            onOpenSavedResult={sourceId => { setOpenLibraryResultId(sourceId); navigateRoute({ section: "settings", page: "library" }); }}
+            onOpenSavedResult={sourceId => { setOpenLibraryResultId(sourceId); navigateRoute({ section: "chat", page: "library" }); }}
             onRemoveAttachment={removeChatAttachment}
             onAttachmentInvalid={setErrorMessage}
             onSuggestedAction={handleSuggestedAction}
@@ -1240,22 +1239,27 @@ export function App({
             onStop={stopChatGeneration}
             onEdit={editChatMessage}
             onRegenerate={regenerateChatMessage}
-            onOpenLibrary={() => {
-              navigateRoute({ section: "settings", page: "library" });
-              const startedAt = Date.now();
-              const tryScroll = () => {
-                const target = document.getElementById("library-sources");
-                if (target) {
-                  target.scrollIntoView({ behavior: "smooth", block: "start" });
-                  return;
-                }
-                if (Date.now() - startedAt < 2000) window.requestAnimationFrame(tryScroll);
-              };
-              window.requestAnimationFrame(tryScroll);
-            }}
+            onOpenLibrary={() => navigateRoute({ section: "chat", page: "library" })}
           />
         </Suspense>
+        </AIWorkspaceModules>
       </AssistantSurface>
+
+      {errorMessage ? (
+        <div className="feedback-banner error-banner global-error-toast"><TriangleAlert size={16} /><span>{errorMessage}</span><button onClick={() => setErrorMessage("")} aria-label="关闭错误提示"><X size={15} /></button></div>
+      ) : null}
+      {noticeMessage ? (
+        <div className="feedback-banner notice-banner global-notice-toast" role="status" aria-live="polite"><CheckCircle2 size={16} /><span>{noticeMessage}</span></div>
+      ) : null}
+      {conversationDialog ? (
+        <ConversationDialog
+          dialog={conversationDialog}
+          busy={conversationBusy}
+          onClose={() => setConversationDialog(null)}
+          onRename={(conversation, title) => void renameConversation(conversation, title)}
+          onDelete={(conversation) => void removeConversation(conversation)}
+        />
+      ) : null}
     </main>
   );
 }

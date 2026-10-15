@@ -1,0 +1,39 @@
+.chat-workspace .run-process .run-process-toggle { width: 100%; flex-wrap: nowrap; }
+.chat-workspace .run-current-content { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-workspace .run-process-toggle > small { flex: none; white-space: nowrap; }
+.chat-workspace .run-process-fixed { box-sizing: border-box; max-height: 280px; display: flex; flex-direction: column; padding-top: 10px; }
+.chat-workspace .run-process-fixed[hidden] { display: none; }
+.chat-workspace .run-process-scroll { flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; overflow-anchor: none; scrollbar-width: thin; scrollbar-color: var(--color-border) transparent; padding-right: 9px; }
+.chat-workspace .run-process-scroll > :last-child { margin-bottom: 0; }
+.chat-workspace .run-process-scroll:focus-visible { outline: 2px solid var(--color-brand); outline-offset: -2px; }
+.chat-workspace .run-process-followbar { height: 26px; flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--color-text-muted); }
+.chat-workspace .run-process-followbar small { font-size: 10px; }
+.chat-workspace .run-process-followbar button { padding: 0; border: 0; background: transparent; color: var(--color-brand); cursor: pointer; font-size: 11px; }
+.chat-workspace .run-process-followbar button[hidden] { display: none; }
+.chat-workspace .tool-call-record { min-width: 0; margin-bottom: 18px; }
+.chat-workspace .run-process .tool-call-toggle { width: 100%; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; text-align: left; font-family: inherit; cursor: pointer; }
+.chat-workspace .tool-call-toggle > span { flex: 1; min-width: 0; }
+.chat-workspace .tool-call-toggle > small { display: flex; align-items: center; flex: none; gap: 3px; margin-left: 6px; color: var(--color-text-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.chat-workspace .tool-call-toggle[aria-expanded="true"] > small svg { transform: rotate(180deg); }
+.chat-workspace .tool-call-toggle:focus-visible, .chat-workspace .run-process-followbar button:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 3px; }
+.chat-workspace .tool-call-detail { margin: 3px 0 12px 24px; padding: 0; border: 0; background: transparent; color: var(--color-text-muted); font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.chat-workspace .tool-call-detail[hidden] { display: none; }
+.chat-workspace .tool-call-detail p { margin: 3px 0; }
+.chat-workspace .is-current-execution { color: var(--color-brand); }
+@supports ((background-clip: text) or (-webkit-background-clip: text)) {
+  .chat-workspace .is-current-execution {
+    background-image: linear-gradient(105deg, var(--color-text-muted) 0%, var(--color-text-muted) 27%, #8c6fc5 42%, #6488c6 52%, #b07f9e 62%, var(--color-text-muted) 76%, var(--color-text-muted) 100%);
+    background-size: 250% 100%; background-position: 150% 0;
+    background-clip: text; -webkit-background-clip: text;
+    color: transparent; -webkit-text-fill-color: transparent;
+    animation: execution-text-shimmer 3.6s linear infinite;
+  }
+}
+@keyframes execution-text-shimmer { from { background-position: 150% 0; } to { background-position: -150% 0; } }
+@media (max-width: 600px) {
+  .chat-workspace .run-process-fixed { max-height: 220px; }
+  .chat-workspace .run-process .run-process-toggle { font-size: 12px; }
+  .chat-workspace .tool-call-toggle > small { font-size: 10px; }
+}
+@media (prefers-reduced-motion: reduce) { .chat-workspace .is-current-execution { animation: none; background-position: 50% 0; } }
+@media (forced-colors: active) { .chat-workspace .is-current-execution { background: none; color: CanvasText; -webkit-text-fill-color: CanvasText; animation: none; } }

@@ -39,12 +39,11 @@ export type SidebarHighlight = "dashboard" | "library" | "chat" | "settings" | n
 
 export function sidebarHighlightForView(
   view: ViewKey,
-  extras: { settingsPage?: SettingsPage } = {}
+  extras: { settingsPage?: SettingsPage; libraryOpen?: boolean } = {}
 ): SidebarHighlight {
   if (view === "dashboard") return "dashboard";
-  if (view === "chat") return "chat";
-  if (view === "settings" && extras.settingsPage === "library") return "library";
-  if (view === "settings" && extras.settingsPage && extras.settingsPage !== "library") return "settings";
+  if (view === "chat") return extras.libraryOpen ? "library" : "chat";
+  if (view === "settings" && extras.settingsPage) return "settings";
   if (view === "settings") return "settings";
   return null;
 }

@@ -3,6 +3,8 @@ import { createRouteDataCache, requiredDataForRoute } from "./route-data";
 
 describe("requiredDataForRoute", () => {
   it("loads only the data needed when a route is opened", () => {
+    expect(requiredDataForRoute({ section: "chat", page: "library" })).toEqual(["library"]);
+    expect(requiredDataForRoute({ section: "settings", page: "library" })).toEqual(["library"]);
     expect(requiredDataForRoute({ section: "chat" })).toEqual([
       "conversations",
       "capabilities",

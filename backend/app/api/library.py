@@ -17,6 +17,10 @@ from ..library.sources import (
 from ..library.service import get_library
 from ..library.organization import FolderIn, OrganizationIn, create_folder, list_folders, organize_source
 from ..library.conversations import LibraryConversationIn, prepare_conversation
+from ..library.collections import (
+    CollectionIn, CollectionSourcesIn, delete_collection, list_collections,
+    save_collection, update_collection_sources,
+)
 from ..documents import service as document_service
 from .schemas import (
     LibraryKnowledgeIn,
@@ -30,6 +34,45 @@ from .schemas import (
 
 
 router = APIRouter()
+
+
+@router.get("/library/collections")
+def library_collections_get() -> list[dict[str, Any]]:
+    return list_collections()
+
+
+@router.post("/library/collections")
+def library_collection_post(payload: CollectionIn) -> dict[str, Any]:
+    try:
+        return save_collection(payload.name, source_ids=payload.source_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.patch("/library/collections/{collection_id}")
+def library_collection_patch(collection_id: int, payload: CollectionIn) -> dict[str, Any]:
+    try:
+        return save_collection(payload.name, collection_id=collection_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404 if "不存在" in str(exc) else 422, detail=str(exc)) from exc
+
+
+@router.patch("/library/collections/{collection_id}/sources")
+def library_collection_sources_patch(collection_id: int, payload: CollectionSourcesIn) -> dict[str, bool]:
+    try:
+        update_collection_sources(collection_id, payload.source_ids, action=payload.action)
+        return {"updated": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=404 if "不存在" in str(exc) else 422, detail=str(exc)) from exc
+
+
+@router.delete("/library/collections/{collection_id}")
+def library_collection_delete(collection_id: int) -> dict[str, bool]:
+    try:
+        delete_collection(collection_id)
+        return {"deleted": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/library/conversations")
@@ -81,11 +124,7 @@ def library_put(payload: LibraryMetadataIn) -> dict[str, Any]:
 
 @router.get("/library/sources")
 def library_sources_get(q: str = "") -> list[dict[str, Any]]:
-    sources = list_sources()
-    if not q.strip():
-        return sources
-    query = q.strip().casefold()
-    return [source for source in sources if query in f"{source['title']} {source['original_filename']} {get_source(source['id'])['content']}".casefold()]
+    return list_sources(query=q)
 
 
 @router.get("/library/folders")
@@ -117,6 +156,7 @@ def library_sources_post(payload: LibrarySourceIn) -> dict[str, Any]:
             content=payload.content,
             source_uri=payload.source_uri,
             privacy_mode=payload.privacy_mode,
+            enabled=payload.enabled,
         )
         return {"source": source, "proposals": []}
     except ValueError as exc:
@@ -128,6 +168,7 @@ async def library_sources_import(
     files: list[UploadFile] = File(...),
     mode: str = Form(default="fast"),
     privacy_mode: Literal["redacted", "original"] = Form(default="redacted"),
+    enabled: bool = Form(default=True),
 ) -> dict[str, Any]:
     results: list[dict[str, Any]] = []
     for file in files:
@@ -138,6 +179,7 @@ async def library_sources_import(
                 content_bytes=await file.read(),
                 mode=mode,
                 privacy_mode=privacy_mode,
+                enabled=enabled,
             )
             results.append({"filename": filename, "ok": True, "source": source})
         except Exception as exc:

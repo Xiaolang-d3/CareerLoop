@@ -1,6 +1,19 @@
 """Current library storage; no career business tables."""
 
 LIBRARY_CORE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS library_collections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS library_collection_sources (
+    collection_id INTEGER NOT NULL REFERENCES library_collections(id) ON DELETE CASCADE,
+    source_id INTEGER NOT NULL REFERENCES library_sources(id) ON DELETE CASCADE,
+    PRIMARY KEY (collection_id, source_id)
+);
+CREATE INDEX IF NOT EXISTS idx_library_collection_source ON library_collection_sources(source_id);
+
 CREATE TABLE IF NOT EXISTS library_folders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,

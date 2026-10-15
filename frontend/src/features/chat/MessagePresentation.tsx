@@ -1,3 +1,6 @@
+import { ToolCallDetails } from "./ToolCallDetails";
+import { formatExecutionTime } from "./tool-call-details";
+import "./run-process.css";
 import { MarkdownContent, SourceFavicon, sourceDomain, type WebSource } from "./ChatMarkdown";
 export type { WebSource } from "./ChatMarkdown";
 const STARTER_PROMPTS: Array<{
@@ -20,7 +23,7 @@ import { ResultActionsContext } from "./result-types";
 import { HistoryAttachment } from "./HistoryAttachment";
 import { GeneratedImage } from "./GeneratedImage";
 import { ActionBarPrimitive, ComposerPrimitive, MessagePrimitive, type AppendMessage, type MessageState } from "@assistant-ui/react";
-import { ArrowUpRight, Check, CheckCircle2, ChevronDown, CircleHelp, Copy, FileText, FolderPlus, Info, LoaderCircle, PanelRight, Pencil, RefreshCw, Search, TriangleAlert, Wrench, X } from "lucide-react";
+import { ArrowUpRight, Check, CheckCircle2, ChevronDown, CircleHelp, Copy, FileText, FolderPlus, Info, LoaderCircle, PanelRight, Pencil, RefreshCw, Search, X } from "lucide-react";
 
 const modelStageLabels: Record<string, string> = { classify: "意图识别", plan: "任务规划", execute: "执行回答" };
 const modelSelectionReasons: Record<string, string> = {
@@ -215,13 +218,6 @@ export function thinkingHeaderCopy(agent: AgentRunResult | undefined, streaming:
   return currentTask ? { title, currentTask } : { title };
 }
 
-function formatRunTime(milliseconds: number): string {
-  const seconds = Math.floor(Math.max(0, milliseconds) / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}m ${seconds % 60}s`;
-}
-
 const COMPLETED_ACTIVITY_LABELS: Record<string, string> = {
   image_generation: "已生成图片",
   search_public_web: "已检索公开资料", get_library_context: "已读取知识库",
@@ -236,13 +232,14 @@ function processEntries(agent: AgentRunResult | undefined, streaming: boolean) {
   const steps = planStepsFromAgent(agent);
   const merged = new Map<string, AgentRunResult["events"][number]>();
   for (const event of agent?.events ?? []) {
-    merged.set(event.tool_call_id, { ...merged.get(event.tool_call_id), ...event });
+    const previous = merged.get(event.tool_call_id);
+    merged.set(event.tool_call_id, { ...previous, ...event, data: { ...previous?.data, ...event.data } });
   }
   return [...merged.values()].flatMap((event) => {
     if (event.tool_name === "agent_thinking") {
       const text = event.message.trim();
       return text && !ROUTE_SUMMARY_MESSAGE.test(text)
-        ? [{ id: event.tool_call_id, text, thought: true, status: event.status, tool: event.tool_name }]
+        ? [{ id: event.tool_call_id, text, thought: true, status: event.status, tool: event.tool_name, event }]
         : [];
     }
     const isRunning = streaming && event.status === "running";
@@ -252,7 +249,7 @@ function processEntries(agent: AgentRunResult | undefined, streaming: boolean) {
         : event.status === "done" ? COMPLETED_ACTIVITY_LABELS[event.tool_name] || neutral : neutral
       : event.message.trim();
     if (!streaming && event.status === "running") text = text.replace(/^正在/, "");
-    return text ? [{ id: event.tool_call_id, text, thought: false, status: event.status, tool: event.tool_name }] : [];
+    return text ? [{ id: event.tool_call_id, text, thought: false, status: event.status, tool: event.tool_name, event }] : [];
   });
 }
 
@@ -266,53 +263,96 @@ export function RunProcess({ agent, streaming, stopping = false, content = "" }:
   const [expanded, setExpanded] = useState(streaming);
   const previousStreaming = useRef(streaming);
   const [now, setNow] = useState(Date.now);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const following = useRef(true);
+  const [follow, setFollow] = useState(true);
+  const [unseen, setUnseen] = useState(0);
+  const previousIds = useRef(new Set<string>());
   const startedAt = agent?.started_at ? Date.parse(agent.started_at) : NaN;
   useEffect(() => {
     if (previousStreaming.current && !streaming) setExpanded(false);
     previousStreaming.current = streaming;
   }, [streaming]);
   useEffect(() => {
-    if (!streaming || !Number.isFinite(startedAt)) return;
+    if (!streaming) return;
     setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [streaming, startedAt]);
+  }, [streaming]);
   const elapsed = streaming && Number.isFinite(startedAt) ? Math.max(0, now - startedAt)
     : !streaming && typeof agent?.duration_ms === "number" && Number.isFinite(agent.duration_ms)
       ? Math.max(0, agent.duration_ms) : null;
   const current = thinkingHeaderCopy(agent, streaming);
   const generating = content.trim() && !agent?.events.some((event) => event.status === "running" && event.tool_name !== "agent_thinking");
-  const title = streaming ? stopping ? "正在停止生成" : generating ? "正在生成回复" : current.title
-    : elapsed !== null ? `用时 ${formatRunTime(elapsed)}` : "思考与执行过程";
   const terminalError = !streaming && agent?.status === "failed" ? agent.error?.message?.trim() : undefined;
-  const entries = processEntries(agent, streaming).filter((entry) =>
-    (!streaming || entry.thought || entry.text !== title)
-    && !(terminalError && !entry.thought && entry.text === terminalError)
-  );
+  const entries = processEntries(agent, streaming).flatMap((entry) => {
+    if (!terminalError || entry.thought || entry.text !== terminalError) return [entry];
+    // Keep a failed tool inspectable without repeating the error already shown in the answer.
+    if (entry.tool === "model_provider") return [];
+    const activity = (TOOL_ACTIVITY_LABELS[entry.tool] || "执行任务").replace(/^正在/, "");
+    return [{ ...entry, text: `${activity}失败` }];
+  });
+  const liveEntry = [...entries].reverse().find(entry => !entry.thought && entry.status === "running");
+  const title = streaming ? stopping ? "正在停止生成" : generating ? "正在生成回复" : liveEntry?.text || current.currentTask || current.title
+    : elapsed !== null ? `用时 ${formatExecutionTime(elapsed)}` : "思考与执行过程";
   const imageFailure = agent?.events.some(event => event.tool_name === "image_generation") && !agent?.assets?.length;
   const outcome = !streaming ? agent?.status === "failed" ? imageFailure ? "未生成图片" : "生成失败"
     : agent?.status === "cancelled" ? "已停止" : agent?.status === "waiting_user" ? "等待确认" : "" : "";
+  const signature = JSON.stringify(entries);
+  function jumpToLatest() {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    following.current = true;
+    setFollow(true);
+    setUnseen(0);
+  }
+  useLayoutEffect(() => {
+    if (expanded) jumpToLatest();
+  }, [expanded]);
+  useLayoutEffect(() => {
+    const ids = new Set(entries.map(entry => entry.id));
+    if (expanded) {
+      if (following.current) {
+        if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      } else {
+        const added = [...ids].filter(id => !previousIds.current.has(id)).length;
+        if (added) setUnseen(count => count + added);
+      }
+    }
+    previousIds.current = ids;
+  }, [signature, expanded]);
+  function inspect() {
+    following.current = false;
+    setFollow(false);
+  }
   if (!streaming && !entries.length && !outcome && elapsed === null) return null;
   return (
     <section className={`run-process${streaming ? " is-running" : ""}${expanded ? " is-expanded" : ""}`} aria-label="思考与执行过程">
       <button type="button" className="run-process-toggle" aria-expanded={expanded} aria-controls={bodyId}
         aria-label={`${expanded ? "收起" : "展开"}思考与执行过程`} onClick={() => setExpanded((open) => !open)}>
         {streaming ? <LoaderCircle size={14} className="spinning" aria-hidden="true" /> : null}
-        <span role={streaming ? "status" : undefined}>{title}</span>
-        {streaming && elapsed !== null ? <small>已用时 {formatRunTime(elapsed)}</small> : null}
+        <span className={`run-current-content${streaming && !stopping ? " is-current-execution" : ""}`} role={streaming ? "status" : undefined} title={title}>{title}</span>
+        {streaming && elapsed !== null ? <small>已用时 {formatExecutionTime(elapsed)}</small> : null}
         {outcome ? <span className={`run-process-outcome${agent?.status === "failed" ? " is-failed" : ""}`}>{outcome}</span> : null}
         <ChevronDown size={15} className="run-process-chevron" aria-hidden="true" />
       </button>
-      <div id={bodyId} className="run-process-body" hidden={!expanded}>
-        {entries.map((entry) => entry.thought
-          ? <p key={entry.id} className="run-process-thought">{entry.text}</p>
-          : <div key={entry.id} className={`run-process-tool${entry.status === "failed" ? " is-failed" : ""}`}>
-            {entry.status === "failed" ? <TriangleAlert size={16} aria-hidden="true" />
-              : entry.tool === "search_public_web" || entry.tool === "search_library" ? <Search size={16} aria-hidden="true" />
-                : entry.tool === "get_library_context" ? <FileText size={16} aria-hidden="true" /> : <Wrench size={16} aria-hidden="true" />}
-            <span>{entry.text}</span>
-          </div>)}
-        {!entries.length ? <p className="run-process-empty">{streaming ? "等待模型响应…" : "未记录更多过程信息。"}</p> : null}
+      <div id={bodyId} className="run-process-fixed" hidden={!expanded}>
+        <div ref={scrollRef} className="run-process-scroll" tabIndex={0} role="region" aria-label="执行记录，可滚动查看"
+          onScroll={() => {
+            const node = scrollRef.current;
+            if (!node) return;
+            const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight <= 24;
+            following.current = atBottom;
+            setFollow(atBottom);
+            if (atBottom) setUnseen(0);
+          }}>
+          {entries.map((entry) => entry.thought
+            ? <p key={entry.id} className="run-process-thought">{entry.text}</p>
+            : <ToolCallDetails key={entry.id} event={entry.event} title={entry.text} streaming={streaming} stopping={stopping} now={now} onInspect={inspect} />)}
+          {!entries.length ? <p className="run-process-empty">{streaming ? "等待模型响应…" : "未记录更多过程信息。"}</p> : null}
+        </div>
+        {!follow ? <div className="run-process-followbar"><small>{unseen ? `有 ${unseen} 条新记录` : "已暂停跟随"}</small>
+          <button type="button" onClick={jumpToLatest}>回到最新{unseen ? `（${unseen}）` : ""}</button>
+        </div> : null}
       </div>
       {!streaming ? <RunErrorNote run={agent} content={content} /> : null}
     </section>

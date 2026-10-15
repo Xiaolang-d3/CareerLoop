@@ -110,7 +110,7 @@ class ModelRouter:
             required.append("tools")
         if any(message.payload.get("image_urls") for message in request.messages):
             required.append("vision")
-        if streaming:
+        if streaming and not request.image_generation:
             required.append("streaming")
         if request.image_generation:
             required.append("image_generation")

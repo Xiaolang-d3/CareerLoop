@@ -212,29 +212,28 @@
     }
   },
   {
-    "description": "联网开关会盖过 JD 分析",
+    "description": "联网开关只授权工具面，不改写任务车道",
     "vars": {
       "task": "route",
       "query": "分析这个岗位是否适合我",
       "web_search": true,
       "expected": {
-        "kind": "web_search",
-        "allowed_tools": [
-          "search_public_web"
-        ]
+        "kind": "conversation",
+        "empty_tools": true
       }
     }
   },
   {
-    "description": "岗位评估不被联网开关改道",
+    "description": "岗位评估带联网授权仍走本地资料车道",
     "vars": {
       "task": "route",
       "query": "为已保存的岗位生成完整评估和岗位决策报告",
       "web_search": true,
       "expected": {
-        "kind": "web_search",
+        "kind": "library_search",
         "allowed_tools": [
-          "search_public_web"
+          "get_library_context",
+          "search_library"
         ]
       }
     }
@@ -384,6 +383,7 @@
     "vars": {
       "task": "route",
       "query": "帮我联网搜索一下今天的招聘市场新闻",
+      "web_search": true,
       "expected": {
         "kind": "web_search",
         "allowed_tools": [
@@ -467,6 +467,7 @@
     "vars": {
       "task": "route",
       "query": "查一下最新的人工智能新闻",
+      "web_search": true,
       "expected": {
         "kind": "web_search",
         "allowed_tools": [

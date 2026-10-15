@@ -2,13 +2,13 @@
 
 本文是灯灯**智能体层的维护文档**。代码是行为的事实来源；本文记录意图、边界和同步点。改智能体行为时必须在同一变更中更新本文。
 
-最近校准：2026-10-09（多连接、会话选模与阶段模型路由；全局外观设置；开发者资讯首页与显式文件库/对话联动；灯灯品牌与公共产品演示；持久化运行 JSON 容错；资料库与持久化独立；数据库版本 27）。
+最近校准：2026-10-14（文件库主题集合、仅存档与长期使用分离；会话资料副本与发送上限对齐；数据库版本 31）。
 
 ## 定位
 
-灯灯是从对话开始的个人 AI 协作助手，优先理解意图、接续上下文、协助分析和生成可修改的成果。资料库是按需带入依据与复用知识的支撑能力。主入口为首页、文件库、AI 工作区、设置；问答、搜索、分析和内容创作统一在 AI 工作区完成。
+灯灯是从对话开始的个人 AI 协作助手，优先理解意图、接续上下文、协助分析和生成可修改的成果。资料库是按需带入依据与复用知识的支撑能力。主入口为首页、AI 工作区、文件库、设置；问答、搜索、分析和内容创作统一在 AI 工作区完成。文件库在左侧栏提供独立入口，也可从设置的“文件库管理”进入，两处共用同一资料与组件。
 
-首页保留实时本地时间与欢迎语，按开发者定稿展示 AI / Agent 官方动态、GitHub 日榜/周榜、关注仓库 Releases 和工程实践；“简洁”改为密集信息列表，仍读取资讯。全局导航保持首页、文件库、AI 工作区、设置四个平级入口，保留灯灯品牌。首页通用路由数据依赖仍为空，由 `features/home/useHomeFeed.ts` 独立加载资讯；不预取资料、会话、模型能力或附件配置。
+首页保留实时本地时间与欢迎语，按开发者定稿展示 AI / Agent 官方动态、GitHub 日榜/周榜、关注仓库 Releases 和工程实践；“简洁”改为密集信息列表，仍读取资讯。全局导航为首页、AI 工作区、文件库、设置四个入口，保留灯灯品牌。首页通用路由数据依赖仍为空，由 `features/home/useHomeFeed.ts` 独立加载资讯；不预取资料、会话、模型能力或附件配置。
 
 全局外观入口为 `#/settings/appearance`，放在设置模块内，不新增侧栏子导航。`features/appearance/ThemeProvider.tsx` 在应用入口包裹认证与业务页面，解析浅色、深色或跟随系统偏好，在文档根节点设置 `data-theme` 与 `color-scheme`。偏好仅保存到当前设备浏览器的 `careerloop-theme`，跨标签页同步；未保存全局偏好时迁移当前账号旧首页主题，不覆盖已有全局选择。该前端路由无需 API 数据，不增加 Agent 路由、工具或权限。验证记录见 [global-theme-qa.md](global-theme-qa.md)。
 
@@ -67,14 +67,14 @@ macOS 打包 CI 使用支持 SQLite 扩展加载的 Homebrew Python 3.11 创建�
         ▼
  AgentRuntime.run_stream
         │
-        ├─ detect_kind()          关键词只出 route.kind
-        ├─ apply_hard_gates()     联网开关
+        ├─ route_task()           关键词 kind + 能力合成（CapabilityResolver）→ allowed/required
         ├─ classify kind（仅 conversation）  JSON {"kind":...}；失败则保持 conversation
-        ├─ tools_for_kind()       按车道从 TOOL_POLICIES 展开 allowed_tools
-        ├─ planner（可选）         生成 JSON 计划；失败则整轮终止
-        ├─ CompletionValidator     必需工具成功事件 / tool_choice
+        ├─ plan_mode()            none / static（单能力组确定性计划）/ llm（多能力组）
+        ├─ planner（仅 llm）        validate_plan 校验并冻结必需工具；失败则整轮终止
+        ├─ EgressPolicy           混合任务逐条外发确认；未批准不发送、不写账本
+        ├─ CompletionValidator     必需工具成功事件（同能力组可互相满足）/ tool_choice
         ├─ 模型多轮 tool calls     只允许计划内工具
-        ├─ ToolRegistry.execute   超时、审计、waiting_approval
+        ├─ ToolRegistry.execute   超时、审计、waiting_approval；联网工具出网前二次校验
         └─ 引用校验（若本轮用过联网工具）
                 │
                 ▼
@@ -90,7 +90,11 @@ backend/app/
 │   ├── runtime.py           对话循环
 │   ├── completion.py        完成义务与强制工具选择
 │   ├── tool_executor.py     工具超时、结果归一化与审计边界
-│   ├── orchestration.py     路由、风险、规划
+│   ├── orchestration.py     关键词路线、分类、计划解析
+│   ├── capability_resolver.py 能力请求 → allowed/required、混合任务判定
+│   ├── plan_builder.py      计划模式与确定性兜底计划
+│   ├── plan_validator.py    计划校验与必需工具冻结
+│   ├── egress_policy.py     外发查询审批状态与确认载荷
 │   ├── bootstrap.py         组装模型 + 工具
 │   ├── settings.py          人设、记忆开关、模型连接
 │   ├── operations.py        运营快照
@@ -121,7 +125,7 @@ backend/app/
 
 生成和窄屏时保留工具栏模型名称与联网文字，不再通过隐藏所有按钮内的 span 压缩工具栏；联网开关与搜索类别共享一个控件，开启后可选择自动、通用、新闻、金融，技术来源偏好收进模块内的搜索设置。运行中锁定这些选项，关闭联网后同一草稿保留选择。停止按钮使用中性样式，停止请求中禁用并显示“正在停止生成”。
 
-对话滚动由 `useConversationScroll` 统一管理，靠近底部时跟随输出，向上阅读时保留位置并提示新内容；加载更早消息补偿高度，切换对话定位末尾。思考与执行过程只在当前助手消息正文前的 `RunProcess` 折叠区展示，取消输入框上方状态条、回答下“查看过程”入口和来源侧栏中的过程列表。运行时默认展开，阶段标题只出现一次；真实返回的思考文本按段落、工具活动按紧凑图标行显示，过滤本地路由概要，不展示原始参数对象或工具指纹。用户手动折叠后，流式更新不强制展开；终态自动收起、去掉加载动画，用同一标题行显示用时及“生成失败”“已停止”“等待确认”。终态以运行 status 为准，已恢复的单个工具失败不标记整个回答失败，缺少工具事件的失败仍有结果说明，保留已生成内容。停止按钮仍在输入框内。Markdown 代码块完整复制、超过 24 行可折叠，流式期间不折叠；Mermaid 图形继续使用专用渲染，宽表格在独立容器中滚动。
+对话滚动由 `useConversationScroll` 统一管理，靠近底部时跟随输出，向上阅读时保留位置并提示新内容；加载更早消息补偿高度，切换对话定位末尾。思考与执行过程只在当前助手消息正文前的 `RunProcess` 折叠区展示，取消输入框上方状态条、回答下“查看过程”入口和来源侧栏中的过程列表。运行时默认展开，标题显示当前具体执行内容；展开区随内容自然撑开，上限为桌面 280px、移动端 220px（含暂停跟随时的底部提示），超过上限才滚动，避免少量记录下方留白，按原顺序保留记录，初次展开定位最新。位于底部时跟随更新，向上阅读或展开某次工具说明时暂停跟随，新增调用按稳定 tool_call_id 计数，原调用更新不重复计数；滚回底部或点击「回到最新」恢复跟随。正常跟随时不显示常驻提示或占用底部空行；仅暂停跟随时显示「已暂停跟随」或新记录数量及「回到最新」。真实返回的思考摘要按段落、工具活动按紧凑图标行显示，过滤本地路由概要，不展示原始参数对象或工具指纹。工具行整行可点击，以无底色、无边框的缩进说明展示本次调用的查询词、来源数量/标题、读取资料数量或失败原因；不显示原始正文、调试 JSON、服务参数，缺失时明确说明未保留。当前执行文字带轻微流光，终态及停止请求撤下流光，减少动态效果偏好下禁用动画。用户手动折叠后，流式更新不强制展开；终态自动收起、去掉加载动画，用同一标题行显示用时及“生成失败”“已停止”“等待确认”。终态以运行 status 为准，已恢复的单个工具失败不标记整个回答失败，缺少工具事件的失败仍有结果说明，保留已生成内容。停止按钮仍在输入框内。Markdown 代码块完整复制、超过 24 行可折叠，流式期间不折叠；Mermaid 图形继续使用专用渲染，宽表格在独立容器中滚动。
 
 「回到最新」入口位于消息区域的悬浮层，与实际滚动容器互为同层元素，不随消息内容滚走，也不占用输入框的一行。消息区域和输入框继续使用各自的网格行；输入框增高时，悬浮入口随消息区域底部移动。完整页和浮动面板共享同一布局，保留离开底部时暂停跟随、新内容提醒和点击恢复跟随的规则。
 
@@ -155,41 +159,62 @@ Tavily 自动模式开启 `auto_parameters` 并省略 `topic`，显式固定 `se
 
 每轮顺序：
 
-1. `route_task()`：关键词 `detect_kind` + 硬开关，得到 `kind`。关键词未命中且仍为 `conversation` 时，额外一次模型调用只分类 `kind`（`ROUTE_LABELS` 之一）；`hello`、`你好`、`test` 等确定性的简单问候/连通性测试直接走对话，不花一次分类调用。解析失败或输出工具名则保持 `conversation`。`allowed_tools` 始终由 `tools_for_kind` / `TOOL_POLICIES` 计算，分类器不能点名工具。
-2. 需要计划时，另一次模型调用生成 JSON；解析失败则用路由允许工具做兜底计划；规划调用本身失败则整轮 `failed`。
+1. `route_task()`：`detect_kind` 先给关键词 `kind`；`capability_resolver` 再把「车道基线能力 + 文本能力信号」解析成当前注册表上的 `allowed_tools` / `required_tools`。联网开关只决定 `search_public_web` 是否进入可信工具面，不改写路由文本。关键词未命中且仍为 `conversation` 时，额外一次模型调用只分类 `kind`（`ROUTE_LABELS` 之一），分类只改 kind、随后同样经能力解析；`hello`、`你好`、`test` 等确定性的简单问候/连通性测试直接走对话，不花一次分类调用。解析失败或输出工具名则保持 `conversation`。分类器不能点名工具。
+2. 计划由 `plan_mode()` 分流：无可调用工具为 `none`；单一能力组为 `static`，直接使用确定性兜底计划，不额外调用模型；多能力组（含混合任务）为 `llm`，另一次模型调用生成 JSON，经 `validate_plan` 强制 required ⊆ planned ⊆ allowed ⊆ registered，非法计划整轮 `plan_validation_failed`，解析失败则用兜底计划；规划调用本身失败则整轮 `failed`。最终计划会冻结必需工具：计划选了同能力组的替代工具（如 `search_library` 代替 `get_library_context`）时，完成义务随计划改写。
 3. 把计划写入 system 消息，并把模型可见的 tool definitions 裁成计划内工具。另注入一条「本轮实际可用工具」清单（`visible_tools_prompt`），只列出 `executable_tools`。全局 `SYSTEM_PROMPT` 不点名具体工具。
-4. 每次模型生成前，`CompletionValidator` 用成功的工具事件核对 `REQUIRED_CAPABILITIES_BY_ROUTE` 编译出的 `route.required_tools`。仍有义务时，OpenAI Chat / Responses 使用 `tool_choice=required`，Anthropic 使用 `any`，Gemini 使用 `ANY`；Ollama 以 system 约束补足原生协议缺少 `tool_choice` 的差异。
+4. 每次模型生成前，`CompletionValidator` 用成功的工具事件核对 `route.required_tools`。同一能力组内任一工具成功即满足该项义务（读路径与检索路径可互相满足），未知工具回退按名精确匹配。仍有义务时，OpenAI Chat / Responses 使用 `tool_choice=required`，Anthropic 使用 `any`，Gemini 使用 `ANY`；Ollama 以 system 约束补足原生协议缺少 `tool_choice` 的差异。
 5. 循环：模型生成 → 若有 tool_calls 则逐个执行 → 结果以 `role=tool` 回写。模型在义务未完成时只返回正文或空响应，runtime 会丢弃该终态并追加一次纠正提示；同一未完成集合再次出现则 `completion_obligations_unmet`，不能保存为成功回答。义务集合因工具成功而缩小时，可以继续下一步。
-6. 工具 `failed`：同一轮只允许一次同车道重规划（`replan_prompt` + `parse_plan`），新计划仍受当前 `allowed_tools` 约束，不能换车道或补联网工具。重规划成功后清空本轮错误，最终正文标 `done`。第二次失败、`blocked`、超时或规划调用失败则整轮终止。
+6. 工具 `failed`：同一轮只允许一次同车道重规划（`replan_prompt` + `parse_plan` + `validate_plan`），新计划仍受当前 `allowed_tools` 约束，不能换车道或补联网工具。重规划成功后清空本轮错误，最终正文标 `done`。第二次失败、`blocked`、超时或规划调用失败则整轮终止。
 7. 完成义务满足且无 tool_calls、有正文：若本轮用过联网工具，则校验 Markdown 链接必须来自本轮工具返回的 URL；失败会自动重写一次，再失败则标记 `citation_validation_failed`。
 8. 达到轮数上限 → `round_limit_reached`。
-9. `waiting_user` 会把 `route` / `plan` / 完整 `messages` / `clarification` 写入 `agent_run_snapshots`。下一轮若有快照，先判定是否仍在回答暂停时的问题：命中选项原文，或手输未改口，则 `resume` 同一条 run（跳过分类与规划，不换车道）。手输明显改口（改口词，或 `detect_kind` 落到另一条非 `conversation` 车道）则清快照并重新路由。取消、回退、重置上下文或非 `local_router` 的终态会清快照。历史退役工具快照不会恢复。
+9. `waiting_user` 会把 `route` / `plan` / 完整 `messages` / `clarification` / `approved_search_queries` / `pending_search_queries` 写入 `agent_run_snapshots`。下一轮若有快照，先判定是否仍在回答暂停时的问题：命中选项原文，或手输未改口，则 `resume` 同一条 run（跳过分类与规划，不换车道）。手输明显改口（改口词，或 `detect_kind` 落到另一条非 `conversation` 车道）则清快照并重新路由；存在待批联网查询时，回复一律按批准/拒绝/自定义查询解释，不当作换题。取消、回退、重置上下文或非 `local_router` 的终态会清快照。历史退役工具快照不会恢复。
 
 硬约束（不要在改 runtime 时悄悄放宽，除非同步改本文和测试）：
 
 - 计划外工具立即 `blocked` / `tool_not_planned`。`ask_user` 是例外：它不进车道计划，但始终对模型可见，调用后以 `waiting_user` 交回界面。
-- `REQUIRED_CAPABILITIES_BY_ROUTE` 不只是规划提示，也是完成契约；路由会把 capability 解析成当前工具面的 `required_tools`，没有对应工具的 `done` 事件时，模型正文不能结束任务。
+- 完成义务以 `route.required_tools` 为准；义务由能力解析产生，没有对应能力的 `done` 事件时，模型正文不能结束任务。同能力组的工具可互相满足，但不会放宽到组外。
 - 工具 `failed`：先同车道重规划一次；`blocked` / 超时仍立即终止。
 - `waiting_approval`：状态 `waiting_user`，把确认权交回界面。若 `data.clarification` 带有 `question` / `options`，输入框上方渲染选项。点选选项，或手输仍是在回答（选项原文、补充指代），则恢复原计划。手输明显换题则清快照并重新路由。
 - 联网回答必须引用本轮来源；不得把未检索到的经历写成事实。
+- 混合任务（同一轮同时授权本地资料与公开搜索，`is_mixed_run`）中，`search_public_web` 每次调用先经 `EgressPolicy`：查询未被批准时以 `waiting_approval` 暂停（错误码 `external_query_approval_required`），展示完整查询字符串并等待批准/拒绝/自定义回复；暂停不执行工具、不写工具账本，恢复时按结果继续。批准只对当时展示的查询（或用户手输的新查询）生效；拒绝把联网从 route 和 plan 移除并撤销混合状态。联网工具在真正出网前还会独立复核一次，未批准返回 `external_query_not_approved`。
+
+真实工具运行事件的 `ToolEvent.started_at`、`completed_at`、`duration_ms` 为可选字段：开始时发布 UTC 时间，结束时用单调时钟记录包含安全重试的调用总耗时；终态结果保留时间与查询词白名单（query/company_name），历史未记录时不补造。前端总时长与各节点均统一为秒 s，至多一位小数；进行中基于服务端开始时间计时，完成后使用最终耗时。当前未补记录耗时的系统活动显示「未记录」。此变更不新增工具执行、详情读取接口或恢复入口。
 
 流式事件类型：`run_started`、`text_reset`、`text_delta`、`agent_event`、`waiting_user`、`completed`、`cancelled`、`error`。过程叙述走 `agent_event`，最终回答只保留对用户有用的结论。
 
-聊天入口还会注入：最近对话里解析出的公司全称、用户上传附件的本地解析文本。路由文本与模型可见文本分开：`web_search` 开关只进入 `routing_content`，避免用户把系统可信标记写进正文。
+聊天入口还会注入：最近对话里解析出的公司全称、用户上传附件的本地解析文本。路由文本与模型可见文本保持同一原文：联网开关只扩展可信工具面，不通过文本标记改写路由或正文。
 
 ## 路由与计划
 
-实现：`backend/app/agent/orchestration.py`。关键词识别意图，未命中时可由模型分类；分类只能选择既有 kind，不能自行指定工具。联网可信开关只影响本轮，路由不接受岗位截图或画像访谈状态参数。
+实现：`backend/app/agent/orchestration.py`（关键词与分类）、`capability_resolver.py`（能力合成）、`plan_builder.py` / `plan_validator.py`（计划模式与校验）。关键词识别意图，未命中时可由模型分类；分类只能选择既有 kind，不能自行指定工具。联网可信开关只影响本轮工具面，路由不接受岗位截图或画像访谈状态参数。
 
-| kind | 作用 | 可用能力 |
+`capability_request_for_content` 从文本提取三类能力信号：
+
+- 本地资料：`LIBRARY_SIGNALS`（知识库、我的资料、已保存、这份材料、资料里等限定词组）。
+- 公开联网：强信号（联网、网上查、上网查、网上搜）；动作信号（搜索、查一下、帮我查…）；时效信号（最新、实时、近期、新闻、进展、动态）。命中「搜索我的资料」「笔记里」等 `LOCAL_SEARCH_PHRASES` 时不算外发请求。
+- 知识写入：`PROPOSE_SIGNALS`（记住、加入知识库、记录知识…）。
+
+`resolve_capabilities` 按车道基线能力 + 信号，在当前注册表上为每个能力取代表工具（`priority`、`name`），产出 `allowed_tools`；`required_tools` 取车道义务 + 显式联网/写入，并支持同一能力组回退。联网开关只决定 `search_public_web` 是否可被选中；被选中只代表授权，不代表一定执行。
+
+| kind | 作用 | 基线能力 |
 | --- | --- | --- |
-| conversation | 日常问答 | ask_user 中断询问 |
+| conversation | 日常问答 | 无；文本资料信号可扩展 library.read/search |
 | library_search | 知识库问答 | library.read、library.search |
 | library_update | 补充知识 | library.read、library.propose |
 | content_creation | 总结、改写、文章和大纲 | library.read、library.search |
-| web_search | 公开检索 | web.search.generic |
+| web_search | 公开检索 | web.search.generic（仅联网开关打开时） |
 
-工具面来自当前注册表的 capability 与 priority；规划器只能选 allowed_tools。知识库问答/创作必须先读取知识库，写知识必须生成待确认条目，联网必须真正调用检索工具。历史 checkpoint 含退役路由、工具或计划步骤时不恢复，重新按当前请求路由。
+allowed 同时包含公开搜索与本地资料组时是混合任务：`needs_plan` 为真、注入逐条外发确认提示、执行时按 `EgressPolicy` 逐条审批。工具面来自当前注册表的 capability 与 priority；规划器只能选 allowed_tools。知识库问答/创作必须先读取知识库，写知识必须生成待确认条目，联网必须真正调用检索工具。历史 checkpoint 含退役路由、工具或计划步骤时不恢复，重新按当前请求路由。
+
+### 外发查询审批（EgressPolicy）
+
+实现：`backend/app/agent/egress_policy.py`。只用于混合任务；纯公开搜索（用户开启联网并明确要求搜索）以本轮开关作为一次性授权，不逐条确认。
+
+- 状态：`mixed`、`approved`、`pending`，按规范化查询（空白折叠、忽略大小写）比对；批准只覆盖当时展示的查询字符串，附带查询摘要用于审计。
+- 暂停：模型调用 `search_public_web` 且查询未批准时，发布 `waiting_approval` 工具事件（`data.arguments.query` 与 `data.clarification` 选项「允许发送这条查询 / 不联网，仅用本地资料」，允许自定义），运行进入 `waiting_user`；不执行工具、不写工具账本，避免恢复后重复暂停。
+- 恢复：点选批准 → 该查询进入 approved，模型继续；手输其他文本 → 视为用户自供的替代查询，系统提示模型只使用该查询；点选拒绝 → 联网从 route/plan 移除、撤销混合状态，模型继续仅用本地资料。空回复或超长回复保持待批并再次展示确认，不消耗模型轮次。
+- 出网复核：`SearchPublicWebTool` 在真正请求搜索服务前独立复核 `require_external_query_approval` 与批准集合，未批准返回 `external_query_not_approved`，不依赖 runtime 单点把关。
+- 快照：`approved_search_queries` / `pending_search_queries` 随暂停快照保存；checkpoint 恢复保留既有批准，运行重连不会重新暂停已批准查询。
 
 ## 工具目录
 
@@ -207,7 +232,7 @@ Tavily 自动模式开启 `auto_parameters` 并省略 `topic`，显式固定 `se
 
 ## 执行循环与收敛
 
-新任务和 `waiting_user` 恢复任务共用同一个有界 model/tool loop，不再维护两份执行逻辑。`max_tool_rounds` 限制模型轮数；每轮先检查完成义务，再选择 `required` 或 `auto` 的 `tool_choice`。所有 `AgentRunResult` 都带 `stop_reason`：成功为 `completed`，等待为 `waiting_user`，失败时使用稳定错误码，便于 UI、运营看板和回归评测区分停止原因。
+新任务和 `waiting_user` 恢复任务共用同一个有界 model/tool loop，不再维护两份执行逻辑。`max_tool_rounds` 限制模型轮数；每轮先检查完成义务，再选择 `required` 或 `auto` 的 `tool_choice`。所有 `AgentRunResult` 都带 `stop_reason`：成功为 `completed`，等待为 `waiting_user`，失败时使用稳定错误码（规划校验失败为 `plan_validation_failed`，待批外发查询为 `external_query_approval_required`），便于 UI、运营看板和回归评测区分停止原因。
 
 循环有三层恢复与防失控规则：
 
@@ -221,7 +246,7 @@ Tavily 自动模式开启 `auto_parameters` 并省略 `topic`，显式固定 `se
 
 实现：`backend/app/agent/run_store.py`，表为 `agent_execution_runs`、`agent_run_steps`、`agent_tool_executions`。AG-UI 的 `runId` 是运行幂等键，并且只能属于一个对话；重复提交已结束的 `runId` 会复用原模型结果和已绑定的 user/assistant 消息，不会再次调用模型或产生重复消息。
 
-runtime 在进入循环、完成每个工具轮、写入完成修复提示和引用修复提示后保存 `checkpoint`。检查点包含车道、计划、消息、轮数、已完成工具和重复调用防护状态，但不会通过运行状态 API 暴露原始消息。服务启动时把遗留的 `queued` / `running` 运行和 `running` 工具调用标为 `interrupted`；客户端用同一个 `runId` 重试时，从最近检查点继续，不重复追加原始 user 消息。
+runtime 在进入循环、完成每个工具轮、写入完成修复提示和引用修复提示后保存 `checkpoint`。检查点包含车道、计划、消息、轮数、已完成工具、重复调用防护状态和外发查询批准集合，但不会通过运行状态 API 暴露原始消息。服务启动时把遗留的 `queued` / `running` 运行和 `running` 工具调用标为 `interrupted`；客户端用同一个 `runId` 重试时，从最近检查点继续，不重复追加原始 user 消息。
 
 工具账本以“runId + 工具名/参数指纹”为唯一键：
 
@@ -246,7 +271,7 @@ runtime 在进入循环、完成每个工具轮、写入完成修复提示和引
 
 称呼可留空，不影响文件库的可用状态。文件库采用扁平主导航，分类（全部、最近、收藏、回收站）和文件夹在模块内。数据库 v25 新增账户内 `library_folders`；来源的文件夹、收藏、打开时间及回收站时间写入 `metadata.organization`，合并时保留解析元数据。v24 升级只扩展表及重建可恢复索引，不改来源 ID、原件或启用状态。`PATCH /library/sources/{id}/organization` 管理组织状态，回收站移除通用上下文和检索分块，恢复按原启用状态重新索引；原 `DELETE` 保持永久删除语义，前端只在回收站二次确认后调用。组织操作不会更改文件修改时间。上传解析失败仍保存原件并标记 failed，正文补充后可恢复 ready；PDF/图片直接读取鉴权原件（PDF 使用本地打包的 PDF.js worker、字体与 CMap，支持翻页/缩放），文本原件与校正的 AI 文字分别展示，DOCX 可下载原件或查看提取文字。`GET /library/sources?q=` 支持文件名与正文搜索。
 
-`POST /library/conversations` 将最多 10 个选中文件复制为新会话的待发送 document 附件，不启动模型请求。每份快照使用来源当前隐私模式（默认脱敏），去重并拒绝回收站或无文字来源；附件创建失败清理本次会话与附件。前端一次性消费待发送附件，用户仍需填写消息并发送。该动作不限制 Agent 现有的资料记忆范围，其他启用资料仍按原记忆规则读取；之后校正、删除来源或改变隐私模式不会追溯改写已有会话快照。
+`POST /library/conversations` 将最多 8 个选中文件复制为新会话的待发送 document 附件，与发送上限一致，不启动模型请求。每份快照使用来源当前隐私模式（默认脱敏），记录来源 ID、标题、更新时间及副本哈希；去重并拒绝回收站或无文字来源。附件创建失败清理本次会话与附件，空列表或超限不会创建会话。前端展示用途后创建对话，一次性消费附件，用户仍需填写消息并发送。该动作不启用来源，也不限制 Agent 现有的资料记忆范围，其他长期资料仍按原记忆规则读取；之后校正、删除来源或改变隐私模式不会追溯改写已有会话快照。
 
 默认向模型提供 `scan_and_redact` 后的文本；用户只可对单个来源开启 original。`get_library_context` 每个启用来源最多取 4000 字、总量最多约 12000 字并附来源摘要；更长资料由 `search_library` 按 `library_source` 分块检索并返回来源 ID、标题和片段。
 
@@ -312,9 +337,10 @@ Base URL 视为对应协议的 API 根地址：显式 OpenAI 兼容客户端不�
 
 这些是现状，不是待办清单里的默认目标：
 
-- 关键词命中仍走规则；未命中会再分类一次 `kind`，分类器不能选工具。已命中的关键词车道换一种说法仍可能进错。
+- 关键词与能力信号都仍走规则；未命中会再分类一次 `kind`，分类器不能选工具。换一种说法（尤其未命中联网动作词）仍可能漏掉或误加联网能力。
 - 工具失败只允许一次同车道重规划；`blocked` / 超时仍立即停。
 - 任务进度由持久化运行账本展示。等待中的下一条消息默认恢复原 run；手输改口会清快照。无改口词且仍落在 `conversation` 的闲聊可能继续锁在旧任务，可点结束任务。
+- 混合任务的逐条外发确认以「查得到的行为」为触发点：只有模型实际调用 `search_public_web` 时才暂停；计划声称要联网但模型改用本地工具回答时不会弹窗，由完成义务和引用校验兜底。
 - 记忆是业务账本，不是「上次同类任务怎么走」的策略记忆。
 - 输入框确认条只在工具返回 `data.clarification` 时出现；模型若只在正文里提问，界面不会自动抽出选项。
 - 未配置模型密钥时仍可登录并浏览资料库/工作台/首页；对话发送会引导到 `#/settings/model`。
@@ -352,6 +378,12 @@ macOS 单机网页和桌面的新密钥写入 Keychain；环境模式只读管�
 ## 架构收敛进度
 
 当前资料库的基础资料、知识审核和来源管理位于 `library/`，只使用 `library_metadata`、`library_knowledge`、`library_evidence` 与 `library_sources`。确认知识不再改写画像 Markdown 或技能小节。`/library`、`/library/sources`、`/library/facts` URL 保持；文档解析不再返回退役求职推断字段。历史存储只在一次性兼容升级中读取，当前入口不再写旧工作流。完整实施范围与验收见 `docs/refactoring-plan.md`。
+
+文件库内部按“文件”和“知识”组织：文件页组合目录、来源及 AI 使用状态筛选，知识页展示有正文且启用的资料依据、待确认提议与已确认知识。文件存档、明确带入一次对话、启用为后续资料依据和确认知识是不同操作；进入知识页不启动模型、不自动确认内容。无可检索正文的文件保留原件预览和下载，但不能批量带入文字对话或启用资料依据；回收站文件不计入资料依据。自动参考仍遵循既有资料/知识记忆开关。搜索在一个账号工作区快照内匹配标题、文件名和正文，只返回摘要，不逐文件额外读取详情。现有 URL、存储格式与知识审核协议保持，产品结构说明见 [file-library-architecture.md](file-library-architecture.md)。
+
+工作区通过 `features/chat/AIWorkspaceModules.tsx` 保持对话输入区挂载，左侧栏分别提供 AI 工作区与文件库入口，聊天顶部不显示模块切换行；`#/chat/library` 打开资料模块，`#/settings/library` 在设置路径中管理同一模块，旧 `#/library` 规范化为工作区地址。工作区文件视图保持聊天组件挂载但隐藏，保留当前会话、草稿和待发送附件，切换不停止任务；会话路由自动恢复逻辑不覆盖文件模块路由。聊天中的查看资料、已保存成果入口进入工作区文件模块，文件视图高亮侧栏文件库，返回 AI 工作区恢复原会话。聊天顶部只保留右对齐的“新建 / 记录”，标题管理统一在记录面板进行；来源入口随对应消息显示，点击引用或消息后的来源按钮打开该消息的详情，顶部不提供统一来源按钮。两处文件入口使用同一 `useLibrary` 状态和 `LibraryPage`，不增加存储、Agent 工具或检索范围；文件路由只加载资料数据。
+
+v31 增加账户内 `library_collections` 与多对多 `library_collection_sources`，`/library` 返回主题集合及成员 ID；`GET/POST /library/collections`、`PATCH/DELETE /library/collections/{id}` 和 `PATCH /library/collections/{id}/sources` 提供列表、创建、重命名、删除及批量加入/移出。成员变更在事务内验证整批来源，回收站不可新增成员。集合只整理资料，不改变原件、目录或模型使用许可；删除集合不删除文件，永久删除文件时级联清理成员，回收站恢复保留原关联。升级先备份、保留来源与索引；文件库 UI 上传/新建笔记显式提交 `enabled=false`，默认仅存档，旧服务/API 默认值保持兼容。可检索来源在 UI 标记“长期使用”，开关直接显示在文件详情；主题集合过滤仅限浏览与显式选取对话资料，不缩小 Agent 的自动记忆检索范围。
 
 ## 兼容白名单与验证边界
 
@@ -393,3 +425,27 @@ v29 新增 chat_image_operations/chat_image_assets，保留旧表、消息与索
 数据库统一升级至 v30（`unified_models_and_chat_assets`），兼容聊天成果分支与 LiteLLM 分支各自的 v29 布局。升级前备份至 `.upgrade-backups/before-schema-v30/`，保留历史消息、模型绑定与原迁移名称；已为两种 v29 和 v27/v28 的合成工作区快照补充升级、完整性与重复初始化测试。
 
 阶段适配器沿用所属档案的推理强度、实际协议与计价参数；运行时缓存同时包含凭证指纹、阶段策略与备用策略版本。生图请求经过 LiteLLM 包装时委托原生 Responses 适配器，绕过 Completion Router 和可选参数重试，保留图片输出和进度事件。当前用户连接已明确不支持生图，仍在请求前拦截，不因文本模型可用而推断生图可用。模型推理与工具过程共用对话内折叠区，备用回答仅补充实际回答模型提示，不恢复输入区重复状态。
+
+
+### Packy Images 文生图（2026-10-15）
+
+`gpt-image-*` 自动解析为独立 `images` 协议，也可在连接中显式选择 Images。明确的当轮生图指令使用冻结 execute 档案，直接调用 `/v1/images/generations`，仅发送 model、prompt 与 `n=1`，尺寸、质量与输出格式使用服务默认值；不调用 Responses 或 Chat Completions，不使用文本参数、推理强度或原生工具。Packy 连接使用 `https://cf.api.fan/v1` 与 sora 分组令牌；根域名会补 `/v1`，自定义 API 路径保留。
+
+`OpenAIImagesProvider` 在原生和 LiteLLM 两种后端均走专用无重试路径，300 秒等待上限，图片模型不能作为聊天备用模型。应用 SSE 可以展示生成过程，但上游请求不启用 streaming，因此生图不要求档案具备文本流式能力；独立 image_generation 能力门禁照常生效。检测连接只读取目录，不付费出图；目录可见不证明生图可用，普通文本请求和附件编辑在请求前拒绝。
+
+结果复用账户本地图片校验、资产引用、下载与存档；Base64 不序列化，URL 响应仅下载 Packy 资源白名单地址。沿用操作标记与任务重放，取消、超时或异常均不自动重发；同一任务成功重放复用图片，未知状态阻止重复生成。旧 Grok 4.7 Responses 路径保留。无新表或迁移，配置和测试见 [文生图接入](image-generation.md)。
+
+
+### Images 模型绘图路由修复（2026-10-15）
+
+入口先读取冻结 execute 档案的协议；选中 Images 时在 classify/plan 之前进入图片输入校验。`image_generation_intent` 的 `image_model_selected` 只放开架构图、流程图等图表关键词对明确绘图指令的排除，普通聊天模型保持原行为；询问能力、费用和引用文档内的绘图指令仍不授权付费生成。非生图输入返回本地 `image_prompt_required` 与 image_generation 失败事件，不调用文字阶段或外部图片接口，不创建生图尝试标记，不包装为“模型服务不可用”。回归覆盖用户的原始架构图指令、自动与手动 Images 协议、无文字规划、无付费请求及原有防重复生成。
+
+
+### Images 实际网关参数兼容（2026-10-15）
+
+Packy 实际路由以 400 拒绝教程标为支持的 `response_format`，出图请求改为仅包含 model、prompt、n=1；省略尺寸、质量和输出格式等可选参数，由服务采用默认值，不通过重新生图协商参数。响应优先读取 Base64；仅返回 URL 时，只接受 HTTPS 的 `external-resources.packyapi.ai/file_download/`，独立 HTTP 客户端不转发 API Key 或 Cookie，禁止重定向，60 秒超时，按声明与实际流式长度限制 20 MB，再交给既有图片校验和账户资产落盘。URL 不写入运行/SSE/图片元数据；非法链接、下载失败或无效图片均不自动重新生成，未知结果任务保护照常保留。
+
+
+### Agent V2.2 单 runtime 能力合成与外发审批（2026-10-15）
+
+单一 `AgentRuntime` 内支持多能力任务：删除联网文本标记与硬改道（`WEB_SEARCH_MARKER`、`ROUTING_MARKERS`、`apply_hard_gates`、`tools_for_kind`），改由 `capability_resolver` 合并车道基线能力与文本信号，联网开关只授权 `search_public_web` 是否进入工具面，并保留旧的单车道行为（纯联网任务照常）。规划分三档：无工具 `none`、单能力组 `static`（确定性兜底计划，简单任务不多花规划调用）、多能力组 `llm`；计划必须通过与注册表一致的 `validate_plan`，完成义务按能力组匹配，计划选用的替代工具会被冻结为实际义务。混合任务（本地资料 + 公开搜索）进入逐条外发审批：模型调用搜索工具时代理层拦截未批查询，展示查询原文供批准/拒绝/自定义，暂停不执行、不写账本；拒绝会移除联网能力；检测到待批快照的回复不再按改口处理。快照新增 `approved_search_queries` / `pending_search_queries`（默认空、无数据库迁移），`run_store.checkpoint` 在运行行不存在时跳过步骤写入以避免外键错误。前端联网开关文案改为「允许按需联网搜索公开信息」并说明混合任务逐条确认。离线评测的 `web_search: true` 现在表示授权而非强制调用。原生与 LiteLLM 两条模型后端共用同一 runtime，未引入第二套 runtime 或事件协议。

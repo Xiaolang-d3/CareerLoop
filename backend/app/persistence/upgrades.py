@@ -20,6 +20,7 @@ _MIGRATION_NAMES = {
     28: "model_protocol_and_reasoning",
     29: "litellm_model_layer",
     30: "unified_models_and_chat_assets",
+    31: "library_topic_collections",
 }
 
 

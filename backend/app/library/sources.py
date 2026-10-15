@@ -128,12 +128,18 @@ def _summary(source: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def list_sources(db_path: str | Path | None = None) -> list[dict[str, Any]]:
+def list_sources(db_path: str | Path | None = None, *, query: str = "") -> list[dict[str, Any]]:
     with connect(db_path) as conn:
         rows = conn.execute(
             "SELECT * FROM library_sources ORDER BY updated_at DESC, id DESC"
         ).fetchall()
-    return [_summary(_source_from_row(row)) for row in rows]
+    needle = query.strip().casefold()
+    # Search the same workspace snapshot once, without a separate detail read
+    # per file. Python casefold preserves Unicode matching across platforms.
+    return [
+        _summary(_source_from_row(row)) for row in rows
+        if not needle or needle in f"{row['title']} {row['original_filename']} {row['content']}".casefold()
+    ]
 
 
 def get_source(
@@ -161,6 +167,7 @@ def create_text_source(
     content: str,
     privacy_mode: str = "redacted",
     source_uri: str = "",
+    enabled: bool = True,
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
     clean_content = content.strip()
@@ -176,7 +183,7 @@ def create_text_source(
                 source_kind, title, mime_type, source_uri, content,
                 redacted_content, privacy_mode, enabled, parse_status,
                 content_hash, character_count, metadata_json
-            ) VALUES ('paste', ?, 'text/plain', ?, ?, ?, ?, 1, 'ready', ?, ?, '{}')
+            ) VALUES ('paste', ?, 'text/plain', ?, ?, ?, ?, ?, 'ready', ?, ?, '{}')
             """,
             (
                 _clean_title(title),
@@ -184,6 +191,7 @@ def create_text_source(
                 clean_content,
                 redacted,
                 privacy_mode,
+                int(enabled),
                 sha256(clean_content.encode("utf-8")).hexdigest(),
                 len(clean_content),
             ),
@@ -200,6 +208,7 @@ def import_file_source(
     content_bytes: bytes,
     mode: str = "fast",
     privacy_mode: str = "redacted",
+    enabled: bool = True,
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
     if not content_bytes:
@@ -229,7 +238,7 @@ def import_file_source(
                 source_kind, title, original_filename, mime_type, content,
                 redacted_content, privacy_mode, enabled, parse_status,
                 content_hash, character_count, metadata_json
-            ) VALUES ('upload', ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+            ) VALUES ('upload', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 _clean_title(Path(safe_name).stem),
@@ -238,6 +247,7 @@ def import_file_source(
                 extracted,
                 redacted,
                 privacy_mode,
+                int(enabled and bool(extracted)),
                 "ready" if extracted else "failed",
                 digest,
                 len(extracted),

@@ -4,12 +4,13 @@ from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 
 
-ModelProtocol = Literal["auto", "openai", "responses", "anthropic", "gemini", "ollama"]
-ResolvedModelProtocol = Literal["openai", "responses", "anthropic", "gemini", "ollama"]
+ModelProtocol = Literal["auto", "openai", "responses", "images", "anthropic", "gemini", "ollama"]
+ResolvedModelProtocol = Literal["openai", "responses", "images", "anthropic", "gemini", "ollama"]
 
 PROTOCOL_LABELS: dict[ResolvedModelProtocol, str] = {
     "openai": "OpenAI 兼容 Chat Completions",
     "responses": "OpenAI Responses API",
+    "images": "OpenAI Images API",
     "anthropic": "Anthropic Messages API",
     "gemini": "Google Gemini generateContent",
     "ollama": "Ollama Chat API",
@@ -18,7 +19,7 @@ PROTOCOL_LABELS: dict[ResolvedModelProtocol, str] = {
 
 def normalize_model_protocol(value: str | None) -> ModelProtocol:
     normalized = (value or "auto").strip().lower()
-    if normalized in {"openai", "responses", "anthropic", "gemini", "ollama"}:
+    if normalized in PROTOCOL_LABELS:
         return normalized  # type: ignore[return-value]
     return "auto"
 
@@ -33,6 +34,8 @@ def resolve_model_protocol(
         return protocol
     normalized_model = model_name.strip().lower()
     normalized_url = base_url.strip().lower()
+    if normalized_model.startswith("gpt-image-"):
+        return "images"
     if "anthropic.com" in normalized_url:
         return "anthropic"
     if "generativelanguage.googleapis.com" in normalized_url:
@@ -58,6 +61,8 @@ def model_protocol_candidates(
     protocol = normalize_model_protocol(configured)
     primary = resolve_model_protocol(model_name, protocol, base_url)
     if protocol != "auto":
+        return (primary,)
+    if primary == "images":
         return (primary,)
     normalized_url = base_url.strip().lower()
     if any(

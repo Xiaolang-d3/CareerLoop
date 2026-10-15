@@ -18,7 +18,7 @@ from ..models import ModelProviderError
 from ..workspace import resolve_document_dir
 
 
-def image_generation_intent(text: str) -> bool:
+def image_generation_intent(text: str, *, image_model_selected: bool = False) -> bool:
     # Only an instruction in this turn enables the billed native tool. Quoted
     # documents, past turns and requests to explain image generation do not.
     first = text.strip().split("\n", 1)[0]
@@ -26,7 +26,7 @@ def image_generation_intent(text: str) -> bool:
         return False
     if re.match(r"^(?:能否|可以|能不能|你能|你可以).*(?:吗|[?？])$", first):
         return False
-    if re.search(r"(?:思维导图|流程图|时序图|架构图|折线图|柱状图|饼图|Mermaid)", first, re.I) and not re.search(r"图片|图像|插画|海报", first):
+    if not image_model_selected and re.search(r"(?:思维导图|流程图|时序图|架构图|折线图|柱状图|饼图|Mermaid)", first, re.I) and not re.search(r"图片|图像|插画|海报", first):
         return False
     if re.match(r"^(?:请|帮我)?生成(?:图片|图像)(?:需要|有什么|怎么|是否)", first):
         return False

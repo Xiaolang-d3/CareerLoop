@@ -208,7 +208,7 @@ class AgentRunStore:
             "web_search_options": original_options or snapshot.web_search_options,
         })
         with connect(self._db_path) as conn:
-            conn.execute(
+            updated = conn.execute(
                 """
                 UPDATE agent_execution_runs
                 SET status = 'running', route_kind = ?, round_number = ?,
@@ -222,7 +222,7 @@ class AgentRunStore:
                     run_id,
                 ),
             )
-            if snapshot.plan is not None:
+            if snapshot.plan is not None and updated.rowcount > 0:
                 for position, step in enumerate(snapshot.plan.steps):
                     conn.execute(
                         """

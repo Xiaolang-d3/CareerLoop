@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
+from ..agent.egress_policy import EXTERNAL_QUERY_NOT_APPROVED, normalize_query
 from ..config import Settings, get_settings
 from ..domain import ToolDefinition, ToolError, ToolResult
 from ..research.options import SearchRequest
@@ -46,6 +47,22 @@ class SearchPublicWebTool:
             payload = SearchPublicWebArguments.model_validate(arguments)
         except ValidationError as exc:
             return invalid_arguments("联网搜索参数不合法", exc)
+
+        if context.require_external_query_approval:
+            approved = {
+                normalize_query(item) for item in context.approved_external_queries
+            }
+            if normalize_query(payload.query) not in approved:
+                message = "这条查询尚未获得用户批准，不能发送给公开搜索服务"
+                return ToolResult(
+                    ok=False,
+                    status="blocked",
+                    message=message,
+                    error=ToolError(
+                        code=EXTERNAL_QUERY_NOT_APPROVED,
+                        message=message,
+                    ),
+                )
 
         if not self._settings.web_research_enabled and self._client is None:
             message = "联网搜索尚未启用，请在本地 backend/.env 中启用 WEB_RESEARCH_ENABLED 并配置搜索服务"

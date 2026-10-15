@@ -42,7 +42,7 @@ class AgentSettingsIn(BaseModel):
     context_message_limit: int = Field(default=12, ge=4, le=30)
     model_name: str = Field(default="gpt-5.5", min_length=1, max_length=120)
     model_base_url: str = Field(default="", max_length=500)
-    model_protocol: Literal["auto", "openai", "responses", "anthropic", "gemini", "ollama"] = "auto"
+    model_protocol: Literal["auto", "openai", "responses", "images", "anthropic", "gemini", "ollama"] = "auto"
     api_key: str = Field(default="", max_length=500)
     expected_revision: int | None = Field(default=None, ge=0)
     request_id: str | None = Field(default=None, max_length=120)
@@ -50,13 +50,13 @@ class AgentSettingsIn(BaseModel):
 class ModelDiscoveryIn(BaseModel):
     model_base_url: str = Field(default="", max_length=500)
     model_name: str = Field(default="", max_length=120)
-    model_protocol: Literal["auto", "openai", "responses", "anthropic", "gemini", "ollama"] = "auto"
+    model_protocol: Literal["auto", "openai", "responses", "images", "anthropic", "gemini", "ollama"] = "auto"
     api_key: str = Field(default="", max_length=500)
 
 class ModelCapabilitiesIn(BaseModel):
     model_name: str = Field(default="", max_length=120)
     model_base_url: str = Field(default="", max_length=500)
-    model_protocol: Literal["auto", "openai", "responses", "anthropic", "gemini", "ollama"] = "auto"
+    model_protocol: Literal["auto", "openai", "responses", "images", "anthropic", "gemini", "ollama"] = "auto"
     api_key: str = Field(default="", max_length=500)
     probe: bool = False
 
@@ -70,6 +70,7 @@ class LibrarySourceIn(BaseModel):
     content: str = Field(min_length=1, max_length=200_000)
     source_uri: str = Field(default="", max_length=2_000)
     privacy_mode: Literal["redacted", "original"] = "redacted"
+    enabled: bool = True
 
 class LibrarySourceUpdateIn(BaseModel):
     title: str | None = Field(default=None, max_length=255)

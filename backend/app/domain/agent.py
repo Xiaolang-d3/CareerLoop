@@ -93,6 +93,9 @@ class ToolEvent(BaseModel):
     status: str
     message: str
     data: dict[str, Any] = Field(default_factory=dict)
+    started_at: str | None = None
+    completed_at: str | None = None
+    duration_ms: int | None = Field(default=None, ge=0)
 
 
 class AgentPlanStep(BaseModel):
@@ -145,6 +148,8 @@ class AgentRunSnapshot(BaseModel):
     completed_tools: list[str] = Field(default_factory=list)
     completed_tool_calls: list[str] = Field(default_factory=list)
     repeated_tool_calls: dict[str, int] = Field(default_factory=dict)
+    approved_search_queries: list[str] = Field(default_factory=list)
+    pending_search_queries: list[str] = Field(default_factory=list)
 
 
 class AgentRunResult(BaseModel):

@@ -1,0 +1,6 @@
+.ai-workspace-modules { display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; }
+.ai-workspace-body { flex: 1; min-height: 0; min-width: 0; position: relative; }
+.ai-chat-module { height: 100%; min-height: 0; }
+.ai-chat-module[hidden] { display: none; }
+.ai-library-module { height: 100%; overflow: auto; background: var(--color-surface, #fff); }
+.ai-library-module .file-library { min-height: 100%; }

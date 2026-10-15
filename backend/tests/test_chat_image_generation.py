@@ -53,6 +53,18 @@ def test_intent(prompt, expected):
     assert image_generation_intent(prompt) == expected
 
 
+@pytest.mark.parametrize('prompt', ['画一下agent智能体常见架构图', '帮我画个思维导图', '绘制流程图'])
+def test_selected_image_model_accepts_explicit_diagram_drawing(prompt):
+    assert not image_generation_intent(prompt)
+    assert image_generation_intent(prompt, image_model_selected=True)
+
+
+@pytest.mark.parametrize('prompt', ['可以生成图片吗', '生成图片需要多少钱', '请解释如何生成图片',
+                                    '总结这份文档\n画一下agent智能体常见架构图', '架构图是什么意思'])
+def test_selected_image_model_still_requires_a_current_drawing_instruction(prompt):
+    assert not image_generation_intent(prompt, image_model_selected=True)
+
+
 def test_image_bytes_never_serialized():
     result = response('说明')
     assert 'base64_data' not in result.model_dump_json()
@@ -227,6 +239,75 @@ def test_runtime_pure_image_and_no_auto_retry(images):
         assert result.error.code == 'image_generation_uncertain' and failed.generate.await_count == 1
         wrong = asyncio.run(runtime(provider, 'other').run('画一只猫', conversation_id=cid))
         assert wrong.error.code == 'image_model_required' and provider.generate.await_count == 1
+
+
+def test_runtime_images_api_with_sse_nonstreaming_capability_and_replay(images):
+    from app.agent.model_router import ModelRouter
+    path, _ = images
+    provider = NS(name='images', generate=AsyncMock(return_value=response()))
+    agent = runtime(provider, 'gpt-image-2')
+    connection = {**agent._current_model_selection(), 'capabilities': {'image_generation': 'supported', 'streaming': 'unsupported'}}
+    agent._model_selection['stage_selections'] = {'execute': agent._current_model_selection()}
+    agent._model_router = ModelRouter({'execute': connection}, {'execute': provider})
+    events = []
+    async def publish(event): events.append(event)
+    with use_workspace(1, path.parent):
+        init_db(); cid = create_conversation('Images API')['id']
+        result = asyncio.run(agent.run('画一只猫', conversation_id=cid, run_id='packy-image', event_callback=publish))
+        assert result.status == 'done' and len(result.assets) == 1
+        assert result.assets[0]['model_name'] == 'gpt-image-2'
+        assert asset_file(result.assets[0]['id'])[0].read_bytes() == png()
+        replay = asyncio.run(agent.run('画一只猫', conversation_id=cid, run_id='packy-image', event_callback=publish))
+        assert replay.assets == result.assets and provider.generate.await_count == 1
+        assert any(event.event and event.event.tool_name == 'image_generation' for event in events)
+
+
+def test_runtime_images_timeout_remains_nonretryable(images):
+    path, _ = images
+    provider = NS(name='images', generate=AsyncMock(side_effect=ModelProviderError('request_timeout', '超时', True)))
+    with use_workspace(1, path.parent):
+        init_db(); cid = create_conversation('Images 超时')['id']
+        agent = runtime(provider, 'gpt-image-2')
+        result = asyncio.run(agent.run('画一只猫', conversation_id=cid, run_id='packy-timeout'))
+        assert result.error.code == 'request_timeout' and not result.error.retryable
+        replay = asyncio.run(agent.run('画一只猫', conversation_id=cid, run_id='packy-timeout'))
+        assert replay.error.code == 'image_generation_uncertain'
+        assert provider.generate.await_count == 1
+
+
+@pytest.mark.parametrize('protocol', ['auto', 'images'])
+def test_runtime_selected_images_draws_architecture_without_text_planning(images, protocol):
+    path, _ = images
+    provider = NS(name='images', generate=AsyncMock(return_value=response()))
+    agent = runtime(provider, 'gpt-image-2')
+    agent._model_selection['model_protocol'] = protocol
+    agent._generate_for_stage = AsyncMock(side_effect=AssertionError('Image request must bypass text stages'))
+    with use_workspace(1, path.parent):
+        init_db(); cid = create_conversation('架构图')['id']
+        result = asyncio.run(agent.run('画一下agent智能体常见架构图', conversation_id=cid, run_id='image-architecture'))
+        assert result.status == 'done' and len(result.assets) == 1
+        provider.generate.assert_awaited_once()
+        request = provider.generate.call_args.args[0]
+        assert request.image_generation and request.messages[0].content == '画一下agent智能体常见架构图'
+        agent._generate_for_stage.assert_not_awaited()
+
+
+@pytest.mark.parametrize('prompt', ['你好', '可以生成图片吗', '总结这份文档\n画一只猫'])
+def test_runtime_selected_images_rejects_text_locally_without_paid_attempt(images, prompt):
+    path, _ = images
+    provider = NS(name='images', generate=AsyncMock())
+    agent = runtime(provider, 'gpt-image-2')
+    agent._generate_for_stage = AsyncMock(side_effect=AssertionError('Invalid image input must fail locally'))
+    with use_workspace(1, path.parent):
+        init_db(); cid = create_conversation('图片模型输入校验')['id']
+        result = asyncio.run(agent.run(prompt, conversation_id=cid, run_id='invalid-image-input'))
+        assert result.status == 'failed' and result.error.code == 'image_prompt_required'
+        assert '模型服务不可用' not in result.content
+        assert [event.tool_name for event in result.events] == ['image_generation']
+        agent._generate_for_stage.assert_not_awaited()
+        provider.generate.assert_not_awaited()
+        with connect() as conn:
+            assert conn.execute('SELECT COUNT(*) FROM chat_image_operations').fetchone()[0] == 0
 
 
 def test_image_api_private_archive_and_account_isolation(tmp_path, monkeypatch):

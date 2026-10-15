@@ -34,6 +34,10 @@ test("new account imports, corrects and reviews knowledge through the real backe
   await page.getByLabel("编辑资料正文").fill("阅读结论：每周整理一次阅读笔记，联系 reader@example.test。");
   await page.getByRole("button", { name: "保存正文", exact: true }).click();
   await expect(preview).toContainText("正文已校正");
+  // 上传默认仅存档；先开启长期使用，后续对话才能检索到正文。
+  // 勾选框由接口结果驱动，点击后等待保存完成再断言，而不是要求点击当下立即变化。
+  await page.getByRole("checkbox", { name: "长期使用" }).click();
+  await expect(page.getByRole("checkbox", { name: "长期使用" })).toBeChecked();
   await page.getByRole("button", { name: "关闭快速预览" }).click();
   await page.getByRole("button", { name: "操作 reading" }).click();
   const downloadPromise = page.waitForEvent("download");
@@ -52,17 +56,16 @@ test("new account imports, corrects and reviews knowledge through the real backe
   await expect(log).toContainText("等待你确认");
   await expect(page.getByRole("button", { name: "发送" })).toBeVisible();
   await page.goto("/#/library");
-  await page.getByRole("button", { name: "知识与个性化" }).click();
-  await expect(page.getByLabel("待确认内容")).toContainText("每周整理一次阅读笔记");
+  await page.getByRole("button", { name: "知识", exact: true }).click();
+  await expect(page.getByRole("region", { name: "待确认内容" })).toContainText("每周整理一次阅读笔记");
   await page.getByRole("button", { name: "确认", exact: true }).click();
-  await expect(page.getByLabel("待确认内容")).toHaveCount(0);
-  await page.getByRole("button", { name: "关闭弹窗" }).click();
+  await expect(page.getByRole("region", { name: "待确认内容" })).toContainText("暂无待确认知识");
+  await page.getByRole("button", { name: "文件", exact: true }).click();
   await page.getByRole("button", { name: "操作 reading" }).click();
   await page.getByRole("button", { name: "快速预览" }).click();
-  await page.getByText("文件设置", { exact: true }).click();
   // 勾选框由接口结果驱动，点击后等待保存完成再断言，而不是要求点击当下立即变化。
-  await page.getByRole("checkbox", { name: "启用为资料依据" }).click();
-  await expect(page.getByRole("checkbox", { name: "启用为资料依据" })).not.toBeChecked();
+  await page.getByRole("checkbox", { name: "长期使用" }).click();
+  await expect(page.getByRole("checkbox", { name: "长期使用" })).not.toBeChecked();
   await page.getByRole("button", { name: "关闭快速预览" }).click();
   await page.getByRole("button", { name: "操作 notes" }).click();
   await page.getByRole("button", { name: "移入回收站" }).click();
@@ -70,7 +73,7 @@ test("new account imports, corrects and reviews knowledge through the real backe
   await expect(list.locator("tbody tr")).toHaveCount(1);
   await page.reload();
   await expect(list.locator("tbody tr")).toHaveCount(1);
-  await expect(list).toContainText("已停用");
+  await expect(list).toContainText("仅存档");
   await page.getByRole("button", { name: "回收站", exact: true }).click();
   await page.getByRole("button", { name: "恢复 notes" }).click();
   await expect(page.getByText("回收站是空的")).toBeVisible();
@@ -78,6 +81,7 @@ test("new account imports, corrects and reviews knowledge through the real backe
   await expect(list.locator("tbody tr")).toHaveCount(2);
   await page.getByRole("checkbox", { name: "选择 notes", exact: true }).check();
   await page.getByRole("button", { name: "用于对话", exact: true }).click();
+  await page.getByRole("button", { name: "创建对话", exact: true }).click();
   await expect(page).toHaveURL(/#\/chat\/\d+$/);
   await expect(page.getByRole("button", { name: "移除 notes.txt" })).toBeVisible();
 });

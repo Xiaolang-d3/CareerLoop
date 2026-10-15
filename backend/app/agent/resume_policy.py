@@ -90,6 +90,11 @@ def should_abandon_snapshot(
         return False
     if is_explicit_abandon(text):
         return True
+    if snapshot.pending_search_queries:
+        # The run is paused on an external-send confirmation. The reply is
+        # interpreted as approve/decline/custom query, never as a new topic;
+        # keyword routing must not hijack replies that merely mention 联网.
+        return False
     kind = detect_kind(routing_text or text)
     return kind not in {"conversation", snapshot.route_kind}
 

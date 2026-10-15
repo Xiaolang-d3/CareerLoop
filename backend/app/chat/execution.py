@@ -250,9 +250,9 @@ async def stream_chat_response(
             base=inherited_options,
             provider=payload.web_search_provider if inherited_options is None or inherited_options.provider is None else None,
         )
-    trusted_routing_content = payload.content.replace("[系统可信开关：本轮允许联网搜索]", "")
-    if search_options.enabled:
-        trusted_routing_content += "\n[系统可信开关：本轮允许联网搜索]"
+    # Consent no longer rewrites routing text; it only extends the trusted tool
+    # surface inside the runtime, so the content stays verbatim.
+    trusted_routing_content = payload.content
     abandon_snapshot = bool(resume_snapshot is not None and should_abandon_snapshot(
         payload.content, resume_snapshot, routing_text=trusted_routing_content,
     ))
@@ -267,9 +267,6 @@ async def stream_chat_response(
                 legacy_mode=payload.web_search_mode if "web_search_mode" in fields else None,
                 provider=payload.web_search_provider,
             )
-            trusted_routing_content = payload.content.replace("[系统可信开关：本轮允许联网搜索]", "")
-            if search_options.enabled:
-                trusted_routing_content += "\n[系统可信开关：本轮允许联网搜索]"
 
     if cached_execution is None and not recovering_terminal_result:
         search_provider = get_settings().resolved_web_search_provider

@@ -13,10 +13,12 @@ export type RouteDataKey =
 export function requiredDataForRoute(route: AppRoute): RouteDataKey[] {
   switch (route.section) {
     case "chat":
+      if (route.page === "library") return ["library"];
       return ["conversations", "capabilities", "attachmentConfig"];
     case "dashboard":
       return [];
     case "settings":
+      if (route.page === "library") return ["library"];
       if (route.page === "appearance") return [];
       if (route.page === "agent") return ["agentOperations", "conversations", "capabilities", "attachmentConfig"];
       if (route.page === "model") return ["agentSettings", "modelMonitor", "modelCapabilities", "conversations", "capabilities", "attachmentConfig"];

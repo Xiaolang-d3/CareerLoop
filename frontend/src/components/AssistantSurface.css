@@ -30,7 +30,6 @@
 .assistant-surface .composer-shortcuts { flex-wrap: wrap; min-width: 0; }
 .assistant-surface .composer-bottom-row { align-items: flex-end; }
 .assistant-surface .chat-session-tools { flex-shrink: 0; }
-.assistant-surface .chat-session-title > span:not(.chat-session-mark) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .assistant-controls button:hover { background: #eae6fa; color: #6246d7; }
 
 /* Popup layout depends on its own narrow width, even on a large desktop. */
@@ -46,7 +45,6 @@
 .assistant-welcome-mark { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 16px; background: #efebff; color: #7552e9; font-size: 28px; }
 .assistant-popup .chat-workspace .chat-composer .composer-input { min-height: 100px !important; padding: 8px !important; border-radius: 14px !important; box-shadow: 0 4px 16px #30266e0a !important; }
 .assistant-popup .chat-workspace .chat-composer .composer-input textarea { min-height: 40px !important; max-height: 100px; font-size: 14px !important; }
-.assistant-popup .chat-workspace .chat-research-toggle > span { display: none; }
 .assistant-popup .chat-workspace .chat-session-tool { min-width: 34px; min-height: 34px; }
 .assistant-popup .chat-workspace .composer-drafts { justify-content: flex-start; gap: 6px; }
 .assistant-popup .chat-workspace .composer-drafts button { font-size: 12px; padding: 6px 10px; height: auto; }
@@ -88,23 +86,11 @@
   max-width: 100%;
 }
 .assistant-popup .chat-workspace .chat-main > .chat-session-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  justify-content: flex-end;
   gap: 8px;
 }
-.assistant-popup .chat-workspace .chat-session-title {
-  width: 100%;
-  max-width: 100%;
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: normal;
-}
-.assistant-popup .chat-workspace .chat-session-identity { overflow: hidden; }
 .assistant-popup .chat-workspace .chat-session-tools { gap: 2px; padding: 2px; }
-.assistant-popup .chat-workspace .chat-session-header .chat-research-toggle { width: 34px; padding: 0; }
-.assistant-popup .chat-workspace .chat-session-header .chat-research-toggle > span,
-.assistant-popup .chat-workspace .chat-session-header .chat-research-toggle > em { display: none; }
 .assistant-popup .chat-workspace .message.assistant { width: 100%; max-width: 100%; }
 .assistant-popup .chat-workspace .message-markdown { font-size: 14px; line-height: 1.75; overflow-wrap: anywhere; }
 .assistant-popup .chat-workspace .message-markdown h1,

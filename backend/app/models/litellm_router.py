@@ -298,6 +298,8 @@ def route_target_for_connection(connection: dict[str, Any], *, timeout_seconds: 
     from ..model_protocol import protocol_requires_api_key
 
     protocol = connection.get("detected_protocol") or connection["resolved_model_protocol"]
+    if protocol == "images":
+        raise ValueError("图片模型不能作为聊天备用模型")
     if protocol_requires_api_key(protocol) and not connection.get("api_key"):
         raise ValueError("备用模型缺少 API Key")
     provider = LiteLLMProvider(

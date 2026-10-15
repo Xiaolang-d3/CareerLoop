@@ -151,7 +151,7 @@ test("home and library use current sources and stay usable on narrow screens", a
     await page.goto("/#/library");
     await expect(page.getByRole("table", { name: "文件列表" })).toBeVisible();
     await expect(page.getByRole("button", { name: "操作 读书笔记" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "知识与个性化" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "知识", exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     await page.screenshot({ path: resolve("..", "..", "output", "playwright", `library-${width}.png`), fullPage: true });
   }

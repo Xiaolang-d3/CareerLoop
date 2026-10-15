@@ -7,13 +7,13 @@ from typing import Any
 from ..domain import ModelResponse
 from .orchestration import (
     TOOL_POLICIES,
-    TaskRoute,
+    build_task_route,
     parse_classified_kind,
     parse_plan,
     refine_route_from_classifier,
     route_task,
-    tools_for_kind,
 )
+from .plan_validator import freeze_route_requirements, validate_plan
 
 
 CLAIM_PATTERNS = (
@@ -42,13 +42,14 @@ def apply_classifier_output(query: str, model_output: str) -> dict[str, Any]:
 
 
 def apply_planner_output(query: str, kind: str, model_output: str) -> dict[str, Any]:
-    route = TaskRoute(
-        kind=kind,
-        needs_plan=True,
-        allowed_tools=tools_for_kind(kind, query, set(TOOL_POLICIES)),
-    )
-    plan = parse_plan(ModelResponse(content=model_output), query, route)
-    parsed = list(plan.steps and [step.tool_name for step in plan.steps] or [])
+    specs = dict(TOOL_POLICIES)
+    route = build_task_route(kind, query, set(specs), tool_specs=specs)
+    plan = parse_plan(ModelResponse(content=model_output), query, route, specs)
+    validation = validate_plan(route, plan, registered_specs=specs)
+    if validation.valid and validation.normalized_plan is not None:
+        plan = validation.normalized_plan
+    route = freeze_route_requirements(route, plan, specs)
+    parsed = [step.tool_name for step in plan.steps]
     raw_names = _raw_plan_tools(model_output)
     return {
         "kind": kind,

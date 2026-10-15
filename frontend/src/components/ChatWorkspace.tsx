@@ -23,7 +23,7 @@ import { AssistantRuntimeProvider, ComposerPrimitive, ThreadPrimitive, type Thre
 
 import { useAui, useAuiState } from "@assistant-ui/store";
 
-import { ArrowUp, ArrowUpRight, FileText, History, ImagePlus, LoaderCircle, PanelRight, Paperclip, Pencil, Plus, RefreshCw, Square, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, ArrowUpRight, FileText, History, ImagePlus, LoaderCircle, Paperclip, Plus, RefreshCw, Square, TriangleAlert, X } from "lucide-react";
 
 function asClarificationOption(value: unknown, index: number): ChatClarificationOption | null {
   if (!value || typeof value !== "object") return null;
@@ -68,7 +68,6 @@ type ChatWorkspaceContentProps = ChatWorkspaceProps & {
 
 function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   const attachmentInputRef = useRef<HTMLInputElement>(null);
-  const researchToggleRef = useRef<HTMLButtonElement>(null);
   const aui = useAui();
   const composerText = useAuiState((state) => state.composer.text);
   const [composerFocused, setComposerFocused] = useState(false);
@@ -125,10 +124,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
     sources: WebSource[];
     selectedSource: number;
   } | null>(null);
-  const currentConversation = props.conversations.find((item) => item.id === props.currentConversationId);
-  const sessionTitle = props.conversationTitle?.trim() || currentConversation?.title || "新对话";
   const showStarters = props.messages.length === 0 && !props.chatBusy && !clarification;
-  const isFreshUntitled = props.messages.length === 0 && (!currentConversation || sessionTitle === "新对话");
   const latestAssistant = [...props.messages].reverse().find((message) => message.role === "assistant");
   const defaultResearchAgent = props.latestAgent ?? latestAssistant?.payload?.agent;
   const defaultResearchSources = webSourcesFromAgent(defaultResearchAgent);
@@ -154,7 +150,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
     window.requestAnimationFrame(() => {
       if (researchReturn.current !== saved) return;
       if (saved) scrolling.restorePosition(saved.top);
-      if (restoreFocus) (saved?.element?.isConnected ? saved.element : researchToggleRef.current)?.focus({ preventScroll: true });
+      if (restoreFocus) (saved?.element?.isConnected ? saved.element : props.chatInputRef.current)?.focus({ preventScroll: true });
     });
   }
 
@@ -273,47 +269,8 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
       <AttachmentThumbnailContext.Provider value={props.onLoadAttachmentThumbnail}>
       <ResultActionsContext.Provider value={props.onLoadResults ? (messageId, selector, saving) => setResultSelection({ messageId, selector, saving }) : null}>
       <ThreadPrimitive.Root className="chat-main">
-        <header
-          className={`chat-session-header${isFreshUntitled ? " is-untitled" : " has-session"}`}
-          aria-label={`${sessionTitle} · 对话操作`}
-        >
-          <div className="chat-session-identity">
-            {currentConversation ? (
-              <button
-                type="button"
-                className="chat-session-title"
-                onClick={() => props.onRenameConversation(currentConversation)}
-                aria-label="重命名对话"
-                title="重命名对话"
-              >
-                <span className="chat-session-mark" aria-hidden="true" />
-                <span>{sessionTitle}</span>
-                <Pencil size={13} aria-hidden="true" />
-              </button>
-            ) : (
-              <p className="chat-session-title is-static">
-                <span className="chat-session-mark" aria-hidden="true" />
-                <span>{sessionTitle}</span>
-              </p>
-            )}
-          </div>
+        <header className="chat-session-header" aria-label="对话操作栏">
           <div className="chat-session-tools" role="toolbar" aria-label="对话操作">
-            {researchPanelOpen || defaultResearchSources.length > 0 ? (
-              <button
-                ref={researchToggleRef}
-                className={`chat-session-tool chat-research-toggle${researchPanelOpen ? " is-open" : ""}`}
-                type="button"
-                onClick={() => researchPanelOpen ? closeResearchDetails(false) : openResearchDetails()}
-                aria-label="来源详情"
-                aria-expanded={researchPanelOpen}
-                aria-controls="chat-research-panel"
-                title="查看引用来源"
-              >
-                <PanelRight size={15} />
-                <span>来源</span>
-                {defaultResearchSources.length ? <em>{defaultResearchSources.length}</em> : null}
-              </button>
-            ) : null}
             <button
               className="chat-session-tool"
               type="button"

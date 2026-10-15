@@ -74,7 +74,7 @@ export function ComposerWebSearch(props: Props) {
   return <div ref={root} className={`composer-web-search${options.enabled ? " is-active" : ""}`} onKeyDown={onKeyDown}>
     <button type="button" className={`composer-tool web-search-toggle${options.enabled ? " active" : ""}${!props.available ? " unavailable" : ""}`} disabled={busy}
       aria-label="联网搜索" aria-pressed={options.enabled} onClick={() => { props.onChange({ ...options, enabled: !options.enabled }); setOpen(false); }}
-      title={props.available ? `使用 ${provider} 搜索公开信息${props.inherited ? "；沿用待确认任务设置，可修改" : ""}` : "开启后请读取能力并配置搜索服务"}>
+      title={props.available ? `允许按需联网搜索公开信息${props.inherited ? "；沿用待确认任务设置，可修改" : ""}` : "开启后请读取能力并配置搜索服务"}>
       <Globe size={16} aria-hidden="true" /><span>联网</span>
     </button>
     {options.enabled ? <>
@@ -107,6 +107,7 @@ export function ComposerWebSearch(props: Props) {
             <span><strong>优先技术资料</strong><small>{capabilities?.supports_technical_preference === true ? "偏好开发资料，也包含其他相关网站" : `${known ? provider : "当前服务"} 暂不支持技术来源偏好`}</small></span>{options.source_preference === "technical" ? <Check size={14} /> : null}
           </button>
         </div> : null}
+        <p className="web-search-approval-note">开启后智能体可按需发起搜索；与本地资料混用的任务会在发送每条查询前先向你确认。</p>
         {props.inherited ? <p className="web-search-inherited">沿用待确认任务的联网设置；修改后按新配置执行。</p> : null}
         {issue && known ? <p className="web-search-capability-note">{issue}</p> : null}
       </div>, document.body) : null}

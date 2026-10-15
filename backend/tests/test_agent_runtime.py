@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime
+from unittest.mock import patch
 
+from app.agent.egress_policy import APPROVE_OPTION_LABEL, DECLINE_OPTION_LABEL
 from app.agent.orchestration import route_task
 from app.agent.runtime import AgentRuntime
 from app.domain import AgentMessage, AgentRunSnapshot, AgentClarification, ClarificationOption, ModelResponse, ModelStreamEvent, ToolCall, ToolDefinition, ToolError, ToolResult
@@ -97,6 +100,37 @@ class CurrentRoutePolicyTest(unittest.TestCase):
 
 
 class CurrentRuntimeTest(unittest.IsolatedAsyncioTestCase):
+    async def test_call_timing_and_safe_input_survive_the_terminal_snapshot(self) -> None:
+        model = ScriptedModel([
+            ModelResponse(content='{"goal":"查资料","steps":[{"tool_name":"search_library","title":"检索资料"}]}'),
+            ModelResponse(tool_calls=[ToolCall(id="read-1", name="search_library", arguments={"query": "任务恢复", "api_key": "do-not-copy"})]),
+            ModelResponse(content="已基于资料回答。"),
+        ])
+        streamed = []
+
+        async def capture(event):
+            if event.event is not None:
+                streamed.append(event.event.model_dump(mode="json"))
+
+        tool = CountingTool("search_library", fail_once=True)
+        with patch("app.agent.runtime.perf_counter", side_effect=[10.0, 10.8]):
+            result = await runtime_for(model, tool).run(
+                "根据我的知识库回答", event_callback=capture,
+            )
+        final = next(event for event in result.events if event.tool_call_id == "read-1" and event.status == "done")
+        progress = next(event for event in streamed if event["tool_call_id"] == "read-1" and event["status"] == "running")
+        self.assertEqual(tool.calls, 2)
+        self.assertEqual(final.duration_ms, 800)
+        retry = next(event for event in streamed if event.get("data", {}).get("retry_number") == 1)
+        self.assertEqual(retry["started_at"], progress["started_at"])
+        self.assertEqual(final.started_at, progress["started_at"])
+        self.assertGreaterEqual(datetime.fromisoformat(final.completed_at), datetime.fromisoformat(final.started_at))
+        self.assertEqual(final.data["arguments"], {"query": "任务恢复"})
+        restored = type(result).model_validate(result.model_dump(mode="json"))
+        persisted = next(event for event in restored.events if event.tool_call_id == "read-1" and event.status == "done")
+        self.assertEqual(persisted.duration_ms, 800)
+        self.assertEqual(persisted.started_at, final.started_at)
+
     async def test_confirmation_without_options_inherits_original_search_configuration(self) -> None:
         class CaptureTool(CountingTool):
             async def execute(self, arguments, context):
@@ -147,7 +181,6 @@ class CurrentRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_required_tool_cannot_be_skipped_by_text_answer(self) -> None:
         model = ScriptedModel([
-            ModelResponse(content='{"goal":"读取资料","steps":[{"tool_name":"get_library_context","title":"读取知识库"}]}'),
             ModelResponse(content="我先直接回答。"),
             ModelResponse(tool_calls=[ToolCall(id="read-1", name="get_library_context", arguments={})]),
             ModelResponse(content="已基于资料回答。"),
@@ -250,6 +283,124 @@ class CurrentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         events = [event async for event in runtime_for(StreamingModel()).run_stream("你好")]
         self.assertEqual([event.delta for event in events if event.type == "text_delta"], ["本地", "回答"])
         self.assertEqual(events[-1].result.status, "done")
+
+
+class MixedRunEgressTest(unittest.IsolatedAsyncioTestCase):
+    MIXED_QUERY = "根据我的笔记并搜索最新技术写报告"
+    PLAN = (
+        '{"goal":"查资料并联网","steps":['
+        '{"tool_name":"get_library_context","title":"读取知识库"},'
+        '{"tool_name":"search_public_web","title":"联网检索"}]}'
+    )
+
+    async def test_mixed_run_pauses_before_sending_unapproved_query(self) -> None:
+        model = ScriptedModel([
+            ModelResponse(content=self.PLAN),
+            ModelResponse(tool_calls=[ToolCall(id="read-1", name="get_library_context", arguments={})]),
+            ModelResponse(tool_calls=[ToolCall(id="web-1", name="search_public_web", arguments={"query": "最新 AI 趋势"})]),
+        ])
+        library = CountingTool("get_library_context")
+        search = CountingTool("search_public_web")
+        result = await runtime_for(model, library, search).run(
+            self.MIXED_QUERY, web_search_options=WebSearchOptions(enabled=True),
+        )
+        self.assertEqual(result.status, "waiting_user")
+        self.assertEqual(result.error.code, "external_query_approval_required")
+        self.assertEqual(search.calls, 0)
+        self.assertEqual(library.calls, 1)
+        self.assertEqual(result.snapshot.pending_search_queries, ["最新 AI 趋势"])
+        waiting = next(event for event in result.events if event.status == "waiting_approval")
+        self.assertEqual(waiting.data["arguments"]["query"], "最新 AI 趋势")
+        self.assertIn("最新 AI 趋势", waiting.data["clarification"]["question"])
+        self.assertEqual(waiting.data["clarification"]["options"][0]["label"], APPROVE_OPTION_LABEL)
+
+    async def test_resume_approval_sends_exactly_the_pending_query(self) -> None:
+        paused = await runtime_for(
+            ScriptedModel([
+                ModelResponse(content=self.PLAN),
+                ModelResponse(tool_calls=[ToolCall(id="read-1", name="get_library_context", arguments={})]),
+                ModelResponse(tool_calls=[ToolCall(id="web-1", name="search_public_web", arguments={"query": "最新 AI 趋势"})]),
+            ]),
+            CountingTool("get_library_context"),
+            CountingTool("search_public_web"),
+        ).run(self.MIXED_QUERY, web_search_options=WebSearchOptions(enabled=True))
+        search = CountingTool("search_public_web")
+        model = ScriptedModel([
+            ModelResponse(tool_calls=[ToolCall(id="web-2", name="search_public_web", arguments={"query": "最新 AI 趋势"})]),
+            ModelResponse(content="示例信息。[来源](https://example.com/source)"),
+        ])
+        resumed = await runtime_for(model, CountingTool("get_library_context"), search).run(
+            APPROVE_OPTION_LABEL,
+            resume=paused.snapshot,
+            web_search_options=WebSearchOptions(enabled=True),
+        )
+        self.assertEqual(resumed.status, "done")
+        self.assertEqual(search.calls, 1)
+
+    async def test_resume_decline_removes_web_from_route_and_plan(self) -> None:
+        paused = await runtime_for(
+            ScriptedModel([
+                ModelResponse(content=self.PLAN),
+                ModelResponse(tool_calls=[ToolCall(id="read-1", name="get_library_context", arguments={})]),
+                ModelResponse(tool_calls=[ToolCall(id="web-1", name="search_public_web", arguments={"query": "最新 AI 趋势"})]),
+            ]),
+            CountingTool("get_library_context"),
+            CountingTool("search_public_web"),
+        ).run(self.MIXED_QUERY, web_search_options=WebSearchOptions(enabled=True))
+        search = CountingTool("search_public_web")
+        model = ScriptedModel([ModelResponse(content="仅依据本地资料回答。")])
+        resumed = await runtime_for(model, CountingTool("get_library_context"), search).run(
+            DECLINE_OPTION_LABEL,
+            resume=paused.snapshot,
+            web_search_options=WebSearchOptions(enabled=True),
+        )
+        self.assertEqual(resumed.status, "done")
+        self.assertEqual(search.calls, 0)
+        self.assertEqual(
+            [step.tool_name for step in resumed.plan.steps], ["get_library_context"]
+        )
+
+    async def test_checkpoint_resume_keeps_prior_approval_without_repausing(self) -> None:
+        paused = await runtime_for(
+            ScriptedModel([
+                ModelResponse(content=self.PLAN),
+                ModelResponse(tool_calls=[ToolCall(id="read-1", name="get_library_context", arguments={})]),
+                ModelResponse(tool_calls=[ToolCall(id="web-1", name="search_public_web", arguments={"query": "最新 AI 趋势"})]),
+            ]),
+            CountingTool("get_library_context"),
+            CountingTool("search_public_web"),
+        ).run(self.MIXED_QUERY, web_search_options=WebSearchOptions(enabled=True))
+        checkpoint = paused.snapshot.model_copy(update={
+            "resume_mode": "checkpoint",
+            "pending_search_queries": [],
+            "approved_search_queries": ["最新 AI 趋势"],
+        })
+        search = CountingTool("search_public_web")
+        model = ScriptedModel([
+            ModelResponse(tool_calls=[ToolCall(id="web-2", name="search_public_web", arguments={"query": "最新 AI 趋势"})]),
+            ModelResponse(content="示例信息。[来源](https://example.com/source)"),
+        ])
+        resumed = await runtime_for(model, CountingTool("get_library_context"), search).run(
+            "继续",
+            resume=checkpoint,
+            web_search_options=WebSearchOptions(enabled=True),
+        )
+        self.assertEqual(resumed.status, "done")
+        self.assertEqual(search.calls, 1)
+        self.assertFalse([event for event in resumed.events if event.status == "waiting_approval"])
+
+    async def test_authorized_pure_web_run_needs_no_per_query_approval(self) -> None:
+        model = ScriptedModel([
+            ModelResponse(tool_calls=[ToolCall(id="web-1", name="search_public_web", arguments={"query": "最新 AI 趋势"})]),
+            ModelResponse(content="示例信息。[来源](https://example.com/source)"),
+        ])
+        search = CountingTool("search_public_web")
+        result = await runtime_for(model, search).run(
+            "帮我联网搜索最新 AI 趋势", web_search_options=WebSearchOptions(enabled=True),
+        )
+        self.assertEqual(result.status, "done")
+        self.assertEqual(search.calls, 1)
+        self.assertFalse([event for event in result.events if event.status == "waiting_approval"])
 
 
 if __name__ == "__main__":

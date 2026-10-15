@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Cpu,
   FileText,
+  Folder,
   KeyRound,
   Palette,
   ShieldCheck,
@@ -25,7 +26,7 @@ type WorkspaceProps = {
 const pageLabels: Record<Exclude<SettingsPage, "overview">, string> = {
   appearance: "外观",
   account: "账号与安全",
-  library: "资料库",
+  library: "文件库管理",
   model: "模型设置",
   agent: "Agent 执行记录"
 };
@@ -33,7 +34,7 @@ const pageLabels: Record<Exclude<SettingsPage, "overview">, string> = {
 export function SettingsWorkspace({ page, children, onBack }: WorkspaceProps) {
   return (
     <section className={`settings-workspace settings-${page}`}>
-      {page !== "overview" && page !== "library" ? (
+      {page !== "overview" ? (
         <nav className="settings-breadcrumb" aria-label="设置路径">
           <button type="button" onClick={onBack}><ArrowLeft size={14} />设置</button>
           <ChevronRight size={13} aria-hidden="true" />
@@ -49,6 +50,7 @@ type OverviewProps = {
   library: LibraryEditor;
   libraryReady: boolean | null;
   sourceTitle?: string;
+  fileCount?: number;
   onOpen: (page: Exclude<SettingsPage, "overview">) => void;
   accountEmail?: string;
   accountName?: string;
@@ -56,22 +58,8 @@ type OverviewProps = {
   apiKeyConfigured?: boolean;
 };
 
-function libraryReadyBadge(libraryReady: boolean | null) {
-  if (libraryReady == null) {
-    return <em>检查中</em>;
-  }
-  return (
-    <em className={libraryReady ? "success" : "warning"}>
-      {libraryReady ? <CheckCircle2 size={13} /> : <TriangleAlert size={13} />}
-      {libraryReady ? "资料已就绪" : "待完善"}
-    </em>
-  );
-}
-
 export function SettingsOverview({
-  library,
-  libraryReady,
-  sourceTitle,
+  fileCount,
   onOpen,
   accountEmail,
   accountName,
@@ -94,12 +82,12 @@ export function SettingsOverview({
           <ChevronRight size={19} />
         </button>
         <button className="settings-entry-card library" type="button" onClick={() => onOpen("library")}>
-          <span className="settings-entry-icon"><UserRound size={21} /></span>
+          <span className="settings-entry-icon"><Folder size={21} /></span>
           <span className="settings-entry-copy">
-            <span className="settings-entry-title"><strong>资料库</strong>{libraryReadyBadge(libraryReady)}</span>
-            <span className="settings-entry-primary">{library.name || "尚未填写称呼"}</span>
-            <span className="settings-entry-meta"><FileText size={13} />{sourceTitle || "尚未保存资料"}</span>
-            <span className="settings-entry-meta"><ShieldCheck size={13} />{library.privacyMode === "original" ? "允许使用原文" : "脱敏模式"}</span>
+            <span className="settings-entry-title"><strong>文件库管理</strong></span>
+            <span className="settings-entry-primary">文件、主题集合与知识</span>
+            <span className="settings-entry-meta"><FileText size={13} />{fileCount === undefined ? "整理文件与长期使用范围" : fileCount ? `共 ${fileCount} 个文件` : "暂无文件，可随时添加"}</span>
+            <span className="settings-entry-meta">与 AI 工作区共用同一文件库</span>
           </span>
           <ChevronRight size={19} />
         </button>

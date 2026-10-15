@@ -7,7 +7,7 @@ from .schemas import ConversationUpdate
 from ..agent.model_router import RoutingPolicy
 
 
-Protocol = Literal["auto", "openai", "responses", "anthropic", "gemini", "ollama"]
+Protocol = Literal["auto", "openai", "responses", "images", "anthropic", "gemini", "ollama"]
 ReasoningEffort = Literal["low", "medium", "high"]
 
 

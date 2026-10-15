@@ -58,13 +58,13 @@
 .web-search-popover button { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 42px; gap: 8px; padding: 8px; border: 0; border-radius: 7px; color: var(--color-text-secondary); background: transparent; text-align: left; }
 .web-search-popover button > span { display: grid; gap: 3px; min-width: 0; }
 .web-search-popover button strong { font-size: 12px; font-weight: 500; }
-.web-search-popover button small, .web-search-capability-note, .web-search-inherited { color: var(--color-text-muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.web-search-popover button small, .web-search-capability-note, .web-search-inherited, .web-search-approval-note { color: var(--color-text-muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
 .web-search-popover button:hover:not(:disabled), .web-search-popover button[aria-checked="true"] { background: var(--color-brand-soft); color: var(--color-brand-strong); }
 .web-search-popover button:disabled { opacity: .55; cursor: not-allowed; }
 .web-search-popover .web-search-settings-toggle { justify-content: flex-start; margin-top: 6px; border-top: 1px solid var(--color-border); border-radius: 0; }
 .web-search-settings-toggle > svg:last-child { margin-left: auto; }
 .web-search-source-settings > p { padding: 4px 8px 0; margin: 0; color: var(--color-text-muted); font-size: 11px; }
-.web-search-capability-note, .web-search-inherited { padding: 6px 8px; margin: 0; }
+.web-search-capability-note, .web-search-inherited, .web-search-approval-note { padding: 6px 8px; margin: 0; }
 .web-search-capability-note > span { display: block; }
 .chat-workspace .chat-composer .composer-input.composer-input--enhanced .send-button.stop-button { border: 1px solid var(--color-border); color: var(--color-text-secondary); background: var(--color-surface-subtle); }
 .chat-workspace .chat-composer .composer-input.composer-input--enhanced .send-button.stop-button:hover:not(:disabled) { color: var(--color-text); background: var(--color-border); }

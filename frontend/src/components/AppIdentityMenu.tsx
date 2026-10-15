@@ -136,7 +136,7 @@ export function AppIdentityMenu({
               onFocus={() => onPrefetchPage?.("library")}
             >
               <UserRound size={16} aria-hidden="true" />
-              资料库
+              文件库管理
             </button>
             {onOpenAccount ? (
               <button
