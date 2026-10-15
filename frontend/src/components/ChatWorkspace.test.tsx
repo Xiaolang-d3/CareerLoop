@@ -897,7 +897,7 @@ describe("ChatWorkspace", () => {
 
   it("identifies the configured search provider without requiring AgentSearch", () => {
     renderChat([], { webSearchAvailable: true, webSearchProvider: "tavily" });
-    expect(screen.getByRole("button", { name: "联网搜索" })).toHaveAttribute("title", "使用 Tavily 搜索公开信息");
+    expect(screen.getByRole("button", { name: "联网搜索" })).toHaveAttribute("title", "允许按需联网搜索公开信息");
     cleanup();
     renderChat([], { webSearchAvailable: false });
     expect(screen.getByRole("button", { name: "联网搜索" })).toHaveAttribute("title", "开启后请读取能力并配置搜索服务");

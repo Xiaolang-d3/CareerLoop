@@ -39,6 +39,11 @@ describe("ComposerWebSearch", () => {
     fireEvent.click(screen.getByRole("button", { name: "搜索设置" }));
     expect(screen.getByRole("radio", { name: /优先技术资料/ })).toBeDisabled();
   });
+  it("explains that mixed local-and-web tasks confirm each query before sending", () => {
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "搜索类别" }));
+    expect(screen.getByText(/发送每条查询前先向你确认/)).toBeInTheDocument();
+  });
   it("locks all controls while a run is active", () => {
     setup(tavily, true);
     expect(screen.getByRole("button", { name: "联网搜索" })).toBeDisabled();
