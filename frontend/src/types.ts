@@ -89,7 +89,7 @@ export type ViewKey =
   | "chat"
   | "settings";
 
-export type ModelProtocol = "auto" | "openai" | "responses" | "anthropic" | "gemini" | "ollama";
+export type ModelProtocol = "auto" | "openai" | "responses" | "images" | "anthropic" | "gemini" | "ollama";
 
 export type ResolvedModelProtocol = Exclude<ModelProtocol, "auto">;
 

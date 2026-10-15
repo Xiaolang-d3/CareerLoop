@@ -80,6 +80,7 @@ function formatTokens(value: number | null | undefined) {
 function resolvedProtocol(modelName: string, configured: AgentSettings["model_protocol"], baseUrl: string) {
   if (configured !== "auto") return configured;
   const normalizedBaseUrl = baseUrl.trim();
+  if (/^gpt-image-/i.test(modelName.trim())) return "images";
   if (/anthropic\.com/i.test(normalizedBaseUrl)) return "anthropic";
   if (/generativelanguage\.googleapis\.com/i.test(normalizedBaseUrl)) return "gemini";
   if (/ollama/i.test(normalizedBaseUrl) || /:11434(?:\/|$)/i.test(normalizedBaseUrl)) return "ollama";
@@ -92,6 +93,7 @@ function protocolLabel(protocol: Exclude<AgentSettings["model_protocol"], "auto"
   return {
     openai: "OpenAI 兼容 Chat Completions",
     responses: "OpenAI Responses API",
+    images: "OpenAI Images API",
     anthropic: "Anthropic Messages API",
     gemini: "Google Gemini generateContent",
     ollama: "Ollama Chat API"
@@ -102,6 +104,7 @@ function protocolBaseUrl(protocol: Exclude<AgentSettings["model_protocol"], "aut
   return {
     openai: "https://api.openai.com/v1",
     responses: "https://api.openai.com/v1",
+    images: "https://cf.api.fan/v1",
     anthropic: "https://api.anthropic.com",
     gemini: "https://generativelanguage.googleapis.com/v1beta",
     ollama: "http://127.0.0.1:11434"
@@ -112,6 +115,7 @@ function protocolBaseUrlHelp(protocol: Exclude<AgentSettings["model_protocol"], 
   if (protocol === "anthropic") return "填写 Anthropic 服务根地址，系统按 Messages 协议请求 /v1/messages。";
   if (protocol === "gemini") return "填写 Gemini API 版本根地址，系统按 generateContent 协议组装模型路径。";
   if (protocol === "ollama") return "填写 Ollama 服务根地址，系统会请求 /api/chat 和 /api/tags。";
+  if (protocol === "images") return "Packy 文生图：填写 https://cf.api.fan/v1、gpt-image-2 和 sora 分组令牌；每次生成一张图片。";
   if (protocol === "responses") return "填写 Responses API 根地址；系统会在该根地址下请求 /responses。";
   return "填写 Chat Completions 的完整 API 根地址；系统不会自动添加 /v1。";
 }
@@ -283,6 +287,7 @@ export function ModelSettingsPage({
                   <option value="auto">自动匹配（{automaticProtocolLabel}）</option>
                   <option value="openai">OpenAI 兼容 Chat Completions</option>
                   <option value="responses">OpenAI Responses API</option>
+                  <option value="images">OpenAI Images API（文生图）</option>
                   <option value="anthropic">Anthropic Messages API</option>
                   <option value="gemini">Google Gemini generateContent</option>
                   <option value="ollama">Ollama Chat API</option>

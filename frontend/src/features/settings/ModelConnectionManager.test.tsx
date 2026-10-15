@@ -22,6 +22,21 @@ function props(overrides: Partial<Omit<ManagerProps, "fetchJson">> & { fetchJson
 afterEach(cleanup);
 
 describe("ModelConnectionManager", () => {
+  it("saves a Packy Images connection and shows the sora token requirement", async () => {
+    const page = props();
+    render(<ModelConnectionManager {...page} />);
+    fireEvent.click(screen.getByRole("button", { name: "添加连接" }));
+    fireEvent.change(screen.getByLabelText("连接 Base URL"), { target: { value: "https://cf.api.fan/v1" } });
+    fireEvent.change(screen.getByLabelText("首个模型名称"), { target: { value: "gpt-image-2" } });
+    expect(screen.getByText(/使用 sora 分组令牌/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("连接接口协议"), { target: { value: "images" } });
+    fireEvent.change(screen.getByLabelText(/^连接 API Key/), { target: { value: "test-only-sora-key" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存连接" }));
+    await waitFor(() => expect(page.onMutate).toHaveBeenCalledWith("/agent/model-connections", "POST", expect.objectContaining({
+      model_name: "gpt-image-2", model_protocol: "images", model_base_url: "https://cf.api.fan/v1", api_key: "test-only-sora-key"
+    })));
+  });
+
   it("adds a connection with three required fields and clears its credential after submission", async () => {
     const page = props();
     render(<ModelConnectionManager {...page} />);

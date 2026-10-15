@@ -1688,9 +1688,14 @@ class AgentRuntime:
         execute = selection.get("stage_selections", {}).get("execute") or selection
         operation_id = run_id or f"image-{uuid.uuid4().hex}"
         try:
-            if not re.match(r"^grok-4\.7(?:[-.]|$)", str(execute.get("model_name", "")), re.I):
-                raise ModelProviderError("image_model_required", "当前生图接入支持 Grok 4.7；请在输入框选择该模型，并确认服务开放生图工具")
-            if execute.get("model_protocol", "auto") not in {"auto", "responses"}:
+            from ..model_protocol import resolve_model_protocol
+
+            model_name = str(execute.get("model_name", ""))
+            protocol = execute.get("model_protocol", "auto")
+            uses_images = resolve_model_protocol(model_name, protocol, str(execute.get("model_base_url", ""))) == "images"
+            if not uses_images and not re.match(r"^grok-4\.7(?:[-.]|$)", model_name, re.I):
+                raise ModelProviderError("image_model_required", "请选择 gpt-image-2（自动识别或 Images 接口）或支持原生生图的 Grok 4.7 模型")
+            if not uses_images and protocol not in {"auto", "responses"}:
                 raise ModelProviderError("image_generation_protocol", "Grok 生图需要 Responses 接口，请在模型配置中使用自动识别或 Responses")
             if conversation_id is None:
                 raise ModelProviderError("image_conversation_required", "请在聊天对话中生成图片")

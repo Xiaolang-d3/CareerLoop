@@ -229,6 +229,40 @@ def test_runtime_pure_image_and_no_auto_retry(images):
         assert wrong.error.code == 'image_model_required' and provider.generate.await_count == 1
 
 
+def test_runtime_images_api_with_sse_nonstreaming_capability_and_replay(images):
+    from app.agent.model_router import ModelRouter
+    path, _ = images
+    provider = NS(name='images', generate=AsyncMock(return_value=response()))
+    agent = runtime(provider, 'gpt-image-2')
+    connection = {**agent._current_model_selection(), 'capabilities': {'image_generation': 'supported', 'streaming': 'unsupported'}}
+    agent._model_selection['stage_selections'] = {'execute': agent._current_model_selection()}
+    agent._model_router = ModelRouter({'execute': connection}, {'execute': provider})
+    events = []
+    async def publish(event): events.append(event)
+    with use_workspace(1, path.parent):
+        init_db(); cid = create_conversation('Images API')['id']
+        result = asyncio.run(agent.run('画一只猫', conversation_id=cid, run_id='packy-image', event_callback=publish))
+        assert result.status == 'done' and len(result.assets) == 1
+        assert result.assets[0]['model_name'] == 'gpt-image-2'
+        assert asset_file(result.assets[0]['id'])[0].read_bytes() == png()
+        replay = asyncio.run(agent.run('画一只猫', conversation_id=cid, run_id='packy-image', event_callback=publish))
+        assert replay.assets == result.assets and provider.generate.await_count == 1
+        assert any(event.event and event.event.tool_name == 'image_generation' for event in events)
+
+
+def test_runtime_images_timeout_remains_nonretryable(images):
+    path, _ = images
+    provider = NS(name='images', generate=AsyncMock(side_effect=ModelProviderError('request_timeout', '超时', True)))
+    with use_workspace(1, path.parent):
+        init_db(); cid = create_conversation('Images 超时')['id']
+        agent = runtime(provider, 'gpt-image-2')
+        result = asyncio.run(agent.run('画一只猫', conversation_id=cid, run_id='packy-timeout'))
+        assert result.error.code == 'request_timeout' and not result.error.retryable
+        replay = asyncio.run(agent.run('画一只猫', conversation_id=cid, run_id='packy-timeout'))
+        assert replay.error.code == 'image_generation_uncertain'
+        assert provider.generate.await_count == 1
+
+
 def test_image_api_private_archive_and_account_isolation(tmp_path, monkeypatch):
     from app import db
     from app.main import app

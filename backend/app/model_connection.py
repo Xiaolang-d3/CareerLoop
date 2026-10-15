@@ -10,6 +10,7 @@ from .model_protocol import normalize_model_protocol, resolve_model_protocol
 DEFAULT_API_ROOTS = {
     "openai": "https://api.openai.com/v1",
     "responses": "https://api.openai.com/v1",
+    "images": "https://api.openai.com/v1",
     "anthropic": "https://api.anthropic.com",
     "gemini": "https://generativelanguage.googleapis.com/v1beta",
     "ollama": "http://127.0.0.1:11434",
@@ -39,6 +40,8 @@ def normalize_api_root(base_url: str, protocol: str = "openai") -> str:
     if port is not None and (scheme, port) not in {("http", 80), ("https", 443)}:
         host = f"{host}:{port}"
     path = parsed.path.rstrip("/")
+    if protocol == "images" and not path:
+        path = "/v1"
     if protocol == "gemini" and parsed.hostname.lower() == "generativelanguage.googleapis.com" and not path:
         path = "/v1beta"
     return urlunsplit((scheme, host, path, "", ""))

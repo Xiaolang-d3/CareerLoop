@@ -10,6 +10,7 @@ from .gemini_generate_content import GeminiGenerateContentProvider
 from .ollama_chat import OllamaChatProvider
 from .openai_compatible import OpenAICompatibleProvider
 from .openai_responses import OpenAIResponsesProvider
+from .openai_images import OpenAIImagesProvider
 from ..model_protocol import base_url_for_protocol, model_protocol_candidates, normalize_model_protocol
 
 
@@ -19,6 +20,7 @@ MODEL_BACKEND_ENV = "DENGDENG_MODEL_BACKEND"
 _NATIVE_CLASSES = {
     "openai": OpenAICompatibleProvider,
     "responses": OpenAIResponsesProvider,
+    "images": OpenAIImagesProvider,
     "anthropic": AnthropicMessagesProvider,
     "gemini": GeminiGenerateContentProvider,
     "ollama": OllamaChatProvider,
@@ -57,6 +59,9 @@ def model_backend() -> str:
 
 
 def _provider_class(candidate: str, backend: str):
+    if candidate == "images":
+        # Images are a single paid operation, outside Completion retries/router.
+        return OpenAIImagesProvider
     if backend == "litellm":
         from .litellm_provider import LiteLLMProvider
 
@@ -99,7 +104,7 @@ def build_model_provider(
                     fallback=index > 0,
                 ),
                 timeout_seconds=timeout_seconds,
-                **extra,
+                **(extra if candidate != "images" else {}),
             ),
         )
         for index, candidate in enumerate(candidates)

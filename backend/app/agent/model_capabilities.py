@@ -51,6 +51,7 @@ _VISION_SUPPORTED = (
     "internvl",
 )
 _NON_CHAT = (
+    "gpt-image-",
     "text-embedding",
     "embedding",
     "whisper",
@@ -67,6 +68,7 @@ def provider_label(provider: str, base_url: str = "") -> str:
         "gemini": "Google Gemini",
         "ollama": "Ollama",
         "responses": "OpenAI Responses",
+        "images": "OpenAI Images",
     }
     if provider in native_labels:
         return native_labels[provider]
@@ -98,6 +100,8 @@ def infer_vision(model_name: str) -> dict[str, str]:
 
 
 def infer_streaming(model_name: str, protocol: str = "openai") -> dict[str, str]:
+    if protocol == "images":
+        return _flag("unsupported", "client", "Images 接口使用非流式请求，生成过程在聊天中展示")
     if _contains(model_name, _NON_CHAT):
         return _flag("unsupported", "model_id", "该模型 ID 通常不是对话模型，不支持对话流式响应")
     if model_name.strip():

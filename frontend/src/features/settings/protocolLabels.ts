@@ -3,6 +3,7 @@ import type { ModelProtocol, ReasoningEffort, ResolvedModelProtocol } from "../.
 export const PROTOCOL_LABELS: Record<ResolvedModelProtocol, string> = {
   openai: "OpenAI 兼容 Chat Completions",
   responses: "OpenAI Responses API",
+  images: "OpenAI Images API",
   anthropic: "Anthropic Messages API",
   gemini: "Google Gemini generateContent",
   ollama: "Ollama Chat API"
