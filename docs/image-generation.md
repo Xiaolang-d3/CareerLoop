@@ -27,24 +27,20 @@
 {
   "model": "gpt-image-2",
   "prompt": "用户当轮的生图指令",
-  "n": 1,
-  "size": "auto",
-  "quality": "auto",
-  "output_format": "png",
-  "response_format": "b64_json"
+  "n": 1
 }
 ```
 
-不发送聊天消息、工具定义、推理强度、文本 token 上限、`stream` 或 `partial_images`。请求等待上限为 300 秒；中间代理仍需允许长连接。当前默认由服务自动选择尺寸和质量，不提供图像编辑和透明背景选项。
+采用教程中的最小调用，不发送聊天消息、工具定义、推理强度、文本 token 上限、`stream` 或 `partial_images`，也不发送 `response_format`、`output_format`、`size`、`quality` 等可选参数。教程标记 `response_format` 可用，但当前实际网关以 400 拒绝该参数，故直接省略，不通过重新生成来协商参数。请求等待上限为 300 秒；中间代理仍需允许长连接。尺寸、质量和文件格式采用服务默认值，不提供图像编辑和透明背景选项。
 
-Base64 只在模型响应内存中短暂保留，排除序列化和 repr；由账户本地图片存储验证内容、尺寸和大小后保存。SSE 与历史消息仅携带资产引用。要求服务按 `b64_json` 返回；仅返回 URL、HTML 或空结果时明确失败，不下载任意上游 URL。
+兼容 `b64_json` 和 Packy 下载链接。Base64 只在模型响应内存中短暂保留，排除序列化和 repr；由账户本地图片存储验证内容、尺寸和大小后保存。SSE 与历史消息仅携带资产引用。仅允许下载 `https://external-resources.packyapi.ai/file_download/` 下的图片，使用独立无凭证 HTTP 客户端，禁止重定向，等待上限 60 秒，按声明长度和流式实际长度限制 20 MB；其他地址、HTML 或空结果明确失败。下载失败也不会重新发起生图。
 
 图片请求在原生和 LiteLLM 两种后端均使用专用适配器，不经过聊天备用路由，不自动重试、换协议或补发请求。运行开始前固定模型版本并记录操作，同一任务完成重放复用资产；超时或结果不确定时阻止同一任务再次扣费。图片模型也不能用作文本聊天的备用模型。
 
 ## 验证
 
-- `backend/tests/test_openai_images.py`：模拟 HTTP 验证端点、参数、根地址、协议、诊断、隐私和异常不重试。
+- `backend/tests/test_openai_images.py`：模拟 HTTP 验证端点、最小参数、Base64/URL 返回、无凭证下载、下载限制、根地址、协议、诊断、隐私和异常不重试。
 - `backend/tests/test_chat_image_generation.py`：验证聊天流程、图片落盘、非流式能力与 SSE 共存、任务重放与超时保护。
 - `frontend/src/features/settings/ModelConnectionManager.test.tsx`：验证 Images 配置提交与 sora 令牌提示。
 
-测试不使用真实凭证或付费服务；真实出图仍需用户在应用内配置有效的 Packy sora 令牌。
+自动化测试不使用真实凭证或付费服务；真实出图需用户在应用内配置有效的 Packy sora 令牌。
