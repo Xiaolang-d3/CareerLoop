@@ -288,7 +288,15 @@ class AgentRuntime:
         provider = self._models.get(self._model_provider)
         selected_platform = platform_name or self._platform_name
         from ..chat.image_assets import image_generation_intent
-        if resume is None and image_generation_intent(user_content):
+        from ..model_protocol import resolve_model_protocol
+
+        selection = self._current_model_selection()
+        execute = selection.get("stage_selections", {}).get("execute") or selection
+        image_model_selected = resolve_model_protocol(
+            str(execute.get("model_name", "")), execute.get("model_protocol", "auto"),
+            str(execute.get("model_base_url", "")),
+        ) == "images"
+        if resume is None and (image_model_selected or image_generation_intent(user_content)):
             return await self._generate_image_run(provider, user_content, selected_platform, conversation_id, event_callback, run_id, image_urls)
         if resume is not None:
             return await self._resume_run(
@@ -1697,6 +1705,11 @@ class AgentRuntime:
                 raise ModelProviderError("image_model_required", "请选择 gpt-image-2（自动识别或 Images 接口）或支持原生生图的 Grok 4.7 模型")
             if not uses_images and protocol not in {"auto", "responses"}:
                 raise ModelProviderError("image_generation_protocol", "Grok 生图需要 Responses 接口，请在模型配置中使用自动识别或 Responses")
+            if uses_images:
+                from ..chat.image_assets import image_generation_intent
+
+                if not image_generation_intent(prompt, image_model_selected=True):
+                    raise ModelProviderError("image_prompt_required", "当前为图片模型，请发送生图指令，例如“画一张智能体架构图”；普通问答请切换聊天模型")
             if conversation_id is None:
                 raise ModelProviderError("image_conversation_required", "请在聊天对话中生成图片")
             if image_urls:
