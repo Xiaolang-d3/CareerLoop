@@ -402,3 +402,8 @@ v29 新增 chat_image_operations/chat_image_assets，保留旧表、消息与索
 `OpenAIImagesProvider` 在原生和 LiteLLM 两种后端均走专用无重试路径，300 秒等待上限，图片模型不能作为聊天备用模型。应用 SSE 可以展示生成过程，但上游请求不启用 streaming，因此生图不要求档案具备文本流式能力；独立 image_generation 能力门禁照常生效。检测连接只读取目录，不付费出图；目录可见不证明生图可用，普通文本请求和附件编辑在请求前拒绝。
 
 结果复用账户本地图片校验、资产引用、下载与存档；Base64 不序列化，不下载服务返回的任意 URL。沿用操作标记与任务重放，取消、超时或异常均不自动重发；同一任务成功重放复用图片，未知状态阻止重复生成。旧 Grok 4.7 Responses 路径保留。无新表或迁移，配置和测试见 [文生图接入](image-generation.md)。
+
+
+### Images 模型绘图路由修复（2026-10-15）
+
+入口先读取冻结 execute 档案的协议；选中 Images 时在 classify/plan 之前进入图片输入校验。`image_generation_intent` 的 `image_model_selected` 只放开架构图、流程图等图表关键词对明确绘图指令的排除，普通聊天模型保持原行为；询问能力、费用和引用文档内的绘图指令仍不授权付费生成。非生图输入返回本地 `image_prompt_required` 与 image_generation 失败事件，不调用文字阶段或外部图片接口，不创建生图尝试标记，不包装为“模型服务不可用”。回归覆盖用户的原始架构图指令、自动与手动 Images 协议、无文字规划、无付费请求及原有防重复生成。
