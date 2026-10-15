@@ -18,6 +18,8 @@ class ToolContext(BaseModel):
     user_content: str = ""
     web_search_mode: Literal["auto", "technical", "general"] = "auto"
     web_search_options: WebSearchOptions | None = None
+    require_external_query_approval: bool = False
+    approved_external_queries: tuple[str, ...] = ()
 
 
 class ToolHandler(Protocol):

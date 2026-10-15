@@ -8,6 +8,13 @@ from pydantic import ValidationError
 
 from ..domain import AgentPlan, AgentPlanStep, ModelResponse
 from ..tooling import TOOL_SPECS, ToolSpec
+from .capability_resolver import (
+    WEB_SEARCH_CAPABILITY,
+    TaskRoute,
+    capability_request_for_content,
+    resolve_capabilities,
+)
+from .plan_builder import fallback_plan
 
 
 # Compatibility name for callers while route policy migrates to capabilities.
@@ -15,16 +22,8 @@ TOOL_POLICIES: dict[str, ToolSpec] = TOOL_SPECS
 
 
 # Always visible to the model, never part of a lane plan, and never blocked as
-# tool_not_planned. Must not be added to tools_for_kind / allowed_tools.
+# tool_not_planned. Must not be added to allowed_tools.
 INTERRUPT_TOOLS = frozenset({"ask_user"})
-
-
-@dataclass(frozen=True)
-class TaskRoute:
-    kind: str
-    needs_plan: bool
-    allowed_tools: tuple[str, ...]
-    required_tools: tuple[str, ...] = ()
 
 
 ROUTE_LABELS = {
@@ -35,9 +34,6 @@ ROUTE_LABELS = {
     "web_search": "联网搜索",
 }
 
-
-WEB_SEARCH_MARKER = "[系统可信开关：本轮允许联网搜索]"
-ROUTING_MARKERS = (WEB_SEARCH_MARKER,)
 SIMPLE_CONVERSATION_MESSAGES = frozenset(
     {
         "hi",
@@ -54,56 +50,17 @@ SIMPLE_CONVERSATION_MESSAGES = frozenset(
 )
 
 
-def strip_routing_markers(content: str) -> str:
-    """Remove trusted routing switches so keyword intent cannot read them as user text."""
-    text = content
-    for marker in ROUTING_MARKERS:
-        text = text.replace(marker, " ")
-    return " ".join(text.split())
-
-
 def detect_kind(content: str) -> str:
-    text = strip_routing_markers(content).lower()
+    text = (content or "").strip().lower()
     if any(word in text for word in ("记住", "加入知识库", "记录知识", "保存这条知识")):
         return "library_update"
-    if any(word in text for word in ("联网", "网上查", "搜索一下", "查一下最新")):
+    if any(word in text for word in ("联网", "网上查", "搜索一下", "查一下最新", "新闻")):
         return "web_search"
     if any(word in text for word in ("写文章", "改写", "总结", "大纲", "创作", "写一篇")):
         return "content_creation"
     if any(word in text for word in ("知识库", "我的资料", "我的笔记", "已保存", "这份材料", "查找资料")):
         return "library_search"
     return "conversation"
-
-
-def apply_hard_gates(content: str, keyword_kind: str) -> str:
-    if WEB_SEARCH_MARKER in content:
-        return "web_search"
-    return keyword_kind if keyword_kind in ROUTE_LABELS else "conversation"
-
-
-def tools_for_kind(
-    kind: str,
-    content: str,
-    available_tools: set[str],
-    tool_specs: dict[str, ToolSpec] | None = None,
-) -> tuple[str, ...]:
-    capabilities = {
-        "library_search": ("library.read", "library.search"),
-        "content_creation": ("library.read", "library.search"),
-        "library_update": ("library.read", "library.propose"),
-        "web_search": ("web.search.generic",),
-    }.get(kind, ())
-    specs = tool_specs or TOOL_SPECS
-    selected = []
-    for capability in capabilities:
-        matches = sorted(
-            (spec for name, spec in specs.items()
-             if name in available_tools and capability in spec.capabilities),
-            key=lambda spec: (spec.priority, spec.name),
-        )
-        if matches and matches[0].name not in selected:
-            selected.append(matches[0].name)
-    return tuple(selected)
 
 
 def build_task_route(
@@ -113,13 +70,17 @@ def build_task_route(
     *,
     tool_specs: dict[str, ToolSpec] | None = None,
 ) -> TaskRoute:
+    """Resolve authorized capabilities into an explicit least-privilege route."""
     resolved = kind if kind in ROUTE_LABELS else "conversation"
     specs = tool_specs or TOOL_SPECS
-    allowed = tools_for_kind(resolved, content, available_tools, specs)
-    route = TaskRoute(kind=resolved, needs_plan=bool(allowed), allowed_tools=allowed)
-    return TaskRoute(
-        kind=resolved, needs_plan=bool(allowed), allowed_tools=allowed,
-        required_tools=tuple(required_tools_for_route(route, specs)),
+    surface = {name: spec for name, spec in specs.items() if name in available_tools}
+    request = capability_request_for_content(content, resolved)
+    return resolve_capabilities(
+        request,
+        registered_specs=surface,
+        web_search_allowed=any(
+            WEB_SEARCH_CAPABILITY in spec.capabilities for spec in surface.values()
+        ),
     )
 
 
@@ -129,10 +90,9 @@ def route_task(
     *,
     tool_specs: dict[str, ToolSpec] | None = None,
 ) -> TaskRoute:
-    """Keyword fast path plus hard gates. Does not call the model."""
-    kind = apply_hard_gates(content, detect_kind(content))
+    """Keyword fast path. Public web access is checked against the trusted surface."""
     return build_task_route(
-        kind,
+        detect_kind(content),
         content,
         available_tools,
         tool_specs=tool_specs,
@@ -140,10 +100,10 @@ def route_task(
 
 
 def should_classify_kind(route: TaskRoute, content: str) -> bool:
-    """Only classify when keywords and hard gates left the turn as open conversation."""
+    """Only classify when keyword detection left the turn as open conversation."""
     if route.kind != "conversation":
         return False
-    normalized = strip_routing_markers(content).strip().lower().rstrip("!！?？。,. ")
+    normalized = (content or "").strip().lower().rstrip("!！?？。,. ")
     if not normalized or normalized in SIMPLE_CONVERSATION_MESSAGES:
         return False
     return True
@@ -158,7 +118,7 @@ def classifier_prompt(content: str) -> str:
 {lanes}
 规则：只选一个车道；不确定则 kind 为 conversation；不要输出工具名；不要解释。
 用户消息：
-{strip_routing_markers(content)}"""
+{content}"""
 
 
 def parse_classified_kind(response: ModelResponse) -> str | None:
@@ -251,64 +211,13 @@ def visible_tools_prompt(
     )
 
 
-# Each lane lists the capabilities that must produce a successful event before
-# the run can finish. The concrete tool is resolved from the current tool surface.
-REQUIRED_CAPABILITIES_BY_ROUTE: dict[str, tuple[str, ...]] = {
-    "web_search": ("web.search.generic",),
-    "library_search": ("library.read",),
-    "content_creation": ("library.read",),
-    "library_update": ("library.propose",),
-}
-
-
 def required_tools_for_route(
     route: TaskRoute,
     tool_specs: dict[str, ToolSpec] | None = None,
 ) -> list[str]:
-    """Resolve completion obligations to concrete tools on this route."""
-    if route.required_tools:
-        return list(route.required_tools)
-    specs = tool_specs or TOOL_SPECS
-    allowed = set(route.allowed_tools)
-    chosen: list[str] = []
-    for capability in REQUIRED_CAPABILITIES_BY_ROUTE.get(route.kind, ()):
-        match = min(
-            (
-                spec
-                for name, spec in specs.items()
-                if name in allowed and capability in spec.capabilities
-            ),
-            key=lambda spec: (spec.priority, spec.name),
-            default=None,
-        )
-        if match is not None and match.name not in chosen:
-            chosen.append(match.name)
-    return chosen
-
-
-def fallback_plan(
-    goal: str,
-    route: TaskRoute,
-    tool_specs: dict[str, ToolSpec] | None = None,
-) -> AgentPlan:
-    specs = tool_specs or TOOL_SPECS
-    steps = []
-    for index, tool_name in enumerate(route.allowed_tools, start=1):
-        policy = specs[tool_name]
-        steps.append(
-            AgentPlanStep(
-                id=f"step-{index}",
-                title=policy.title,
-                tool_name=tool_name,
-                risk=policy.risk,
-            )
-        )
-    return AgentPlan(
-        goal=goal.strip()[:300] or "完成当前工作任务",
-        route=route.kind,
-        steps=steps,
-        requires_confirmation=any(step.risk == "confirmed_local_write" for step in steps),
-    )
+    """Completion obligations are explicit on the route; empty means none."""
+    del tool_specs
+    return list(route.required_tools)
 
 
 def replan_prompt(
@@ -376,14 +285,23 @@ def parse_plan(
         payload = json.loads(raw)
     except json.JSONDecodeError:
         return fallback_plan(goal, route, specs)
+    if not isinstance(payload, dict):
+        return fallback_plan(goal, route, specs)
 
     allowed = set(route.allowed_tools)
     steps: list[AgentPlanStep] = []
-    for item in payload.get("steps", []):
-        tool_name = str(item.get("tool_name", ""))
+    raw_steps = payload.get("steps")
+    if not isinstance(raw_steps, list):
+        raw_steps = []
+    for item in raw_steps:
+        if not isinstance(item, dict):
+            continue
+        tool_name = str(item.get("tool_name") or "").strip()
         if tool_name not in allowed or tool_name in {step.tool_name for step in steps}:
             continue
-        policy = specs[tool_name]
+        policy = specs.get(tool_name)
+        if policy is None:
+            continue
         try:
             step = AgentPlanStep(
                 id=f"step-{len(steps) + 1}",
@@ -397,7 +315,9 @@ def parse_plan(
     for tool_name in required_tools_for_route(route):
         if tool_name not in allowed or tool_name in {step.tool_name for step in steps}:
             continue
-        policy = specs[tool_name]
+        policy = specs.get(tool_name)
+        if policy is None:
+            continue
         steps.append(
             AgentPlanStep(
                 id=f"step-{len(steps) + 1}",
@@ -408,8 +328,9 @@ def parse_plan(
         )
     if not steps:
         return fallback_plan(goal, route, specs)
+    parsed_goal = str(payload.get("goal") or goal).strip()[:300]
     return AgentPlan(
-        goal=str(payload.get("goal") or goal).strip()[:300],
+        goal=parsed_goal or "完成当前工作任务",
         route=route.kind,
         steps=steps,
         requires_confirmation=any(step.risk == "confirmed_local_write" for step in steps),

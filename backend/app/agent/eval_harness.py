@@ -13,7 +13,6 @@ from .behavior_checks import (
 )
 from .orchestration import (
     TOOL_POLICIES,
-    WEB_SEARCH_MARKER,
     route_task,
 )
 from .runtime import validate_web_citations
@@ -99,11 +98,13 @@ def assert_eval_expected(result: dict[str, Any], expected: dict[str, Any]) -> No
 
 def _run_route(vars_: dict[str, Any]) -> dict[str, Any]:
     content = str(vars_.get("query") or "")
-    if vars_.get("web_search"):
-        content = f"{content}\n{WEB_SEARCH_MARKER}"
+    available = set(AVAILABLE_TOOLS)
+    if not vars_.get("web_search"):
+        # Same trusted surface the runtime builds when web consent is off.
+        available -= {"search_public_web"}
     route = route_task(
         content,
-        AVAILABLE_TOOLS,
+        available,
     )
     return {
         "kind": route.kind,

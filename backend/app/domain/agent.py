@@ -148,6 +148,8 @@ class AgentRunSnapshot(BaseModel):
     completed_tools: list[str] = Field(default_factory=list)
     completed_tool_calls: list[str] = Field(default_factory=list)
     repeated_tool_calls: dict[str, int] = Field(default_factory=dict)
+    approved_search_queries: list[str] = Field(default_factory=list)
+    pending_search_queries: list[str] = Field(default_factory=list)
 
 
 class AgentRunResult(BaseModel):
