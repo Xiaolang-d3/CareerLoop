@@ -34,6 +34,7 @@ def image_request():
 async def call_with_transport(handler, *, streaming=False, request=None, diagnostic=False):
     provider = OpenAIImagesProvider(api_key="test-image-key", model="gpt-image-2", base_url="https://cf.api.fan")
     provider._record_event = Mock()
+    provider._image_download_transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider._client = AsyncOpenAI(api_key="test-image-key", base_url=provider._base_url, http_client=client, max_retries=0)
         if diagnostic:
@@ -80,13 +81,76 @@ def test_generation_uses_single_nonstreaming_images_post_and_keeps_bytes_private
         result = result[0].response
     assert len(requests) == 1 and requests[0].method == "POST"
     assert str(requests[0].url) == "https://cf.api.fan/v1/images/generations"
-    assert json.loads(requests[0].content) == {"model": "gpt-image-2", "prompt": "画一只猫", "n": 1,
-        "size": "auto", "quality": "auto", "output_format": "png", "response_format": "b64_json"}
+    assert json.loads(requests[0].content) == {"model": "gpt-image-2", "prompt": "画一只猫", "n": 1}
     assert result.images[0].base64_data.get_secret_value() == encoded
     assert encoded not in result.model_dump_json() and encoded not in repr(result)
     assert result.usage.total_tokens == 5
     assert provider._record_event.call_args.kwargs["total_tokens"] == 5
     assert encoded not in str(provider._record_event.call_args)
+
+
+def test_gateway_rejecting_response_format_accepts_minimal_request():
+    requests = []
+    def handler(request):
+        requests.append(request)
+        if 'response_format' in json.loads(request.content):
+            return httpx.Response(400, json={"error": {"message": "Unknown parameter: 'response_format'."}})
+        return httpx.Response(200, json={"data": [{"b64_json": png_base64()}]})
+    result, _ = asyncio.run(call_with_transport(handler))
+    assert len(requests) == 1 and len(result.images) == 1
+
+
+def test_packy_url_output_is_downloaded_once_without_api_credential():
+    requests = []
+    url = 'https://external-resources.packyapi.ai/file_download/test-image?signature=test'
+    encoded = png_base64()
+    def handler(request):
+        requests.append(request)
+        if request.method == 'POST':
+            return httpx.Response(200, json={"data": [{"url": url}]})
+        assert str(request.url) == url
+        assert 'authorization' not in request.headers and 'cookie' not in request.headers
+        return httpx.Response(200, content=base64.b64decode(encoded), headers={"content-type": "image/png"})
+    result, _ = asyncio.run(call_with_transport(handler, streaming=True))
+    assert [r.method for r in requests] == ['POST', 'GET']
+    assert result[0].response.images[0].base64_data.get_secret_value() == encoded
+    assert url not in str(result[0].model_dump())
+
+
+@pytest.mark.parametrize('url', ['http://external-resources.packyapi.ai/file_download/test',
+    'https://localhost/file_download/test', 'https://127.0.0.1/file_download/test',
+    'https://external-resources.packyapi.ai.evil.test/file_download/test',
+    'https://user:pass@external-resources.packyapi.ai/file_download/test',
+    'https://external-resources.packyapi.ai:1234/file_download/test',
+    'https://external-resources.packyapi.ai/unexpected-path'])
+def test_url_output_rejects_unapproved_downloads_without_another_request(url):
+    requests = []
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"data": [{"url": url}]})
+    with pytest.raises(ModelProviderError) as caught:
+        asyncio.run(call_with_transport(handler))
+    assert caught.value.code == 'invalid_image_output' and len(requests) == 1
+
+
+@pytest.mark.parametrize('failure', ['redirect', 'timeout', 'oversize-header', 'oversize-body', 'empty'])
+def test_download_failure_does_not_regenerate_or_follow_redirects(failure):
+    requests = []
+    def handler(request):
+        requests.append(request)
+        if request.method == 'POST':
+            return httpx.Response(200, json={"data": [{"url": 'https://external-resources.packyapi.ai/file_download/test'}]})
+        if failure == 'redirect':
+            return httpx.Response(302, headers={'location': 'https://127.0.0.1/private'})
+        if failure == 'timeout':
+            raise httpx.ReadTimeout('timeout', request=request)
+        if failure == 'oversize-header':
+            return httpx.Response(200, headers={'content-length': '20000001'})
+        return httpx.Response(200, content=b'x' * 20_000_001 if failure == 'oversize-body' else b'')
+    with pytest.raises(ModelProviderError) as caught:
+        asyncio.run(call_with_transport(handler))
+    assert not caught.value.retryable
+    assert [r.method for r in requests] == ['POST', 'GET']
 
 
 @pytest.mark.parametrize("failure", ["timeout", "server", "html", "missing", "url"])

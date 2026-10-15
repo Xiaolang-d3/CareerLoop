@@ -1,10 +1,13 @@
 """Non-streaming Images API; never retry a possibly billed generation."""
 from __future__ import annotations
 
+import base64
 from collections.abc import AsyncIterator
 from time import perf_counter
 from typing import Any
+from urllib.parse import urlsplit
 
+import httpx
 from openai import APIError, APIStatusError
 
 from ..domain import ModelRequest, ModelResponse, ModelStreamEvent, ModelUsage
@@ -16,6 +19,7 @@ from .openai_compatible import OpenAICompatibleProvider
 
 class OpenAIImagesProvider(OpenAICompatibleProvider):
     name = "images"
+    _image_download_transport: httpx.AsyncBaseTransport | None = None
 
     @staticmethod
     def _normalize_base_url(base_url: str | None) -> str:
@@ -33,14 +37,13 @@ class OpenAIImagesProvider(OpenAICompatibleProvider):
             raise ModelProviderError("image_prompt_required", "请填写图片描述")
         started_at = perf_counter()
         try:
-            # Packy supports n=1 and no streaming/partial_images. Request bytes
-            # so results use the account-local asset lifecycle, without fetching
-            # arbitrary upstream URLs or exposing expiring links to the client.
+            # Live Packy routes reject response_format despite the tutorial's
+            # optional-parameter table. Send only the documented minimum; never
+            # negotiate by resending a potentially billed generation.
             raw = await self._client.with_options(timeout=300, max_retries=0).images.generate(
-                model=self._model, prompt=prompt, n=1, size="auto", quality="auto",
-                output_format="png", response_format="b64_json",
+                model=self._model, prompt=prompt, n=1,
             )
-            result = self._response_from_images(raw)
+            result = await self._response_from_images(raw)
         except APIError as exc:
             error = self._provider_error(exc)
             error.retryable = False
@@ -57,15 +60,17 @@ class OpenAIImagesProvider(OpenAICompatibleProvider):
                            total_tokens=result.usage.total_tokens if result.usage else 0)
         return result
 
-    def _response_from_images(self, raw: Any) -> ModelResponse:
+    async def _response_from_images(self, raw: Any) -> ModelResponse:
         data = getattr(raw, "data", None)
         if not isinstance(data, list) or not data:
             raise ModelProviderError("image_generation_not_executed", "服务没有返回生成的图片，请确认 sora 分组令牌与模型权限；不会自动重新生成")
         if len(data) != 1:
             raise ModelProviderError("invalid_image_output", "生图服务未按 n=1 返回图片；不会自动重新生成")
         encoded = getattr(data[0], "b64_json", None)
+        if not encoded and getattr(data[0], "url", None):
+            encoded = await self._download_image(data[0].url)
         if not isinstance(encoded, str) or not encoded:
-            raise ModelProviderError("invalid_image_output", "服务没有按 b64_json 返回图片数据，请检查 Images API 配置；不会自动重新生成")
+            raise ModelProviderError("invalid_image_output", "服务没有返回图片数据或可用的 Packy 图片地址；不会自动重新生成")
         if len(encoded) > 28_000_000:
             raise ModelProviderError("invalid_image_output", "生成的图片超过 20 MB；不会自动重新生成")
         raw_usage = getattr(raw, "usage", None)
@@ -79,6 +84,38 @@ class OpenAIImagesProvider(OpenAICompatibleProvider):
             output_blocks=[{"type": "image", "index": 0}], usage=usage,
             provider_metadata={"model": self._model, "base_url": self._base_url, "protocol": self.name},
         )
+
+    async def _download_image(self, url: str) -> str:
+        # A separate client never forwards the generation API's bearer token.
+        # Only the tutorial's Packy resource origin/path may be downloaded, and
+        # redirects cannot move the request to another host or a local service.
+        try:
+            parsed = urlsplit(url)
+            allowed = (parsed.scheme == "https" and parsed.hostname == "external-resources.packyapi.ai"
+                       and parsed.port in {None, 443} and not parsed.username and not parsed.password
+                       and parsed.path.startswith("/file_download/") and not parsed.fragment)
+        except (ValueError, TypeError):
+            allowed = False
+        if not allowed:
+            raise ModelProviderError("invalid_image_output", "服务返回的图片下载地址不受支持；不会自动重新生成")
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60, connect=10), follow_redirects=False,
+                                         transport=self._image_download_transport) as client:
+                async with client.stream("GET", url) as response:
+                    response.raise_for_status()
+                    declared = response.headers.get("content-length", "")
+                    if declared.isdigit() and int(declared) > 20_000_000:
+                        raise ModelProviderError("invalid_image_output", "生成的图片超过 20 MB；不会自动重新生成")
+                    content = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        content.extend(chunk)
+                        if len(content) > 20_000_000:
+                            raise ModelProviderError("invalid_image_output", "生成的图片超过 20 MB；不会自动重新生成")
+            if not content:
+                raise ModelProviderError("invalid_image_output", "图片下载结果为空；不会自动重新生成")
+            return base64.b64encode(content).decode("ascii")
+        except httpx.HTTPError as exc:
+            raise ModelProviderError("image_download_failed", "图片已生成，但下载失败。请保留服务记录；不会自动重新生成") from exc
 
     def _provider_error(self, exc: Exception) -> ModelProviderError:
         if isinstance(exc, APIStatusError) and exc.status_code in {404, 405}:
