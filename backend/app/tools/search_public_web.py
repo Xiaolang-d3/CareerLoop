@@ -33,6 +33,7 @@ class SearchPublicWebTool:
         ),
         input_schema=SearchPublicWebArguments.model_json_schema(),
     )
+    arguments_model = SearchPublicWebArguments
 
     def __init__(
         self,

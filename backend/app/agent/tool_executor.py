@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 from time import perf_counter
 
+from pydantic import ValidationError
+
 from ..domain import ToolCall, ToolError, ToolResult
 from ..observability.tool_call_audit import record_tool_call_event
 from ..tools import ToolContext, ToolRegistry
+from ..tools.errors import invalid_arguments
 
 
 class ToolExecutor:
@@ -29,29 +32,34 @@ class ToolExecutor:
             or self._default_timeout_seconds
         )
         try:
-            handler = self._tools.get(tool_call.name)
-            result = await asyncio.wait_for(
-                handler.execute(tool_call.arguments, context),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError:
-            message = f"工具 {tool_call.name} 执行超时"
-            result = ToolResult(
-                ok=False,
-                status="failed",
-                data={"status": "failed", "error": "timeout"},
-                message=message,
-                error=ToolError(code="tool_timeout", message=message, retryable=True),
-            )
-        except Exception as exc:
-            message = f"工具执行失败：{exc}"
-            result = ToolResult(
-                ok=False,
-                status="failed",
-                data={"status": "failed", "error": str(exc)},
-                message=message,
-                error=ToolError(code="tool_execution_failed", message=message),
-            )
+            arguments = self._tools.validate_arguments(tool_call.name, tool_call.arguments)
+        except ValidationError as exc:
+            result = invalid_arguments(f"工具 {tool_call.name} 参数不合法", exc)
+        else:
+            try:
+                handler = self._tools.get(tool_call.name)
+                result = await asyncio.wait_for(
+                    handler.execute(arguments, context),
+                    timeout=timeout,
+                )
+            except asyncio.TimeoutError:
+                message = f"工具 {tool_call.name} 执行超时"
+                result = ToolResult(
+                    ok=False,
+                    status="failed",
+                    data={"status": "failed", "error": "timeout"},
+                    message=message,
+                    error=ToolError(code="tool_timeout", message=message, retryable=True),
+                )
+            except Exception as exc:
+                message = f"工具执行失败：{exc}"
+                result = ToolResult(
+                    ok=False,
+                    status="failed",
+                    data={"status": "failed", "error": str(exc)},
+                    message=message,
+                    error=ToolError(code="tool_execution_failed", message=message),
+                )
 
         self._record(
             conversation_id=conversation_id,
