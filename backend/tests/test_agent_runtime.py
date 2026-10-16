@@ -89,6 +89,34 @@ class ConfirmingWriteTool:
         return ToolResult(ok=True, status="done", message="已写入")
 
 
+class ValidatedNoteTool:
+    class Arguments(BaseModel):
+        query: str = Field(min_length=1)
+
+    arguments_model = Arguments
+
+    def __init__(self) -> None:
+        self.definition = ToolDefinition(
+            name="test_note",
+            description="测试参数自愈的数据读取",
+            input_schema=self.Arguments.model_json_schema(),
+        )
+        self.spec = ToolSpec(
+            name="test_note",
+            title="查找测试资料",
+            risk="read_only",
+            capabilities=frozenset({"library.search"}),
+            priority=1,
+        )
+        self.calls = 0
+        self.seen: dict | None = None
+
+    async def execute(self, arguments, context):
+        self.calls += 1
+        self.seen = arguments
+        return ToolResult(ok=True, status="done", message="已查到资料")
+
+
 def runtime_for(model, *handlers, max_rounds: int = 5) -> AgentRuntime:
     models = ModelProviderRegistry()
     models.register(model.name, model)
@@ -529,19 +557,64 @@ class ToolConfirmationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool.calls, 1)
         self.assertFalse([event for event in resumed.events if event.status == "waiting_approval"])
 
-    async def test_invalid_arguments_never_reach_the_confirmation_card(self) -> None:
+    async def test_invalid_arguments_never_show_the_confirmation_card_and_can_recover(self) -> None:
         tool = ConfirmingWriteTool()
         model = ScriptedModel([
             ModelResponse(tool_calls=[ToolCall(id="write-bad", name="test_write", arguments={})]),
-            ModelResponse(content="补充说明"),
+            self._tool_call("write-bad-2"),
         ])
 
         result = await runtime_for(model, tool).run(self.MESSAGE)
 
+        self.assertEqual(result.status, "waiting_user")
+        self.assertEqual(result.error.code, "tool_approval_required")
+        self.assertEqual(tool.calls, 0)
+        self.assertIsNotNone(result.snapshot.pending_tool_approval)
+        statuses = [event.status for event in result.events if event.tool_name == "test_write"]
+        self.assertEqual(statuses, ["failed", "waiting_approval"])
+
+
+class InvalidArgumentRecoveryTest(unittest.IsolatedAsyncioTestCase):
+    MESSAGE = "查找资料：周五交付"
+
+    async def test_invalid_arguments_recover_on_the_next_round(self) -> None:
+        tool = ValidatedNoteTool()
+        model = ScriptedModel([
+            ModelResponse(tool_calls=[ToolCall(id="note-1", name="test_note", arguments={})]),
+            ModelResponse(tool_calls=[ToolCall(id="note-2", name="test_note", arguments={"query": "周五交付"})]),
+            ModelResponse(content="已查到资料。"),
+        ])
+
+        result = await runtime_for(model, tool).run(self.MESSAGE)
+
+        self.assertEqual(result.status, "done")
+        self.assertEqual(tool.calls, 1)
+        self.assertEqual(tool.seen, {"query": "周五交付"})
+        statuses = [event.status for event in result.events if event.tool_name == "test_note"]
+        self.assertEqual(statuses, ["failed", "done"])
+        self.assertFalse([event for event in result.events if event.data.get("replan")])
+        correction = [
+            message
+            for message in model.requests[1].messages
+            if message.role == "system" and "参数不合法" in message.content
+        ]
+        self.assertEqual(len(correction), 1)
+        self.assertIn("test_note", correction[0].content)
+
+    async def test_invalid_arguments_stop_after_the_retry_cap(self) -> None:
+        tool = ValidatedNoteTool()
+        model = ScriptedModel([
+            ModelResponse(tool_calls=[ToolCall(id="note-1", name="test_note", arguments={})]),
+            ModelResponse(tool_calls=[ToolCall(id="note-2", name="test_note", arguments={"query": ""})]),
+            ModelResponse(tool_calls=[ToolCall(id="note-3", name="test_note", arguments={"other": 1})]),
+        ])
+
+        result = await runtime_for(model, tool).run(self.MESSAGE)
+
+        self.assertEqual(len(model.requests), 3)
         self.assertEqual(result.status, "failed")
         self.assertEqual(result.error.code, "invalid_arguments")
         self.assertEqual(tool.calls, 0)
-        self.assertFalse([event for event in result.events if event.status == "waiting_approval"])
 
 
 if __name__ == "__main__":

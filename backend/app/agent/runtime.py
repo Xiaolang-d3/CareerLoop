@@ -77,6 +77,7 @@ from .tool_executor import ToolExecutor
 
 StreamCallback = Callable[[AgentStreamEvent], Awaitable[None]]
 WEB_RESEARCH_TOOLS = {"search_public_web"}
+MAX_INVALID_ARGUMENT_RETRIES = 2
 MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\((https?://[^)\s]+)\)")
 COMPANY_REFERENCE_PHRASES = ("这家公司", "该公司", "这个公司", "这家企业", "该企业")
 COMPANY_SUFFIX = r"(?:有限责任公司|股份有限公司|有限公司)"
@@ -1014,6 +1015,7 @@ class AgentRuntime:
         """Execute the bounded model/tool loop for a fresh or resumed run."""
         tool_specs = {spec.name: spec for spec in self._tools.specs()}
         unresolved_error: ToolError | None = None
+        invalid_argument_retries = 0
         rejected_completions: set[tuple[str, ...]] = set()
         self._checkpoint_run(
             run_id,
@@ -1528,6 +1530,27 @@ class AgentRuntime:
                     )
                 )
                 if result.status in {"failed", "blocked"}:
+                    if (
+                        result.status == "failed"
+                        and result.error is not None
+                        and result.error.code == "invalid_arguments"
+                        and invalid_argument_retries < MAX_INVALID_ARGUMENT_RETRIES
+                    ):
+                        # Schema rejections are the model's own call to fix; give it
+                        # the field-level reason and a bounded chance to retry.
+                        invalid_argument_retries += 1
+                        messages.append(
+                            AgentMessage(
+                                role="system",
+                                content=(
+                                    f"工具 {tool_call.name} 未执行：传入参数不合法（{result.error.message}）。"
+                                    "请对照工具定义的参数模式，用修正后的参数重新调用同一个工具；"
+                                    "不要换车道，不要编造数据，也不要重复原来的参数。"
+                                ),
+                            )
+                        )
+                        round_error = None
+                        continue
                     round_error = result.error or ToolError(
                         code=f"tool_{result.status}", message=result.message
                     )
