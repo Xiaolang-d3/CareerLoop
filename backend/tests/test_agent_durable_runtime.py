@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from app.agent.approval_policy import APPROVE_OPTION_LABEL
 from app.agent.run_store import AgentRunStore
 from app.agent.runtime import AgentRuntime, _tool_call_fingerprint
 from app.db import connect, init_db
@@ -21,6 +22,7 @@ from app.domain import (
 )
 from app.models import ModelProviderRegistry
 from app.search_options import WebSearchOptions
+from app.tooling import ToolSpec
 from app.tools import ToolContext, ToolRegistry
 
 
@@ -279,6 +281,43 @@ class AgentDurableRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.error.code, "tool_execution_uncertain")
         self.assertEqual(tool.calls, 0)
 
+    async def test_tool_confirmation_holds_before_ledger_until_approved(self) -> None:
+        tool = ConfirmingWriteTool()
+        tools = ToolRegistry()
+        tools.register_handler(tool)
+        arguments = {"note": "周五交付"}
+        runtime = self._runtime(ToolThenTextModel(tool.definition.name, arguments), tools)
+
+        events = await self._collect(runtime, "记住这条知识：周五交付", run_id="confirm-run")
+
+        paused = events[-1].result
+        self.assertEqual(paused.status, "waiting_user")
+        self.assertEqual(paused.error.code, "tool_approval_required")
+        self.assertEqual(tool.calls, 0)
+        self.assertEqual(self.store.list_tool_executions("confirm-run"), [])
+        self.assertEqual(paused.snapshot.pending_tool_approval.tool_name, tool.definition.name)
+        self.assertEqual(
+            paused.snapshot.pending_tool_approval.fingerprint,
+            _tool_call_fingerprint(tool.definition.name, arguments),
+        )
+
+        approved_runtime = self._runtime(ToolThenTextModel(tool.definition.name, arguments), tools)
+        resumed = [
+            event
+            async for event in approved_runtime.run_stream(
+                APPROVE_OPTION_LABEL,
+                conversation_id=self.conversation_id,
+                task_id=self.task_id,
+                run_id="confirm-run-2",
+                resume=paused.snapshot,
+            )
+        ]
+
+        self.assertEqual(resumed[-1].result.status, "done")
+        self.assertEqual(tool.calls, 1)
+        ledger = self.store.list_tool_executions("confirm-run-2")
+        self.assertEqual([row["status"] for row in ledger], ["done"])
+
     async def test_durable_cancel_stops_before_model_request(self) -> None:
         class ShouldNotRunModel:
             name = "cancelled"
@@ -373,6 +412,27 @@ class CountingTool:
     async def execute(self, arguments: dict, context: ToolContext) -> ToolResult:
         self.calls += 1
         return ToolResult(ok=True, status="done", message="工具完成")
+
+
+class ConfirmingWriteTool:
+    def __init__(self) -> None:
+        self.definition = ToolDefinition(
+            name="test_confirm_write",
+            description="持久化确认写入工具",
+            input_schema={"type": "object", "additionalProperties": True},
+        )
+        self.spec = ToolSpec(
+            name="test_confirm_write",
+            title="写入确认工具",
+            risk="confirmed_local_write",
+            capabilities=frozenset({"library.propose"}),
+            priority=1,
+        )
+        self.calls = 0
+
+    async def execute(self, arguments: dict, context: ToolContext) -> ToolResult:
+        self.calls += 1
+        return ToolResult(ok=True, status="done", message="写入完成")
 
 
 class ToolThenTextModel:

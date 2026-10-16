@@ -72,9 +72,10 @@ macOS 打包 CI 使用支持 SQLite 扩展加载的 Homebrew Python 3.11 创建�
         ├─ plan_mode()            none / static（单能力组确定性计划）/ llm（多能力组）
         ├─ planner（仅 llm）        validate_plan 校验并冻结必需工具；失败则整轮终止
         ├─ EgressPolicy           混合任务逐条外发确认；未批准不发送、不写账本
+        ├─ ToolApprovalPolicy     需确认写入暂停待批；批准后才执行、不写账本
         ├─ CompletionValidator     必需工具成功事件（同能力组可互相满足）/ tool_choice
         ├─ 模型多轮 tool calls     只允许计划内工具
-        ├─ ToolRegistry.execute   超时、审计、waiting_approval；联网工具出网前二次校验
+        ├─ ToolRegistry.execute   中央参数校验、超时、审计、waiting_approval；联网工具出网前二次校验
         └─ 引用校验（若本轮用过联网工具）
                 │
                 ▼
@@ -95,6 +96,7 @@ backend/app/
 │   ├── plan_builder.py      计划模式与确定性兜底计划
 │   ├── plan_validator.py    计划校验与必需工具冻结
 │   ├── egress_policy.py     外发查询审批状态与确认载荷
+│   ├── approval_policy.py   待确认写入审批状态与确认载荷
 │   ├── bootstrap.py         组装模型 + 工具
 │   ├── settings.py          人设、记忆开关、模型连接
 │   ├── operations.py        运营快照
@@ -167,7 +169,7 @@ Tavily 自动模式开启 `auto_parameters` 并省略 `topic`，显式固定 `se
 6. 工具 `failed`：同一轮只允许一次同车道重规划（`replan_prompt` + `parse_plan` + `validate_plan`），新计划仍受当前 `allowed_tools` 约束，不能换车道或补联网工具。重规划成功后清空本轮错误，最终正文标 `done`。第二次失败、`blocked`、超时或规划调用失败则整轮终止。
 7. 完成义务满足且无 tool_calls、有正文：若本轮用过联网工具，则校验 Markdown 链接必须来自本轮工具返回的 URL；失败会自动重写一次，再失败则标记 `citation_validation_failed`。
 8. 达到轮数上限 → `round_limit_reached`。
-9. `waiting_user` 会把 `route` / `plan` / 完整 `messages` / `clarification` / `approved_search_queries` / `pending_search_queries` 写入 `agent_run_snapshots`。下一轮若有快照，先判定是否仍在回答暂停时的问题：命中选项原文，或手输未改口，则 `resume` 同一条 run（跳过分类与规划，不换车道）。手输明显改口（改口词，或 `detect_kind` 落到另一条非 `conversation` 车道）则清快照并重新路由；存在待批联网查询时，回复一律按批准/拒绝/自定义查询解释，不当作换题。取消、回退、重置上下文或非 `local_router` 的终态会清快照。历史退役工具快照不会恢复。
+9. `waiting_user` 会把 `route` / `plan` / 完整 `messages` / `clarification` / `approved_search_queries` / `pending_search_queries` / `approved_tool_fingerprints` / `pending_tool_approval` 写入 `agent_run_snapshots`。下一轮若有快照，先判定是否仍在回答暂停时的问题：命中选项原文，或手输未改口，则 `resume` 同一条 run（跳过分类与规划，不换车道）。手输明显改口（改口词，或 `detect_kind` 落到另一条非 `conversation` 车道）则清快照并重新路由；存在待批联网查询时，回复一律按批准/拒绝/自定义查询解释，存在待确认写入时按批准/拒绝/其他解释，都不当作换题。取消、回退、重置上下文或非 `local_router` 的终态会清快照。历史退役工具快照不会恢复。
 
 硬约束（不要在改 runtime 时悄悄放宽，除非同步改本文和测试）：
 
@@ -177,6 +179,7 @@ Tavily 自动模式开启 `auto_parameters` 并省略 `topic`，显式固定 `se
 - `waiting_approval`：状态 `waiting_user`，把确认权交回界面。若 `data.clarification` 带有 `question` / `options`，输入框上方渲染选项。点选选项，或手输仍是在回答（选项原文、补充指代），则恢复原计划。手输明显换题则清快照并重新路由。
 - 联网回答必须引用本轮来源；不得把未检索到的经历写成事实。
 - 混合任务（同一轮同时授权本地资料与公开搜索，`is_mixed_run`）中，`search_public_web` 每次调用先经 `EgressPolicy`：查询未被批准时以 `waiting_approval` 暂停（错误码 `external_query_approval_required`），展示完整查询字符串并等待批准/拒绝/自定义回复；暂停不执行工具、不写工具账本，恢复时按结果继续。批准只对当时展示的查询（或用户手输的新查询）生效；拒绝把联网从 route 和 plan 移除并撤销混合状态。联网工具在真正出网前还会独立复核一次，未批准返回 `external_query_not_approved`。
+- 需人工确认的本地写入（`risk=confirmed_local_write`，即 `ToolSpec.requires_confirmation`；当前目录暂无此类工具）在模型调用且参数通过中央校验后先经 `ToolApprovalPolicy`：以 `waiting_approval` 暂停（错误码 `tool_approval_required`），展示工具标题与参数摘要并等待批准/拒绝；暂停不执行工具、不写工具账本。批准绑定「工具名 + 规范化参数」指纹且仅对该次调用生效；拒绝把该工具从 route/plan 移除，模型继续用其他方式回答。参数未通过校验的调用照常返回 `invalid_arguments`，不进入确认。
 
 真实工具运行事件的 `ToolEvent.started_at`、`completed_at`、`duration_ms` 为可选字段：开始时发布 UTC 时间，结束时用单调时钟记录包含安全重试的调用总耗时；终态结果保留时间与查询词白名单（query/company_name），历史未记录时不补造。前端总时长与各节点均统一为秒 s，至多一位小数；进行中基于服务端开始时间计时，完成后使用最终耗时。当前未补记录耗时的系统活动显示「未记录」。此变更不新增工具执行、详情读取接口或恢复入口。
 
@@ -216,6 +219,15 @@ allowed 同时包含公开搜索与本地资料组时是混合任务：`needs_pl
 - 出网复核：`SearchPublicWebTool` 在真正请求搜索服务前独立复核 `require_external_query_approval` 与批准集合，未批准返回 `external_query_not_approved`，不依赖 runtime 单点把关。
 - 快照：`approved_search_queries` / `pending_search_queries` 随暂停快照保存；checkpoint 恢复保留既有批准，运行重连不会重新暂停已批准查询。
 
+### 待确认写入审批（ToolApprovalPolicy）
+
+实现：`backend/app/agent/approval_policy.py`。只对 `ToolSpec.requires_confirmation`（`risk=confirmed_local_write`）的工具生效；当前目录没有该类工具，此接缝为后续本地写操作预留，新增工具只需注册风险声明即可获得完整确认语义。
+
+- 暂停：模型调用需确认工具且参数通过中央校验时，发布 `waiting_approval` 工具事件（`data.arguments` 与 `data.clarification` 选项「允许执行这个操作 / 不要执行这个操作」），运行进入 `waiting_user`（错误码 `tool_approval_required`）；不执行工具、不写工具账本，避免恢复后重复暂停。参数未通过校验的调用不会进入确认。
+- 恢复：点选批准 → 该调用指纹进入 approved 并执行一次；点选拒绝 → 该工具从 route/plan 移除，模型改用其他方式回答，再调用同一工具会被 `tool_not_planned` 拦截；其他回复（含空回复、超长回复）保持待批并重新展示卡片，不消耗模型轮次。
+- 指纹：批准只覆盖「工具名 + 规范化参数」指纹，与重复调用防护共用同一算法；模型改写参数需重新确认。
+- 快照：`approved_tool_fingerprints` / `pending_tool_approval` 随暂停快照保存（默认空、无数据库迁移）；checkpoint 恢复保留既有批准，不会重新暂停已批准调用。
+
 ## 工具目录
 
 工具实现、bootstrap 注册与 ToolSpec 必须一致；无元数据的工具不能注册。`/agent/capabilities` 只返回以下五个工具：
@@ -228,11 +240,11 @@ allowed 同时包含公开搜索与本地资料组时是混合任务：`needs_pl
 | search_public_web | external_read | 带来源的公开搜索，受联网开关与配置约束 |
 | ask_user | read_only | 提问并等待用户选择 |
 
-通用资料工具位于 `tools/library.py`，数据边界在 `library/service.py`。`tools` 包只导出当前工具与基础协议，不加载退役工具；当前工具的参数校验和错误处理位于独立的 `tools/errors.py`。资料来源和聊天附件共用 `documents/parser.py` 与可选的 `documents/ocr.py`，不通过岗位模块执行解析。所有模型调用遵守资料即数据、不执行资料内嵌指令的规则。ToolExecutor 统一处理超时、异常与审计；本地写操作不自动重放。
+通用资料工具位于 `tools/library.py`，数据边界在 `library/service.py`。`tools` 包只导出当前工具与基础协议，不加载退役工具。带 `arguments_model` 的处理器先经 `ToolRegistry.validate_arguments` 中央校验（Pydantic 归一化后再交给 handler，失败统一返回 `invalid_arguments`）；其余错误处理与文案位于独立的 `tools/errors.py`。资料来源和聊天附件共用 `documents/parser.py` 与可选的 `documents/ocr.py`，不通过岗位模块执行解析。所有模型调用遵守资料即数据、不执行资料内嵌指令的规则。ToolExecutor 统一处理超时、异常与审计；本地写操作不自动重放。
 
 ## 执行循环与收敛
 
-新任务和 `waiting_user` 恢复任务共用同一个有界 model/tool loop，不再维护两份执行逻辑。`max_tool_rounds` 限制模型轮数；每轮先检查完成义务，再选择 `required` 或 `auto` 的 `tool_choice`。所有 `AgentRunResult` 都带 `stop_reason`：成功为 `completed`，等待为 `waiting_user`，失败时使用稳定错误码（规划校验失败为 `plan_validation_failed`，待批外发查询为 `external_query_approval_required`），便于 UI、运营看板和回归评测区分停止原因。
+新任务和 `waiting_user` 恢复任务共用同一个有界 model/tool loop，不再维护两份执行逻辑。`max_tool_rounds` 限制模型轮数；每轮先检查完成义务，再选择 `required` 或 `auto` 的 `tool_choice`。所有 `AgentRunResult` 都带 `stop_reason`：成功为 `completed`，等待为 `waiting_user`，失败时使用稳定错误码（规划校验失败为 `plan_validation_failed`，待批外发查询为 `external_query_approval_required`，待确认写入为 `tool_approval_required`），便于 UI、运营看板和回归评测区分停止原因。
 
 循环有三层恢复与防失控规则：
 
@@ -246,7 +258,7 @@ allowed 同时包含公开搜索与本地资料组时是混合任务：`needs_pl
 
 实现：`backend/app/agent/run_store.py`，表为 `agent_execution_runs`、`agent_run_steps`、`agent_tool_executions`。AG-UI 的 `runId` 是运行幂等键，并且只能属于一个对话；重复提交已结束的 `runId` 会复用原模型结果和已绑定的 user/assistant 消息，不会再次调用模型或产生重复消息。
 
-runtime 在进入循环、完成每个工具轮、写入完成修复提示和引用修复提示后保存 `checkpoint`。检查点包含车道、计划、消息、轮数、已完成工具、重复调用防护状态和外发查询批准集合，但不会通过运行状态 API 暴露原始消息。服务启动时把遗留的 `queued` / `running` 运行和 `running` 工具调用标为 `interrupted`；客户端用同一个 `runId` 重试时，从最近检查点继续，不重复追加原始 user 消息。
+runtime 在进入循环、完成每个工具轮、写入完成修复提示和引用修复提示后保存 `checkpoint`。检查点包含车道、计划、消息、轮数、已完成工具、重复调用防护状态、外发查询批准集合以及待确认写入批准集合与待批调用，但不会通过运行状态 API 暴露原始消息。服务启动时把遗留的 `queued` / `running` 运行和 `running` 工具调用标为 `interrupted`；客户端用同一个 `runId` 重试时，从最近检查点继续，不重复追加原始 user 消息。
 
 工具账本以“runId + 工具名/参数指纹”为唯一键：
 
@@ -341,6 +353,7 @@ Base URL 视为对应协议的 API 根地址：显式 OpenAI 兼容客户端不�
 - 工具失败只允许一次同车道重规划；`blocked` / 超时仍立即停。
 - 任务进度由持久化运行账本展示。等待中的下一条消息默认恢复原 run；手输改口会清快照。无改口词且仍落在 `conversation` 的闲聊可能继续锁在旧任务，可点结束任务。
 - 混合任务的逐条外发确认以「查得到的行为」为触发点：只有模型实际调用 `search_public_web` 时才暂停；计划声称要联网但模型改用本地工具回答时不会弹窗，由完成义务和引用校验兜底。
+- 需确认写入（`confirmed_local_write`）同样以「调用发生」为触发点：模型不调用该工具时不会出现确认卡片；当前目录还没有这类工具。
 - 记忆是业务账本，不是「上次同类任务怎么走」的策略记忆。
 - 输入框确认条只在工具返回 `data.clarification` 时出现；模型若只在正文里提问，界面不会自动抽出选项。
 - 未配置模型密钥时仍可登录并浏览资料库/工作台/首页；对话发送会引导到 `#/settings/model`。
@@ -449,3 +462,8 @@ Packy 实际路由以 400 拒绝教程标为支持的 `response_format`，出图
 ### Agent V2.2 单 runtime 能力合成与外发审批（2026-10-15）
 
 单一 `AgentRuntime` 内支持多能力任务：删除联网文本标记与硬改道（`WEB_SEARCH_MARKER`、`ROUTING_MARKERS`、`apply_hard_gates`、`tools_for_kind`），改由 `capability_resolver` 合并车道基线能力与文本信号，联网开关只授权 `search_public_web` 是否进入工具面，并保留旧的单车道行为（纯联网任务照常）。规划分三档：无工具 `none`、单能力组 `static`（确定性兜底计划，简单任务不多花规划调用）、多能力组 `llm`；计划必须通过与注册表一致的 `validate_plan`，完成义务按能力组匹配，计划选用的替代工具会被冻结为实际义务。混合任务（本地资料 + 公开搜索）进入逐条外发审批：模型调用搜索工具时代理层拦截未批查询，展示查询原文供批准/拒绝/自定义，暂停不执行、不写账本；拒绝会移除联网能力；检测到待批快照的回复不再按改口处理。快照新增 `approved_search_queries` / `pending_search_queries`（默认空、无数据库迁移），`run_store.checkpoint` 在运行行不存在时跳过步骤写入以避免外键错误。前端联网开关文案改为「允许按需联网搜索公开信息」并说明混合任务逐条确认。离线评测的 `web_search: true` 现在表示授权而非强制调用。原生与 LiteLLM 两条模型后端共用同一 runtime，未引入第二套 runtime 或事件协议。
+
+
+### 工具确认接缝与中央参数校验（2026-10-16）
+
+处理器可通过可选 `arguments_model` 声明 Pydantic 参数模型，`ToolRegistry.validate_arguments` 在 ToolExecutor 执行前中央校验并传递归一化参数，失败统一返回 `invalid_arguments`，避免每个 handler 重复自校验。新增 `agent/approval_policy.py`：`risk=confirmed_local_write` 的工具（`ToolSpec.requires_confirmation`）被调用时，runtime 在重复调用防护之前暂停为 `waiting_approval` / `tool_approval_required`，展示工具标题与参数摘要供批准或拒绝；暂停不执行、不写工具账本。批准绑定「工具名 + 规范化参数」指纹；拒绝把工具从 route/plan 移除，之后再次调用按 `tool_not_planned` 拦截；其他回复保持待批。快照新增 `approved_tool_fingerprints` / `pending_tool_approval`（默认空、无数据库迁移），checkpoint 恢复保留批准；`should_abandon_snapshot` 对存在待批写入的回复不再按改口处理。当前五个产品工具均未声明该风险，接缝为后续写工具预留；回归见 `tests/test_tool_approval_policy.py`、`test_tool_harness.py` 与 `test_agent_runtime.py` 的确认流程用例。

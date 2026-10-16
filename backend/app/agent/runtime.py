@@ -13,6 +13,8 @@ from time import perf_counter
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
+from pydantic import ValidationError
+
 from ..domain import (
     AgentMessage,
     AgentPlan,
@@ -22,6 +24,7 @@ from ..domain import (
     AgentStreamEvent,
     ModelRequest,
     ModelResponse,
+    PendingToolApproval,
     ToolCall,
     ToolError,
     ToolEvent,
@@ -33,6 +36,13 @@ from ..tools import ToolContext, ToolRegistry
 from ..observability.model_context import model_call_scope
 from .model_binding import internal_model_selection, is_bound_selection, is_legacy_selection, selection_identity
 from .model_router import ModelRouter
+from .approval_policy import (
+    TOOL_APPROVAL_REQUIRED,
+    ToolApprovalState,
+    approval_payload as tool_approval_payload,
+    arguments_summary,
+    resolve_approval_reply,
+)
 from .capability_resolver import is_mixed_run, requests_public_web
 from .completion import validate_completion
 from .egress_policy import (
@@ -126,16 +136,20 @@ def _recent_company_name(history: list[AgentMessage]) -> str | None:
     return None
 
 
-def _drop_web_from_route(route: TaskRoute) -> TaskRoute:
+def _drop_tool_from_route(route: TaskRoute, tool_name: str) -> TaskRoute:
     return TaskRoute(
         kind=route.kind,
         needs_plan=route.needs_plan,
-        allowed_tools=tuple(name for name in route.allowed_tools if name != SEARCH_TOOL_NAME),
-        required_tools=tuple(name for name in route.required_tools if name != SEARCH_TOOL_NAME),
+        allowed_tools=tuple(name for name in route.allowed_tools if name != tool_name),
+        required_tools=tuple(name for name in route.required_tools if name != tool_name),
     )
 
 
-def _drop_web_from_plan(plan: AgentPlan | None, route: TaskRoute) -> AgentPlan | None:
+def _drop_web_from_route(route: TaskRoute) -> TaskRoute:
+    return _drop_tool_from_route(route, SEARCH_TOOL_NAME)
+
+
+def _drop_tool_from_plan(plan: AgentPlan | None, route: TaskRoute) -> AgentPlan | None:
     if plan is None:
         return None
     allowed = set(route.allowed_tools)
@@ -190,6 +204,7 @@ class AgentRuntime:
         self._run_context: ContextVar[str] = ContextVar(f"run-{id(self)}", default="")
         self._search_context: ContextVar[WebSearchOptions | None] = ContextVar(f"search-{id(self)}", default=None)
         self._egress_context: ContextVar[EgressState | None] = ContextVar(f"egress-{id(self)}", default=None)
+        self._approval_context: ContextVar[ToolApprovalState | None] = ContextVar(f"approval-{id(self)}", default=None)
         self._tool_executor = ToolExecutor(tools, tool_timeout_seconds)
 
     @property
@@ -293,10 +308,15 @@ class AgentRuntime:
         if resume is not None:
             egress.approved = list(resume.approved_search_queries)
             egress.pending = list(resume.pending_search_queries)
+        approval = ToolApprovalState()
+        if resume is not None:
+            approval.approved = list(resume.approved_tool_fingerprints)
+            approval.pending = resume.pending_tool_approval
         selection_token = self._selection_context.set(selection)
         run_token = self._run_context.set(str(run_id or ""))
         search_token = self._search_context.set(options)
         egress_token = self._egress_context.set(egress)
+        approval_token = self._approval_context.set(approval)
         try:
             result = await self._run(
                 user_content, platform_name=platform_name, history=history,
@@ -311,6 +331,7 @@ class AgentRuntime:
             self._selection_context.reset(selection_token)
             self._search_context.reset(search_token)
             self._egress_context.reset(egress_token)
+            self._approval_context.reset(approval_token)
 
     async def _run(
         self,
@@ -655,6 +676,7 @@ class AgentRuntime:
         ]
         await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=events[0]))
         messages = [*resume.messages]
+        approval = self._approval_context.get()
         if resume.resume_mode == "waiting_user":
             messages.append(
                 AgentMessage(
@@ -667,7 +689,7 @@ class AgentRuntime:
                 decision = resolve_egress_reply(user_content, egress.pending)
                 if decision.declined:
                     route = _drop_web_from_route(route)
-                    plan = _drop_web_from_plan(plan, route)
+                    plan = _drop_tool_from_plan(plan, route)
                     egress.revoke()
                     messages.append(
                         AgentMessage(
@@ -717,6 +739,57 @@ class AgentRuntime:
                         selected_platform=selected_platform,
                         round_number=resume.rounds_used,
                         error=ToolError(code=APPROVAL_REQUIRED, message=content),
+                        events=events,
+                        route=route,
+                        plan=plan,
+                        messages=messages,
+                        replan_used=resume.replan_used,
+                        citation_retry_used=resume.citation_retry_used,
+                        completed_tools=set(resume.completed_tools),
+                        completed_tool_calls=set(resume.completed_tool_calls),
+                        repeated_tool_calls=dict(resume.repeated_tool_calls),
+                    )
+            elif approval is not None and approval.pending is not None:
+                pending = approval.pending
+                decision = resolve_approval_reply(user_content)
+                if decision.declined:
+                    route = _drop_tool_from_route(route, pending.tool_name)
+                    plan = _drop_tool_from_plan(plan, route)
+                    approval.clear_pending()
+                    messages.append(
+                        AgentMessage(
+                            role="system",
+                            content=(
+                                f"用户拒绝执行「{pending.title}」，该操作已从本任务移除。"
+                                "不要再次请求执行；缺少该操作无法完成时直接说明。"
+                            ),
+                        )
+                    )
+                elif decision.approved:
+                    approval.approve(pending.fingerprint)
+                    messages.append(
+                        AgentMessage(
+                            role="system",
+                            content=f"用户已批准执行「{pending.title}」，可以继续原计划。",
+                        )
+                    )
+                else:
+                    content = f"“{pending.title}”需要确认后才能执行"
+                    event = ToolEvent(
+                        round=resume.rounds_used,
+                        tool_call_id=pending.tool_call_id or f"tool-approval-{resume.rounds_used}",
+                        tool_name=pending.tool_name,
+                        status="waiting_approval",
+                        message=content,
+                        data={"summary": pending.summary, **tool_approval_payload(pending.title, pending.summary)},
+                    )
+                    events.append(event)
+                    await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
+                    return self._waiting_result(
+                        content=content,
+                        selected_platform=selected_platform,
+                        round_number=resume.rounds_used,
+                        error=ToolError(code=TOOL_APPROVAL_REQUIRED, message=content),
                         events=events,
                         route=route,
                         plan=plan,
@@ -836,6 +909,7 @@ class AgentRuntime:
         clarification: AgentClarification | None = None,
     ) -> AgentRunSnapshot:
         egress = self._egress_context.get()
+        approval = self._approval_context.get()
         return AgentRunSnapshot(
             model_selection=self._current_model_selection(),
             web_search_options=self._search_context.get(),
@@ -855,6 +929,8 @@ class AgentRuntime:
             completed_tools=sorted(completed_tools),
             completed_tool_calls=sorted(completed_tool_calls),
             repeated_tool_calls=repeated_tool_calls,
+            approved_tool_fingerprints=list(approval.approved) if approval else [],
+            pending_tool_approval=approval.pending if approval else None,
         )
 
     def _checkpoint_run(
@@ -887,6 +963,13 @@ class AgentRuntime:
                 repeated_tool_calls=repeated_tool_calls,
             ),
         )
+
+    def _arguments_valid(self, tool_call: ToolCall) -> bool:
+        try:
+            self._tools.validate_arguments(tool_call.name, tool_call.arguments)
+        except ValidationError:
+            return False
+        return True
 
     def _append_visible_tools(
         self,
@@ -1277,6 +1360,65 @@ class AgentRuntime:
                             selected_platform=selected_platform,
                             round_number=round_number,
                             error=ToolError(code=APPROVAL_REQUIRED, message=content),
+                            events=events,
+                            route=route,
+                            plan=plan,
+                            messages=messages,
+                            replan_used=replan_used,
+                            citation_retry_used=citation_retry_used,
+                            completed_tools=completed_tools,
+                            completed_tool_calls=completed_tool_calls,
+                            repeated_tool_calls=repeated_tool_calls,
+                        )
+                approval = self._approval_context.get()
+                spec = tool_specs[tool_call.name]
+                if spec.requires_confirmation and approval is not None:
+                    fingerprint = _tool_call_fingerprint(tool_call.name, tool_call.arguments)
+                    if not approval.allows(fingerprint) and self._arguments_valid(tool_call):
+                        summary = arguments_summary(tool_call.arguments)
+                        approval.hold(
+                            PendingToolApproval(
+                                tool_name=tool_call.name,
+                                tool_call_id=tool_call.id,
+                                fingerprint=fingerprint,
+                                title=spec.title,
+                                summary=summary,
+                            )
+                        )
+                        content = f"“{spec.title}”需要确认后才能执行"
+                        event = ToolEvent(
+                            round=round_number,
+                            tool_call_id=tool_call.id,
+                            tool_name=tool_call.name,
+                            status="waiting_approval",
+                            message=content,
+                            data={"summary": summary, **tool_approval_payload(spec.title, summary)},
+                        )
+                        events.append(event)
+                        await self._publish(
+                            event_callback,
+                            AgentStreamEvent(type="agent_event", event=event),
+                        )
+                        messages.append(
+                            AgentMessage(
+                                role="tool",
+                                tool_call_id=tool_call.id,
+                                content="系统尚未执行该操作，正在等待用户确认。",
+                                payload={
+                                    "status": "waiting_approval",
+                                    "tool_name": tool_call.name,
+                                    "error": {
+                                        "code": TOOL_APPROVAL_REQUIRED,
+                                        "message": "等待用户确认工具执行",
+                                    },
+                                },
+                            )
+                        )
+                        return self._waiting_result(
+                            content=content,
+                            selected_platform=selected_platform,
+                            round_number=round_number,
+                            error=ToolError(code=TOOL_APPROVAL_REQUIRED, message=content),
                             events=events,
                             route=route,
                             plan=plan,

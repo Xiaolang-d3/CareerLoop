@@ -69,6 +69,7 @@ class AskUserTool:
         ),
         input_schema=AskUserArguments.model_json_schema(),
     )
+    arguments_model = AskUserArguments
 
     async def execute(self, arguments: dict[str, Any], context: ToolContext) -> ToolResult:
         del context

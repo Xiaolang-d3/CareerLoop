@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel
 
@@ -24,6 +24,8 @@ class ToolContext(BaseModel):
 
 class ToolHandler(Protocol):
     definition: ToolDefinition
+    # Optional Pydantic model; when present the registry validates centrally.
+    arguments_model: type[BaseModel] | None
 
     async def execute(self, arguments: dict, context: ToolContext) -> ToolResult:
         ...
@@ -63,3 +65,16 @@ class ToolRegistry(NamedRegistry[ToolHandler]):
             for spec in self.specs()
             if capabilities & set(spec.capabilities)
         ]
+
+    def validate_arguments(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Validate one call before execution and return normalized arguments.
+
+        Handlers that declare ``arguments_model`` get schema validation at the
+        harness boundary; others keep the raw-dict contract and validate in
+        their own error boundary.
+        """
+        handler = self.get(name)
+        model = getattr(handler, "arguments_model", None)
+        if model is None:
+            return arguments
+        return model.model_validate(arguments).model_dump(mode="json")

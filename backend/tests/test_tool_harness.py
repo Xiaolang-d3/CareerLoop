@@ -4,6 +4,8 @@ import asyncio
 import unittest
 from unittest.mock import patch
 
+from pydantic import BaseModel, Field
+
 from app.agent.completion import validate_completion
 from app.agent.orchestration import TaskRoute
 from app.agent.tool_executor import ToolExecutor
@@ -65,12 +67,42 @@ class BrokenTool:
         raise RuntimeError("boom")
 
 
+class ValidatedTool:
+    class Arguments(BaseModel):
+        query: str = Field(min_length=2)
+        limit: int = Field(default=3, ge=1, le=10)
+
+    definition = ToolDefinition(
+        name="test_validated",
+        description="测试中央参数校验",
+        input_schema=Arguments.model_json_schema(),
+    )
+    spec = ToolSpec(
+        name="test_validated",
+        title="测试中央参数校验",
+        risk="read_only",
+        capabilities=frozenset({"test.validated"}),
+    )
+    arguments_model = Arguments
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.seen: dict | None = None
+
+    async def execute(self, arguments, context):
+        self.calls += 1
+        self.seen = arguments
+        return ToolResult(ok=True, status="done", message="参数通过")
+
+
 class ToolHarnessTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.tools = ToolRegistry()
         self.tools.register_handler(SearchTool())
         self.tools.register_handler(SlowTool())
         self.tools.register_handler(BrokenTool())
+        self.validated = ValidatedTool()
+        self.tools.register_handler(self.validated)
         self.executor = ToolExecutor(self.tools, default_timeout_seconds=5)
         self.context = ToolContext(platform_name="manual")
 
@@ -157,6 +189,30 @@ class ToolHarnessTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.status, "failed")
         self.assertEqual(result.error.code, "tool_execution_failed")
+
+    async def test_executor_rejects_invalid_arguments_before_handler(self) -> None:
+        result = await self.executor.execute(
+            ToolCall(id="call-4", name="test_validated", arguments={"query": "x"}),
+            self.context,
+            round_number=1,
+            conversation_id=None,
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.error.code, "invalid_arguments")
+        self.assertEqual(self.validated.calls, 0)
+
+    async def test_executor_passes_normalized_arguments_to_handler(self) -> None:
+        result = await self.executor.execute(
+            ToolCall(id="call-5", name="test_validated", arguments={"query": "有效查询", "unknown": 1}),
+            self.context,
+            round_number=1,
+            conversation_id=None,
+        )
+
+        self.assertEqual(result.status, "done")
+        self.assertEqual(self.validated.calls, 1)
+        self.assertEqual(self.validated.seen, {"query": "有效查询", "limit": 3})
 
 
 if __name__ == "__main__":
