@@ -95,6 +95,10 @@ def should_abandon_snapshot(
         # interpreted as approve/decline/custom query, never as a new topic;
         # keyword routing must not hijack replies that merely mention 联网.
         return False
+    if snapshot.pending_tool_approval is not None:
+        # The run is paused on a tool confirmation card. Any reply that is not
+        # an explicit abandon stays on the card until it is answered.
+        return False
     kind = detect_kind(routing_text or text)
     return kind not in {"conversation", snapshot.route_kind}
 

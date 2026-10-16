@@ -130,6 +130,16 @@ class AgentClarification(BaseModel):
     allow_custom: bool = True
 
 
+class PendingToolApproval(BaseModel):
+    """A held tool call waiting for one explicit user confirmation."""
+
+    tool_name: str = Field(min_length=1)
+    tool_call_id: str = ""
+    fingerprint: str = Field(min_length=1)
+    title: str = ""
+    summary: str = ""
+
+
 class AgentRunSnapshot(BaseModel):
     # Internal immutable identity only. Credentials are resolved from versioned storage.
     model_selection: dict[str, Any] = Field(default_factory=dict)
@@ -150,6 +160,8 @@ class AgentRunSnapshot(BaseModel):
     repeated_tool_calls: dict[str, int] = Field(default_factory=dict)
     approved_search_queries: list[str] = Field(default_factory=list)
     pending_search_queries: list[str] = Field(default_factory=list)
+    approved_tool_fingerprints: list[str] = Field(default_factory=list)
+    pending_tool_approval: PendingToolApproval | None = None
 
 
 class AgentRunResult(BaseModel):

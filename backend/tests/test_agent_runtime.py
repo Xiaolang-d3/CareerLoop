@@ -4,12 +4,17 @@ import unittest
 from datetime import datetime
 from unittest.mock import patch
 
+from pydantic import BaseModel, Field
+
+from app.agent.approval_policy import APPROVE_OPTION_LABEL as TOOL_APPROVE_LABEL
+from app.agent.approval_policy import DECLINE_OPTION_LABEL as TOOL_DECLINE_LABEL
 from app.agent.egress_policy import APPROVE_OPTION_LABEL, DECLINE_OPTION_LABEL
 from app.agent.orchestration import route_task
-from app.agent.runtime import AgentRuntime
+from app.agent.runtime import AgentRuntime, _tool_call_fingerprint
 from app.domain import AgentMessage, AgentRunSnapshot, AgentClarification, ClarificationOption, ModelResponse, ModelStreamEvent, ToolCall, ToolDefinition, ToolError, ToolResult
 from app.search_options import WebSearchOptions
 from app.models import ModelProviderError, ModelProviderRegistry
+from app.tooling import ToolSpec
 from app.tools import AskUserTool, ToolContext, ToolRegistry
 
 
@@ -54,6 +59,34 @@ class CountingTool:
                 "evidence": [{"id": "S1", "url": "https://example.com/source", "excerpt": "示例信息"}],
             }
         return ToolResult(ok=True, status="done", message="工具完成", data=data)
+
+
+class ConfirmingWriteTool:
+    class Arguments(BaseModel):
+        note: str = Field(min_length=1)
+
+    arguments_model = Arguments
+
+    def __init__(self) -> None:
+        self.definition = ToolDefinition(
+            name="test_write",
+            description="测试需确认写入",
+            input_schema=self.Arguments.model_json_schema(),
+        )
+        self.spec = ToolSpec(
+            name="test_write",
+            title="保存笔记",
+            risk="confirmed_local_write",
+            capabilities=frozenset({"library.propose"}),
+            priority=1,
+        )
+        self.calls = 0
+        self.seen: dict | None = None
+
+    async def execute(self, arguments, context):
+        self.calls += 1
+        self.seen = arguments
+        return ToolResult(ok=True, status="done", message="已写入")
 
 
 def runtime_for(model, *handlers, max_rounds: int = 5) -> AgentRuntime:
@@ -400,6 +433,114 @@ class MixedRunEgressTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.status, "done")
         self.assertEqual(search.calls, 1)
+        self.assertFalse([event for event in result.events if event.status == "waiting_approval"])
+
+
+class ToolConfirmationTest(unittest.IsolatedAsyncioTestCase):
+    MESSAGE = "记住这条知识：周五交付"
+    ARGUMENTS = {"note": "周五交付"}
+
+    def _tool_call(self, call_id: str = "write-1") -> ModelResponse:
+        return ModelResponse(
+            tool_calls=[ToolCall(id=call_id, name="test_write", arguments=dict(self.ARGUMENTS))]
+        )
+
+    async def _pause(self):
+        tool = ConfirmingWriteTool()
+        paused = await runtime_for(ScriptedModel([self._tool_call()]), tool).run(self.MESSAGE)
+        self.assertEqual(tool.calls, 0)
+        return paused
+
+    async def test_required_write_pauses_before_executing(self) -> None:
+        paused = await self._pause()
+
+        self.assertEqual(paused.status, "waiting_user")
+        self.assertEqual(paused.error.code, "tool_approval_required")
+        pending = paused.snapshot.pending_tool_approval
+        self.assertIsNotNone(pending)
+        self.assertEqual(pending.tool_name, "test_write")
+        self.assertEqual(pending.fingerprint, _tool_call_fingerprint("test_write", self.ARGUMENTS))
+        self.assertEqual(paused.snapshot.approved_tool_fingerprints, [])
+        waiting = next(event for event in paused.events if event.status == "waiting_approval")
+        self.assertEqual(waiting.data["clarification"]["options"][0]["label"], TOOL_APPROVE_LABEL)
+        self.assertIn("保存笔记", waiting.data["clarification"]["question"])
+        self.assertIn("note=周五交付", waiting.data["clarification"]["question"])
+
+    async def test_approved_write_executes_exactly_once(self) -> None:
+        paused = await self._pause()
+        tool = ConfirmingWriteTool()
+        model = ScriptedModel([self._tool_call("write-2"), ModelResponse(content="已保存")])
+
+        resumed = await runtime_for(model, tool).run(TOOL_APPROVE_LABEL, resume=paused.snapshot)
+
+        self.assertEqual(resumed.status, "done")
+        self.assertEqual(tool.calls, 1)
+        self.assertEqual(tool.seen, self.ARGUMENTS)
+        self.assertFalse([event for event in resumed.events if event.status == "waiting_approval"])
+
+    async def test_declined_write_is_removed_and_never_executed(self) -> None:
+        paused = await self._pause()
+        tool = ConfirmingWriteTool()
+        model = ScriptedModel([ModelResponse(content="好，先不保存。")])
+
+        resumed = await runtime_for(model, tool).run(TOOL_DECLINE_LABEL, resume=paused.snapshot)
+
+        self.assertEqual(resumed.status, "done")
+        self.assertEqual(tool.calls, 0)
+        self.assertEqual(resumed.plan.steps, [])
+
+    async def test_declined_write_cannot_be_called_again(self) -> None:
+        paused = await self._pause()
+        tool = ConfirmingWriteTool()
+        model = ScriptedModel([self._tool_call("write-3")])
+
+        resumed = await runtime_for(model, tool).run(TOOL_DECLINE_LABEL, resume=paused.snapshot)
+
+        self.assertEqual(resumed.status, "failed")
+        self.assertEqual(resumed.error.code, "tool_not_planned")
+        self.assertEqual(tool.calls, 0)
+
+    async def test_unrecognized_reply_keeps_the_confirmation_pending(self) -> None:
+        paused = await self._pause()
+        tool = ConfirmingWriteTool()
+
+        resumed = await runtime_for(ScriptedModel([]), tool).run("改成周一再保存", resume=paused.snapshot)
+
+        self.assertEqual(resumed.status, "waiting_user")
+        self.assertEqual(resumed.error.code, "tool_approval_required")
+        self.assertEqual(tool.calls, 0)
+        self.assertIsNotNone(resumed.snapshot.pending_tool_approval)
+        self.assertEqual(resumed.snapshot.approved_tool_fingerprints, [])
+
+    async def test_checkpoint_resume_keeps_prior_approval_without_repausing(self) -> None:
+        paused = await self._pause()
+        fingerprint = _tool_call_fingerprint("test_write", self.ARGUMENTS)
+        checkpoint = paused.snapshot.model_copy(update={
+            "resume_mode": "checkpoint",
+            "pending_tool_approval": None,
+            "approved_tool_fingerprints": [fingerprint],
+        })
+        tool = ConfirmingWriteTool()
+        model = ScriptedModel([self._tool_call("write-4"), ModelResponse(content="已保存")])
+
+        resumed = await runtime_for(model, tool).run("继续", resume=checkpoint)
+
+        self.assertEqual(resumed.status, "done")
+        self.assertEqual(tool.calls, 1)
+        self.assertFalse([event for event in resumed.events if event.status == "waiting_approval"])
+
+    async def test_invalid_arguments_never_reach_the_confirmation_card(self) -> None:
+        tool = ConfirmingWriteTool()
+        model = ScriptedModel([
+            ModelResponse(tool_calls=[ToolCall(id="write-bad", name="test_write", arguments={})]),
+            ModelResponse(content="补充说明"),
+        ])
+
+        result = await runtime_for(model, tool).run(self.MESSAGE)
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.error.code, "invalid_arguments")
+        self.assertEqual(tool.calls, 0)
         self.assertFalse([event for event in result.events if event.status == "waiting_approval"])
 
 
