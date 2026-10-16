@@ -4,7 +4,7 @@ import asyncio
 import unittest
 from unittest.mock import patch
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from app.agent.completion import validate_completion
 from app.agent.orchestration import TaskRoute
@@ -12,6 +12,7 @@ from app.agent.tool_executor import ToolExecutor
 from app.domain import AgentPlan, AgentPlanStep, ToolCall, ToolDefinition, ToolResult
 from app.tooling import ToolSpec
 from app.tools import ToolContext, ToolRegistry
+from app.tools.errors import describe_validation_error
 
 
 class SearchTool:
@@ -200,6 +201,9 @@ class ToolHarnessTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.status, "failed")
         self.assertEqual(result.error.code, "invalid_arguments")
+        self.assertEqual(result.message, "工具 test_validated 参数不合法")
+        self.assertIn("query", result.error.message)
+        self.assertNotIn("\n", result.error.message)
         self.assertEqual(self.validated.calls, 0)
 
     async def test_executor_passes_normalized_arguments_to_handler(self) -> None:
@@ -213,6 +217,36 @@ class ToolHarnessTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "done")
         self.assertEqual(self.validated.calls, 1)
         self.assertEqual(self.validated.seen, {"query": "有效查询", "limit": 3})
+
+    def test_validation_error_summary_is_compact_and_bounded(self) -> None:
+        with self.assertRaises(ValidationError) as caught:
+            ValidatedTool.Arguments.model_validate({"query": "x", "limit": 99})
+
+        summary = describe_validation_error(caught.exception)
+
+        self.assertNotIn("\n", summary)
+        self.assertIn("query", summary)
+        self.assertIn("limit", summary)
+
+        class Wide(BaseModel):
+            a: str
+            b: str
+            c: str
+            d: str
+            e: str
+            f: str
+            g: str
+
+        with self.assertRaises(ValidationError) as wide:
+            Wide.model_validate({})
+
+        capped = describe_validation_error(wide.exception)
+        self.assertEqual(capped.count("；"), 4)
+
+    def test_validation_error_summary_handles_non_pydantic_errors(self) -> None:
+        summary = describe_validation_error(ValueError("bad\nvalue"))
+
+        self.assertEqual(summary, "bad value")
 
 
 if __name__ == "__main__":
