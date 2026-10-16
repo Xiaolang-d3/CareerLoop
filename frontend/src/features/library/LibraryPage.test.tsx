@@ -50,8 +50,7 @@ function props() {
   };
 }
 async function preview() {
-  fireEvent.click(screen.getByRole("button", { name: "操作 读书笔记" }));
-  fireEvent.click(screen.getByRole("button", { name: "快速预览" }));
+  fireEvent.click(screen.getByRole("button", { name: "预览 读书笔记" }));
   return screen.findByRole("complementary", { name: "文件快速预览" });
 }
 describe("file library", () => {
@@ -72,10 +71,63 @@ describe("file library", () => {
     expect(screen.queryByLabelText("筛选来源")).not.toBeInTheDocument();
     expect(screen.getByText("对话成果")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
+    expect(screen.getByRole("columnheader", { name: "AI 使用" })).toBeInTheDocument();
     expect(screen.getByRole("table", { name: "文件列表" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "文件库更多选项" }));
+    expect(screen.getByRole("button", { name: "列表视图" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByRole("button", { name: "网格视图" }));
     expect(screen.getByRole("table")).toHaveClass("fl-grid");
+    expect(screen.getByRole("button", { name: "网格视图" })).toHaveAttribute("aria-pressed", "true");
+  });
+  it("previews filenames without selecting and opens the reader without loading the file twice", async () => {
+    const p = props();
+    render(<LibraryPage {...p} />);
+    const row = screen.getByRole("button", { name: "预览 读书笔记" }).closest("tr")!;
+    const pane = await preview();
+    expect(within(pane).getByRole("heading", { name: "读书笔记" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "选择 读书笔记" })).not.toBeChecked();
+    expect(screen.queryByRole("toolbar", { name: "批量文件操作" })).not.toBeInTheDocument();
+    expect(row).toHaveClass("is-previewing");
+    fireEvent.doubleClick(row);
+    expect(screen.getByRole("region", { name: "文件阅读器" })).toBeInTheDocument();
+    expect(p.onLoadSource).toHaveBeenCalledOnce();
+  });
+  it("keeps checkbox and file actions separate from reading and exposes batch actions directly", () => {
+    const p = props();
+    render(<LibraryPage {...p} />);
+    const checkbox = screen.getByRole("checkbox", { name: "选择 读书笔记" });
+    fireEvent.click(checkbox);
+    fireEvent.doubleClick(checkbox);
+    const toolbar = screen.getByRole("toolbar", { name: "批量文件操作" });
+    expect(within(toolbar).getByRole("button", { name: "加入主题集合" })).toBeInTheDocument();
+    expect(within(toolbar).getByRole("button", { name: "移动" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "操作 读书笔记" }));
+    expect(screen.getByRole("button", { name: "快速预览" })).toBeInTheDocument();
+    expect(p.onLoadSource).not.toHaveBeenCalled();
+  });
+  it("supports keyboard preview and full reading without changing file selections", async () => {
+    const p = props();
+    render(<LibraryPage {...p} />);
+    const row = screen.getByRole("button", { name: "预览 读书笔记" }).closest("tr")!;
+    fireEvent.keyDown(row, { key: " ", code: "Space" });
+    await screen.findByRole("complementary", { name: "文件快速预览" });
+    expect(screen.getByRole("checkbox", { name: "选择 读书笔记" })).not.toBeChecked();
+    fireEvent.keyDown(row, { key: "Enter" });
+    expect(screen.getByRole("region", { name: "文件阅读器" })).toBeInTheDocument();
+    expect(p.onLoadSource).toHaveBeenCalledOnce();
+  });
+  it("closes the filter popover with Escape without closing the reading panel", async () => {
+    render(<LibraryPage {...props()} />);
+    await preview();
+    const trigger = screen.getByRole("button", { name: "筛选" });
+    fireEvent.click(trigger);
+    const origin = screen.getByLabelText("筛选来源");
+    fireEvent.keyDown(origin, { key: "Escape" });
+    expect(screen.queryByLabelText("筛选来源")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    expect(screen.getByRole("complementary", { name: "文件快速预览" })).toBeInTheDocument();
+    fireEvent.click(trigger);
+    fireEvent.pointerDown(screen.getByRole("heading", { name: "文件库" }));
+    expect(screen.queryByLabelText("筛选来源")).not.toBeInTheDocument();
   });
   it("opens a saved result directly and consumes the initial source once", async () => {
     const p = props(), consumed = vi.fn();
@@ -104,7 +156,7 @@ describe("file library", () => {
   it("creates redacted notes in the current folder", async () => {
     const p = props();
     render(<LibraryPage {...p} />);
-    fireEvent.click(screen.getByRole("button", { name: "项目资料" }));
+    fireEvent.change(screen.getByLabelText("筛选目录"), { target: { value: "3" } });
     fireEvent.click(screen.getByRole("button", { name: "添加" }));
     fireEvent.click(screen.getByRole("button", { name: "新建笔记" }));
     fireEvent.change(screen.getByLabelText("文件名称"), { target: { value: "会议纪要" } });
@@ -145,7 +197,6 @@ describe("file library", () => {
     await waitFor(() => expect(p.onUseForChat).toHaveBeenCalledWith([8, 7]));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     fireEvent.click(screen.getByRole("checkbox", { name: "选择当前全部文件" }));
-    fireEvent.click(screen.getByRole("button", { name: "更多文件操作" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "移动" })).not.toBeDisabled());
     fireEvent.click(screen.getByRole("button", { name: "移动" }));
     fireEvent.change(screen.getByLabelText("目标文件夹"), { target: { value: "3" } });
@@ -216,7 +267,7 @@ describe("file library", () => {
     ];
     const search = vi.fn().mockResolvedValue(files);
     render(<LibraryPage {...p} sources={files} onSearchSources={search} />);
-    fireEvent.click(screen.getByRole("button", { name: "项目资料" }));
+    fireEvent.change(screen.getByLabelText("筛选目录"), { target: { value: "3" } });
     fireEvent.click(screen.getByRole("button", { name: "筛选" }));
     fireEvent.change(screen.getByLabelText("筛选来源"), { target: { value: "chat" } });
     fireEvent.change(screen.getByLabelText("筛选 AI 使用"), { target: { value: "archive" } });
@@ -299,7 +350,6 @@ describe("file library", () => {
     await waitFor(() => expect(p.onCreateCollection).toHaveBeenCalledWith("研究资料"));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 读书笔记" }));
-    fireEvent.click(screen.getByRole("button", { name: "更多文件操作" }));
     fireEvent.click(screen.getByRole("button", { name: "加入主题集合" }));
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "加入主题集合" }));
     await waitFor(() => expect(p.onUpdateCollectionSources).toHaveBeenCalledWith(10, [7], "add"));
@@ -311,7 +361,6 @@ describe("file library", () => {
     p.onUpdateCollectionSources.mockRejectedValue(new Error("集合保存失败"));
     render(<LibraryPage {...p} collections={[{ id: 10, name: "阅读", source_ids: [], file_count: 0 }]} />);
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 读书笔记" }));
-    fireEvent.click(screen.getByRole("button", { name: "更多文件操作" }));
     fireEvent.click(screen.getByRole("button", { name: "加入主题集合" }));
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "加入主题集合" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("集合保存失败");
@@ -323,7 +372,6 @@ describe("file library", () => {
     const p = props();
     render(<LibraryPage {...p} />);
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 读书笔记" }));
-    fireEvent.click(screen.getByRole("button", { name: "更多文件操作" }));
     fireEvent.click(screen.getByRole("button", { name: "加入主题集合" }));
     expect(screen.getByLabelText("目标主题集合")).toHaveValue("new");
     fireEvent.change(screen.getByLabelText("主题集合名称"), { target: { value: "我的阅读" } });

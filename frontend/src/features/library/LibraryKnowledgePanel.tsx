@@ -19,7 +19,7 @@ export function LibraryKnowledgePanel({ sources, pendingFacts, confirmedFacts, w
   const readyCount = sources.filter((source) => !source.trashed_at && knowledgeUse(source) === "ready").length;
   return <section className="fl-knowledge" aria-label="知识管理">
     <header>
-      <div><h1>让资料成为可复用的知识</h1><p>长期使用的资料和你确认的知识分别管理。</p></div>
+      <div><h2>让资料成为可复用的知识</h2><p>长期使用的资料和你确认的知识分别管理。</p></div>
       <button type="button" className="fl-button" onClick={onShowSources}><FileText size={17} />查看长期资料</button>
     </header>
     <div className="fl-knowledge-summary" aria-label="知识概览">

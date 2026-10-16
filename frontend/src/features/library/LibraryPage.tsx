@@ -7,6 +7,7 @@ import {
   FileImage,
   FileText,
   Folder,
+  FolderPlus,
   Info,
   LayoutGrid,
   List,
@@ -118,7 +119,7 @@ function FileTypeIcon({ source }: { source: LibrarySource }) {
   const Icon = kind === "image" ? FileImage : FileText;
   return (
     <span className={`fl-file-icon ${kind}`}>
-      <Icon size={23} strokeWidth={1.6} />
+      <Icon size={16} strokeWidth={1.7} />
     </span>
   );
 }
@@ -132,7 +133,12 @@ function sizeLabel(source: LibrarySource) {
 }
 function dateLabel(value: string) {
   const date = new Date(/Z|\+\d\d:\d\d$/.test(value) ? value : value.replace(" ", "T") + "Z");
-  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
+  if (Number.isNaN(date.getTime())) return "—";
+  const start = (item: Date) => new Date(item.getFullYear(), item.getMonth(), item.getDate()).getTime();
+  const days = Math.round((start(new Date()) - start(date)) / 86400000);
+  if (days === 0) return "今天";
+  if (days === 1) return "昨天";
+  return date.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
 }
 function Button({
   label,
@@ -176,6 +182,7 @@ export function LibraryPage(props: Props) {
     [grid, setGrid] = useState(false),
     [ascending, setAscending] = useState(false);
   const [preview, setPreview] = useState<LibrarySourceDetail | null>(null),
+    [previewId, setPreviewId] = useState<number | null>(null),
     [full, setFull] = useState(false),
     [loading, setLoading] = useState(false),
     [mode, setMode] = useState<"original" | "text">("original");
@@ -235,6 +242,11 @@ export function LibraryPage(props: Props) {
   }, [sources]);
   const visible = visibleLibrarySources(sources, { category, folderId, unfiled, filters, query, searchIds, ascending, collectionSourceIds: collection?.source_ids });
   const filterActive = collectionId !== null || folderId !== null || unfiled || filters.origin !== "all" || filters.knowledge !== "all";
+  const scopeLabel = query
+    ? "搜索结果"
+    : category === "trash"
+      ? "已删除文件"
+      : collection?.name || (filters.knowledge === "ready" ? "长期使用的资料" : category === "all" ? "" : categories.find(([key]) => key === category)?.[1] || "");
   function resetFilters() {
     setFolderId(null);
     setUnfiled(false);
@@ -266,6 +278,7 @@ export function LibraryPage(props: Props) {
   function closePreview() {
     request.current += 1;
     setPreview(null);
+    setPreviewId(null);
     setLoading(false);
     setFull(false);
     setDraft(null);
@@ -282,10 +295,15 @@ export function LibraryPage(props: Props) {
     closePreview();
   }
   async function open(id: number, complete = false) {
+    if (previewId === id && (preview || loading)) {
+      if (complete) setFull(true);
+      return;
+    }
     const sequence = ++request.current;
     setArea("files");
     setLoading(true);
     setPreview(null);
+    setPreviewId(id);
     setFull(complete);
     setMode("original");
     setMenu(null);
@@ -298,7 +316,11 @@ export function LibraryPage(props: Props) {
       setPreview(detail);
       await props.onOrganizeSource?.(id, { opened: true });
     } catch (reason) {
-      if (sequence === request.current) setError(reason instanceof Error ? reason.message : "读取文件失败");
+      if (sequence === request.current) {
+        setPreviewId(null);
+        setFull(false);
+        setError(reason instanceof Error ? reason.message : "读取文件失败");
+      }
     } finally {
       if (sequence === request.current) setLoading(false);
     }
@@ -408,6 +430,8 @@ export function LibraryPage(props: Props) {
             disabled={working || ids.length > 8 || ids.some((id) => !hasReadableText(sources.find((source) => source.id === id)!))}
             action={() => useChat(ids)}
           />
+          <Button label="加入主题集合" icon={<FolderPlus size={16} />} disabled={working || (!props.onUpdateCollectionSources && !props.onCreateCollection)} action={() => show("joinCollection", ids)} />
+          <Button label="移动" icon={<Folder size={16} />} disabled={working || !props.onOrganizeSource} action={() => show("move", ids)} />
           <div className="fl-menu-wrap">
             <button type="button" className="fl-icon-button" aria-label="更多文件操作" title="更多文件操作" aria-expanded={menu === "selection"}
               onClick={(event) => { event.stopPropagation(); setMenu(menu === "selection" ? null : "selection"); }}><MoreHorizontal size={19} /></button>
@@ -420,13 +444,11 @@ export function LibraryPage(props: Props) {
                   for (const id of ids) await props.onUpdateSource(id, { enabled });
                 })}
               />
-              <Button label="加入主题集合" disabled={working || !props.onUpdateCollectionSources} action={() => show("joinCollection", ids)} />
               {collection && <Button label="移出当前集合" disabled={working} action={() => void run(async () => {
                 if (!props.onUpdateCollectionSources) throw new Error("主题集合暂不可用");
                 await props.onUpdateCollectionSources(collection.id, ids, "remove");
                 setSelected([]);
               })} />}
-              <Button label="移动" icon={<Folder size={17} />} disabled={working} action={() => show("move", ids)} />
               <Button
                 label="下载"
                 icon={<Download size={17} />}
@@ -503,12 +525,6 @@ export function LibraryPage(props: Props) {
           {preview.privacy_mode === "original" ? "模型使用原文" : "模型使用脱敏文本"}
         </span>
       </nav>
-      {!full && (
-        <small className="fl-privacy-hint">
-          <Info size={14} />
-          {preview.privacy_mode === "original" ? "模型使用原文" : "模型使用脱敏文本"}
-        </small>
-      )}
       <div className="fl-preview-scroll">
         {draft !== null ? (
           <label className="fl-text-page">
@@ -519,14 +535,15 @@ export function LibraryPage(props: Props) {
           <FilePreview source={preview} mode={mode} loadOriginal={props.onLoadOriginal} loadAsset={props.onLoadAsset} />
         )}
       </div>
-      <footer className="fl-viewer-footer">
+      <footer className={`fl-viewer-footer ${full ? "" : "is-pinned"}`}>
         <section className="fl-source-use" aria-label="资料使用范围">
           <label>
+            长期使用
             <input type="checkbox" checked={preview.enabled} disabled={working || !hasReadableText(preview)}
               onChange={(event) => {
                 const enabled = event.target.checked;
                 void run(async () => { await props.onUpdateSource(preview.id, { enabled }); await reloadPreview(preview.id); });
-              }} />长期使用
+              }} />
           </label>
           <p>{!hasReadableText(preview) ? "暂无可检索正文，请先补充 AI 读取内容。" : preview.enabled ? "可在后续对话中检索，遵循资料记忆设置。" : "仅存档。手动用于对话不会开启长期使用。"}</p>
           {collections.some((item) => item.source_ids.includes(preview.id)) && <small>主题：{collections.filter((item) => item.source_ids.includes(preview.id)).map((item) => item.name).join("、")}</small>}
@@ -601,21 +618,40 @@ export function LibraryPage(props: Props) {
           </button>
         </p>
       )}
-      {!full && <nav className="fl-workspace-navigation" aria-label="文件库工作区">
-        <button type="button" aria-current={area === "files" ? "page" : undefined} onClick={() => { setArea("files"); setMenu(null); }}>文件</button>
-        <button type="button" aria-current={area === "knowledge" ? "page" : undefined} onClick={() => { closePreview(); setArea("knowledge"); setSelected([]); setMenu(null); }}>知识</button>
-        <div className="fl-menu-wrap fl-workspace-settings">
-          <button type="button" className="fl-icon-button" aria-label="文件库更多选项" title="更多选项" aria-expanded={menu === "workspace"}
-            onClick={(event) => { event.stopPropagation(); setMenu(menu === "workspace" ? null : "workspace"); }}><MoreHorizontal size={20} /></button>
-          {menu === "workspace" && <div className="fl-menu">
-            {area === "files" && <>
-              <button type="button" onClick={() => { setGrid(!grid); setMenu(null); }}>{grid ? <List size={16} /> : <LayoutGrid size={16} />}{grid ? "列表视图" : "网格视图"}</button>
-              <button type="button" onClick={() => { setAscending(!ascending); setMenu(null); }}><ArrowDownUp size={16} />{ascending ? "按时间从新到旧" : "按时间从旧到新"}</button>
-            </>}
-            <button type="button" onClick={() => show("preferences")}><Settings size={16} />文件库设置</button>
+      {!full && <header className="fl-header">
+        <h1>文件库</h1>
+        <nav className="fl-workspace-navigation" aria-label="文件库工作区">
+          <button type="button" aria-current={area === "files" ? "page" : undefined} onClick={() => { setArea("files"); setMenu(null); }}>文件</button>
+          <button type="button" aria-current={area === "knowledge" ? "page" : undefined} onClick={() => { closePreview(); setArea("knowledge"); setSelected([]); setMenu(null); }}>知识</button>
+        </nav>
+        <div className="fl-header-actions">
+          {area === "files" && <div className="fl-menu-wrap">
+            <button type="button" className="fl-button primary" aria-expanded={menu === "new"} disabled={disabled}
+              onClick={(event) => { event.stopPropagation(); setMenu(menu === "new" ? null : "new"); }}>
+              {props.sourceBusy ? <LoaderCircle className="spinning" size={17} /> : <Plus size={17} />}添加<ChevronDown size={14} />
+            </button>
+            {menu === "new" && <div className="fl-menu">
+              <button type="button" onClick={() => { setMenu(null); input.current?.click(); }}><Upload size={16} />上传文件</button>
+              <button type="button" disabled={!props.onCreateFolder} onClick={() => show("folder")}><Folder size={16} />新建文件夹</button>
+              <button type="button" disabled={!props.onCreateCollection} onClick={() => show("collection")}><Sparkles size={16} />新建主题集合</button>
+              <button type="button" onClick={() => show("note")}><Pencil size={16} />新建笔记</button>
+            </div>}
           </div>}
+          <div className="fl-menu-wrap">
+            <button type="button" className="fl-icon-button" aria-label="文件库更多选项" title="更多选项" aria-expanded={menu === "workspace"}
+              onClick={(event) => { event.stopPropagation(); setMenu(menu === "workspace" ? null : "workspace"); }}><MoreHorizontal size={20} /></button>
+            {menu === "workspace" && <div className="fl-menu">
+              <button type="button" onClick={() => show("preferences")}><Settings size={16} />文件库设置</button>
+            </div>}
+          </div>
         </div>
-      </nav>}
+        <input ref={input} className="fl-hidden" type="file" aria-label="选择上传文件" multiple accept=".png,.jpg,.jpeg,.webp,.pdf,.docx,.txt,.md"
+          onChange={(event) => {
+            const files = Array.from(event.target.files || []);
+            event.target.value = "";
+            void run(() => props.onImportFiles(files, folderId, collectionId));
+          }} />
+      </header>}
       {area === "knowledge" ? <LibraryKnowledgePanel
         sources={sources} pendingFacts={props.pendingFacts || []} confirmedFacts={props.confirmedFacts || []}
         working={working} reviewAvailable={Boolean(props.onReviewFact)}
@@ -637,74 +673,6 @@ export function LibraryPage(props: Props) {
           )}
         </section>
       ) : (
-        <>
-          <header className="fl-header">
-            <h1>文件库</h1>
-            <label className="fl-search">
-              <Search size={20} />
-              <input
-                aria-label="搜索文件名或内容"
-                placeholder="搜索文件名或内容"
-                value={query}
-                onChange={(event) => {
-                  setQuery(event.target.value);
-                  setSelected([]);
-                }}
-              />
-              {query && (
-                <button type="button" aria-label="清除搜索" onClick={() => setQuery("")}>
-                  <X size={17} />
-                </button>
-              )}
-            </label>
-            <div className="fl-header-actions">
-              <div className="fl-menu-wrap">
-                <button
-                  type="button"
-                  className="fl-button primary"
-                  aria-expanded={menu === "new"}
-                  disabled={disabled}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setMenu(menu === "new" ? null : "new");
-                  }}
-                >
-                  {props.sourceBusy ? <LoaderCircle className="spinning" size={18} /> : <Plus size={18} />}
-                  添加
-                  <ChevronDown size={16} />
-                </button>
-                {menu === "new" && (
-                  <div className="fl-menu">
-                    <button type="button" onClick={() => { setMenu(null); input.current?.click(); }}>
-                      <Upload size={16} />上传文件
-                    </button>
-                    <button type="button" disabled={!props.onCreateFolder} onClick={() => show("folder")}>
-                      <Folder size={16} />
-                      新建文件夹
-                    </button>
-                    <button type="button" disabled={!props.onCreateCollection} onClick={() => show("collection")}><Sparkles size={16} />新建主题集合</button>
-                    <button type="button" onClick={() => show("note")}>
-                      <Pencil size={16} />
-                      新建笔记
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-            <input
-              ref={input}
-              className="fl-hidden"
-              type="file"
-              aria-label="选择上传文件"
-              multiple
-              accept=".png,.jpg,.jpeg,.webp,.pdf,.docx,.txt,.md"
-              onChange={(event) => {
-                const files = Array.from(event.target.files || []);
-                event.target.value = "";
-                void run(() => props.onImportFiles(files, folderId, collectionId));
-              }}
-            />
-          </header>
           <div className={`fl-body ${preview || loading ? "with-preview" : ""}`}>
             <section
               className="fl-browser"
@@ -724,13 +692,21 @@ export function LibraryPage(props: Props) {
                   void run(() => props.onImportFiles(Array.from(event.dataTransfer.files), folderId, collectionId));
               }}
             >
+              <div className="fl-search-row">
+                <label className="fl-search">
+                  <Search size={16} />
+                  <input aria-label="搜索文件名或内容" placeholder="搜索文件名或内容" value={query}
+                    onChange={(event) => { setQuery(event.target.value); setSelected([]); }} />
+                  {query && <button type="button" aria-label="清除搜索" onClick={() => setQuery("")}><X size={16} /></button>}
+                </label>
+              </div>
               <div className="fl-module-navigation">
                 <nav aria-label="文件分类">
                   {categories.map(([key, label]) => (
                     <button
                       type="button"
                       key={key}
-                      className={category === key ? "active" : ""}
+                      className={`${category === key ? "active" : ""} ${key === "trash" ? "is-quiet" : ""}`}
                       aria-current={category === key ? "page" : undefined}
                       onClick={() => choose(key)}
                     >
@@ -738,55 +714,53 @@ export function LibraryPage(props: Props) {
                     </button>
                   ))}
                 </nav>
-              </div>
-              <LibraryCollections collections={collections} selectedId={collectionId} busy={working}
-                onSelect={(id) => { choose("all"); setCollectionId(id); }}
-                onRename={(id) => show("renameCollection", [id])} onDelete={(id) => show("deleteCollection", [id])} />
-              <LibraryFilters folders={folders} folderId={folderId} unfiled={unfiled} filters={filters}
-                onFolderChange={(value) => { setFolderId(value === "all" || value === "unfiled" ? null : Number(value)); setUnfiled(value === "unfiled"); setSelected([]); closePreview(); }}
-                onChange={(next) => { setFilters(next); setSelected([]); }} onReset={resetFilters} />
-              {folder || unfiled ? (
-                <div className="fl-breadcrumb">
-                  <button type="button" onClick={() => choose("all")}>
-                    全部文件
-                  </button>
-                  <span>/ {unfiled ? "未分类" : folder?.name}</span>
-                </div>
-              ) : category === "all" && !query && !filterActive && folders.length > 0 ? (
-                <section className="fl-folders">
-                  <h2>按目录整理</h2>
-                  <div>
-                    <button type="button" onClick={() => { setUnfiled(true); setSelected([]); }}>
-                      <Folder size={29} /><span>未分类<small>{sources.filter((source) => !source.trashed_at && source.folder_id == null).length} 个文件</small></span>
+                <div className="fl-scope-controls">
+                  <label className="fl-scope-select" title="目录是存放位置，一份文件只属于一个目录">
+                    <Folder size={14} />
+                    <select aria-label="筛选目录" value={unfiled ? "unfiled" : folderId ?? "all"}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setFolderId(value === "all" || value === "unfiled" ? null : Number(value));
+                        setUnfiled(value === "unfiled");
+                        setSelected([]);
+                        closePreview();
+                      }}>
+                      <option value="all">目录</option>
+                      <option value="unfiled">未分类</option>
+                      {folders.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                    </select>
+                  </label>
+                  <LibraryCollections collections={collections} selectedId={collectionId} busy={working}
+                    onSelect={(id) => { choose("all"); setCollectionId(id); }}
+                    onRename={(id) => show("renameCollection", [id])} onDelete={(id) => show("deleteCollection", [id])} />
+                  <LibraryFilters filters={filters} onChange={(next) => { setFilters(next); setSelected([]); }} />
+                  <div className="fl-view-controls">
+                    <button type="button" className="fl-sort" aria-label={ascending ? "按时间从新到旧" : "按时间从旧到新"}
+                      title={ascending ? "当前从旧到新，点击切换" : "当前从新到旧，点击切换"} onClick={() => setAscending(!ascending)}>
+                      <ArrowDownUp size={15} /><span>排序</span>
                     </button>
-                    {folders.map((item) => (
-                      <button type="button" key={item.id} aria-label={item.name} onClick={() => choose("all", item.id)}>
-                        <Folder size={29} />
-                        <span>{item.name}<small>{sources.filter((source) => !source.trashed_at && source.folder_id === item.id).length} 个文件</small></span>
-                      </button>
-                    ))}
+                    <div className="fl-view-switch" role="group" aria-label="文件视图">
+                      <button type="button" className="fl-icon-button" aria-label="列表视图" title="列表视图" aria-pressed={!grid} onClick={() => setGrid(false)}><List size={16} /></button>
+                      <button type="button" className="fl-icon-button" aria-label="网格视图" title="网格视图" aria-pressed={grid} onClick={() => setGrid(true)}><LayoutGrid size={16} /></button>
+                    </div>
                   </div>
-                </section>
-              ) : null}
-              {selected.length > 0 && category !== "trash" && <p className="fl-use-guide">用于对话仅带入文件副本；开启长期使用后，后续对话也可检索这些资料。</p>}
+                </div>
+              </div>
               {selected.length > 8 && category !== "trash" && <p className="fl-use-warning" role="status">一次对话最多带入 8 个文件，请减少选择。</p>}
               {selected.some((id) => !hasReadableText(sources.find((source) => source.id === id)!)) && category !== "trash" &&
                 <p className="fl-use-warning" role="status">所选文件中有无可检索正文的文件。请先打开文件，补充 AI 读取内容。</p>}
               <div className="fl-files-heading">
-                {selected.length ? (
-                  <>
-                    <span>已选 {selected.length} 个文件</span>
-                    {actions(selected, category === "trash")}
-                  </>
-                ) : (
-                  <>
-                    <div>
-                      <h2>{query ? "搜索结果" : category === "trash" ? "已删除文件" : collection?.name || (filters.knowledge === "ready" ? "长期使用的资料" : "文件")}</h2>
-                      <span>{visible.length} 个文件</span>
-                      {searching && <small role="status">搜索中…</small>}
-                    </div>
-                  </>
-                )}
+                <div className="fl-file-context">
+                  <nav className="fl-breadcrumb" aria-label="文件路径">
+                    {folder || unfiled ? <>
+                      <button type="button" onClick={resetFilters}>全部文件</button>
+                      <span aria-hidden="true">/</span><strong>{unfiled ? "未分类" : folder?.name}</strong>
+                    </> : scopeLabel ? <strong>{scopeLabel}</strong> : null}
+                  </nav>
+                  <span>{visible.length} 个文件</span>
+                  {searching && <small role="status">搜索中…</small>}
+                </div>
+                {filterActive && <button type="button" className="fl-filter-reset" onClick={resetFilters}>清除筛选</button>}
               </div>
               {!visible.length ? (
                 <div className="fl-empty">
@@ -821,6 +795,7 @@ export function LibraryPage(props: Props) {
                         />
                       </th>
                       <th>名称</th>
+                      <th className="fl-status">AI 使用</th>
                       <th className="fl-size">大小</th>
                       <th className="fl-date">修改时间</th>
                       <th className="fl-actions">
@@ -834,19 +809,21 @@ export function LibraryPage(props: Props) {
                         key={source.id}
                         tabIndex={0}
                         aria-selected={selected.includes(source.id)}
-                        className={selected.includes(source.id) ? "selected" : ""}
-                        onClick={(event) => select(source.id, event.metaKey || event.ctrlKey)}
+                        className={`${selected.includes(source.id) ? "selected" : ""} ${previewId === source.id ? "is-previewing" : ""}`}
+                        onClick={(event) => {
+                          if (event.metaKey || event.ctrlKey) select(source.id, true);
+                          else if (category !== "trash" && event.detail < 2) void open(source.id);
+                        }}
                         onDoubleClick={() => category !== "trash" && void open(source.id, true)}
                         onKeyDown={(event) => {
                           if (event.target !== event.currentTarget || category === "trash") return;
                           if (event.key === "Enter" || event.code === "Space") {
                             event.preventDefault();
-                            select(source.id);
                             void open(source.id, event.key === "Enter");
                           }
                         }}
                       >
-                        <td className="fl-check" onClick={(event) => event.stopPropagation()}>
+                        <td className="fl-check" onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
                           <input
                             type="checkbox"
                             aria-label={`选择 ${source.title}`}
@@ -858,26 +835,33 @@ export function LibraryPage(props: Props) {
                           <div className="fl-filename">
                             <FileTypeIcon source={source} />
                             <div>
-                              <strong title={source.original_filename || source.title}>{source.title}</strong>
-                              <small>
-                                {source.text_parse_status === "not_required"
-                                  ? "原文件已存档 · 无可检索文字"
-                                  : source.parse_status !== "ready"
-                                  ? "暂无提取文字"
-                                  : !source.enabled
-                                    ? "可手动带入对话"
-                                    : source.original_filename || "文本笔记"}
+                              <button type="button" className="fl-file-title" title={source.original_filename || source.title}
+                                aria-label={category === "trash" ? undefined : `预览 ${source.title}`} disabled={category === "trash"}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  if (category === "trash" || event.detail > 1) return;
+                                  void open(source.id);
+                                }}
+                                onDoubleClick={(event) => {
+                                  event.stopPropagation();
+                                  if (category !== "trash") void open(source.id, true);
+                                }}>
+                                {source.title}
+                              </button>
+                              <small className="fl-origin">
+                                {source.original_filename && source.original_filename !== source.title ? source.original_filename
+                                  : source.source_uri.startsWith("chat:") ? "对话成果" : source.source_kind === "paste" ? "文本笔记" : "导入文件"}
                               </small>
-                              <span className={`fl-knowledge-badge ${source.trashed_at ? "archive" : knowledgeUse(source)}`}>{knowledgeLabel(source)}</span>
                             </div>
                             {source.favorite && <Star size={14} className="fl-favorite" fill="currentColor" />}
                           </div>
                         </td>
+                        <td className="fl-status"><span className={`fl-knowledge-badge ${source.trashed_at ? "archive" : knowledgeUse(source)}`}>{knowledgeLabel(source)}</span></td>
                         <td className="fl-size">{sizeLabel(source)}</td>
                         <td className="fl-date" title={source.updated_at}>
                           {dateLabel(source.updated_at)}
                         </td>
-                        <td className="fl-actions" onClick={(event) => event.stopPropagation()}>
+                        <td className="fl-actions" onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
                           {category === "trash" ? (
                             <button
                               type="button"
@@ -940,11 +924,17 @@ export function LibraryPage(props: Props) {
                   </tbody>
                 </table>
               )}
+              {selected.length > 0 && (
+                <div className="fl-selection-dock" role="toolbar" aria-label="批量文件操作">
+                  <span>已选 {selected.length} 个文件</span>
+                  {actions(selected, category === "trash")}
+                </div>
+              )}
               <footer className="fl-browser-footer">
-                <span>{visible.length} 个文件</span>
+                <span>{selected.length ? "用于对话仅带入副本，不会开启长期使用" : "支持拖入文件，或通过「添加」新建笔记"}</span>
                 <span>
                   <Info size={16} />
-                  选中文件，按空格快速预览
+                  单击文件名预览 · 双击完整打开
                 </span>
               </footer>
               {dragging && (
@@ -969,7 +959,6 @@ export function LibraryPage(props: Props) {
               </aside>
             ) : null}
           </div>
-        </>
       )}
       {dialog && (
         <LibraryDialog title={titles[dialog.kind]} close={() => !working && setDialog(null)}>
