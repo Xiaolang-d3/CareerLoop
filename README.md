@@ -3,6 +3,8 @@
 灯灯是从对话开始的个人 AI 协作助手。一起想清楚，一步步做好。
 
 [![CI](https://github.com/Xiaolang-d3/CareerLoop/actions/workflows/ci.yml/badge.svg)](https://github.com/Xiaolang-d3/CareerLoop/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/Xiaolang-d3/CareerLoop?color=blue)](LICENSE)
+[![Community Standards](https://img.shields.io/badge/Community-Standards-blue)](https://github.com/Xiaolang-d3/CareerLoop/community)
 
 本地优先、由个人资料驱动的 AI 协作工作台：沉淀可复用上下文，通过可恢复 Agent 完成搜索、分析与内容生成。资料与对话持续保存在本地，任务支持中断恢复。产品聚焦知识库、AI 问答和内容创作，不再提供专用求职功能。
 
