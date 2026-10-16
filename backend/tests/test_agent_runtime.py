@@ -17,6 +17,7 @@ from app.search_options import WebSearchOptions
 from app.models import ModelProviderError, ModelProviderRegistry
 from app.tooling import ToolSpec
 from app.tools import AskUserTool, ToolContext, ToolRegistry
+from app.tools.limits import MAX_RESULT_DATA_CHARS, MAX_RESULT_MESSAGE_CHARS
 
 
 class ScriptedModel:
@@ -657,10 +658,12 @@ class ResultGovernanceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "done")
         tool_message = next(message for message in model.requests[1].messages if message.role == "tool")
         self.assertIs(tool_message.payload["truncated"], True)
-        rendered = len(json.dumps(tool_message.payload, ensure_ascii=False))
-        self.assertLess(rendered, 40000)
+        data = {key: value for key, value in tool_message.payload.items() if key not in {"status", "tool_name", "error"}}
+        self.assertLessEqual(len(json.dumps(data, ensure_ascii=False)), MAX_RESULT_DATA_CHARS)
+        self.assertLessEqual(len(tool_message.content), MAX_RESULT_MESSAGE_CHARS)
         event = next(item for item in result.events if item.tool_name == "test_huge_note")
         self.assertIs(event.data["truncated"], True)
+        self.assertEqual({key: value for key, value in event.data.items() if key != "arguments"}, data)
 
 
 if __name__ == "__main__":

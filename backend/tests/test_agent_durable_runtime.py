@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,6 +25,7 @@ from app.models import ModelProviderRegistry
 from app.search_options import WebSearchOptions
 from app.tooling import ToolSpec
 from app.tools import ToolContext, ToolRegistry
+from app.tools.limits import MAX_RESULT_DATA_CHARS
 
 
 class AgentDurableRuntimeTest(unittest.IsolatedAsyncioTestCase):
@@ -317,6 +319,45 @@ class AgentDurableRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool.calls, 1)
         ledger = self.store.list_tool_executions("confirm-run-2")
         self.assertEqual([row["status"] for row in ledger], ["done"])
+
+    async def test_oversized_result_is_bounded_in_checkpoint_and_tool_ledger(self) -> None:
+        store = self.store
+
+        class OversizedTool(CountingTool):
+            async def execute(self, arguments, context):
+                self.calls += 1
+                return ToolResult(
+                    ok=True,
+                    status="done",
+                    message="找到资料",
+                    data={"excerpts": [{"content": "正文" * 5000} for _ in range(40)]},
+                )
+
+        class CheckpointModel(ToolThenTextModel):
+            async def generate(self, request):
+                if self.calls:
+                    self.checkpoint = store.load_checkpoint("bounded-result-run")
+                return await super().generate(request)
+
+        tool = OversizedTool("search_library")
+        tools = ToolRegistry()
+        tools.register_handler(tool)
+        model = CheckpointModel("search_library", {"query": "周五交付"})
+
+        events = await self._collect(
+            self._runtime(model, tools), "查找资料：周五交付", run_id="bounded-result-run",
+        )
+
+        self.assertEqual(events[-1].result.status, "done")
+        self.assertEqual(tool.calls, 1)
+        self.assertIsNotNone(model.checkpoint)
+        message = next(message for message in model.checkpoint.messages if message.role == "tool")
+        ledger = self.store.list_tool_executions("bounded-result-run")
+        data = ledger[0]["result"]["data"]
+        self.assertIs(data["truncated"], True)
+        self.assertLessEqual(len(json.dumps(data, ensure_ascii=False)), MAX_RESULT_DATA_CHARS)
+        self.assertEqual(message.payload["excerpts"], data["excerpts"])
+        self.assertIs(message.payload["truncated"], True)
 
     async def test_durable_cancel_stops_before_model_request(self) -> None:
         class ShouldNotRunModel:
