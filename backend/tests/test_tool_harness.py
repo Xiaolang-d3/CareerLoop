@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import unittest
 from unittest.mock import patch
 
@@ -9,10 +10,17 @@ from pydantic import BaseModel, Field, ValidationError
 from app.agent.completion import validate_completion
 from app.agent.orchestration import TaskRoute
 from app.agent.tool_executor import ToolExecutor
-from app.domain import AgentPlan, AgentPlanStep, ToolCall, ToolDefinition, ToolResult
+from app.domain import AgentPlan, AgentPlanStep, ToolCall, ToolDefinition, ToolError, ToolResult
 from app.tooling import ToolSpec
 from app.tools import ToolContext, ToolRegistry
 from app.tools.errors import describe_validation_error
+from app.tools.limits import (
+    MAX_RESULT_DATA_CHARS,
+    MAX_RESULT_ITEMS,
+    MAX_RESULT_MESSAGE_CHARS,
+    MAX_RESULT_STRING_CHARS,
+    govern_tool_result,
+)
 
 
 class SearchTool:
@@ -66,6 +74,33 @@ class BrokenTool:
 
     async def execute(self, arguments, context):
         raise RuntimeError("boom")
+
+
+class HugeResultTool:
+    definition = ToolDefinition(
+        name="test_huge",
+        description="测试结果大小治理",
+        input_schema={"type": "object"},
+    )
+    spec = ToolSpec(
+        name="test_huge",
+        title="测试结果大小治理",
+        risk="read_only",
+        capabilities=frozenset({"test.huge"}),
+    )
+
+    async def execute(self, arguments, context):
+        return ToolResult(
+            ok=True,
+            status="done",
+            data={
+                "items": [
+                    {"content": "长" * 5000, "url": f"https://example.com/{index}"}
+                    for index in range(40)
+                ]
+            },
+            message="巨型结果",
+        )
 
 
 class ValidatedTool:
@@ -218,6 +253,20 @@ class ToolHarnessTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.validated.calls, 1)
         self.assertEqual(self.validated.seen, {"query": "有效查询", "limit": 3})
 
+    async def test_executor_governs_oversized_results(self) -> None:
+        self.tools.register_handler(HugeResultTool())
+
+        result = await self.executor.execute(
+            ToolCall(id="call-6", name="test_huge", arguments={}),
+            self.context,
+            round_number=1,
+            conversation_id=None,
+        )
+
+        self.assertEqual(result.status, "done")
+        self.assertIs(result.data["truncated"], True)
+        self.assertLessEqual(len(json.dumps(result.data, ensure_ascii=False)), MAX_RESULT_DATA_CHARS)
+
     def test_validation_error_summary_is_compact_and_bounded(self) -> None:
         with self.assertRaises(ValidationError) as caught:
             ValidatedTool.Arguments.model_validate({"query": "x", "limit": 99})
@@ -247,6 +296,153 @@ class ToolHarnessTest(unittest.IsolatedAsyncioTestCase):
         summary = describe_validation_error(ValueError("bad\nvalue"))
 
         self.assertEqual(summary, "bad value")
+
+
+class ToolResultGovernanceTest(unittest.TestCase):
+    def test_small_result_is_unchanged_without_marker(self) -> None:
+        result = ToolResult(ok=True, status="done", data={"a": "b", "note": "…（已截断）"}, message="ok")
+
+        governed = govern_tool_result(result)
+
+        self.assertEqual(governed, result)
+        self.assertEqual(governed.message, "ok")
+        self.assertIsNone(governed.error)
+        self.assertNotIn("truncated", governed.data)
+
+    def test_long_message_and_error_are_bounded(self) -> None:
+        long_text = "长" * (MAX_RESULT_MESSAGE_CHARS + 500)
+        result = ToolResult(
+            ok=False,
+            status="failed",
+            message=long_text,
+            error=ToolError(code="x", message=long_text),
+        )
+
+        governed = govern_tool_result(result)
+
+        self.assertLessEqual(len(governed.message), MAX_RESULT_MESSAGE_CHARS)
+        self.assertLessEqual(len(governed.error.message), MAX_RESULT_MESSAGE_CHARS)
+        self.assertIs(governed.data["truncated"], True)
+
+    def test_data_strings_lists_and_depth_are_bounded(self) -> None:
+        deep: object = "末"
+        for _ in range(12):
+            deep = {"value": deep}
+        result = ToolResult(
+            ok=True,
+            status="done",
+            data={
+                "text": "a" * (MAX_RESULT_STRING_CHARS + 100),
+                "items": list(range(MAX_RESULT_ITEMS + 20)),
+                "deep": deep,
+            },
+            message="ok",
+        )
+
+        governed = govern_tool_result(result)
+
+        self.assertLessEqual(len(governed.data["text"]), MAX_RESULT_STRING_CHARS)
+        self.assertEqual(len(governed.data["items"]), MAX_RESULT_ITEMS)
+        node = governed.data["deep"]
+        while isinstance(node, dict):
+            node = node["value"]
+        self.assertIsInstance(node, str)
+        self.assertIn("已截断", node)
+        self.assertIs(governed.data["truncated"], True)
+
+    def test_total_data_budget_caps_many_strings(self) -> None:
+        data = {"blobs": ["字" * MAX_RESULT_STRING_CHARS for _ in range(30)]}
+        result = ToolResult(ok=True, status="done", data=data, message="ok")
+
+        governed = govern_tool_result(result)
+
+        self.assertLessEqual(len(json.dumps(governed.data, ensure_ascii=False)), MAX_RESULT_DATA_CHARS)
+        self.assertIs(governed.data["truncated"], True)
+
+    def test_total_json_budget_includes_keys_structure_and_escaped_values(self) -> None:
+        cases = {
+            "numbers": {"items": [[123456789012345 for _ in range(50)] for _ in range(50)]},
+            "long_key": {"k" * 50000: True, "valid": "kept"},
+            "escaped": {"items": ["\x00\n\"\\" * 2000 for _ in range(50)]},
+            "urls": {"sources": [{"url": f"https://example.com/{i}/" + "x" * 2000} for i in range(50)]},
+        }
+        for name, data in cases.items():
+            with self.subTest(name=name):
+                result = ToolResult(ok=True, status="done", data=data, message="ok")
+                original_json = json.dumps(result.data, ensure_ascii=False)
+
+                governed = govern_tool_result(result)
+
+                self.assertLessEqual(len(json.dumps(governed.data, ensure_ascii=False)), MAX_RESULT_DATA_CHARS)
+                self.assertIs(governed.data["truncated"], True)
+                self.assertEqual(govern_tool_result(governed), governed)
+                self.assertEqual(json.dumps(result.data, ensure_ascii=False), original_json)
+                if name == "urls":
+                    original_urls = {source["url"] for source in data["sources"]}
+                    retained_urls = {source["url"] for source in governed.data["sources"] if "url" in source}
+                    self.assertTrue(retained_urls)
+                    self.assertLessEqual(retained_urls, original_urls)
+
+    def test_oversized_urls_are_omitted_instead_of_rewritten(self) -> None:
+        for key in ("url", "source_url", "href"):
+            with self.subTest(key=key):
+                result = ToolResult(
+                    ok=True,
+                    status="done",
+                    data={key: "https://example.com/" + "x" * MAX_RESULT_STRING_CHARS},
+                    message="ok",
+                )
+
+                governed = govern_tool_result(result)
+
+                self.assertNotIn(key, governed.data)
+                self.assertIs(governed.data["truncated"], True)
+
+    def test_marker_fits_at_the_key_limit_and_governance_stays_idempotent(self) -> None:
+        data = {f"item_{index}": index for index in range(MAX_RESULT_ITEMS)}
+        clean = ToolResult(ok=True, status="done", data=data, message="ok")
+        self.assertEqual(govern_tool_result(clean), clean)
+
+        oversized = clean.model_copy(update={"message": "长" * (MAX_RESULT_MESSAGE_CHARS + 1)})
+        governed = govern_tool_result(oversized)
+
+        self.assertEqual(len(governed.data), MAX_RESULT_ITEMS)
+        self.assertIs(governed.data["truncated"], True)
+        self.assertEqual(govern_tool_result(governed), governed)
+
+    def test_governance_is_idempotent(self) -> None:
+        nested: object = "x"
+        for _ in range(8):
+            nested = {"value": nested}
+        result = ToolResult(
+            ok=True,
+            status="done",
+            data={
+                "text": "a" * 5000,
+                "items": list(range(80)),
+                "nested": nested,
+                "blobs": ["字" * 4000 for _ in range(20)],
+            },
+            message="m" * (MAX_RESULT_MESSAGE_CHARS + 50),
+        )
+
+        once = govern_tool_result(result)
+
+        self.assertEqual(govern_tool_result(once), once)
+
+    def test_source_urls_survive_governance(self) -> None:
+        urls = [f"https://example.com/research/{index}?ref=abcdef" for index in range(8)]
+        data = {
+            "sources": [{"url": url, "content": "长" * 5000} for url in urls],
+            "evidence": [{"url": url, "excerpt": "长" * 5000} for url in urls],
+        }
+        result = ToolResult(ok=True, status="done", data=data, message="ok")
+
+        governed = govern_tool_result(result)
+
+        self.assertEqual([source["url"] for source in governed.data["sources"]], urls)
+        self.assertEqual([item["url"] for item in governed.data["evidence"]], urls)
+        self.assertIs(governed.data["truncated"], True)
 
 
 if __name__ == "__main__":

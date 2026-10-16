@@ -9,6 +9,7 @@ from ..domain import ToolCall, ToolError, ToolResult
 from ..observability.tool_call_audit import record_tool_call_event
 from ..tools import ToolContext, ToolRegistry
 from ..tools.errors import invalid_arguments
+from ..tools.limits import govern_tool_result
 
 
 class ToolExecutor:
@@ -60,6 +61,8 @@ class ToolExecutor:
                     message=message,
                     error=ToolError(code="tool_execution_failed", message=message),
                 )
+
+        result = govern_tool_result(result)
 
         self._record(
             conversation_id=conversation_id,
