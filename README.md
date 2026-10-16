@@ -214,3 +214,10 @@ PROMPTFOO_CONFIG_DIR=.promptfoo PROMPTFOO_DISABLE_TELEMETRY=1 npm run eval
 - 贡献、分支、提交与验证规则：[`CONTRIBUTING.md`](CONTRIBUTING.md)
 - 版本与里程碑摘要：[`CHANGELOG.md`](CHANGELOG.md)
 - 智能体维护边界：[`docs/agent.md`](docs/agent.md)
+- 社区行为准则：[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
+- 安全漏洞报告：[`SECURITY.md`](SECURITY.md)；请使用私密报告渠道。
+- 问题反馈、功能建议与使用咨询：[创建 Issue](https://github.com/Xiaolang-d3/CareerLoop/issues/new/choose)
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE)。使用、修改或分发代码时请保留许可证与版权声明。项目中单独注明许可证的第三方代码与依赖继续遵循各自的授权条款，例如 [`backend/app/password_policy-LICENSE.txt`](backend/app/password_policy-LICENSE.txt)。
