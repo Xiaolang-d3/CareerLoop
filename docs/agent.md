@@ -177,6 +177,7 @@ Tavily 自动模式开启 `auto_parameters` 并省略 `topic`，显式固定 `se
 - 完成义务以 `route.required_tools` 为准；义务由能力解析产生，没有对应能力的 `done` 事件时，模型正文不能结束任务。同能力组的工具可互相满足，但不会放宽到组外。
 - 工具 `failed`：先同车道重规划一次；`blocked` / 超时仍立即终止。
 - 参数校验失败（`invalid_arguments`）先给模型自愈机会：把字段级错误摘要写回消息，模型可用修正后的参数重试同一工具（每次运行至多 2 次，`static` 车道同样适用，优先于同车道重规划）；用尽后仍按失败与重规划规则处理。
+- 工具结果在 ToolExecutor 返回前统一经 `tools/limits.py` 大小治理：message/错误文案限长、data 深截断（单串 ≤3000、列表/键 ≤50、深度 ≤6、内容累计 ≤32000 字符，`url`/`source_url`/`href` 不计入预算以保住引用）；发生截断时 `data["truncated"] = true`。治理是确定性且幂等的，保证模型上下文、快照与事件里单条结果有界。
 - `waiting_approval`：状态 `waiting_user`，把确认权交回界面。若 `data.clarification` 带有 `question` / `options`，输入框上方渲染选项。点选选项，或手输仍是在回答（选项原文、补充指代），则恢复原计划。手输明显换题则清快照并重新路由。
 - 联网回答必须引用本轮来源；不得把未检索到的经历写成事实。
 - 混合任务（同一轮同时授权本地资料与公开搜索，`is_mixed_run`）中，`search_public_web` 每次调用先经 `EgressPolicy`：查询未被批准时以 `waiting_approval` 暂停（错误码 `external_query_approval_required`），展示完整查询字符串并等待批准/拒绝/自定义回复；暂停不执行工具、不写工具账本，恢复时按结果继续。批准只对当时展示的查询（或用户手输的新查询）生效；拒绝把联网从 route 和 plan 移除并撤销混合状态。联网工具在真正出网前还会独立复核一次，未批准返回 `external_query_not_approved`。
@@ -241,7 +242,7 @@ allowed 同时包含公开搜索与本地资料组时是混合任务：`needs_pl
 | search_public_web | external_read | 带来源的公开搜索，受联网开关与配置约束 |
 | ask_user | read_only | 提问并等待用户选择 |
 
-通用资料工具位于 `tools/library.py`，数据边界在 `library/service.py`。`tools` 包只导出当前工具与基础协议，不加载退役工具。带 `arguments_model` 的处理器先经 `ToolRegistry.validate_arguments` 中央校验（Pydantic 归一化后再交给 handler，失败统一返回 `invalid_arguments`，错误消息压缩为单行字段摘要，供日志与模型自愈使用）；其余错误处理与文案位于独立的 `tools/errors.py`。资料来源和聊天附件共用 `documents/parser.py` 与可选的 `documents/ocr.py`，不通过岗位模块执行解析。所有模型调用遵守资料即数据、不执行资料内嵌指令的规则。ToolExecutor 统一处理超时、异常与审计；本地写操作不自动重放。
+通用资料工具位于 `tools/library.py`，数据边界在 `library/service.py`。`tools` 包只导出当前工具与基础协议，不加载退役工具。带 `arguments_model` 的处理器先经 `ToolRegistry.validate_arguments` 中央校验（Pydantic 归一化后再交给 handler，失败统一返回 `invalid_arguments`，错误消息压缩为单行字段摘要，供日志与模型自愈使用）；其余错误处理与文案位于独立的 `tools/errors.py`；结果大小治理位于 `tools/limits.py`。资料来源和聊天附件共用 `documents/parser.py` 与可选的 `documents/ocr.py`，不通过岗位模块执行解析。所有模型调用遵守资料即数据、不执行资料内嵌指令的规则。ToolExecutor 统一处理超时、异常、结果大小治理与审计；本地写操作不自动重放。
 
 ## 执行循环与收敛
 
@@ -473,3 +474,8 @@ Packy 实际路由以 400 拒绝教程标为支持的 `response_format`，出图
 ### 参数校验自愈循环（2026-10-16）
 
 `invalid_arguments` 不再立即终止：runtime 把 `tools/errors.py` 生成的单行字段级错误摘要（去换行、限长、最多 5 项）写回消息，模型可用修正后的参数重试同一工具，每次运行至多 `MAX_INVALID_ARGUMENT_RETRIES = 2` 次；恢复判断先于同车道重规划，`static` 车道同样适用，同批其余工具调用照常执行。用尽后仍按失败与重规划规则处理（`llm` 车道可再重规划一次），终态错误码不变。回归见 `test_tool_harness.py` 的错误摘要用例与 `test_agent_runtime.py` 的无效参数恢复流程。
+
+
+### 工具结果大小治理（2026-10-16）
+
+新增 `tools/limits.py`：ToolExecutor 在返回结果前（审计之前）统一调用 `govern_tool_result`，对 message、错误文案与 data 做确定性、幂等的截断——单串 ≤ 3000 字符、列表与字典键 ≤ 50、嵌套深度 ≤ 6、data 内容累计 ≤ 32000 字符、message/错误 ≤ 4000 字符；`url` / `source_url` / `href` 字段不计入累计预算，保证模型引用校验（`sources[].url`）不受影响。发生截断时在 `data` 追加 `truncated: true` 标记（键数满时保留前 49 键）；不改 assistant `tool_calls` 的参数以维持 API 配对。工具消息的 payload 会序列化进模型上下文，因此该治理同时约束模型输入、快照消息与 SSE 事件体积。回归见 `tests/test_tool_harness.py` 的治理用例与 `test_agent_runtime.py` 的端到端有界断言。
