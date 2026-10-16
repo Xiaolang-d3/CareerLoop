@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from datetime import datetime
 from unittest.mock import patch
@@ -115,6 +116,30 @@ class ValidatedNoteTool:
         self.calls += 1
         self.seen = arguments
         return ToolResult(ok=True, status="done", message="已查到资料")
+
+
+class HugeNoteTool:
+    def __init__(self) -> None:
+        self.definition = ToolDefinition(
+            name="test_huge_note",
+            description="测试结果大小治理的数据读取",
+            input_schema={"type": "object", "additionalProperties": True},
+        )
+        self.spec = ToolSpec(
+            name="test_huge_note",
+            title="查找大量测试资料",
+            risk="read_only",
+            capabilities=frozenset({"library.search"}),
+            priority=1,
+        )
+
+    async def execute(self, arguments, context):
+        return ToolResult(
+            ok=True,
+            status="done",
+            data={"excerpts": [{"content": "长" * 5000} for _ in range(40)]},
+            message="已查到资料",
+        )
 
 
 def runtime_for(model, *handlers, max_rounds: int = 5) -> AgentRuntime:
@@ -615,6 +640,27 @@ class InvalidArgumentRecoveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "failed")
         self.assertEqual(result.error.code, "invalid_arguments")
         self.assertEqual(tool.calls, 0)
+
+
+class ResultGovernanceRuntimeTest(unittest.IsolatedAsyncioTestCase):
+    MESSAGE = "查找资料：周五交付"
+
+    async def test_oversized_tool_result_is_bounded_in_model_context(self) -> None:
+        tool = HugeNoteTool()
+        model = ScriptedModel([
+            ModelResponse(tool_calls=[ToolCall(id="huge-1", name="test_huge_note", arguments={})]),
+            ModelResponse(content="已查到资料。"),
+        ])
+
+        result = await runtime_for(model, tool).run(self.MESSAGE)
+
+        self.assertEqual(result.status, "done")
+        tool_message = next(message for message in model.requests[1].messages if message.role == "tool")
+        self.assertIs(tool_message.payload["truncated"], True)
+        rendered = len(json.dumps(tool_message.payload, ensure_ascii=False))
+        self.assertLess(rendered, 40000)
+        event = next(item for item in result.events if item.tool_name == "test_huge_note")
+        self.assertIs(event.data["truncated"], True)
 
 
 if __name__ == "__main__":
