@@ -1,0 +1,21 @@
+name: 使用咨询
+description: 询问安装、配置和使用方法。
+title: "[Question] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提问前可先查看 [README](https://github.com/Xiaolang-d3/CareerLoop#readme) 和已有 Issue。
+        请遵守 [社区行为准则](https://github.com/Xiaolang-d3/CareerLoop/blob/main/CODE_OF_CONDUCT.md)，不要粘贴 .env、密钥、数据库或个人资料。
+  - type: textarea
+    id: question
+    attributes:
+      label: 想了解的问题
+      description: 说明你想完成的任务、卡住的位置和已经尝试的方法。
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 相关环境与配置（可选）
+      description: 版本或提交哈希、操作系统、浏览器版或桌面版；只提供已脱敏的必要信息。
