@@ -1,4 +1,4 @@
-import { MoreHorizontal } from "lucide-react";
+import { Layers3, MoreHorizontal } from "lucide-react";
 import type { LibraryCollection } from "../../types";
 
 export function LibraryCollections({ collections, selectedId, busy, onSelect, onRename, onDelete }: {
@@ -11,9 +11,10 @@ export function LibraryCollections({ collections, selectedId, busy, onSelect, on
 }) {
   const selected = collections.find((item) => item.id === selectedId);
   return <div className="fl-collection-scope">
-    <label>主题集合
+    <label className="fl-scope-select" title="主题集合可跨目录整理，同一文件可加入多个主题">
+      <Layers3 size={15} />
       <select aria-label="选择主题集合" value={selectedId ?? "all"} onChange={(event) => onSelect(event.target.value === "all" ? null : Number(event.target.value))}>
-        <option value="all">全部文件</option>
+        <option value="all">主题集合</option>
         {collections.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.file_count}</option>)}
       </select>
     </label>
@@ -23,6 +24,6 @@ export function LibraryCollections({ collections, selectedId, busy, onSelect, on
         <button type="button" disabled={busy} onClick={() => onRename(selected.id)}>重命名集合</button>
         <button type="button" disabled={busy} onClick={() => onDelete(selected.id)}>删除集合</button>
       </div>
-    </details> : <small>同一份文件可加入多个主题</small>}
+    </details> : null}
   </div>;
 }
