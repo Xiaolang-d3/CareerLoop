@@ -18,7 +18,7 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up Python with SQLite extension support
         run: |
           if ! brew list --versions python@3.11 >/dev/null; then
@@ -26,9 +26,9 @@ jobs:
           fi
           echo "CAREERLOOP_BASE_PYTHON=$(brew --prefix python@3.11)/bin/python3.11" >> "$GITHUB_ENV"
           echo "$GITHUB_WORKSPACE/backend/.venv/bin" >> "$GITHUB_PATH"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: |
             frontend/package-lock.json
