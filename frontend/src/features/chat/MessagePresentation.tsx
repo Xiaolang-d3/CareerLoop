@@ -1,6 +1,7 @@
 import { ToolCallDetails } from "./ToolCallDetails";
 import { formatExecutionTime } from "./tool-call-details";
 import "./run-process.css";
+import "./research-sources.css";
 import { MarkdownContent, SourceFavicon, sourceDomain, type WebSource } from "./ChatMarkdown";
 export type { WebSource } from "./ChatMarkdown";
 const STARTER_PROMPTS: Array<{
@@ -14,7 +15,7 @@ const STARTER_PROMPTS: Array<{
     { draft: "帮我查找并核对这个主题的公开信息：", title: "查找公开信息", enableWebSearch: true },
     { draft: "根据我的要求起草一份内容。用途、读者和要点是：", title: "起草一份内容" }
   ];
-import type { AgentRunResult, ChatClarification, ChatMessage, ChatSessionContext, ModelSelection } from "./types";
+import type { AgentRunResult, ChatClarification, ChatMessage, ChatSessionContext } from "./types";
 import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { searchMetadataFromAgent, type SearchMetadata } from "./searchMetadata";
 import { webSearchTopicLabels } from "./webSearchOptions";
@@ -23,13 +24,7 @@ import { ResultActionsContext } from "./result-types";
 import { HistoryAttachment } from "./HistoryAttachment";
 import { GeneratedImage } from "./GeneratedImage";
 import { ActionBarPrimitive, ComposerPrimitive, MessagePrimitive, type AppendMessage, type MessageState } from "@assistant-ui/react";
-import { ArrowUpRight, Check, CheckCircle2, ChevronDown, CircleHelp, Copy, FileText, FolderPlus, Info, LoaderCircle, PanelRight, Pencil, RefreshCw, Search, X } from "lucide-react";
-
-const modelStageLabels: Record<string, string> = { classify: "意图识别", plan: "任务规划", execute: "执行回答" };
-const modelSelectionReasons: Record<string, string> = {
-  explicit_profile: "手动选模", conversation_profile: "会话选模", stage_role: "阶段分工",
-  default_profile: "账号默认", restored_stage: "原任务配置"
-};
+import { BookOpen, Check, CheckCircle2, ChevronDown, ChevronRight, CircleHelp, Copy, FileText, LoaderCircle, Pencil, RefreshCw, Search, X } from "lucide-react";
 
 function resultOnlyContent(content: string, hasThoughtSummary: boolean): string {
   if (!hasThoughtSummary) return content;
@@ -265,9 +260,6 @@ export function RunProcess({ agent, streaming, stopping = false, content = "" }:
   const [now, setNow] = useState(Date.now);
   const scrollRef = useRef<HTMLDivElement>(null);
   const following = useRef(true);
-  const [follow, setFollow] = useState(true);
-  const [unseen, setUnseen] = useState(0);
-  const previousIds = useRef(new Set<string>());
   const startedAt = agent?.started_at ? Date.parse(agent.started_at) : NaN;
   useEffect(() => {
     if (previousStreaming.current && !streaming) setExpanded(false);
@@ -302,27 +294,17 @@ export function RunProcess({ agent, streaming, stopping = false, content = "" }:
   function jumpToLatest() {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     following.current = true;
-    setFollow(true);
-    setUnseen(0);
   }
   useLayoutEffect(() => {
     if (expanded) jumpToLatest();
   }, [expanded]);
   useLayoutEffect(() => {
-    const ids = new Set(entries.map(entry => entry.id));
-    if (expanded) {
-      if (following.current) {
-        if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-      } else {
-        const added = [...ids].filter(id => !previousIds.current.has(id)).length;
-        if (added) setUnseen(count => count + added);
-      }
+    if (expanded && following.current && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-    previousIds.current = ids;
   }, [signature, expanded]);
   function inspect() {
     following.current = false;
-    setFollow(false);
   }
   if (!streaming && !entries.length && !outcome && elapsed === null) return null;
   return (
@@ -340,19 +322,13 @@ export function RunProcess({ agent, streaming, stopping = false, content = "" }:
           onScroll={() => {
             const node = scrollRef.current;
             if (!node) return;
-            const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight <= 24;
-            following.current = atBottom;
-            setFollow(atBottom);
-            if (atBottom) setUnseen(0);
+            following.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 24;
           }}>
           {entries.map((entry) => entry.thought
             ? <p key={entry.id} className="run-process-thought">{entry.text}</p>
             : <ToolCallDetails key={entry.id} event={entry.event} title={entry.text} streaming={streaming} stopping={stopping} now={now} onInspect={inspect} />)}
           {!entries.length ? <p className="run-process-empty">{streaming ? "等待模型响应…" : "未记录更多过程信息。"}</p> : null}
         </div>
-        {!follow ? <div className="run-process-followbar"><small>{unseen ? `有 ${unseen} 条新记录` : "已暂停跟随"}</small>
-          <button type="button" onClick={jumpToLatest}>回到最新{unseen ? `（${unseen}）` : ""}</button>
-        </div> : null}
       </div>
       {!streaming ? <RunErrorNote run={agent} content={content} /> : null}
     </section>
@@ -467,27 +443,16 @@ function WebSourcesPanel({ sources, onOpen }: { sources: WebSource[]; onOpen?: (
       <button
         type="button"
         className="web-sources-heading"
+        aria-label={`查看全部 ${sources.length} 个来源`}
         onClick={onOpen}
       >
-        <Search size={16} />
-        <strong>查看全部 {sources.length} 个来源</strong>
-        <PanelRight size={14} />
+        <span className="web-sources-symbol" aria-hidden="true"><BookOpen size={15} /></span>
+        <span className="web-sources-label">参考来源</span>
+        <span className="web-sources-count">{sources.length}</span>
+        <ChevronRight className="web-sources-arrow" size={14} aria-hidden="true" />
       </button>
     </section>
   );
-}
-
-function sourceConfidence(source: WebSource): "high" | "review" {
-  const host = sourceDomain(source).toLowerCase();
-  return /\.(?:gov|edu)(?:\.[a-z]{2})?$/.test(host) || /(?:^|\.)docs\./.test(host) ? "high" : "review";
-}
-
-function sourceDisplaySummary(source: WebSource): string {
-  const summary = source.content?.trim() || source.snippet?.trim() || "";
-  const compactness = summary.length ? summary.replace(/\s/g, "").length / summary.length : 0;
-  if (!summary) return "暂无摘要，可打开原网页核对完整内容。";
-  if (summary.length > 1200 && compactness > .92) return "页面返回的摘要不可读，请打开原网页核对完整内容。";
-  return `${summary.slice(0, 520)}${summary.length > 520 ? "…" : ""}`;
 }
 
 export function ResearchPanel({
@@ -496,7 +461,6 @@ export function ResearchPanel({
   sources,
   selectedSource,
   streaming,
-  onSelectSource,
   onClose
 }: {
   open: boolean;
@@ -504,7 +468,6 @@ export function ResearchPanel({
   sources: WebSource[];
   selectedSource: number;
   streaming: boolean;
-  onSelectSource: (index: number) => void;
   onClose: () => void;
 }) {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -518,8 +481,13 @@ export function ResearchPanel({
   }, [open]);
 
   useLayoutEffect(() => {
-    if (!open || !sources.length || !sourceSectionRef.current || !panelScrollRef.current) return;
-    panelScrollRef.current.scrollTop = sourceSectionRef.current.offsetTop - panelScrollRef.current.offsetTop;
+    const scroll = panelScrollRef.current;
+    const selected = sourceSectionRef.current?.querySelector<HTMLElement>(".research-source-item.is-active");
+    if (!open || !scroll || !selected) return;
+    const bounds = scroll.getBoundingClientRect();
+    const item = selected.getBoundingClientRect();
+    if (item.top < bounds.top) scroll.scrollTop += item.top - bounds.top - 12;
+    else if (item.bottom > bounds.bottom) scroll.scrollTop += item.bottom - bounds.bottom + 12;
   }, [open, selectedSource, sources.length]);
 
   if (!open) return null;
@@ -527,9 +495,10 @@ export function ResearchPanel({
     <aside id="chat-research-panel" className="research-panel" aria-label="来源详情">
       <header className="research-panel-header">
         <div>
-          <span className={`research-live-dot${streaming ? " is-live" : ""}`} aria-hidden="true" />
-          <strong>来源详情</strong>
-          <small>{sources.length}</small>
+          <BookOpen size={16} aria-hidden="true" />
+          <strong>参考来源</strong>
+          {streaming ? <span className="research-live-dot is-live" aria-hidden="true" /> : null}
+          <small>{sources.length} 个来源</small>
         </div>
         <button ref={closeButtonRef} type="button" onClick={onClose} aria-label="关闭来源详情" title="关闭来源详情">
           <X size={17} />
@@ -538,48 +507,27 @@ export function ResearchPanel({
 
       <div className="research-panel-scroll" ref={panelScrollRef}>
         <section className="research-section research-sources" aria-labelledby="research-sources-title" ref={sourceSectionRef}>
-          <div className="research-section-heading">
-            <span>引用</span>
-            <small>{sources.length ? `${sources.length} 个来源` : "暂无来源"}</small>
-          </div>
-          <h2 id="research-sources-title">用于回答的公开资料</h2>
+          <h2 id="research-sources-title" className="sr-only">本次回答的参考资料</h2>
           {sources.length ? (
-            <>
-              {activeSource ? (
-                <article className="research-source-detail" aria-label={`来源详情：${activeSource.title}`}>
-                  <div>
-                    <span>来源 {Math.min(selectedSource, sources.length - 1) + 1}</span>
-                    <a href={activeSource.url} target="_blank" rel="noreferrer">打开原网页<ArrowUpRight size={13} /></a>
-                  </div>
-                  <strong title={activeSource.title}>{activeSource.title}</strong>
-                  {activeSource.published_at ? <small>{activeSource.published_at}</small> : null}
-                  <p>{sourceDisplaySummary(activeSource)}</p>
-                </article>
-              ) : null}
-              <div className="research-source-list" aria-label="来源列表">
-                {sources.map((source, index) => {
-                  const confidence = sourceConfidence(source);
-                  return (
-                    <button
-                      type="button"
-                      className={activeSource?.url === source.url ? "is-active" : ""}
-                      key={`${source.url}-${index}`}
-                      onClick={() => onSelectSource(index)}
-                      aria-label={`来源 ${index + 1}：${source.title}`}
-                    >
+            <div className="research-source-list" aria-label="来源列表">
+              {sources.map((source, index) => {
+                const selected = source === activeSource;
+                return (
+                  <div className={`research-source-item${selected ? " is-active" : ""}`} key={`${source.url}-${index}`}>
+                    <a className="research-source-link" href={source.url} target="_blank" rel="noreferrer" aria-label={source.title}>
                       <span className="research-source-number">{index + 1}</span>
-                      <SourceFavicon domain={sourceDomain(source)} title={source.title} />
                       <span className="research-source-copy">
+                        <span className="research-source-meta">
+                          <SourceFavicon domain={sourceDomain(source)} title={source.title} />
+                          <small>{sourceDomain(source).replace(/^www\./i, "")}</small>
+                        </span>
                         <strong title={source.title}>{source.title}</strong>
-                        <small>{sourceDomain(source)}</small>
                       </span>
-                      <em className={`is-${confidence}`}>{confidence === "high" ? "高可信" : "待核验"}</em>
-                    </button>
-                  );
-                })}
-              </div>
-
-            </>
+                    </a>
+                  </div>
+                );
+              })}
+            </div>
           ) : (
             <div className="research-empty-state">
               <Search size={16} />
@@ -624,7 +572,7 @@ function MessageCopyButton({ content, label }: { content: string; label: string 
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => setFeedback(""), 3000);
   }
-  return <><button type="button" className="message-icon-action" aria-label={label} title={feedback || label} onClick={() => void copy()} disabled={!content}>{feedback === "已复制" ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}</button><span className="message-copy-feedback" role="status">{feedback}</span></>;
+  return <><button type="button" className="message-icon-action" data-copy-state={feedback ? feedback === "已复制" ? "success" : "error" : undefined} aria-label={label} title={feedback || label} onClick={() => void copy()} disabled={!content}>{feedback === "已复制" ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}</button><span className="message-copy-feedback" role="status">{feedback}</span></>;
 }
 
 function SearchMetadataContent({ metadata }: { metadata: SearchMetadata[] }) {
@@ -637,48 +585,6 @@ function SearchMetadataContent({ metadata }: { metadata: SearchMetadata[] }) {
   </span>)}</>;
 }
 
-function MessageModelDetails({ selection, messageId, metadata }: { selection?: ModelSelection; messageId: number; metadata: SearchMetadata[] }) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLSpanElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    function outsideClick(event: PointerEvent) {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false);
-    }
-    function escape(event: KeyboardEvent) {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      event.stopPropagation();
-      setOpen(false);
-      buttonRef.current?.focus({ preventScroll: true });
-    }
-    document.addEventListener("pointerdown", outsideClick);
-    document.addEventListener("keydown", escape, true);
-    return () => {
-      document.removeEventListener("pointerdown", outsideClick);
-      document.removeEventListener("keydown", escape, true);
-    };
-  }, [open]);
-  return (
-    <span ref={rootRef} className="message-details-disclosure">
-      <button ref={buttonRef} type="button" className="message-icon-action" aria-label="回答详情" title="回答详情" aria-expanded={open} aria-controls={`message-details-${messageId}`} onClick={() => setOpen((value) => !value)}>
-        <Info size={14} aria-hidden="true" />
-      </button>
-      {open ? <span id={`message-details-${messageId}`} className="message-model-details" role="region" aria-label="回答详情">
-        {selection ? <><strong>生成模型：{selection.model_name}</strong>
-        <span>模型版本 {selection.profile_revision} · 连接版本 {selection.connection_revision}
-          {selection.policy_version ? ` · 路由版本 ${selection.policy_version}` : ""}</span>
-        {selection.stage_selections ? Object.entries(selection.stage_selections).map(([stage, stageSelection]) => (
-          <span key={stage}>{modelStageLabels[stage] || stage}：{stageSelection.model_name || "未记录"} · {modelSelectionReasons[stageSelection.selection_reason || ""] || "原任务配置"}
-            {stageSelection.capability_status === "unverified" ? " · 所需能力未验证" : stageSelection.capability_status ? "" : " · 本轮未调用"}</span>
-        )) : null}</> : null}
-        <SearchMetadataContent metadata={metadata} />
-      </span> : null}
-    </span>
-  );
-}
-
 export function ChatTurn({ state, chatBusy, stopping = false }: { state: MessageState; chatBusy: boolean; stopping?: boolean }) {
   const researchPanel = useContext(ResearchPanelActionsContext);
   const openAttachment = useContext(AttachmentPreviewContext);
@@ -686,13 +592,15 @@ export function ChatTurn({ state, chatBusy, stopping = false }: { state: Message
   const source = state.metadata.custom.source as ChatMessage | undefined;
   if (!source) return null;
   const modelSelection = source.payload?.agent?.model_selection ?? source.payload?.model_selection;
+  const answerModelName = modelSelection?.answered_model_name?.trim()
+    || modelSelection?.stage_selections?.execute?.model_name?.trim()
+    || modelSelection?.model_name?.trim();
   const thoughtEvent = source.payload?.agent?.events.find(
     (event) => event.tool_name === "agent_thinking"
   );
   const isActiveAssistant = chatBusy && source.id < 0;
   const resultContent = resultOnlyContent(source.content, Boolean(thoughtEvent?.message));
   const failed = source.payload?.agent?.status === "failed";
-  const errorOnly = failed && Boolean(source.payload?.agent?.error?.message?.trim()) && resultContent.trim() === source.payload?.agent?.error?.message.trim();
   const assets = source.payload?.agent?.assets ?? [];
   const blocks = source.payload?.agent?.output_blocks ?? [];
   const seenAssets = new Set<string>();
@@ -703,7 +611,6 @@ export function ChatTurn({ state, chatBusy, stopping = false }: { state: Message
     return <GeneratedImage key={id} asset={asset} messageId={source.id} />;
   };
   const webSources = webSourcesFromAgent(source.payload?.agent);
-  const searchMetadata = searchMetadataFromAgent(source.payload?.agent);
   const openResearch = (selectedSource?: number) => {
     researchPanel?.openDetails(source.payload?.agent, webSources, selectedSource);
   };
@@ -718,17 +625,19 @@ export function ChatTurn({ state, chatBusy, stopping = false }: { state: Message
               {resultContent ? <section className="message-result message-dialog" aria-label="输出结果"><MarkdownContent sources={webSources} streaming={isActiveAssistant} onOpenSource={openResearch}>{resultContent}</MarkdownContent></section> : null}
               {assets.map(asset => imageBlock(asset.id))}
             </>}
-            {modelSelection?.fallback_used && modelSelection.answered_model_name ? <p className="message-model-selection">由备用模型 {modelSelection.answered_model_name} 回答</p> : null}
-            <ActionBarPrimitive.Root className="message-actions" hideWhenRunning>
-              <MessageCopyButton content={resultContent} label="复制回答" />
-              {openResult && ((!errorOnly && resultContent) || assets.length > 0) && source.id > 0 && source.payload?.agent?.status !== "waiting_user" ? <button type="button" className="message-result-action" aria-label="查看与保存成果" title="独立阅读、下载或保存到文件库" onClick={() => openResult(source.id)}><FolderPlus size={14} aria-hidden="true" /><span>成果</span></button> : null}
-              <ActionBarPrimitive.Reload className="message-icon-action" aria-label={failed ? "重试回答" : "重新生成回答"} title={failed ? "重试回答，将替换本轮及后续消息" : "重新生成，将替换本轮及后续消息"} aria-describedby={`regenerate-impact-${source.id}`}>
-                <RefreshCw size={14} aria-hidden="true" />
-              </ActionBarPrimitive.Reload>
-              {modelSelection?.model_name || searchMetadata.length ? <MessageModelDetails key={source.id} selection={modelSelection} messageId={source.id} metadata={searchMetadata} /> : null}
-            </ActionBarPrimitive.Root>
+            {!isActiveAssistant ? <div className="message-footer">
+              <div className="message-footer-tools">
+                <WebSourcesPanel sources={webSources} onOpen={() => openResearch()} />
+                <ActionBarPrimitive.Root className="message-actions" hideWhenRunning>
+                  <MessageCopyButton content={resultContent} label="复制回答" />
+                  <ActionBarPrimitive.Reload className="message-icon-action" aria-label={failed ? "重试回答" : "重新生成回答"} title={failed ? "重试回答，将替换本轮及后续消息" : "重新生成，将替换本轮及后续消息"} aria-describedby={`regenerate-impact-${source.id}`}>
+                    <RefreshCw size={14} aria-hidden="true" />
+                  </ActionBarPrimitive.Reload>
+                </ActionBarPrimitive.Root>
+              </div>
+              {answerModelName ? <span className="message-answer-model" aria-label={`回答模型：${answerModelName}`} title={answerModelName}>{answerModelName}</span> : null}
+            </div> : <WebSourcesPanel sources={webSources} onOpen={() => openResearch()} />}
             <span className="message-action-hint sr-only" id={`regenerate-impact-${source.id}`}>重新生成将替换本轮及后续消息</span>
-            <WebSourcesPanel sources={webSources} onOpen={() => openResearch()} />
           </>
         ) : (
           <>

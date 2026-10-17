@@ -77,6 +77,53 @@ test.beforeEach(async ({ page }) => {
   await mockCurrentProduct(page);
 });
 
+test("long conversations keep one scroll viewport without blank space above the composer", async ({ page }) => {
+  const source = { title: "参考资料", url: "https://example.com/reference", domain: "example.com" };
+  const messages = Array.from({ length: 6 }, (_, index) => [
+    { id: index * 2 + 1, role: "user", content: `问题 ${index + 1}`, created_at: conversation.updated_at },
+    {
+      id: index * 2 + 2, role: "assistant", created_at: conversation.updated_at,
+      content: `${"这是一段用于验证长对话滚动的回答。\n\n".repeat(20)}[参考资料](${source.url})`,
+      payload: { agent: {
+        provider: "mock", platform: "local", status: "done", rounds: 1,
+        events: [{ round: 1, tool_call_id: `search-${index}`, tool_name: "search_public_web", status: "done", message: "已检索", data: { sources: [source] } }]
+      } }
+    }
+  ]).flat();
+  await page.route("**/chat/messages?*", route => route.fulfill({ json: messages }));
+  await page.setViewportSize({ width: 1088, height: 770 });
+  await page.goto("/#/chat/1");
+  await expect(page.locator(".message.assistant")).toHaveCount(6);
+
+  const surface = page.locator(".chat-thread-surface");
+  const viewport = page.getByRole("log");
+  const assertSingleViewport = async () => {
+    await expect.poll(() => surface.evaluate(el => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(1);
+    const [surfaceBox, viewportBox] = await Promise.all([surface.boundingBox(), viewport.boundingBox()]);
+    expect(viewportBox!.y).toBeCloseTo(surfaceBox!.y, 0);
+    expect(viewportBox!.height).toBeCloseTo(surfaceBox!.height, 0);
+  };
+  await assertSingleViewport();
+  await page.getByRole("button", { name: "查看全部 1 个来源", exact: true }).last().click();
+  const panel = page.getByRole("complementary", { name: "来源详情" });
+  await expect(panel).toBeVisible();
+  await panel.getByRole("button", { name: "关闭来源详情", exact: true }).click();
+  await expect(panel).toBeHidden();
+  await assertSingleViewport();
+
+  for (const width of [777, 390, 1088]) {
+    await page.setViewportSize({ width, height: 770 });
+    await viewport.evaluate(el => { el.scrollTop = el.scrollHeight; });
+    await assertSingleViewport();
+    const [viewportBox, lastMessageBox] = await Promise.all([
+      viewport.boundingBox(), page.locator(".message.assistant").last().boundingBox()
+    ]);
+    const bottomGap = viewportBox!.y + viewportBox!.height - lastMessageBox!.y - lastMessageBox!.height;
+    expect(bottomGap).toBeGreaterThanOrEqual(0);
+    expect(bottomGap).toBeLessThanOrEqual(64);
+  }
+});
+
 test("AI workspace keeps one reading axis and switches history rail by breakpoint", async ({ page }) => {
   const evidenceDir = resolve("..", "..", "output", "playwright");
   await mkdir(evidenceDir, { recursive: true });

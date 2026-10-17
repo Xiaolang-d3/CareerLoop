@@ -167,7 +167,7 @@ describe("RunProcess", () => {
 
 
 describe("execution record interaction", () => {
-  it("does not show a routine follow hint on initial expansion or reopening", () => {
+  it("never renders a paused-follow hint or jump button in the execution record", () => {
     const view = render(<RunProcess streaming agent={run({ events: [event("read", "已读取资料", { tool_name: "get_library_context" })] })} />);
     expect(screen.getByRole("region", { name: "执行记录，可滚动查看" })).toBeVisible();
     expect(view.container.querySelector(".run-process-followbar")).toBeNull();
@@ -175,12 +175,12 @@ describe("execution record interaction", () => {
     fireEvent.click(screen.getByRole("button", { name: "展开思考与执行过程" }));
     expect(view.container.querySelector(".run-process-followbar")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "展开已读取资料的执行说明" }));
-    expect(screen.getByText("已暂停跟随")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "回到最新" }));
     expect(view.container.querySelector(".run-process-followbar")).toBeNull();
+    expect(screen.queryByText("已暂停跟随")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /回到最新/ })).not.toBeInTheDocument();
   });
 
-  it("preserves history position, counts only new calls and resumes following on request", () => {
+  it("preserves reading position and resumes following after scrolling back to the latest", () => {
     const a = event("a", "已读取资料", { tool_name: "get_library_context", data: { sources: [] } });
     const view = render(<RunProcess streaming agent={run({ events: [a] })} />);
     const records = screen.getByRole("region", { name: "执行记录，可滚动查看" });
@@ -191,17 +191,14 @@ describe("execution record interaction", () => {
     expect(records.scrollTop).toBe(600);
     records.scrollTop = 90;
     fireEvent.scroll(records);
-    expect(screen.getByText("已暂停跟随")).toBeVisible();
     const c = event("c", "已核对引用", { tool_name: "citation_validator" });
     height = 800;
     view.rerender(<RunProcess streaming agent={run({ events: [a, b, c] })} />);
     expect(records.scrollTop).toBe(90);
-    expect(screen.getByText("有 1 条新记录")).toBeVisible();
     view.rerender(<RunProcess streaming agent={run({ events: [a, { ...b, status: "done" }, c] })} />);
-    expect(screen.getByText("有 1 条新记录")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "回到最新（1）" }));
-    expect(records.scrollTop).toBe(800);
-    expect(screen.queryByRole("button", { name: /回到最新/ })).not.toBeInTheDocument();
+    expect(records.scrollTop).toBe(90);
+    records.scrollTop = 800;
+    fireEvent.scroll(records);
     fireEvent.click(screen.getByRole("button", { name: "展开已读取资料的执行说明" }));
     height = 900;
     const d = event("d", "正在生成回答", { tool_name: "model_provider", status: "running" });
@@ -210,8 +207,7 @@ describe("execution record interaction", () => {
     expect(screen.getByRole("button", { name: "收起已读取资料的执行说明" })).toHaveAttribute("aria-expanded", "true");
     records.scrollTop = 700;
     fireEvent.scroll(records);
-    expect(screen.queryByText("已暂停跟随")).not.toBeInTheDocument();
-    expect(screen.queryByText("跟随最新 · 可向上滚动查看")).not.toBeInTheDocument();
+    expect(view.container.querySelector(".run-process-followbar")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "收起思考与执行过程" }));
     view.rerender(<RunProcess streaming agent={run({ events: [a, b, c, { ...d, message: "正在生成最终回答" }] })} />);
     expect(screen.getByRole("button", { name: "展开思考与执行过程" })).toHaveTextContent("正在生成最终回答");

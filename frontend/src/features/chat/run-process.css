@@ -6,16 +6,12 @@
 .chat-workspace .run-process-scroll { flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; overflow-anchor: none; scrollbar-width: thin; scrollbar-color: var(--color-border) transparent; padding-right: 9px; }
 .chat-workspace .run-process-scroll > :last-child { margin-bottom: 0; }
 .chat-workspace .run-process-scroll:focus-visible { outline: 2px solid var(--color-brand); outline-offset: -2px; }
-.chat-workspace .run-process-followbar { height: 26px; flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--color-text-muted); }
-.chat-workspace .run-process-followbar small { font-size: 10px; }
-.chat-workspace .run-process-followbar button { padding: 0; border: 0; background: transparent; color: var(--color-brand); cursor: pointer; font-size: 11px; }
-.chat-workspace .run-process-followbar button[hidden] { display: none; }
 .chat-workspace .tool-call-record { min-width: 0; margin-bottom: 18px; }
 .chat-workspace .run-process .tool-call-toggle { width: 100%; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; text-align: left; font-family: inherit; cursor: pointer; }
 .chat-workspace .tool-call-toggle > span { flex: 1; min-width: 0; }
 .chat-workspace .tool-call-toggle > small { display: flex; align-items: center; flex: none; gap: 3px; margin-left: 6px; color: var(--color-text-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .chat-workspace .tool-call-toggle[aria-expanded="true"] > small svg { transform: rotate(180deg); }
-.chat-workspace .tool-call-toggle:focus-visible, .chat-workspace .run-process-followbar button:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 3px; }
+.chat-workspace .tool-call-toggle:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 3px; }
 .chat-workspace .tool-call-detail { margin: 3px 0 12px 24px; padding: 0; border: 0; background: transparent; color: var(--color-text-muted); font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
 .chat-workspace .tool-call-detail[hidden] { display: none; }
 .chat-workspace .tool-call-detail p { margin: 3px 0; }

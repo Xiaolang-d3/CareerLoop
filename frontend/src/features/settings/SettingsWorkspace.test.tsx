@@ -29,7 +29,7 @@ describe("SettingsOverview", () => {
 
     expect(screen.getByText("账号与安全")).toBeInTheDocument();
     expect(screen.getByText("小林")).toBeInTheDocument();
-    expect(screen.getByText("owner@example.com")).toBeInTheDocument();
+    expect(screen.queryByText("owner@example.com")).not.toBeInTheDocument();
     expect(screen.getByText("文件库管理")).toBeInTheDocument();
     expect(screen.getByText("文件、主题集合与知识")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "了解 灯灯" })).toHaveAttribute("href", "#/about");
@@ -42,7 +42,7 @@ describe("SettingsOverview", () => {
     const { onOpen } = renderOverview();
     fireEvent.click(screen.getByRole("button", { name: /外观/ }));
     expect(onOpen).toHaveBeenCalledWith("appearance");
-    expect(screen.getByText("浅色、深色或跟随系统")).toBeInTheDocument();
+    expect(screen.queryByText("浅色、深色或跟随系统")).not.toBeInTheDocument();
   });
 
   it("includes 模型设置 and opens the existing model page", () => {
@@ -59,18 +59,32 @@ describe("SettingsOverview", () => {
     expect(onOpen).toHaveBeenCalledWith("model");
   });
 
+  it("keeps unconfigured model settings reachable and labels the missing configuration", () => {
+    const { onOpen } = renderOverview({ modelName: " ", apiKeyConfigured: false });
+    const modelEntry = screen.getByRole("button", { name: /模型设置/ });
+    expect(modelEntry).toHaveTextContent("尚未设置模型");
+    expect(modelEntry).toHaveTextContent("待配置密钥");
+    expect(screen.queryByText("密钥已配置")).not.toBeInTheDocument();
+    fireEvent.click(modelEntry);
+    expect(onOpen).toHaveBeenCalledWith("model");
+  });
+
   it("opens file management even without a profile name or enabled material", () => {
     const { onOpen } = renderOverview({ library: emptyLibraryEditor, libraryReady: false, fileCount: 0 });
-    expect(screen.getByText("暂无文件，可随时添加")).toBeInTheDocument();
+    expect(screen.queryByText("暂无文件，可随时添加")).not.toBeInTheDocument();
     expect(screen.queryByText("待完善")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /文件库管理/ }));
     expect(onOpen).toHaveBeenCalledWith("library");
   });
 
-  it("shows a file count and makes the shared workspace library explicit", () => {
+  it("keeps the overview free of secondary descriptions", () => {
     renderOverview({ fileCount: 3 });
-    expect(screen.getByText("共 3 个文件")).toBeInTheDocument();
-    expect(screen.getByText("与 AI 工作区共用同一文件库")).toBeInTheDocument();
+    expect(screen.queryByText("共 3 个文件")).not.toBeInTheDocument();
+    expect(screen.queryByText("与 AI 工作区共用同一文件库")).not.toBeInTheDocument();
+    expect(screen.queryByText("昵称、头像和密码")).not.toBeInTheDocument();
+    expect(screen.queryByText("对话与分析共用此模型")).not.toBeInTheDocument();
+    expect(screen.queryByText("填写模型名称、服务地址和 API Key")).not.toBeInTheDocument();
+    expect(screen.queryByText("所有模块统一外观，立即生效")).not.toBeInTheDocument();
   });
 
 });

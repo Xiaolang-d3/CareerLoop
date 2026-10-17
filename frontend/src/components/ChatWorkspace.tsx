@@ -11,7 +11,7 @@ import { textFromAppendMessage, WebSource, webSourcesFromAgent, ResearchPanelAct
 
 import type { AgentRunResult, ChatMessage, ChatAttachment, WebSearchOptions, ChatClarificationOption, ChatClarification, ChatWorkspaceProps } from "../features/chat/types";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type CSSProperties, type DragEvent } from "react";
 
 import { ConversationHistoryPanel } from "./ConversationHistoryPanel";
 
@@ -441,6 +441,13 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
               onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setComposerFocused(false); }}
               onSubmit={(event) => { if (props.attachmentBusy || props.modelSelectionBusy || props.modelProfileUnavailable || searchIssue) event.preventDefault(); }}
             >
+              <svg className="composer-border-light" aria-hidden="true" focusable="false">
+                {Array.from({ length: 12 }, (_, index) => (
+                  <rect key={index} x="1.25" y="1.25" rx="16" pathLength="100"
+                    strokeDasharray={`${20 - index * 1.5} ${80 + index * 1.5}`}
+                    style={{ "--composer-trail-start": `${-index * 1.5}px` } as CSSProperties} />
+                ))}
+              </svg>
               <ComposerPrimitive.Input
                 ref={props.chatInputRef}
                 rows={1}
@@ -515,11 +522,6 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
         sources={activeResearch.sources}
         selectedSource={activeResearch.selectedSource}
         streaming={props.chatBusy && activeResearch.agent === props.latestAgent}
-        onSelectSource={(selectedSource) => setResearchSelection({
-          agent: activeResearch.agent,
-          sources: activeResearch.sources,
-          selectedSource
-        })}
         onClose={() => closeResearchDetails()}
       />
       {resultSelection ? <ResultDialog key={resultSelection.messageId} {...resultSelection} services={props} onClose={() => setResultSelection(null)} /> : null}

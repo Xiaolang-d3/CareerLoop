@@ -1,5 +1,7 @@
 /* Keep the editor and controls in separate rows in every conversation state. */
 .chat-workspace .chat-composer .composer-input.composer-input--enhanced {
+  --composer-frame-shadow: 0 3px 14px color-mix(in srgb, var(--color-text) 4%, transparent);
+  --composer-frame-focus: 0 0 0 3px color-mix(in srgb, var(--color-brand) 7%, transparent), var(--composer-frame-shadow);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -92,14 +94,54 @@
 
 /* A quieter input frame keeps the conversation content prominent. */
 .assistant-page .chat-workspace .chat-composer .composer-input.composer-input--enhanced {
-  border-color: var(--color-border) !important;
+  border: 1px solid color-mix(in srgb, var(--color-text-muted) 24%, var(--color-surface)) !important;
   border-radius: 16px !important;
   background: var(--color-surface) !important;
-  box-shadow: 0 4px 16px rgba(48, 38, 110, .05) !important;
+  box-shadow: var(--composer-frame-shadow) !important;
+  transition: border-color .16s ease, box-shadow .16s ease;
+}
+@media (hover: hover) {
+  .assistant-page .chat-workspace .chat-composer .composer-input.composer-input--enhanced:hover:not(:focus-within) {
+    border-color: color-mix(in srgb, var(--color-brand) 26%, var(--color-border)) !important;
+  }
 }
 .assistant-page .chat-workspace .chat-composer .composer-input.composer-input--enhanced:focus-within {
-  border-color: var(--color-brand) !important;
-  box-shadow: var(--focus-ring) !important;
+  border-color: color-mix(in srgb, var(--color-brand) 55%, var(--color-border)) !important;
+  box-shadow: var(--composer-frame-focus) !important;
+}
+/* A normalized SVG path keeps the light moving evenly on wide and narrow editors. */
+.composer-border-light {
+  position: absolute;
+  inset: -1px;
+  width: calc(100% + 2px);
+  height: calc(100% + 2px);
+  overflow: visible;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .2s ease;
+}
+.composer-border-light rect {
+  width: calc(100% - 2.5px);
+  height: calc(100% - 2.5px);
+  fill: none;
+  stroke: var(--color-brand);
+  stroke-width: 2.5px;
+  stroke-linecap: round;
+  stroke-opacity: .075;
+  stroke-dashoffset: var(--composer-trail-start);
+}
+.composer-input--enhanced:focus-within > .composer-border-light { opacity: 1; }
+.composer-input--enhanced:focus-within > .composer-border-light rect {
+  animation: composer-border-light 4.8s linear infinite;
+}
+@keyframes composer-border-light {
+  from { stroke-dashoffset: var(--composer-trail-start); }
+  to { stroke-dashoffset: calc(var(--composer-trail-start) - 100px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .assistant-page .chat-workspace .chat-composer .composer-input.composer-input--enhanced { transition: none; }
+  .composer-input--enhanced > .composer-border-light { display: none; transition: none; }
+  .composer-input--enhanced > .composer-border-light rect { animation: none; }
 }
 .assistant-page .chat-workspace .composer-input-hint {
   color: var(--color-text-muted);

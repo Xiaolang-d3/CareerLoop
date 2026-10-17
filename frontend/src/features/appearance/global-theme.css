@@ -95,7 +95,7 @@
 :root[data-theme="dark"] .chat-workspace .message-markdown :is(h1, h2, h3, h4, h5, h6) { color: var(--color-text); }
 :root[data-theme="dark"] .chat-workspace .message-markdown a { color: var(--color-brand-strong); }
 :root[data-theme="dark"] .chat-workspace .message-markdown blockquote { color: var(--color-text-secondary); border-color: var(--color-brand); }
-:root[data-theme="dark"] .chat-workspace :is(.md-citation-card, .web-sources-heading, .web-source-item) { color: var(--color-text); background: var(--color-surface); border-color: var(--color-border); }
+:root[data-theme="dark"] .chat-workspace :is(.md-citation-card, .web-source-item) { color: var(--color-text); background: var(--color-surface); border-color: var(--color-border); }
 :root[data-theme="dark"] .chat-workspace .thinking-process {
   --think-bg: var(--color-surface-subtle);
   --think-bg-hover: var(--color-brand-soft);
