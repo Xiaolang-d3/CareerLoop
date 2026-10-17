@@ -1,6 +1,5 @@
-<p align="center">
+<div align="center">
   <img src="frontend/public/dengdeng-mark-v1.png" alt="灯灯 Logo" width="88" height="88" />
-</p>
 
 # 灯灯 · 个人 AI 协作工作台
 
@@ -9,6 +8,8 @@
 [![CI](https://github.com/Xiaolang-d3/CareerLoop/actions/workflows/ci.yml/badge.svg)](https://github.com/Xiaolang-d3/CareerLoop/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/github/license/Xiaolang-d3/CareerLoop?color=blue)](LICENSE)
 [![Community Standards](https://img.shields.io/badge/Community-Standards-blue)](https://github.com/Xiaolang-d3/CareerLoop/community)
+
+</div>
 
 灯灯是一个开源、本地优先的个人 AI 协作工作台。把问题、文件和想法带进对话，结合已有资料与公开来源完成研究、分析、起草和修改，再把有用的内容保存下来，留给下一次任务继续使用。
 
