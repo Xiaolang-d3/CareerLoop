@@ -134,12 +134,13 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
 }
 
 describe("ChatWorkspace", () => {
-  it("shows pure generated images and exposes result actions without requiring text", () => {
+  it("keeps generated image saving on the image without a message result button", () => {
     const asset: ChatAttachment = { id: "generated", origin: "generated", kind: "image", original_filename: "生成图片.png", parse_status: "parsed" };
     const pure: ChatMessage = { ...assistantMessage(""), payload: { agent: { provider: "responses", platform: "local", rounds: 1, status: "done", events: [], assets: [asset], output_blocks: [{ type: "image", asset_id: asset.id }] } } };
     renderChat([message, pure], { onLoadResults: vi.fn() });
     expect(screen.getAllByRole("button", { name: "预览 生成图片.png" })).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "查看与保存成果" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "保存 生成图片.png 到文件库" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "查看与保存成果" })).not.toBeInTheDocument();
   });
 
   it("renders ordered text and images once when a snapshot repeats an image reference", () => {
@@ -152,17 +153,28 @@ describe("ChatWorkspace", () => {
     const output = p.view.container.querySelector(".message-result")!;
     expect([...output.children].map(child => child.tagName)).toEqual(["DIV", "FIGURE", "DIV"]);
   });
-  it("opens one result reader without altering the composer draft", async () => {
-    const load = vi.fn().mockResolvedValue({ message_id: 12, snapshot: "a".repeat(64), incomplete: false, artifacts: [{ selector: "answer", kind: "answer", filename: "回答.md", mime_type: "text/markdown", content: "# 完整成果", can_index: true }] });
-    const p = renderChat([message, assistantMessage("完整成果")], { onLoadResults: load, onSaveResult: vi.fn() });
+  it("opens image saving without altering the composer draft", async () => {
+    const asset: ChatAttachment = { id: "generated", origin: "generated", kind: "image", original_filename: "生成图片.png", parse_status: "parsed" };
+    const pure: ChatMessage = { ...assistantMessage(""), payload: { agent: { provider: "responses", platform: "local", rounds: 1, status: "done", events: [], assets: [asset], output_blocks: [{ type: "image", asset_id: asset.id }] } } };
+    const load = vi.fn().mockResolvedValue({ message_id: 12, snapshot: "a".repeat(64), incomplete: false, artifacts: [{ selector: `asset:${asset.id}`, kind: "image", filename: asset.original_filename, mime_type: "image/png", asset, can_index: false }] });
+    const p = renderChat([message, pure], { onLoadResults: load, onSaveResult: vi.fn() });
     const input = screen.getByRole("textbox", { name: "输入消息" });
     fireEvent.change(input, { target: { value: "未发送草稿" } });
-    fireEvent.click(screen.getByRole("button", { name: "查看与保存成果" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存 生成图片.png 到文件库" }));
     expect(await screen.findByRole("dialog", { name: "聊天成果" })).toBeInTheDocument();
     expect(load).toHaveBeenCalledWith(12, expect.any(AbortSignal));
     fireEvent.click(screen.getByRole("button", { name: "关闭成果" }));
     expect(input).toHaveValue("未发送草稿");
     expect(p.onSend).not.toHaveBeenCalled();
+  });
+
+  it("does not show a result button below text answers even when result services are available", () => {
+    const load = vi.fn();
+    renderChat([message, assistantMessage("完整回答")], { onLoadResults: load, onSaveResult: vi.fn() });
+    expect(screen.queryByRole("button", { name: "查看与保存成果" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "复制回答" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "重新生成回答" })).toBeEnabled();
+    expect(load).not.toHaveBeenCalled();
   });
 
   it("does not expose final-result actions on an optimistic streaming response", () => {
@@ -280,15 +292,12 @@ describe("ChatWorkspace", () => {
     await waitFor(() => expect(props.onSend).toHaveBeenCalledWith("只用已有资料", [], [], false, "news", "technical"));
   });
 
-  it("keeps unknown actual categories inside answer details without inventing a match", () => {
+  it("does not add answer details or a model name from search metadata alone", () => {
     const answer: ChatMessage = { ...assistantMessage("测试回答"), payload: { agent: { provider: "test", platform: "local", rounds: 1, status: "done", events: [{ round: 1, tool_call_id: "search-1", tool_name: "search_public_web", status: "done", message: "检索完成", data: { search_metadata: { provider: "tavily", requested_topic: "auto", sent_topic: null, effective_topic: null, source_preference: "technical", warnings: [] } } }] } } };
     renderChat([message, answer]);
     expect(screen.queryByText(/服务实际类别/)).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "回答详情" }));
-    const details = screen.getByRole("region", { name: "回答详情" });
-    expect(details).toHaveTextContent("搜索服务：Tavily");
-    expect(details).toHaveTextContent("服务实际类别：未知");
-    expect(details).toHaveTextContent("优先技术资料");
+    expect(screen.queryByRole("button", { name: "回答详情" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^回答模型：/)).not.toBeInTheDocument();
   });
 
   it("keeps the current model label while generating and provides a stop action", async () => {
@@ -382,29 +391,28 @@ describe("ChatWorkspace", () => {
     } } };
     const props = renderChat([message, greeting]);
     props.view.rerender(<ChatWorkspace {...props} currentModelName="grok-4.7" defaultModelName="grok-4.7" modelConfigured />);
-    expect(screen.getAllByText("grok-4.7")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "切换模型，当前 grok-4.7" })).toBeInTheDocument();
+    expect(screen.getByLabelText("回答模型：grok-4.7")).toHaveTextContent("grok-4.7");
     expect(screen.queryByText(/生成模型：/)).not.toBeInTheDocument();
     expect(screen.queryByText("模型详情")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "来源详情" })).not.toBeInTheDocument();
-    for (const name of ["复制消息", "编辑消息", "复制回答", "重新生成回答", "回答详情"]) {
+    expect(screen.queryByRole("button", { name: "回答详情" })).not.toBeInTheDocument();
+    for (const name of ["复制消息", "编辑消息", "复制回答", "重新生成回答"]) {
       expect(screen.getByRole("button", { name })).toHaveTextContent(/^$/);
     }
   });
 
-  it("opens historical model details on demand and closes them with Escape or outside click", () => {
+  it("shows the historical answer model as plain text independently of the current model picker", () => {
     renderChat([{ ...assistantMessage("历史回答"), payload: { model_selection: {
       profile_id: "old", connection_id: "local", profile_revision: 2, connection_revision: 3, model_name: "历史模型"
-    } } }]);
-    const button = screen.getByRole("button", { name: "回答详情" });
-    expect(button).toHaveAttribute("aria-expanded", "false");
-    fireEvent.click(button);
-    expect(screen.getByRole("region", { name: "回答详情" })).toHaveTextContent("历史模型");
-    fireEvent.keyDown(document, { key: "Escape" });
-    expect(button).toHaveFocus();
+    } } }], { currentModelName: "当前模型" });
+    const label = screen.getByLabelText("回答模型：历史模型");
+    expect(label).toHaveTextContent("历史模型");
+    expect(label.closest("button")).toBeNull();
+    expect(label.closest(".message-footer")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "切换模型，当前 当前模型" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "回答详情" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "回答详情" })).not.toBeInTheDocument();
-    fireEvent.click(button);
-    fireEvent.pointerDown(screen.getByRole("textbox", { name: "输入消息" }));
-    expect(button).toHaveAttribute("aria-expanded", "false");
   });
 
   it("does not repeat an error already present in the answer", () => {
@@ -447,23 +455,47 @@ describe("ChatWorkspace", () => {
     expect(screen.queryByRole("button", { name: "查看过程，打开研究详情" })).not.toBeInTheDocument();
   });
 
-  it("shows the fixed routing version and stage reasons in historical model details", () => {
+  it("shows only the execution model in the answer footer without routing diagnostics", () => {
     renderChat([message, { ...assistantMessage("最终回答"), payload: { model_selection: {
       profile_id: "execute", connection_id: "c", profile_revision: 1, connection_revision: 2,
-      model_name: "执行模型", policy_version: 3,
+      model_name: "默认模型", policy_version: 3,
       stage_selections: {
       classify: { model_name: "识别模型", selection_reason: "stage_role", capability_status: "satisfied" },
       plan: { model_name: "规划模型", selection_reason: "default_profile" },
         execute: { model_name: "执行模型", selection_reason: "explicit_profile", capability_status: "unverified" }
       }
     } } }]);
-    expect(screen.queryByText("生成模型：执行模型")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "回答详情" }));
-    expect(screen.getByText("生成模型：执行模型")).toBeVisible();
-    expect(screen.getByText(/路由版本 3/)).toBeInTheDocument();
-    expect(screen.getByText("意图识别：识别模型 · 阶段分工")).toBeInTheDocument();
-  expect(screen.getByText("任务规划：规划模型 · 账号默认 · 本轮未调用")).toBeInTheDocument();
-    expect(screen.getByText("执行回答：执行模型 · 手动选模 · 所需能力未验证")).toBeInTheDocument();
+    expect(screen.getByLabelText("回答模型：执行模型")).toHaveTextContent("执行模型");
+    expect(screen.queryByLabelText("回答模型：默认模型")).not.toBeInTheDocument();
+    expect(screen.queryByText(/路由版本/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/意图识别：|任务规划：|本轮未调用/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "回答详情" })).not.toBeInTheDocument();
+  });
+
+  it("uses the recorded fallback answer model instead of the primary model", () => {
+    renderChat([{ ...assistantMessage("备用模型的回答"), payload: { agent: {
+      provider: "test", platform: "local", rounds: 1, status: "done", events: [],
+      model_selection: {
+        profile_id: "primary", connection_id: "c", profile_revision: 1, connection_revision: 1,
+        model_name: "主模型", stage_selections: { execute: { model_name: "执行模型" } },
+        fallback_used: true, answered_model_name: "备用模型"
+      }
+    } } }]);
+    expect(screen.getByLabelText("回答模型：备用模型")).toHaveTextContent("备用模型");
+    expect(screen.queryByText("主模型")).not.toBeInTheDocument();
+    expect(screen.queryByText("执行模型")).not.toBeInTheDocument();
+  });
+
+  it("does not infer missing historical model records from the current picker", () => {
+    renderChat([assistantMessage("未记录模型的旧回答")], { currentModelName: "当前模型" });
+    expect(screen.queryByLabelText(/^回答模型：/)).not.toBeInTheDocument();
+  });
+
+  it("waits until generation finishes before showing the answer model", () => {
+    renderChat([{ ...assistantMessage("生成中", -12), payload: { model_selection: {
+      profile_id: "p", connection_id: "c", profile_revision: 1, connection_revision: 1, model_name: "执行模型"
+    } } }], { chatBusy: true });
+    expect(screen.queryByLabelText(/^回答模型：/)).not.toBeInTheDocument();
   });
 
   it("puts the model picker in the composer toolbar and reminds the user to configure a model", () => {
@@ -1301,7 +1333,7 @@ describe("ChatWorkspace", () => {
               data: {
                 sources: [
                   { title: "天眼查", url: "https://www.tianyancha.com/company/1", domain: "www.tianyancha.com" },
-                  { title: "官网", url: "https://www.tencent.com/", domain: "www.tencent.com" }
+                  { title: "官网", url: "https://www.tencent.com/", domain: "www.tencent.com", snippet: "腾讯官网摘要", content: "整页抓取内容与导航" }
                 ]
               }
             }
@@ -1317,9 +1349,12 @@ describe("ChatWorkspace", () => {
     const sourcePanel = screen.getByRole("complementary", { name: "来源详情" });
     expect(sourcePanel).not.toHaveTextContent("已找到并读取 2 条公开公司资料，可生成带来源的公司研究报告");
     expect(screen.getByText("2 个来源")).toBeVisible();
-    expect(screen.getByRole("button", { name: "来源 1：天眼查" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "来源 2：官网" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /打开原网页/ })).toHaveAttribute("href", "https://www.tianyancha.com/company/1");
+    expect(within(sourcePanel).getByRole("link", { name: "天眼查" })).toHaveAttribute("href", "https://www.tianyancha.com/company/1");
+    expect(within(sourcePanel).getByRole("link", { name: "官网" })).toHaveAttribute("href", "https://www.tencent.com/");
+    expect(within(sourcePanel).queryByRole("article")).not.toBeInTheDocument();
+    expect(sourcePanel).not.toHaveTextContent("腾讯官网摘要");
+    expect(sourcePanel).not.toHaveTextContent("整页抓取内容与导航");
+    expect(screen.queryByRole("link", { name: /打开原网页/ })).not.toBeInTheDocument();
   });
 
   it("shows a specific thinking placeholder while waiting for the first assistant token", async () => {
@@ -1523,7 +1558,7 @@ describe("ChatWorkspace", () => {
     fireEvent.scroll(viewport);
     fireEvent.click(citation);
     expect(screen.getByRole("complementary", { name: "来源详情" })).toHaveTextContent("腾讯科技（深圳）有限公司");
-    expect(screen.getByRole("link", { name: "打开原网页" })).toHaveAttribute("target", "_blank");
+    expect(within(screen.getByRole("complementary", { name: "来源详情" })).getByRole("link", { name: "腾讯科技（深圳）有限公司" })).toHaveAttribute("target", "_blank");
     viewport.scrollTop = 0;
     fireEvent.click(within(screen.getByRole("complementary", { name: "来源详情" })).getByRole("button", { name: "关闭来源详情" }));
     await waitFor(() => expect(citation).toHaveFocus());
@@ -1568,8 +1603,8 @@ describe("ChatWorkspace", () => {
     sourceDetails.focus();
     fireEvent.click(sourceDetails);
     const panel = screen.getByRole("complementary", { name: "来源详情" });
-    expect(panel).toHaveTextContent("asyncio 用于编写并发代码");
-    expect(screen.getByRole("link", { name: /打开原网页/ })).toHaveAttribute("href", "https://docs.python.org/3/library/asyncio.html");
+    expect(panel).not.toHaveTextContent("asyncio 用于编写并发代码");
+    expect(within(panel).getByRole("link", { name: "Python 官方文档" })).toHaveAttribute("href", "https://docs.python.org/3/library/asyncio.html");
 
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("complementary", { name: "来源详情" })).not.toBeInTheDocument();

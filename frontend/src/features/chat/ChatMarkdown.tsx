@@ -6,6 +6,7 @@ import { ChatWorkspaceMindmap } from "../../components/ChatWorkspaceMindmap";
 import { isMermaidMindmap } from "../../components/mindmap-source";
 import { downloadText, codeFilename } from "./result-files";
 import "./markdown-reader.css";
+import "./chat-tables.css";
 
 export type WebSource = {
   title: string;

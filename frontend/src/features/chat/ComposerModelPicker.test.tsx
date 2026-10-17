@@ -55,6 +55,24 @@ describe("ComposerModelPicker", () => {
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
 
+  it("searches saved models by model or connection without a service catalog", () => {
+    setup();
+    openMenu();
+    const search = screen.getByRole("textbox", { name: "搜索模型" });
+    fireEvent.change(search, { target: { value: "备用" } });
+    expect(screen.getByRole("option", { name: "claude-x" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "gpt-5.5" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /跟随默认/ })).not.toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "GPT" } });
+    expect(screen.getByRole("option", { name: "gpt-5.5" })).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "备用连接" })).not.toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "missing" } });
+    expect(screen.getByText("没有匹配的模型")).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "" } });
+    expect(screen.getByRole("option", { name: "跟随默认 · gpt-5.5" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("group", { name: "备用连接" })).toBeInTheDocument();
+  });
+
   it("closes on Escape and opens model settings from the footer", () => {
     const props = setup();
     openMenu();
