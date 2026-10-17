@@ -17,7 +17,11 @@
 
 当前版本：**2.0.0 开发预览版**。支持浏览器本地运行，桌面版基于 Tauri 2，目前面向 macOS ARM64 内部测试。
 
+<div align="center">
+
 [快速开始](#快速开始) · [桌面版](#桌面安装包当前macos-arm64-内部测试) · [智能体架构](docs/agent.md) · [贡献指南](CONTRIBUTING.md) · [问题反馈](https://github.com/Xiaolang-d3/CareerLoop/issues/new/choose)
+
+</div>
 
 ## 核心能力
 
