@@ -1158,6 +1158,7 @@
 .assistant-page .chat-workspace {
   --chat-column: min(800px, calc(100% - 48px));
   --chat-gutter: max(24px, calc((100% - var(--chat-column)) / 2));
+  --chat-message-gutter: max(24px, calc((100% - 1120px) / 2));
   display: flex;
   flex-direction: row !important;
   width: 100%;
@@ -1204,7 +1205,7 @@
 .assistant-page .chat-workspace.is-empty .chat-thread {
   grid-row: 2;
   min-height: 0;
-  padding: 24px var(--chat-gutter) 20px;
+  padding: 24px var(--chat-message-gutter) 20px;
   overflow-x: hidden;
   overflow-y: auto;
 }
