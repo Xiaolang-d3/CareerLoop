@@ -4,13 +4,11 @@ import {
   CheckCircle2,
   ChevronRight,
   Cpu,
-  FileText,
   Folder,
+  Info,
   KeyRound,
   Palette,
-  ShieldCheck,
-  TriangleAlert,
-  UserRound
+  TriangleAlert
 } from "lucide-react";
 import type { LibraryEditor } from "../../types";
 import type { SettingsPage } from "../../routing";
@@ -59,7 +57,6 @@ type OverviewProps = {
 };
 
 export function SettingsOverview({
-  fileCount,
   onOpen,
   accountEmail,
   accountName,
@@ -72,48 +69,46 @@ export function SettingsOverview({
     <div className="settings-overview">
       <div className="settings-overview-grid">
         <button className="settings-entry-card account" type="button" onClick={() => onOpen("account")}>
-          <span className="settings-entry-icon"><KeyRound size={21} /></span>
+          <span className="settings-entry-icon"><KeyRound size={20} aria-hidden="true" /></span>
           <span className="settings-entry-copy">
             <span className="settings-entry-title"><strong>账号与安全</strong></span>
-            <span className="settings-entry-primary">{accountLabel}</span>
-            {accountName?.trim() && accountEmail ? <span className="settings-entry-meta"><UserRound size={13} />{accountEmail}</span> : null}
-            <span className="settings-entry-meta"><ShieldCheck size={13} />昵称、头像和密码</span>
+            <span className="settings-entry-primary" title={accountLabel}>{accountLabel}</span>
           </span>
-          <ChevronRight size={19} />
+          <ChevronRight size={17} aria-hidden="true" />
         </button>
         <button className="settings-entry-card library" type="button" onClick={() => onOpen("library")}>
-          <span className="settings-entry-icon"><Folder size={21} /></span>
+          <span className="settings-entry-icon"><Folder size={20} aria-hidden="true" /></span>
           <span className="settings-entry-copy">
             <span className="settings-entry-title"><strong>文件库管理</strong></span>
             <span className="settings-entry-primary">文件、主题集合与知识</span>
-            <span className="settings-entry-meta"><FileText size={13} />{fileCount === undefined ? "整理文件与长期使用范围" : fileCount ? `共 ${fileCount} 个文件` : "暂无文件，可随时添加"}</span>
-            <span className="settings-entry-meta">与 AI 工作区共用同一文件库</span>
           </span>
-          <ChevronRight size={19} />
+          <ChevronRight size={17} aria-hidden="true" />
         </button>
         <button className="settings-entry-card model" type="button" onClick={() => onOpen("model")}>
-          <span className="settings-entry-icon"><Cpu size={21} /></span>
+          <span className="settings-entry-icon"><Cpu size={20} aria-hidden="true" /></span>
           <span className="settings-entry-copy">
             <span className="settings-entry-title">
               <strong>模型设置</strong>
-              <em className={apiKeyConfigured ? "success" : "warning"}>
-                {apiKeyConfigured ? <CheckCircle2 size={13} /> : <TriangleAlert size={13} />}
+            </span>
+            <span className="settings-entry-meta">
+              <span className="settings-entry-primary" title={configuredModel}>{configuredModel}</span>
+              <em className={`settings-entry-status ${apiKeyConfigured ? "success" : "warning"}`}>
+                {apiKeyConfigured ? <CheckCircle2 size={12} aria-hidden="true" /> : <TriangleAlert size={12} aria-hidden="true" />}
                 {apiKeyConfigured ? "密钥已配置" : "待配置密钥"}
               </em>
             </span>
-            <span className="settings-entry-primary">{configuredModel}</span>
-            <span className="settings-entry-meta"><Cpu size={13} />对话与分析共用此模型</span>
-            <span className="settings-entry-meta"><ShieldCheck size={13} />{apiKeyConfigured ? "密钥只保存在本机，页面不显示原文" : "填写模型名称、服务地址和 API Key"}</span>
           </span>
-          <ChevronRight size={19} />
+          <ChevronRight size={17} aria-hidden="true" />
         </button>
         <button className="settings-entry-card appearance" type="button" onClick={() => onOpen("appearance")}>
-          <span className="settings-entry-icon"><Palette size={21} /></span>
-          <span className="settings-entry-copy"><span className="settings-entry-title"><strong>外观</strong></span><span className="settings-entry-primary">全局主题</span><span className="settings-entry-meta">浅色、深色或跟随系统</span><span className="settings-entry-meta">所有模块统一外观，立即生效</span></span>
-          <ChevronRight size={19} />
+          <span className="settings-entry-icon"><Palette size={20} aria-hidden="true" /></span>
+          <span className="settings-entry-copy"><span className="settings-entry-title"><strong>外观</strong></span><span className="settings-entry-primary">全局主题</span></span>
+          <ChevronRight size={17} aria-hidden="true" />
         </button>
       </div>
-      <a className="settings-product-link" href={productIntroHash}>了解 灯灯<ChevronRight size={15} aria-hidden="true" /></a>
+      <a className="settings-product-link" href={productIntroHash}>
+        <Info size={17} aria-hidden="true" /><span>了解 灯灯</span><ChevronRight size={16} aria-hidden="true" />
+      </a>
     </div>
   );
 }
