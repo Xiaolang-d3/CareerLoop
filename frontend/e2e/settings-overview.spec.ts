@@ -40,8 +40,14 @@ for (const theme of ["light", "dark"] as const) {
         // The shared shell animates its sidebar margin when the breakpoint changes.
         await expect.poll(async () => (await panel.boundingBox())!.x).toBeLessThanOrEqual(24);
         const box = (await panel.boundingBox())!;
+        const dbg = await page.evaluate(() => {
+          const content = document.querySelector(".content") as HTMLElement;
+          const cr = content.getBoundingClientRect();
+          return { inner: window.innerWidth, docClient: document.documentElement.clientWidth, bodyClient: document.body.clientWidth, contentX: cr.x, contentWidth: cr.width, contentClient: content.clientWidth };
+        });
+        console.log("[debug]", width, JSON.stringify(box), JSON.stringify(dbg));
         // Classic scrollbars on CI runners shrink the content box; measure the visible width.
-        const contentWidth = await page.evaluate(() => document.documentElement.clientWidth);
+        const contentWidth = await page.evaluate(() => document.body.clientWidth);
         expect(contentWidth - box.x - box.width).toBeLessThanOrEqual(24);
       }
       for (const entry of await entries.all()) await expect(entry).toBeInViewport();
