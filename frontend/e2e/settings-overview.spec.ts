@@ -40,7 +40,9 @@ for (const theme of ["light", "dark"] as const) {
         // The shared shell animates its sidebar margin when the breakpoint changes.
         await expect.poll(async () => (await panel.boundingBox())!.x).toBeLessThanOrEqual(24);
         const box = (await panel.boundingBox())!;
-        expect(width - box.x - box.width).toBeLessThanOrEqual(24);
+        // Classic scrollbars on CI runners shrink the content box; measure the visible width.
+        const contentWidth = await page.evaluate(() => document.documentElement.clientWidth);
+        expect(contentWidth - box.x - box.width).toBeLessThanOrEqual(24);
       }
       for (const entry of await entries.all()) await expect(entry).toBeInViewport();
       await expect(page.getByRole("link", { name: "了解 灯灯", exact: true })).toBeInViewport();
