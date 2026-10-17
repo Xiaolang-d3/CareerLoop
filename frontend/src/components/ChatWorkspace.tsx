@@ -484,7 +484,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                     capabilities={props.webSearchCapabilities} available={props.webSearchAvailable} provider={props.webSearchProvider}
                     busy={props.chatBusy || props.taskCancelBusy} capabilitiesBusy={props.webSearchCapabilitiesBusy}
                     capabilitiesError={props.webSearchCapabilitiesError} onRefresh={props.onRefreshWebSearchCapabilities} inherited={props.webSearchInherited} />
-                  <ChatContextChips context={props.sessionContext} onOpenLibrary={props.onOpenLibrary} />
+                  <ChatContextChips context={props.sessionContext} />
                 </div>
                 {props.chatBusy ? (
                   <ComposerPrimitive.Cancel className="send-button stop-button" disabled={props.taskCancelBusy} aria-label={props.taskCancelBusy ? "正在停止生成" : "停止生成"} title={props.taskCancelBusy ? "正在停止生成" : "停止生成"}>

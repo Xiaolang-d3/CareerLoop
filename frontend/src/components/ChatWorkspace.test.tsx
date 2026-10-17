@@ -955,7 +955,7 @@ describe("ChatWorkspace", () => {
     await waitFor(() => expect(props.onSend).toHaveBeenCalledWith("查一下技术文档", [], [], true, "news", "technical"));
   });
 
-  it("shows saved resume and analysis as attached composer context", () => {
+  it("keeps saved-material access out of the composer while retaining analysis context", () => {
     const onOpenLibrary = vi.fn();
     const onSend = vi.fn();
     render(
@@ -997,17 +997,15 @@ describe("ChatWorkspace", () => {
       />
     );
 
-    const resume = screen.getByRole("button", { name: "查看已保存资料" });
-    expect(resume).toHaveTextContent("已保存资料");
-    expect(resume).toHaveAttribute("title", "查看已保存资料，提问时会自动参考");
+    expect(screen.queryByRole("button", { name: "查看已保存资料" })).not.toBeInTheDocument();
+    expect(screen.queryByText("已保存资料", { exact: true })).not.toBeInTheDocument();
     expect(screen.getByText("示例公司 · 后端")).toBeInTheDocument();
     expect(screen.queryByText("分析")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "分析" })).not.toBeInTheDocument();
     expect(screen.queryByText("参考简历原文")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "梳理已保存资料" })).toBeInTheDocument();
 
-    fireEvent.click(resume);
-    expect(onOpenLibrary).toHaveBeenCalledOnce();
+    expect(onOpenLibrary).not.toHaveBeenCalled();
     expect(onSend).not.toHaveBeenCalled();
     expect(screen.getByLabelText("输入消息")).toHaveValue("");
   });

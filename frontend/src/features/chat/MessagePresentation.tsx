@@ -24,7 +24,7 @@ import { ResultActionsContext } from "./result-types";
 import { HistoryAttachment } from "./HistoryAttachment";
 import { GeneratedImage } from "./GeneratedImage";
 import { ActionBarPrimitive, ComposerPrimitive, MessagePrimitive, type AppendMessage, type MessageState } from "@assistant-ui/react";
-import { BookOpen, Check, CheckCircle2, ChevronDown, ChevronRight, CircleHelp, Copy, FileText, LoaderCircle, Pencil, RefreshCw, Search, X } from "lucide-react";
+import { BookOpen, Check, CheckCircle2, ChevronDown, ChevronRight, CircleHelp, Copy, LoaderCircle, Pencil, RefreshCw, Search, X } from "lucide-react";
 
 function resultOnlyContent(content: string, hasThoughtSummary: boolean): string {
   if (!hasThoughtSummary) return content;
@@ -400,38 +400,21 @@ export function StarterPromptList({
 }
 
 export function ChatContextChips({
-  context,
-  onOpenLibrary
+  context
 }: {
   context?: ChatSessionContext;
-  onOpenLibrary?: () => void;
 }) {
-  const sourceLabel = context?.sourceLabel?.trim();
   const analysisLabel = context?.analysisLabel?.trim();
-  if (!sourceLabel && !analysisLabel) return null;
+  if (!analysisLabel) return null;
   return (
     <span className="composer-context-hint">
-      {sourceLabel ? (
-        <button
-          type="button"
-          className="composer-context-status is-source"
-          onClick={onOpenLibrary}
-          title="查看已保存资料，提问时会自动参考"
-          aria-label="查看已保存资料"
-        >
-          <FileText size={15} aria-hidden="true" />
-          <span>已保存资料</span>
-        </button>
-      ) : null}
-      {analysisLabel ? (
-        <span
-          className="composer-context-status is-analysis"
-          role="status"
-          title={`提问时会参考：${analysisLabel}`}
-        >
-          <span>{analysisLabel}</span>
-        </span>
-      ) : null}
+      <span
+        className="composer-context-status is-analysis"
+        role="status"
+        title={`提问时会参考：${analysisLabel}`}
+      >
+        <span>{analysisLabel}</span>
+      </span>
     </span>
   );
 }

@@ -1,8 +1,13 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { ResearchPanel } from "./MessagePresentation";
+import { ChatContextChips, ResearchPanel } from "./MessagePresentation";
 
 afterEach(cleanup);
+
+it("does not reserve composer space for saved materials alone", () => {
+  const view = render(<ChatContextChips context={{ sourceLabel: "阅读笔记", analysisLabel: null }} />);
+  expect(view.container).toBeEmptyDOMElement();
+});
 
 it("shows source headings as direct links without summary controls", () => {
   render(<ResearchPanel open sources={[
