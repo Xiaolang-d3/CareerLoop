@@ -7,11 +7,11 @@ import { ResultDialog } from "../features/chat/ResultDialog";
 import { ResultActionsContext } from "../features/chat/result-types";
 import { AttachmentThumbnailContext } from "../features/chat/HistoryAttachment";
 import { defaultWebSearchOptions, pendingWebSearchOptions, webSearchConfigurationIssue } from "../features/chat/webSearchOptions";
-import { textFromAppendMessage, WebSource, webSourcesFromAgent, ResearchPanelActionsContext, EditMessageComposer, RunProcess, ComposerClarification, StarterPromptList, ChatContextChips, ResearchPanel, ChatTurn } from "../features/chat/MessagePresentation";
+import { textFromAppendMessage, WebSource, webSourcesFromAgent, ResearchPanelActionsContext, EditMessageComposer, RunProcess, ComposerClarification, ChatContextChips, ResearchPanel, ChatTurn } from "../features/chat/MessagePresentation";
 
 import type { AgentRunResult, ChatMessage, ChatAttachment, WebSearchOptions, ChatClarificationOption, ChatClarification, ChatWorkspaceProps } from "../features/chat/types";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type CSSProperties, type DragEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from "react";
 
 import { ConversationHistoryPanel } from "./ConversationHistoryPanel";
 
@@ -71,7 +71,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   const aui = useAui();
   const composerText = useAuiState((state) => state.composer.text);
   const [composerFocused, setComposerFocused] = useState(false);
-  const showComposerHint = (!props.chatBusy && composerFocused) || composerText.length >= 180_000;
+  const showComposerHint = (!props.chatBusy && (composerFocused || (props.messages.length === 0 && props.density !== "dock"))) || composerText.length >= 180_000;
   const searchIssue = webSearchConfigurationIssue(props.webSearchOptions, props.webSearchCapabilities);
   const localDrafts = useRef(new Map<number, string>());
   const drafts = props.composerDrafts ?? localDrafts.current;
@@ -124,7 +124,6 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
     sources: WebSource[];
     selectedSource: number;
   } | null>(null);
-  const showStarters = props.messages.length === 0 && !props.chatBusy && !clarification;
   const latestAssistant = [...props.messages].reverse().find((message) => message.role === "assistant");
   const defaultResearchAgent = props.latestAgent ?? latestAssistant?.payload?.agent;
   const defaultResearchSources = webSourcesFromAgent(defaultResearchAgent);
@@ -154,10 +153,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
     });
   }
 
-  function fillComposer(draft: string, enableWebSearch = false) {
-    if (enableWebSearch && props.webSearchAvailable && !props.webSearchOptions.enabled) {
-      props.onWebSearchOptionsChange({ ...props.webSearchOptions, enabled: true });
-    }
+  function fillComposer(draft: string) {
     aui.composer().setText(draft);
     window.requestAnimationFrame(() => {
       const input = props.chatInputRef.current;
@@ -328,8 +324,8 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
         <div className="chat-composer">
           {props.messages.length === 0 && props.density !== "dock" ? (
             <div className="chat-welcome">
-              <h2>你想完成什么？</h2>
-              <p>在这里搜索公开信息、核对来源、分析资料并生成内容，不用在多个工具之间来回切换。</p>
+              <h2>今天，想完成什么？</h2>
+              <p>提问、查资料，或描述你想生成的图片。</p>
             </div>
           ) : null}
           {clarification && !props.chatBusy ? (
@@ -441,26 +437,30 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
               onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setComposerFocused(false); }}
               onSubmit={(event) => { if (props.attachmentBusy || props.modelSelectionBusy || props.modelProfileUnavailable || searchIssue) event.preventDefault(); }}
             >
-              <svg className="composer-border-light" aria-hidden="true" focusable="false">
-                {Array.from({ length: 12 }, (_, index) => (
-                  <rect key={index} x="1.25" y="1.25" rx="16" pathLength="100"
-                    strokeDasharray={`${20 - index * 1.5} ${80 + index * 1.5}`}
-                    style={{ "--composer-trail-start": `${-index * 1.5}px` } as CSSProperties} />
-                ))}
-              </svg>
               <ComposerPrimitive.Input
                 ref={props.chatInputRef}
                 rows={1}
                 maxLength={200_000}
                 aria-label="输入消息"
                 aria-describedby="composer-input-hint"
-                placeholder={clarification ? "回答上面的问题，或直接说下一件…" : "输入你的问题或任务…"}
+                placeholder={clarification ? "回答上面的问题，或直接说下一件…" : "直接说说你的想法…"}
                 submitMode="enter"
                 unstable_insertNewlineOnTouchEnter
                 onPaste={handleComposerPaste}
               />
               <div className="composer-bottom-row">
-              <div className="composer-shortcuts" role="group" aria-label="输入选项">
+                <div className="composer-shortcuts" role="group" aria-label="输入选项">
+                  <button className="composer-tool composer-attachment-tool" type="button" aria-label={props.attachmentBusy ? "附件处理中" : "添加附件"} onClick={() => attachmentInputRef.current?.click()} disabled={props.attachmentBusy} title={props.attachmentBusy ? "正在处理附件" : "添加图片或文档，也可粘贴图片或拖入文件"}>
+                    {props.attachmentBusy ? <LoaderCircle className="spinning" size={16} aria-hidden="true" /> : <Paperclip size={20} aria-hidden="true" />}
+                    <span>添加资料</span>
+                  </button>
+                  <ComposerWebSearch options={props.webSearchOptions} onChange={props.onWebSearchOptionsChange}
+                    capabilities={props.webSearchCapabilities} available={props.webSearchAvailable} provider={props.webSearchProvider}
+                    busy={props.chatBusy || props.taskCancelBusy} capabilitiesBusy={props.webSearchCapabilitiesBusy}
+                    capabilitiesError={props.webSearchCapabilitiesError} onRefresh={props.onRefreshWebSearchCapabilities} inherited={props.webSearchInherited} />
+                  <ChatContextChips context={props.sessionContext} />
+                </div>
+                <div className="composer-primary-actions">
                   <ComposerModelPicker
                     configured={props.modelConfigured !== false}
                     currentModelName={props.currentModelName}
@@ -477,24 +477,16 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                     onChange={(profileId) => props.onModelProfileChange?.(profileId)}
                     onOpenSettings={props.onOpenModelSettings}
                   />
-                  <button className="composer-tool composer-attachment-tool" type="button" aria-label={props.attachmentBusy ? "附件处理中" : "添加附件"} onClick={() => attachmentInputRef.current?.click()} disabled={props.attachmentBusy} title={props.attachmentBusy ? "正在处理附件" : "添加图片或文档，也可粘贴图片或拖入文件"}>
-                    {props.attachmentBusy ? <LoaderCircle className="spinning" size={16} aria-hidden="true" /> : <Paperclip size={17} aria-hidden="true" />}
-                  </button>
-                  <ComposerWebSearch options={props.webSearchOptions} onChange={props.onWebSearchOptionsChange}
-                    capabilities={props.webSearchCapabilities} available={props.webSearchAvailable} provider={props.webSearchProvider}
-                    busy={props.chatBusy || props.taskCancelBusy} capabilitiesBusy={props.webSearchCapabilitiesBusy}
-                    capabilitiesError={props.webSearchCapabilitiesError} onRefresh={props.onRefreshWebSearchCapabilities} inherited={props.webSearchInherited} />
-                  <ChatContextChips context={props.sessionContext} />
+                  {props.chatBusy ? (
+                    <ComposerPrimitive.Cancel className="send-button stop-button" disabled={props.taskCancelBusy} aria-label={props.taskCancelBusy ? "正在停止生成" : "停止生成"} title={props.taskCancelBusy ? "正在停止生成" : "停止生成"}>
+                      <Square size={12} fill="currentColor" aria-hidden="true" /><span>停止</span>
+                    </ComposerPrimitive.Cancel>
+                  ) : (
+                    <ComposerPrimitive.Send className="send-button" aria-label="发送" disabled={props.attachmentBusy || props.modelSelectionBusy || props.modelProfileUnavailable || Boolean(searchIssue)} title={searchIssue || (props.attachmentBusy ? "资料处理完成后即可发送" : props.modelSelectionBusy ? "模型选择保存后即可发送" : props.modelProfileUnavailable ? "当前模型已停用，请切换模型" : "发送消息")}>
+                      <ArrowUp size={18} aria-hidden="true" /><span>发送</span>
+                    </ComposerPrimitive.Send>
+                  )}
                 </div>
-                {props.chatBusy ? (
-                  <ComposerPrimitive.Cancel className="send-button stop-button" disabled={props.taskCancelBusy} aria-label={props.taskCancelBusy ? "正在停止生成" : "停止生成"} title={props.taskCancelBusy ? "正在停止生成" : "停止生成"}>
-                    <Square size={12} fill="currentColor" aria-hidden="true" /><span>停止</span>
-                  </ComposerPrimitive.Cancel>
-                ) : (
-                  <ComposerPrimitive.Send className="send-button" aria-label="发送" disabled={props.attachmentBusy || props.modelSelectionBusy || props.modelProfileUnavailable || Boolean(searchIssue)} title={searchIssue || (props.attachmentBusy ? "资料处理完成后即可发送" : props.modelSelectionBusy ? "模型选择保存后即可发送" : props.modelProfileUnavailable ? "当前模型已停用，请切换模型" : "发送消息")}>
-                    <ArrowUp size={18} aria-hidden="true" /><span>发送</span>
-                  </ComposerPrimitive.Send>
-                )}
               </div>
             </ComposerPrimitive.Root>
             <span id="composer-input-hint" className="sr-only"><span className="composer-keyboard-hint">Enter 发送 · Shift + Enter 换行</span><span className="composer-touch-hint">回车换行，点击发送按钮发送</span></span>
@@ -505,12 +497,6 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             </div>
             {isDraggingAttachment ? <div className="composer-drop-hint" aria-live="polite">松开即可添加图片或文档</div> : null}
           </div>
-          {showStarters ? (
-            <StarterPromptList
-              onFill={fillComposer}
-              hasSources={Boolean(props.sessionContext?.sourceLabel?.trim())}
-            />
-          ) : null}
           {expandedPreview ? (
             <AttachmentPreviewDialog attachment={expandedPreview} localFile={props.localFiles[expandedPreview.id]} loadOriginal={props.onLoadAttachment} gallery={gallery} onNavigate={setExpandedPreview} onClose={() => setExpandedPreview(null)} />
           ) : null}

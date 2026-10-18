@@ -21,7 +21,7 @@ describe("tool call display projection", () => {
     }), false);
     expect(details).toEqual([{ text: "已读取 1 份资料、1 条已确认知识：研究笔记" }]);
     expect(toolCallDetails(event("get_library_context", { disabled: true }), false)).toEqual([{ text: "知识库读取已关闭。" }]);
-    expect(toolCallDetails(event("get_library_context"), false)).toEqual([{ text: "这次调用未保留更多说明。" }]);
+    expect(toolCallDetails(event("get_library_context"), false)).toEqual([]);
   });
 
   it("keeps local search input and result titles while leaving full excerpts out", () => {

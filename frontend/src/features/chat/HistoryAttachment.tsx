@@ -5,8 +5,8 @@ import "./results.css";
 
 export const AttachmentThumbnailContext = createContext<ChatWorkspaceProps["onLoadAttachmentThumbnail"]>(undefined);
 
-export function HistoryAttachment({ attachment, onPreview, onSave }: {
-  attachment: ChatAttachment; onPreview: () => void; onSave?: () => void;
+export function HistoryAttachment({ attachment, onPreview, onSave, variant = "attachment" }: {
+  attachment: ChatAttachment; onPreview: () => void; onSave?: () => void; variant?: "attachment" | "generated";
 }) {
   const loader = useContext(AttachmentThumbnailContext);
   const loaderRef = useRef(loader);
@@ -34,10 +34,10 @@ export function HistoryAttachment({ attachment, onPreview, onSave }: {
     }).catch(() => { if (!abort.signal.aborted) setFailed(true); });
     return () => { abort.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [attachment.id, attachment.kind, visible, attempt]);
-  return <div className={`chat-history-attachment${attachment.kind === "image" ? " is-image" : ""}`} ref={ref}>
+  return <div className={variant === "generated" ? "generated-image-preview" : `chat-history-attachment${attachment.kind === "image" ? " is-image" : ""}`} ref={ref}>
     <button type="button" onClick={onPreview} aria-label={`预览 ${attachment.original_filename}`}>
       {url && !failed ? <img src={url} alt="" onError={() => setFailed(true)} /> : attachment.kind === "image" ? <ImagePlus size={16} /> : <FileText size={16} />}
-      <span>{attachment.original_filename}{attachment.vision_status === "consented" ? <em>模型看图</em> : null}</span>
+      {variant !== "generated" ? <span>{attachment.original_filename}{attachment.vision_status === "consented" ? <em>模型看图</em> : null}</span> : null}
     </button>
     {failed ? <button type="button" onClick={() => setAttempt(value => value + 1)}>缩略图加载失败，重试</button> : null}
     {onSave ? <button type="button" onClick={onSave} aria-label={`保存 ${attachment.original_filename} 到文件库`}>保存到文件库</button> : null}

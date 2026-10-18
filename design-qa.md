@@ -1,35 +1,72 @@
-# 开发者首页设计验收
+# Chat composer redesign QA
 
-result: blocked
+final result: passed
 
-日期：2026-10-08。范围：把用户提供的开发者首页定稿接入现有灯灯应用。代码与接口已实现；最终视觉复验尚未完成。
+## Visual truth and capture
 
-## 参考与环境
+- Selected source: `/Users/kkxny/.codex/generated_images/01a149eb-fa1d-7ae1-8817-5fbb48fa5b77/exec-e5b0f00f-ac7e-4b3a-a701-f6ede8668300.png` (the user's attached selection).
+- Implementation: `http://localhost:5173/#/chat/10`, existing CareerLoop application.
+- Final screenshot: `/Users/kkxny/CareerLoop/output/product-design/chat-composer-final.png`.
+- Source pixels: 1724 × 912. Browser CSS viewport and screenshot: 1456 × 770, one screenshot pixel per CSS pixel. Source downsampled to 1456 × 770 for comparison; the 0.084% aspect ratio difference is immaterial. No browser chrome is included.
+- State: authenticated, empty conversation, light theme, default model, no input or attachments, search disabled, menus closed, composer unfocused. Existing logo, avatar, sidebar and account state are preserved.
+- Full-view comparison: `/Users/kkxny/CareerLoop/output/product-design/compare-final-full.png`.
+- Focused comparison: `/Users/kkxny/CareerLoop/output/product-design/compare-final-composer.png`.
+- Both combined comparison images were opened and visually reviewed. They contain the normalized reference and actual browser capture side by side.
 
-- 参考：`/Users/kkxny/Desktop/CareerLoop-开发者首页-定稿/index.html` 及 `shots/01-first-screen.png`、`03-compact-mode.png`、`07-dark.png`。
-- 当前预览：<http://127.0.0.1:5182/#/home>，隔离测试数据，后端 4188。
-- 已查看实际页面的 1440×900 桌面浅色信息模式，真实资讯、四模块和账号菜单可见。
-- 有意差异：保留灯灯品牌、现有 232px 侧栏与四个平级入口；替换设计稿示例新闻及虚构指标为真实来源；原始源没有图片时按无图状态展示；增加长期收藏入口。
+## Findings and iteration history
 
-## 已发现并修复
+### First comparison — blocked
 
-- P2：热榜语言及指标过长，右侧 Fork 数值被裁切。改为完整指标换行，行高自适应；代码已修，最终截图未复验。
-- P3：无图主卡标题与摘要之间留白偏大。减小无图卡最小高度，取消标题最小高度。
-- 跨层审查修复：切换账号后取消分析请求并忽略迟到结果；个人缓存超过旧 4MB 阈值不会被清空，64MiB 上限及损坏文件保护阻止覆盖收藏。
+Evidence: `/Users/kkxny/CareerLoop/output/product-design/compare-v1-full.png` and `/Users/kkxny/CareerLoop/output/product-design/compare-v1-composer.png`, opened together with both artifacts in each image.
 
-## 已验证行为
+- [P2] Composer was 848px wide instead of approximately 896px. A percentage in the shared width variable was evaluated again inside the padded composer. Replaced the empty-page maximum with a fixed 896px ceiling and retained responsive outer gutters.
+- [P2] Attachment and search labels inherited the previous 12px toolbar font. Set the empty-page labels to inherit 14px, weight 500, retaining the existing library icons and increasing icon size.
+- [P2] Model control surface was too purple and headline too large. Used a subtle neutral surface and reduced the desktop headline ceiling from 44px to 40px.
+- [P3] Empty disabled send button was too faint. Increased disabled opacity while preserving the disabled behavior.
 
-- 真实公开源请求与解析成功，预览接口 HTTP 200，快照含动态 11 条、GitHub 日榜 13 条/周榜 11 条、工程实践 16 条（测试时点数据会变化）。
-- 浏览器操作：收藏状态成功；打开更多菜单；编辑资讯标题并确认存入文件库，文件列表出现新文本笔记。
-- 前端全量单元测试：271 passed；TypeScript 与生产构建通过。
-- 后端全量测试：388 passed、8 subtests passed；随后新增容量保护回归，资讯相关测试合计 44 passed。
-- 已更新旧 E2E 首页断言及首页 API fixture，并让隔离 E2E 后端公开源保持无外网请求；本次未执行 Playwright E2E。
-- 单元测试覆盖信息/简洁、主题按账号保存、日周及分类、收藏快照、隐藏撤销、菜单键盘、存库预览失败反馈、分析草稿不自动发送及保护既有输入。
+### Final comparison — passed
 
-## 阻塞与待复验
+Evidence: final full-view and focused comparisons above. No actionable P0/P1/P2 differences remain. Final frame is 896px wide and 210px high at the desktop viewport; editor, toolbar corners and hint follow the selected composition.
 
-恢复浏览器连接时，`cua.getTab` 被浏览器安全策略拒绝，报告请求协议不允许。依工具指令停止浏览器操作，没有使用其他自动化手段绕过。
+## Required fidelity surfaces
 
-因此没有生成“定稿与最终实装”的同输入并排对比图，也未完成修复后的桌面截图、1280/手机窄屏、简洁模式、深色主题及完整 AI 草稿浏览器复验。不能将构建和单元测试代替视觉验收。
+- **Fonts/typography:** existing serif display stack for the headline, 40px desktop ceiling with appropriate Chinese glyphs; existing sans-serif body stack for the 18px subtitle, 22px editor placeholder, 14px tool labels and 12px keyboard hint. Text remains real, editable and selectable. No heading wrapping at tested widths.
+- **Spacing/layout:** centered welcome and writing area, generous writing space, left supporting tools and right model/send actions; 20px frame radius, quiet border and shadow. History composer remains 124px tall. Mobile tools and primary actions split into two rows.
+- **Colors/tokens:** existing light surfaces, muted secondary text and purple brand tokens. Disabled send is deliberately lighter than the reference's active-looking button because an empty draft cannot submit. Focus treatment remains visible and the decorative orbiting border animation has been removed.
+- **Assets/icons:** existing supplied brand logo/avatar reused; existing matching outline icon library used for paperclip, globe and arrow. No new raster assets, custom illustration substitutes or mock screenshots in the UI.
+- **Copy/content:** exact selected welcome, subtitle and editor wording. The real configured model identifier `grok-4.7` is preserved instead of replacing it with the mock's presentation label `Grok 4.7`.
 
-浏览器工具恢复后，应在相同视口、主题、模式下补拍，与参考组合对比字体层级、间距、颜色、图片空态、菜单/弹窗和窄屏溢出，再把本报告结果更新为 passed。
+## Browser and behavior verification
+
+Verified in the user's existing IAB tab through CUA:
+
+- Desktop empty page, model menu open and Escape close with focus restoration.
+- Multiline typing with Shift+Enter, enabled send for a nonempty draft; draft cleared afterward without submission.
+- Attachment entry activated; no files uploaded. Existing deterministic tests verify file selection and upload guards.
+- Search toggle, category menu open/close, search restored to disabled.
+- 390 × 844 and 320 × 740 responsive layouts. At 320px, document width is 320px and composer bounds are x=16..304 (288px), without horizontal overflow or missing controls.
+- Mobile evidence: `/Users/kkxny/CareerLoop/output/product-design/chat-composer-mobile.png`.
+- Existing history conversation inspected with compact composer and real image results, then returned to conversation 10.
+- Browser viewport override reset. Final tab retained as deliverable; no draft or model/search selection left changed.
+- Captured browser console warnings/errors: none.
+- Real paid model/image requests were not made for this UI verification. Existing mocked tests cover sending, generation, cancellation, model selection, attachment handling and draft restoration.
+
+## Automated checks
+
+- `npm run test`: 62 files, 595 tests passed.
+- `npm run build`: TypeScript and Vite production build passed; existing bundle-size advisory only.
+- `git diff --check`: passed.
+
+## Follow-up polish
+
+- [P3] Platform serif rendering and the generated reference differ slightly in glyph weight and vertical optical alignment. Existing font tokens were preserved to avoid introducing a new font dependency for one screen.
+- [P3] Sidebar and header retain the existing product's exact assets and navigation sizing rather than approximating small variations in the generated concept.
+
+## Implementation checklist
+
+- [x] Selected layout implemented in the existing component.
+- [x] Existing functional controls and generation/stop behavior retained.
+- [x] Empty and history layouts checked.
+- [x] Narrow-screen layouts checked and viewport restored.
+- [x] Full-view and focused visual comparisons reviewed after fixes.
+- [x] Tests, build and whitespace checks passed.

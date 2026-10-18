@@ -31,8 +31,8 @@ export function toolCallDetails(event: RunEvent, running: boolean): Detail[] {
   if (event.status === "failed" || event.status === "blocked") {
     return [...details, { label: "原因", text: text(event.message, 300) || "本次调用未记录失败原因。" }];
   }
-  if (running) return [...details, { text: "正在等待返回结果。" }];
-  if (event.status === "running") return [...details, { text: "本次执行已结束，这次调用未保留最终结果。" }];
+  if (running) return details;
+  if (event.status === "running") return details;
   if (event.tool_name === "search_public_web" || event.tool_name === "research_company") {
     const sources = list(data.sources);
     const count = typeof data.source_count === "number" && Number.isFinite(data.source_count) && data.source_count >= 0 ? data.source_count : Array.isArray(data.sources) ? sources.length : null;
@@ -62,9 +62,6 @@ export function toolCallDetails(event: RunEvent, running: boolean): Detail[] {
   } else if (["citation_validator", "completion_validator", "image_generation"].includes(event.tool_name)) {
     const summary = text(data.summary);
     if (summary) details.push({ text: summary });
-  }
-  if (!details.length || (details.length === 1 && details[0].label === "检索")) {
-    details.push({ text: "这次调用未保留更多说明。" });
   }
   return details;
 }

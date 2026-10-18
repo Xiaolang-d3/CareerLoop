@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RunProcess } from "./MessagePresentation";
+import { ImageGenerationProgress } from "./ImageGenerationProgress";
 import type { AgentRunResult } from "./types";
 
 type RunEvent = AgentRunResult["events"][number];
@@ -19,14 +20,25 @@ afterEach(() => {
 });
 
 describe("RunProcess", () => {
-  it("shows one expanded process while waiting for the model", () => {
+  it("shows one truthful status without an empty disclosure while waiting for the model", () => {
     render(<RunProcess streaming />);
     const process = screen.getByRole("region", { name: "思考与执行过程" });
-    const toggle = within(process).getByRole("button", { name: "收起思考与执行过程" });
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(within(process).getByRole("status")).toHaveTextContent("正在整理要点");
-    expect(within(process).getByText("等待模型响应…")).toBeVisible();
-    expect(toggle).not.toHaveTextContent("已用时");
+    expect(within(process).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(process).getByRole("status")).toHaveTextContent("正在等待模型响应");
+    expect(screen.queryByText("等待模型响应…")).not.toBeInTheDocument();
+    expect(process).not.toHaveTextContent("已用时");
+  });
+
+  it("stops describing a finished tool as running and switches to streamed output", () => {
+    const read = event("read", "正在读取知识库", { tool_name: "get_library_context", status: "running" });
+    const view = render(<RunProcess streaming agent={run({ events: [read] })} />);
+    expect(screen.getByRole("status")).toHaveTextContent("正在读取知识库");
+    const agent = run({ events: [read, { ...read, status: "done", message: "已读取知识库" }] });
+    view.rerender(<RunProcess streaming agent={agent} />);
+    expect(screen.getByRole("status")).toHaveTextContent("正在等待模型响应");
+    expect(screen.getByText("已读取知识库")).toBeVisible();
+    view.rerender(<RunProcess streaming agent={agent} content="这是回答" />);
+    expect(screen.getByRole("status")).toHaveTextContent("正在生成回复");
   });
 
   it("shows the current activity in the header and its expandable record", () => {
@@ -40,6 +52,60 @@ describe("RunProcess", () => {
     render(<RunProcess streaming agent={agent} />);
     expect(screen.getAllByText("正在检索：Python 异步任务")).toHaveLength(2);
     expect(screen.getByRole("button", { name: "收起思考与执行过程" })).toHaveTextContent("Python 异步任务");
+  });
+
+  it("shows only the accessible dot animation during image generation", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-17T12:00:08Z"));
+    const image = event("image", "正在生成图片", { tool_name: "image_generation", status: "running" });
+    const view = render(<><RunProcess streaming agent={run({ started_at: "2026-10-17T12:00:00Z", events: [image] })} /><ImageGenerationProgress /></>);
+    expect(screen.getByRole("status", { name: "正在生成图片" })).toHaveTextContent("");
+    expect(view.container.querySelector(".image-generation-dots")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.queryByText("正在生成图片")).not.toBeInTheDocument();
+    expect(screen.queryByText("已用时 8s")).not.toBeInTheDocument();
+    expect(view.container.querySelector(".spinning")).toBeNull();
+    expect(screen.queryByRole("button", { name: /思考与执行过程/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "执行记录，可滚动查看" })).not.toBeInTheDocument();
+  });
+
+  it("updates image progress in place and keeps the completed operation inspectable", () => {
+    const image = event("image", "正在生成图片", { tool_name: "image_generation", status: "running" });
+    const view = render(<RunProcess streaming agent={run({ events: [image] })} />);
+    view.rerender(<RunProcess streaming agent={run({ events: [image, { ...image, message: "正在保存图片" }] })} />);
+    expect(screen.queryByText("正在生成图片")).not.toBeInTheDocument();
+    expect(screen.queryByText("正在保存图片")).not.toBeInTheDocument();
+    expect(view.container).toBeEmptyDOMElement();
+    view.rerender(<RunProcess streaming={false} agent={run({ duration_ms: 8200, events: [{ ...image, status: "done", message: "已生成 1 张图片" }] })} />);
+    fireEvent.click(screen.getByRole("button", { name: "展开思考与执行过程" }));
+    expect(screen.getByText("已生成 1 张图片")).toBeVisible();
+    expect(view.container.querySelector(".image-generation-progress")).toBeNull();
+    expect(screen.queryByRole("button", { name: "展开已生成 1 张图片的执行说明" })).not.toBeInTheDocument();
+    expect(screen.queryByText("未记录")).not.toBeInTheDocument();
+  });
+
+  it("keeps earlier reasoning and image failures while removing only the live duplicate", () => {
+    const thought = event("thought", "按用户描述安排构图。");
+    const image = event("image", "正在生成图片", { tool_name: "image_generation", status: "running" });
+    const view = render(<RunProcess streaming agent={run({ events: [thought, image] })} />);
+    expect(screen.queryByText(thought.message)).not.toBeInTheDocument();
+    expect(view.container).toBeEmptyDOMElement();
+    view.rerender(<RunProcess streaming={false} agent={run({ status: "failed", events: [thought, { ...image, status: "failed", message: "生图服务超时" }] })} />);
+    fireEvent.click(screen.getByRole("button", { name: "展开思考与执行过程" }));
+    fireEvent.click(screen.getByRole("button", { name: "展开生图服务超时的执行说明" }));
+    expect(screen.getByText("原因：生图服务超时")).toBeVisible();
+  });
+
+  it("removes image animation as soon as stopping is requested and keeps the cancelled outcome", () => {
+    const image = event("image", "正在生成图片", { tool_name: "image_generation", status: "running" });
+    const agent = run({ events: [image] });
+    const view = render(<RunProcess streaming agent={agent} />);
+    expect(view.container).toBeEmptyDOMElement();
+    view.rerender(<RunProcess streaming stopping agent={agent} />);
+    expect(view.container.querySelector(".image-generation-dots")).toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent("正在停止生成");
+    view.rerender(<RunProcess streaming={false} agent={{ ...agent, status: "cancelled", duration_ms: 3000 }} />);
+    expect(screen.getByText("已停止")).toBeVisible();
+    expect(view.container.querySelector(".image-generation-dots")).toBeNull();
   });
 
   it("preserves chronological process paragraphs and tool summaries without clipping them", () => {
@@ -168,7 +234,7 @@ describe("RunProcess", () => {
 
 describe("execution record interaction", () => {
   it("never renders a paused-follow hint or jump button in the execution record", () => {
-    const view = render(<RunProcess streaming agent={run({ events: [event("read", "已读取资料", { tool_name: "get_library_context" })] })} />);
+    const view = render(<RunProcess streaming agent={run({ events: [event("read", "已读取资料", { tool_name: "get_library_context", data: { sources: [] } })] })} />);
     expect(screen.getByRole("region", { name: "执行记录，可滚动查看" })).toBeVisible();
     expect(view.container.querySelector(".run-process-followbar")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "收起思考与执行过程" }));
@@ -222,7 +288,7 @@ describe("execution record interaction", () => {
     const view = render(<RunProcess streaming agent={run({ events: [a, b] })} />);
     fireEvent.click(screen.getByRole("button", { name: "展开正在检索甲的执行说明" }));
     expect(screen.getByText("检索：甲")).toBeVisible();
-    expect(screen.getByText("正在等待返回结果。")).toBeVisible();
+    expect(screen.queryByText("正在等待返回结果。")).not.toBeInTheDocument();
     expect(screen.queryByText("检索：乙")).not.toBeInTheDocument();
     const done = { ...a, status: "done", message: "已检索甲", data: { sources: [{ title: "甲来源", url: "https://example.com/a" }] } };
     view.rerender(<RunProcess streaming agent={run({ events: [a, done, b] })} />);
@@ -265,9 +331,10 @@ describe("execution record interaction", () => {
     render(<RunProcess streaming agent={run({ error: { code: "other", message: "另一处错误", retryable: false }, events: [a, b] })} />);
     fireEvent.click(screen.getByRole("button", { name: "展开搜索连接超时的执行说明" }));
     expect(screen.getByText("原因：搜索连接超时")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "展开已读取资料的执行说明" }));
-    expect(screen.getByText("这次调用未保留更多说明。")).toBeVisible();
-    expect(screen.getAllByText("未记录")).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "展开已读取资料的执行说明" })).not.toBeInTheDocument();
+    expect(screen.getByText("已读取资料")).toBeVisible();
+    expect(screen.queryByText("这次调用未保留更多说明。")).not.toBeInTheDocument();
+    expect(screen.queryByText("未记录")).not.toBeInTheDocument();
     expect(screen.queryByText("另一处错误")).not.toBeInTheDocument();
   });
 });
