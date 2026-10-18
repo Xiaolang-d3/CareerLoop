@@ -61,22 +61,35 @@ function HomeDialog({ title, children, onClose, labelledBy, closeDisabled = fals
   }}><div className="home-dialog-head"><h2 id={labelledBy}>{title}</h2><button type="button" className="home-icon-btn" aria-label="关闭" disabled={closeDisabled} onClick={onClose}><X size={18} /></button></div>{children}</div></div>;
 }
 
-export function HomeInterestDialog({ preferences, savePreferences, onClose }: { preferences: HomePreferences; savePreferences: (preferences: HomePreferences) => Promise<void>; onClose: () => void }) {
+export function HomeInterestDialog({ fetchJson, preferences, savePreferences, onClose }: { fetchJson: FetchJson; preferences: HomePreferences; savePreferences: (preferences: HomePreferences) => Promise<void>; onClose: () => void }) {
   const [topics, setTopics] = useState(preferences.topics);
   const [repositories, setRepositories] = useState(preferences.repositories.join("\n"));
+  const [digestProfile, setDigestProfile] = useState(preferences.digest_profile_id || "");
+  const [curationEnabled, setCurationEnabled] = useState(preferences.curation_enabled === true);
+  const [profileOptions, setProfileOptions] = useState<{ id: string; label: string }[]>([]);
+  const [profilesError, setProfilesError] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchJson<{ connections: { id: string; enabled: boolean }[]; profiles: { id: string; model_name: string; connection_id: string; enabled: boolean }[] }>("/agent/model-connections", { signal: controller.signal })
+      .then((catalog) => setProfileOptions(catalog.profiles.filter((profile) => profile.enabled && catalog.connections.some((connection) => connection.id === profile.connection_id && connection.enabled)).map((profile) => ({ id: profile.id, label: profile.model_name }))))
+      .catch(() => setProfilesError(true));
+    return () => controller.abort();
+  }, [fetchJson]);
+  const currentMissing = Boolean(digestProfile) && !profileOptions.some((profile) => profile.id === digestProfile);
   return <HomeDialog title="兴趣设置" labelledBy="home-interest-title" onClose={onClose} closeDisabled={busy}><form onSubmit={async (event) => {
     event.preventDefault();
     if (busy) return;
     const parsed = [...new Set(repositories.split(/[\n,，]/).map((value) => value.trim().replace(/^https:\/\/github\.com\//, "").replace(/\/$/, "")).filter(Boolean))];
     if (parsed.some((repository) => !/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repository))) { setError("仓库格式应为 owner/repository，每行一个公开仓库。"); return; }
     if (parsed.length > 8) { setError("最多关注 8 个公开仓库。"); return; }
+    if (curationEnabled && !digestProfile) { setError("请先选择日报模型，再启用每日资讯精选。"); return; }
     setBusy(true); setError(null);
-    try { await savePreferences({ topics, repositories: parsed }); onClose(); }
+    try { await savePreferences({ topics, repositories: parsed, digest_profile_id: digestProfile, ...(curationEnabled || preferences.curation_enabled !== undefined ? { curation_enabled: curationEnabled } : {}) }); onClose(); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "兴趣设置保存失败，请重试。"); }
     finally { setBusy(false); }
-  }}><p className="home-dialog-description">选择想关注的方向，并添加公开 GitHub 仓库以获取版本更新。</p><fieldset className="home-interest-topics"><legend><SlidersHorizontal size={16} />关注方向</legend><div className="home-chips">{["AI", "Agent", "MCP", "RAG", "评测", "开发工具"].map((key) => <button className={`home-chip${topics.includes(key) ? " on" : ""}`} type="button" key={key} disabled={busy} aria-pressed={topics.includes(key)} onClick={() => setTopics((current) => current.includes(key) ? current.filter((topic) => topic !== key) : [...current, key])}>{key}</button>)}</div></fieldset><label className="home-field">公开仓库<textarea rows={5} value={repositories} disabled={busy} onChange={(event) => setRepositories(event.target.value)} placeholder="例如 owner/repository，每行一个" /><span>最多 8 个公开仓库，只读取公开发布说明。清空后停止关注仓库更新。</span></label>{error && <p className="home-dialog-error" role="alert">{error}</p>}<div className="home-dialog-actions"><button className="home-btn" type="button" onClick={onClose} disabled={busy}>取消</button><button className="home-btn home-btn-primary" type="submit" disabled={busy}>{busy ? "保存中…" : "保存设置"}</button></div></form></HomeDialog>;
+  }}><p className="home-dialog-description">选择想关注的方向，添加公开 GitHub 仓库获取版本更新，并指定生成 AI 日报的模型。</p><fieldset className="home-interest-topics"><legend><SlidersHorizontal size={16} />关注方向</legend><div className="home-chips">{["AI", "Agent", "MCP", "RAG", "评测", "开发工具"].map((key) => <button className={`home-chip${topics.includes(key) ? " on" : ""}`} type="button" key={key} disabled={busy} aria-pressed={topics.includes(key)} onClick={() => setTopics((current) => current.includes(key) ? current.filter((topic) => topic !== key) : [...current, key])}>{key}</button>)}</div></fieldset><label className="home-field">公开仓库<textarea rows={5} value={repositories} disabled={busy} onChange={(event) => setRepositories(event.target.value)} placeholder="例如 owner/repository，每行一个" /><span>最多 8 个公开仓库，只读取公开发布说明。清空后停止关注仓库更新。</span></label><label className="home-field">日报模型<select value={digestProfile} disabled={busy} onChange={(event) => setDigestProfile(event.target.value)}><option value="">不启用（不调用模型）</option>{currentMissing && <option value={digestProfile}>当前模型不可用，请重新选择</option>}{profileOptions.map((profile) => <option key={profile.id} value={profile.id}>{profile.label}</option>)}</select><span>{profilesError ? "模型档案加载失败，其余设置仍可保存；请稍后重试选择日报模型。" : "每天首次打开首页时用公开资讯生成一份中文日报；未启用时不调用模型，也不产生费用。"}</span></label><div className="home-curation-setting"><label className="home-curation-optin"><input type="checkbox" checked={curationEnabled} disabled={busy} onChange={(event) => setCurationEnabled(event.target.checked)} aria-describedby="home-curation-privacy home-curation-cost" />启用每日资讯精选</label><p id="home-curation-privacy">仅发送关注方向与公开内容，不发送私人对话或文件；需要已配置的现有搜索服务，使用上方日报模型。</p><p id="home-curation-cost">每天最多 3 次搜索和 1 次文本模型调用，可能产生费用。仅在应用运行并打开首页时触发，并非全天候定时任务；重新筛选会产生新的请求。</p></div>{error && <p className="home-dialog-error" role="alert">{error}</p>}<div className="home-dialog-actions"><button className="home-btn" type="button" onClick={onClose} disabled={busy}>取消</button><button className="home-btn home-btn-primary" type="submit" disabled={busy}>{busy ? "保存中…" : "保存设置"}</button></div></form></HomeDialog>;
 }
 
 export function HomeLibraryDialog({ item, fetchJson, onLibraryChanged, onClose, onSaved }: { item: HomeReadableItem; fetchJson: FetchJson; onLibraryChanged: () => Promise<void>; onClose: () => void; onSaved: (message: string) => void }) {

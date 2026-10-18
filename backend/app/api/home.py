@@ -15,6 +15,8 @@ class HomePreferencesIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     topics: list[StrictStr] = Field(max_length=6)
     repositories: list[StrictStr] = Field(max_length=8)
+    digest_profile_id: StrictStr | None = Field(default=None, max_length=64)
+    curation_enabled: StrictBool | None = None
 
 
 class HomeItemStateIn(BaseModel):
@@ -43,7 +45,33 @@ def home_feed_refresh() -> dict[str, Any]:
 @router.put("/home/preferences")
 def home_preferences_put(payload: HomePreferencesIn) -> dict[str, Any]:
     try:
-        return save_preferences(payload.topics, payload.repositories)
+        return save_preferences(payload.topics, payload.repositories, payload.digest_profile_id, curation_enabled=payload.curation_enabled)
+    except FeedCacheError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/home/feed/digest")
+def home_feed_digest_post() -> dict[str, Any]:
+    from ..feeds import digest
+
+    try:
+        digest.regenerate()
+        return get_feed(refresh_if_due=False)
+    except FeedCacheError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/home/feed/curation")
+def home_feed_curation_post() -> dict[str, Any]:
+    from ..feeds import curation
+
+    try:
+        curation.regenerate()
+        return get_feed(refresh_if_due=False)
     except FeedCacheError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
