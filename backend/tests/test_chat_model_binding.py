@@ -28,9 +28,11 @@ class BoundRuntime:
     def __init__(self, binding):
         self.model_selection = binding
         self.calls = []
+        self.inputs = []
 
     async def run_stream(self, *args, **kwargs):
         self.calls.append(kwargs)
+        self.inputs.append(args[0])
         yield AgentStreamEvent(type="completed", result=AgentRunResult(
             content="完成回答", provider=self.model_selection["profile_id"], platform="manual", rounds=1,
             model_selection=kwargs["model_selection"],
@@ -89,12 +91,42 @@ class ChatModelBindingTest(unittest.TestCase):
         with patch.object(execution, "get_agent_runtime", return_value=runtime) as resolve:
             response = self.stream("public-binding")
         self.assertEqual(response.status_code, 200)
-        resolve.assert_called_once_with()
+        resolve.assert_called_once_with(None, user_content="你好")
         self.assertNotIn("secret_ref", response.text)
         messages = self.client.get(f"/chat/messages?conversation_id={self.conversation['id']}").json()
         agent = messages[-1]["payload"]["agent"]
         self.assertEqual(agent["model_selection"]["profile_id"], "account-default")
         self.assertNotIn("secret_ref", json.dumps(agent))
+
+    def test_image_request_passes_intent_before_binding_and_keeps_routing_reason(self):
+        binding = {**selection("image-model"), "model_name": "gpt-image-2", "selection_reason": "image_intent"}
+        runtime = BoundRuntime(binding)
+        prompt = "生成一张小猫玩小鱼玩具图"
+        with patch.object(execution, "get_agent_runtime", return_value=runtime) as resolve:
+            response = self.stream("auto-image", {"modelProfileId": "chat-model"}, content=prompt)
+        self.assertEqual(response.status_code, 200)
+        resolve.assert_called_once_with("chat-model", user_content=prompt)
+        self.assertEqual(runtime.calls[0]["model_selection"]["selection_reason"], "image_intent")
+        self.assertEqual(runtime.calls[0]["model_selection"]["profile_id"], "image-model")
+
+    def test_repeat_resolves_before_binding_but_preserves_visible_user_text_and_replay(self):
+        binding = {**selection("image-model"), "selection_reason": "image_intent"}
+        runtime = BoundRuntime(binding)
+        prompt = "生成一张图片，画面是小猫玩小鱼玩具。"
+        with patch.object(execution, "resolve_image_followup", return_value=prompt) as followup, patch.object(execution, "get_agent_runtime", return_value=runtime) as resolve:
+            response = self.stream("repeat-image", content="再生成一张")
+            self.assertEqual(response.status_code, 200)
+            followup.assert_called_once_with("再生成一张", self.conversation["id"])
+            resolve.assert_called_once_with(None, user_content=prompt)
+            replay = self.stream("repeat-image", content="改成其他内容")
+            self.assertEqual(replay.status_code, 200)
+            self.assertEqual(followup.call_count, 1)
+            self.assertEqual(resolve.call_count, 1)
+        self.assertEqual(runtime.inputs, [prompt])
+        self.assertEqual(runtime.calls[0]["model_selection"]["selection_reason"], "image_intent")
+        messages = self.client.get(f"/chat/messages?conversation_id={self.conversation['id']}").json()
+        self.assertEqual(messages[0]["content"], "再生成一张")
+        self.assertEqual(len(messages), 2)
 
     def test_waiting_resume_uses_original_versions_despite_explicit_new_model(self):
         binding = selection("original-model", revision=1)

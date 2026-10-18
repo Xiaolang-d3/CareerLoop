@@ -53,7 +53,7 @@ export function FeedActions({ item, bookmarked, busy, onBookmark, onMore, openIt
 
 export function ArticleCard({ article, variant, now, ...actions }: { article: HomeArticle; variant: "feat" | "sm" | "art"; now: Date } & Omit<ActionsProps, "item">) {
   const [imageFailed, setImageFailed] = useState(false);
-  const hasImage = Boolean(article.image_url && validWebUrl(article.image_url) && !imageFailed);
+  const hasImage = variant !== "art" && Boolean(article.image_url && validWebUrl(article.image_url) && !imageFailed);
   return <article className={`home-card home-card--${variant}${hasImage ? "" : " home-no-img"}`} style={{ "--home-hue": TOPIC_HUES[article.category] ?? 230 } as CSSProperties}>
     {hasImage && <div className="home-card-media"><img src={article.image_url!} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setImageFailed(true)} /></div>}
     <div className="home-card-tag"><span className="home-tag">{TOPIC_LABELS[article.category] || article.tags[0] || "技术动态"}</span>{variant === "feat" && <span className="home-featured-flag"><Star size={14} />最新焦点</span>}</div>

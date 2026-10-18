@@ -128,7 +128,7 @@ test("AI workspace keeps one reading axis and switches history rail by breakpoin
   const evidenceDir = resolve("..", "..", "output", "playwright");
   await mkdir(evidenceDir, { recursive: true });
   await page.goto("/#/chat/1");
-  await expect(page.getByRole("heading", { name: "你想完成什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天，想完成什么？" })).toBeVisible();
   await page.getByRole("button", { name: "对话记录" }).click();
 
   for (const viewport of [

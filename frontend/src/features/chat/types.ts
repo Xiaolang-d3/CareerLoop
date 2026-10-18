@@ -31,6 +31,7 @@ export type ModelSelection = {
 };
 
 export type AgentRunResult = {
+  image_generation_prompt?: string | null;
   assets?: ChatAttachment[];
   output_blocks?: Array<{ type: "text"; text: string } | { type: "image"; asset_id: string }>;
   model_selection?: ModelSelection;

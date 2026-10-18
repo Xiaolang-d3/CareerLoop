@@ -134,6 +134,20 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
 }
 
 describe("ChatWorkspace", () => {
+  it("sends a natural image request directly without a design form or rewriting the prompt", async () => {
+    const p = renderChat();
+    const input = screen.getByRole("textbox", { name: "输入消息" });
+    const prompt = "生成一张小猫玩小鱼玩具图，暖色光线，横向构图";
+    expect(screen.queryByRole("button", { name: "Banner 设计台" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Banner 设计台" })).not.toBeInTheDocument();
+    expect(input).toHaveAttribute("placeholder", "直接说说你的想法…");
+    fireEvent.change(input, { target: { value: prompt } });
+    expect(p.onSend).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /^发送$/ }));
+    await waitFor(() => expect(p.onSend).toHaveBeenCalledWith(prompt, [], [], false, "auto", "none"));
+    expect(p.onSend).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps generated image saving on the image without a message result button", () => {
     const asset: ChatAttachment = { id: "generated", origin: "generated", kind: "image", original_filename: "生成图片.png", parse_status: "parsed" };
     const pure: ChatMessage = { ...assistantMessage(""), payload: { agent: { provider: "responses", platform: "local", rounds: 1, status: "done", events: [], assets: [asset], output_blocks: [{ type: "image", asset_id: asset.id }] } } };
@@ -143,6 +157,16 @@ describe("ChatWorkspace", () => {
     expect(screen.queryByRole("button", { name: "查看与保存成果" })).not.toBeInTheDocument();
   });
 
+  it("shows the saved generation prompt for the matching image instead of reconstructing it from a repeat", () => {
+    const asset: ChatAttachment = { id: "generated", origin: "generated", kind: "image", original_filename: "生成图片.png", parse_status: "parsed" };
+    const prompt = "生成一张图片，沿用以下画面要求：小猫玩小鱼玩具。";
+    const answer: ChatMessage = { ...assistantMessage(""), payload: { agent: { provider: "images", platform: "local", rounds: 1, status: "done", events: [], assets: [asset], image_generation_prompt: prompt } } };
+    const p = renderChat([{ ...message, content: "再生成一张" }, answer]);
+    fireEvent.click(screen.getByText("生成提示词"));
+    expect(screen.getByText(prompt)).toBeVisible();
+    expect(p.onSend).not.toHaveBeenCalled();
+  });
+
   it("renders ordered text and images once when a snapshot repeats an image reference", () => {
     const asset: ChatAttachment = { id: "generated", origin: "generated", kind: "image", original_filename: "生成图片.png", parse_status: "parsed" };
     const mixed: ChatMessage = { ...assistantMessage("前言\n后记"), payload: { agent: { provider: "responses", platform: "local", rounds: 1, status: "done", events: [], assets: [asset], output_blocks: [{ type: "text", text: "前言" }, { type: "image", asset_id: asset.id }, { type: "image", asset_id: asset.id }, { type: "text", text: "后记" }] } } };
@@ -150,8 +174,30 @@ describe("ChatWorkspace", () => {
     expect(screen.getAllByText("前言")).toHaveLength(1);
     expect(screen.getAllByText("后记")).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "预览 生成图片.png" })).toHaveLength(1);
-    const output = p.view.container.querySelector(".message-result")!;
+    const output = p.view.container.querySelector(".message-image-output")!;
     expect([...output.children].map(child => child.tagName)).toEqual(["DIV", "FIGURE", "DIV"]);
+  });
+
+  it("replaces the image-slot animation with a frameless image in the same result container", async () => {
+    const imageEvent = { round: 1, tool_call_id: "image-1", tool_name: "image_generation", status: "running", message: "正在生成图片" };
+    const pending: ChatMessage = { ...assistantMessage("", -1), payload: { agent: { provider: "images", platform: "local", rounds: 1, status: "done", events: [imageEvent] } } };
+    const props = renderChat([message, pending], { chatBusy: true });
+    const output = screen.getByRole("region", { name: "输出结果" });
+    expect(output).toHaveClass("message-image-output");
+    expect(output).not.toHaveClass("message-dialog", "message-result");
+    expect(screen.getByRole("status", { name: "正在生成图片" }).parentElement).toBe(output);
+    expect(props.view.container.querySelector(".run-process")).toBeNull();
+    const asset: ChatAttachment = { id: "generated", origin: "generated", kind: "image", original_filename: "生成图片.png", parse_status: "parsed", width: 1402, height: 1122 };
+    const done: ChatMessage = { ...assistantMessage(""), payload: { agent: { ...pending.payload!.agent!, events: [{ ...imageEvent, status: "done", message: "已生成 1 张图片" }], assets: [asset] } } };
+    props.view.rerender(<ChatWorkspace {...props} messages={[message, done]} chatBusy={false} />);
+    await waitFor(() => expect(screen.getByRole("figure", { name: "模型生成图片" })).toBeVisible());
+    expect(screen.queryByRole("status", { name: "正在生成图片" })).not.toBeInTheDocument();
+    const completedOutput = screen.getByRole("region", { name: "输出结果" });
+    expect(completedOutput).toHaveClass("message-image-output");
+    expect(completedOutput).not.toHaveClass("message-dialog", "message-result");
+    expect(screen.getByRole("figure", { name: "模型生成图片" }).parentElement).toBe(completedOutput);
+    expect(completedOutput.querySelector(".generated-image-preview")).not.toBeNull();
+    expect(completedOutput.querySelector(".chat-history-attachment")).toBeNull();
   });
   it("opens image saving without altering the composer draft", async () => {
     const asset: ChatAttachment = { id: "generated", origin: "generated", kind: "image", original_filename: "生成图片.png", parse_status: "parsed" };
@@ -357,7 +403,7 @@ describe("ChatWorkspace", () => {
     expect(hint).toHaveAttribute("aria-hidden", "false");
     const attachment = screen.getByRole("button", { name: "添加附件" });
     expect(within(screen.getByRole("group", { name: "输入选项" })).getByRole("button", { name: "添加附件" })).toBe(attachment);
-    expect(attachment).toHaveTextContent(/^$/);
+    expect(attachment).toHaveTextContent("添加资料");
     fireEvent.blur(input, { relatedTarget: attachment });
     fireEvent.focus(attachment);
     expect(hint).toHaveAttribute("aria-hidden", "false");
@@ -500,8 +546,7 @@ describe("ChatWorkspace", () => {
 
   it("puts the model picker in the composer toolbar and reminds the user to configure a model", () => {
     const props = renderChat([message], { modelConfigured: false });
-    const toolbar = screen.getByRole("group", { name: "输入选项" });
-    fireEvent.click(within(toolbar).getByRole("button", { name: "未配置模型，去设置" }));
+    fireEvent.click(screen.getByRole("button", { name: "未配置模型，去设置" }));
     expect(props.onOpenModelSettings).toHaveBeenCalledOnce();
     expect(screen.queryByRole("button", { name: /切换模型/ })).not.toBeInTheDocument();
   });
@@ -779,7 +824,7 @@ describe("ChatWorkspace", () => {
     const header = screen.getByLabelText("对话操作栏");
     expect(header).not.toHaveTextContent("新对话");
     expect(screen.getByRole("toolbar", { name: "对话操作" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "你想完成什么？" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "今天，想完成什么？" })).toBeInTheDocument();
   });
 
   it("recedes a default-titled empty session so the opening line owns the canvas", () => {
@@ -820,7 +865,7 @@ describe("ChatWorkspace", () => {
 
     const header = screen.getByLabelText("对话操作栏");
     expect(header).not.toHaveTextContent("新对话");
-    expect(screen.getByRole("heading", { level: 2, name: "你想完成什么？" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "今天，想完成什么？" })).toBeInTheDocument();
   });
 
   it("views and renames the current conversation from history", () => {
@@ -876,25 +921,37 @@ describe("ChatWorkspace", () => {
     expect(screen.queryByRole("complementary", { name: "对话记录" })).not.toBeInTheDocument();
   });
 
-  it("renders an opening line with optional drafts below the composer", () => {
+  it("renders an opening line and composer without optional draft shortcuts", () => {
     renderChat([]);
 
     expect(screen.queryByText("准备与复盘")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "你想完成什么？" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "今天，想完成什么？" })).toBeInTheDocument();
     expect(screen.queryByText("没有固定题目。想出题去面试问答，想拆项目去项目解析。")).not.toBeInTheDocument();
     expect(screen.queryByText("面试问答")).not.toBeInTheDocument();
     expect(screen.queryByText("项目解析")).not.toBeInTheDocument();
-    expect(screen.getByText("在这里搜索公开信息、核对来源、分析资料并生成内容，不用在多个工具之间来回切换。")).toBeInTheDocument();
-    const drafts = screen.getByLabelText("可选草稿");
+    expect(screen.getByText("提问、查资料，或描述你想生成的图片。")).toBeInTheDocument();
+    expect(screen.queryByLabelText("可选草稿")).not.toBeInTheDocument();
     const welcome = document.querySelector(".chat-welcome");
     const composer = document.querySelector(".chat-composer");
     expect(composer?.contains(welcome as Node)).toBe(true);
-    expect(composer?.contains(drafts)).toBe(true);
+    expect(document.querySelector(".composer-drafts")).toBeNull();
     expect(screen.queryByRole("button", { name: "梳理已保存资料" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "分析一份材料" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "查找公开信息" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "起草一份内容" })).toBeInTheDocument();
-    expect(screen.getByLabelText("输入消息")).toHaveAttribute("placeholder", "输入你的问题或任务…");
+    expect(screen.queryByRole("button", { name: "分析一份材料" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "查找公开信息" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "起草一份内容" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("输入消息")).toHaveAttribute("placeholder", "直接说说你的想法…");
+  });
+
+  it("keeps the opening hint visible and separates supporting tools from model and send actions", () => {
+    const props = renderChat([]);
+    const tools = screen.getByRole("group", { name: "输入选项" });
+    expect(within(tools).getByRole("button", { name: "添加附件" })).toHaveTextContent("添加资料");
+    expect(within(tools).getByRole("button", { name: "联网搜索" })).toBeInTheDocument();
+    expect(within(tools).queryByRole("button", { name: /切换模型/ })).not.toBeInTheDocument();
+    const actions = props.view.container.querySelector(".composer-primary-actions") as HTMLElement;
+    expect(within(actions).getByRole("button", { name: /切换模型/ })).toBeInTheDocument();
+    expect(within(actions).getByRole("button", { name: "发送" })).toBeDisabled();
+    expect(props.view.container.querySelector(".composer-input-hint")).toHaveAttribute("aria-hidden", "false");
   });
 
   it("hides starter prompts once the conversation has messages", () => {
@@ -902,29 +959,6 @@ describe("ChatWorkspace", () => {
 
     expect(screen.queryByLabelText("可选草稿")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "分析一份材料" })).not.toBeInTheDocument();
-  });
-
-  it("fills the composer from a draft instead of sending", async () => {
-    const props = renderChat([]);
-
-    fireEvent.click(screen.getByRole("button", { name: "分析一份材料" }));
-
-    expect(props.onSend).not.toHaveBeenCalled();
-    await waitFor(() => {
-      expect(screen.getByLabelText("输入消息")).toHaveValue("帮我分析这份材料，先总结重点，再指出值得继续追问的地方。");
-    });
-  });
-
-  it("enables web search when the public information starter is selected", async () => {
-    renderChat([], { webSearchAvailable: true });
-
-    expect(screen.getByRole("button", { name: "联网搜索" })).toHaveAttribute("aria-pressed", "false");
-    fireEvent.click(screen.getByRole("button", { name: "查找公开信息" }));
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "联网搜索" })).toHaveAttribute("aria-pressed", "true");
-      expect(screen.getByLabelText("输入消息")).toHaveValue("帮我查找并核对这个主题的公开信息：");
-    });
   });
 
   it("identifies the configured search provider without requiring AgentSearch", () => {
@@ -955,7 +989,7 @@ describe("ChatWorkspace", () => {
     await waitFor(() => expect(props.onSend).toHaveBeenCalledWith("查一下技术文档", [], [], true, "news", "technical"));
   });
 
-  it("shows saved resume and analysis as attached composer context", () => {
+  it("keeps saved-material access out of the composer while retaining analysis context", () => {
     const onOpenLibrary = vi.fn();
     const onSend = vi.fn();
     render(
@@ -997,17 +1031,15 @@ describe("ChatWorkspace", () => {
       />
     );
 
-    const resume = screen.getByRole("button", { name: "查看已保存资料" });
-    expect(resume).toHaveTextContent("已保存资料");
-    expect(resume).toHaveAttribute("title", "查看已保存资料，提问时会自动参考");
+    expect(screen.queryByRole("button", { name: "查看已保存资料" })).not.toBeInTheDocument();
+    expect(screen.queryByText("已保存资料", { exact: true })).not.toBeInTheDocument();
     expect(screen.getByText("示例公司 · 后端")).toBeInTheDocument();
     expect(screen.queryByText("分析")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "分析" })).not.toBeInTheDocument();
     expect(screen.queryByText("参考简历原文")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "梳理已保存资料" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "梳理已保存资料" })).not.toBeInTheDocument();
 
-    fireEvent.click(resume);
-    expect(onOpenLibrary).toHaveBeenCalledOnce();
+    expect(onOpenLibrary).not.toHaveBeenCalled();
     expect(onSend).not.toHaveBeenCalled();
     expect(screen.getByLabelText("输入消息")).toHaveValue("");
   });
@@ -1230,8 +1262,8 @@ describe("ChatWorkspace", () => {
       }
     ], { chatBusy: true });
 
-    expect(screen.getAllByText("正在整理要点").length).toBeGreaterThan(0);
-    expect(screen.queryByRole("button", { name: "正在整理要点" })).not.toBeInTheDocument();
+    expect(screen.getAllByText("正在等待模型响应").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "正在等待模型响应" })).not.toBeInTheDocument();
     expect(screen.queryByText(/已识别为/)).not.toBeInTheDocument();
     expect(document.querySelector(".thinking-process-scroll")).not.toBeInTheDocument();
   });
@@ -1360,14 +1392,14 @@ describe("ChatWorkspace", () => {
   it("shows a specific thinking placeholder while waiting for the first assistant token", async () => {
     const props = renderChat([message], { chatBusy: true });
 
-    expect(screen.getAllByText("正在整理要点")).toHaveLength(1);
+    expect(screen.getAllByText("正在等待模型响应")).toHaveLength(1);
     const process = screen.getByRole("region", { name: "思考与执行过程" });
     expect(process.closest(".chat-thread")).not.toBeNull();
     expect(process.closest(".chat-composer")).toBeNull();
     expect(props.view.container.querySelectorAll(".message.assistant")).toHaveLength(1);
     expect(props.view.container.querySelector(".chat-composer .run-process")).not.toBeInTheDocument();
     expect(props.view.container.querySelector(".chat-run-status")).not.toBeInTheDocument();
-    expect(screen.getByText("等待模型响应…")).toBeVisible();
+    expect(screen.queryByText("等待模型响应…")).not.toBeInTheDocument();
     expect(screen.queryByText("正在思考")).not.toBeInTheDocument();
     props.view.rerender(<ChatWorkspace {...props} messages={[message, assistantMessage("", -1)]} />);
     await waitFor(() => expect(screen.getAllByRole("region", { name: "思考与执行过程" })).toHaveLength(1));

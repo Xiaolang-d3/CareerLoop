@@ -56,7 +56,7 @@ def _lock(root: Path) -> threading.RLock:
 
 
 def _empty() -> dict[str, Any]:
-    return {"version": 1, "preferences": {"topics": ["AI", "Agent", "MCP"], "repositories": []}, "item_states": {}, "bookmarked_items": {}, "source_cache": {}}
+    return {"version": 1, "preferences": {"topics": ["AI", "Agent", "MCP"], "repositories": []}, "item_states": {}, "bookmarked_items": {}, "source_cache": {}, "digest": {"profile_id": "", "cache": None}}
 
 
 def _load(root: Path) -> dict[str, Any]:
@@ -80,6 +80,21 @@ def _load(root: Path) -> dict[str, Any]:
         raise FeedCacheError("首页资讯缓存结构不完整，原文件已保留")
     if not isinstance(payload.setdefault("bookmarked_items", {}), dict):
         raise FeedCacheError("首页资讯收藏缓存结构不完整，原文件已保留")
+    digest = payload.setdefault("digest", {})
+    if not isinstance(digest, dict):
+        raise FeedCacheError("首页资讯日报缓存结构不完整，原文件已保留")
+    if not isinstance(digest.setdefault("profile_id", ""), str) or len(digest["profile_id"]) > 64:
+        raise FeedCacheError("首页资讯日报设置不完整，原文件已保留")
+    digest.setdefault("cache", None)
+    if digest["cache"] is not None and not isinstance(digest["cache"], dict):
+        raise FeedCacheError("首页资讯日报缓存结构不完整，原文件已保留")
+    if not isinstance(payload["preferences"].get("curation_enabled", False), bool):
+        raise FeedCacheError("首页资讯精选设置不完整，原文件已保留")
+    curation = payload.setdefault("curation", {})
+    if not isinstance(curation, dict) or not isinstance(curation.get("history", []), list):
+        raise FeedCacheError("首页资讯精选缓存结构不完整，原文件已保留")
+    if curation.get("cache") is not None and not isinstance(curation["cache"], dict):
+        raise FeedCacheError("首页资讯精选缓存结构不完整，原文件已保留")
     return payload
 
 
@@ -227,14 +242,37 @@ def get_feed(*, refresh_if_due: bool = True) -> dict[str, Any]:
         snapshot["last_synced_at"] = max(successes) if successes else None
         for name in ("news", "updates"):
             snapshot[name].sort(key=lambda item: item.get("published_at") or "", reverse=True)
-        return snapshot
+        from . import digest as digest_module
+
+        snapshot["preferences"]["digest_profile_id"] = payload["digest"]["profile_id"]
+        snapshot["digest"] = digest_module.describe(payload, snapshot)
+        from . import curation
+
+        snapshot["curation"] = curation.describe(payload)
+    if refresh_if_due:
+        from . import digest as digest_module
+
+        digest_started = digest_module.maybe_start()
+        curation_started = curation.maybe_start()
+        if digest_started or curation_started:
+            # A previous day's cached card must report the newly reserved run,
+            # otherwise the browser sees only stale and never starts polling.
+            with _lock(root):
+                current = _load(root)
+                if digest_started:
+                    snapshot["digest"] = digest_module.describe(current, snapshot)
+                if curation_started:
+                    snapshot["curation"] = curation.describe(current)
+    return snapshot
 
 
-def save_preferences(topics: list[str], repositories: list[str]) -> dict[str, Any]:
+def save_preferences(topics: list[str], repositories: list[str], digest_profile_id: str | None = None, *, curation_enabled: bool | None = None) -> dict[str, Any]:
     if len(topics) > len(sources.TOPICS) or any(topic not in sources.TOPICS for topic in topics):
         raise ValueError("兴趣主题需选择 AI、Agent、MCP、RAG、评测或开发工具")
     if len(repositories) > 8:
         raise ValueError("最多关注 8 个公开仓库")
+    if digest_profile_id is not None and len(digest_profile_id) > 64:
+        raise ValueError("日报模型 ID 格式不正确")
     normalized = []
     seen = set()
     for value in repositories:
@@ -242,10 +280,27 @@ def save_preferences(topics: list[str], repositories: list[str]) -> dict[str, An
         if repo.casefold() not in seen:
             seen.add(repo.casefold())
             normalized.append(repo)
+    if digest_profile_id is not None:
+        from . import digest as digest_module
+
+        digest_module.validate_profile(digest_profile_id)
     root = _root()
     with _lock(root):
         payload = _load(root)
+        enabled = payload["preferences"].get("curation_enabled", False) if curation_enabled is None else curation_enabled
+        selected_profile = payload["digest"]["profile_id"] if digest_profile_id is None else digest_profile_id
+        if not isinstance(enabled, bool):
+            raise ValueError("资讯精选开关需为布尔值")
+        if enabled and not selected_profile:
+            raise ValueError("请先选择文本日报模型，再启用每日资讯精选")
+        previous_contract = (payload["preferences"].get("curation_enabled", False), payload["preferences"].get("topics"), payload["digest"]["profile_id"])
         payload["preferences"] = {"topics": list(dict.fromkeys(topics)), "repositories": normalized}
+        if curation_enabled is not None or enabled:
+            payload["preferences"]["curation_enabled"] = enabled
+        if digest_profile_id is not None:
+            payload["digest"]["profile_id"] = digest_profile_id
+        if previous_contract != (enabled, payload["preferences"]["topics"], selected_profile):
+            payload.setdefault("curation", {})["revision"] = uuid.uuid4().hex
         active = {source.id for source in sources.configured_sources(normalized)}
         payload["source_cache"] = {key: value for key, value in payload["source_cache"].items() if key in active}
         _save(root, payload)

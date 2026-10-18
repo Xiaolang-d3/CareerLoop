@@ -114,7 +114,7 @@ def test_user_preferences_cache_and_states_are_isolated(home_workspace, immediat
         assert second["news"] == []
         assert second["item_states"] == {}
         assert second["preferences"]["repositories"] == []
-    assert first["preferences"] == {"topics": ["Agent"], "repositories": ["example/agent-sdk"]}
+    assert first["preferences"] == {"topics": ["Agent"], "repositories": ["example/agent-sdk"], "digest_profile_id": ""}
     assert first["item_states"][ARTICLE["id"]] == {"bookmarked": True, "hidden": False}
     assert (home_workspace / "home-feed.json").stat().st_mode & 0o777 == 0o600
     assert not list(home_workspace.glob(".home-feed-*.tmp"))
@@ -193,7 +193,7 @@ def test_api_routes_return_same_snapshot_and_validate_patch(home_workspace, imme
     with TestClient(app) as client:
         fetched = client.get("/home/feed")
         assert fetched.status_code == 200
-        expected_keys = {"news", "repositories", "updates", "practices", "sources", "preferences", "item_states", "bookmarks", "refreshing", "last_synced_at"}
+        expected_keys = {"news", "repositories", "updates", "practices", "sources", "preferences", "item_states", "bookmarks", "refreshing", "last_synced_at", "digest", "curation"}
         assert set(fetched.json()) == expected_keys
         refreshed = client.post("/home/feed/refresh")
         assert refreshed.status_code == 200

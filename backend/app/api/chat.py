@@ -18,6 +18,7 @@ from fastapi import APIRouter
 from ..chat import execution
 from ..chat.execution import stream_chat_response, is_chat_running
 from ..chat.artifacts import ArtifactConflict, SaveArtifactIn, message_artifacts, save_artifact
+from ..chat.image_assets import with_generation_prompts
 
 
 router = APIRouter()
@@ -70,7 +71,7 @@ def list_chat_messages(conversation_id: int | None = None) -> list[dict[str, Any
             "SELECT * FROM chat_messages WHERE conversation_id = ? ORDER BY id ASC",
             (resolved_id,),
         ).fetchall()
-    return rows_to_dicts(rows)
+    return with_generation_prompts(rows_to_dicts(rows), resolved_id)
 
 
 @router.delete("/chat/messages/{message_id}/tail")

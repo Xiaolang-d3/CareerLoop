@@ -85,34 +85,36 @@ export function ModelFallbackSettings({ catalog, fetchJson, busy }: { catalog: M
   }
 
   return <section className="settings-card model-settings-card model-connections-card model-fallback-card" aria-labelledby="model-fallback-title">
-    <div className="model-connections-heading"><div><h3 id="model-fallback-title"><Shuffle size={15} /> 备用模型</h3><p>主模型出错时自动换用其他已保存的模型，并按错误类型重试与冷却。回答会标注实际使用的模型。</p></div>
+    <div className="model-connections-heading"><div><h3 id="model-fallback-title"><Shuffle size={15} aria-hidden="true" />备用模型</h3><p>主模型出错时按顺序换用，回答会标注实际使用的模型。</p></div>
       <label className="model-fallback-switch"><input type="checkbox" checked={draft.enabled} disabled={disabled} onChange={event => { setMessage(""); setDraft({ ...draft, enabled: event.target.checked }); }} />启用备用模型</label></div>
     {native ? <p className="model-connections-hint">当前使用原生模型层（DENGDENG_MODEL_BACKEND=native），备用模型设置会保存，但不会生效。</p> : null}
     {profiles.length < 2 ? <p className="model-connections-hint">至少需要两个可用模型才能设置备用模型，请先在上方添加模型。</p> : null}
-    {LISTS.map(list => <fieldset key={list.key} className="model-fallback-list" disabled={disabled || !draft.enabled}>
-      <legend>{list.title}<small>最多 {list.limit} 个 · {list.help}</small></legend>
-      <div>{profiles.map(profile => {
-        const position = draft[list.key].indexOf(profile.id);
-        return <label key={profile.id} className={position >= 0 ? "selected" : ""}>
-          <input type="checkbox" checked={position >= 0} onChange={() => toggle(list.key, profile.id, list.limit)} aria-label={`${list.title}：${profile.model_name}（${connectionName(profile.connection_id)}）`} />
-          {position >= 0 && list.key === "fallback_profile_ids" ? <b>{position + 1}</b> : null}
-          <span>{profile.model_name}<small>{connectionName(profile.connection_id)}{profile.id === catalog.default_profile_id ? " · 默认模型" : ""}</small></span>
-        </label>;
-      })}</div>
-    </fieldset>)}
-    <fieldset className="model-fallback-retry" disabled={disabled || !draft.enabled}>
-      <legend>重试与冷却<small>同一模型先按错误类型重试；连续失败达到次数后暂停调用该模型一段时间。</small></legend>
-      <div>
-        {RETRIES.map(item => <label key={item.key}><span>{item.label}</span><input type="number" min={0} max={3} value={draft.retry_policy[item.key]} onChange={event => setDraft({ ...draft, retry_policy: { ...draft.retry_policy, [item.key]: clamp(event.target.value, 0, 3) } })} /></label>)}
-        <label><span>允许失败次数</span><input type="number" min={1} max={20} value={draft.allowed_fails} onChange={event => setDraft({ ...draft, allowed_fails: clamp(event.target.value, 1, 20) })} /></label>
-        <label><span>冷却时间（秒）</span><input type="number" min={0} max={3600} value={draft.cooldown_seconds} onChange={event => setDraft({ ...draft, cooldown_seconds: clamp(event.target.value, 0, 3600) })} /></label>
-      </div>
-    </fieldset>
+    {draft.enabled ? <>
+      {LISTS.map(list => <fieldset key={list.key} className="model-fallback-list" disabled={disabled}>
+        <legend>{list.title}<small>最多 {list.limit} 个 · {list.help}</small></legend>
+        <div>{profiles.map(profile => {
+          const position = draft[list.key].indexOf(profile.id);
+          return <label key={profile.id} className={position >= 0 ? "selected" : ""}>
+            <input type="checkbox" checked={position >= 0} onChange={() => toggle(list.key, profile.id, list.limit)} aria-label={`${list.title}：${profile.model_name}（${connectionName(profile.connection_id)}）`} />
+            {position >= 0 && list.key === "fallback_profile_ids" ? <b>{position + 1}</b> : null}
+            <span>{profile.model_name}<small>{connectionName(profile.connection_id)}{profile.id === catalog.default_profile_id ? " · 默认模型" : ""}</small></span>
+          </label>;
+        })}</div>
+      </fieldset>)}
+      <fieldset className="model-fallback-retry" disabled={disabled}>
+        <legend>重试与冷却<small>同一模型先按错误类型重试；连续失败达到次数后暂停调用该模型一段时间。</small></legend>
+        <div>
+          {RETRIES.map(item => <label key={item.key}><span>{item.label}</span><input type="number" min={0} max={3} value={draft.retry_policy[item.key]} onChange={event => setDraft({ ...draft, retry_policy: { ...draft.retry_policy, [item.key]: clamp(event.target.value, 0, 3) } })} /></label>)}
+          <label><span>允许失败次数</span><input type="number" min={1} max={20} value={draft.allowed_fails} onChange={event => setDraft({ ...draft, allowed_fails: clamp(event.target.value, 1, 20) })} /></label>
+          <label><span>冷却时间（秒）</span><input type="number" min={0} max={3600} value={draft.cooldown_seconds} onChange={event => setDraft({ ...draft, cooldown_seconds: clamp(event.target.value, 0, 3600) })} /></label>
+        </div>
+      </fieldset>
+    </> : <p className="model-connections-hint">启用后可选择备用模型，并设置重试与冷却。</p>}
     {error ? <p className="model-capability-error" role="alert">{error}</p> : null}
     {message ? <p className="model-connections-notice" role="status">{message}</p> : null}
     <div className="model-connection-actions">
       <button type="button" disabled={disabled || !dirty} onClick={() => { setDraft(saved); setMessage(""); }}>撤销修改</button>
-      <button type="button" disabled={disabled || !dirty} onClick={() => void save()}>{saving ? "保存中…" : "保存备用模型"}</button>
+      <button className="model-fallback-save" type="button" disabled={disabled || !dirty} onClick={() => void save()}>{saving ? "保存中…" : "保存备用模型"}</button>
     </div>
   </section>;
 }

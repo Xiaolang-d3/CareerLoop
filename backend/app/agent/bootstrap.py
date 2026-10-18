@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .model_binding import internal_model_selection
-from .model_router import ModelRouter, bind_model_stages, get_routing_policy
+from .model_router import ModelRouter, bind_image_model, bind_model_stages, bind_text_model, get_routing_policy
 from ..observability.model_context import public_model_selection
 from ..config import get_settings
 from ..models import ModelProviderRegistry, build_model_provider
@@ -228,7 +228,8 @@ def _cached_components(model_connection: dict[str, Any]) -> tuple[AgentRuntime, 
     return cached
 
 
-def get_agent_runtime(profile_id: str | None = None, *, selection: dict[str, Any] | None = None) -> AgentRuntime:
+def get_agent_runtime(profile_id: str | None = None, *, selection: dict[str, Any] | None = None,
+                      user_content: str | None = None) -> AgentRuntime:
     # Resolve exactly once, before caching; restoring never consults a mutable default.
     from .settings import _settings_lock
 
@@ -238,6 +239,16 @@ def get_agent_runtime(profile_id: str | None = None, *, selection: dict[str, Any
             connection, explicit_profile=profile_id is not None, selection=selection,
             resolve=get_profile_connection, policy=get_routing_policy() if selection is None else None,
         )
+        if selection is None and user_content:
+            from ..chat.image_assets import image_generation_intent
+            from ..model_protocol import resolve_model_protocol
+            from .model_catalog import get_model_catalog
+
+            image_only = resolve_model_protocol(connection["model_name"], connection.get("model_protocol"), connection.get("model_base_url", "")) == "images"
+            if image_generation_intent(user_content, image_model_selected=image_only):
+                connection = bind_image_model(connection, catalog=get_model_catalog(), resolve=get_profile_connection)
+            elif image_only:
+                connection = bind_text_model(connection, catalog=get_model_catalog(), resolve=get_profile_connection)
     runtime, _ = _cached_components(connection)
     return runtime
 

@@ -29,7 +29,9 @@ describe("ModelFallbackSettings", () => {
   it("orders fallbacks, sets retries and cooldown, and saves with the revision", async () => {
     const fetchJson = vi.fn().mockResolvedValueOnce(policy).mockImplementationOnce(async (_path: string, init: RequestInit) => ({ ...JSON.parse(String(init.body)), revision: 5, backend: "litellm" }));
     render(<ModelFallbackSettings catalog={catalog} fetchJson={fetchJson as unknown as Client} busy={false} />);
-    fireEvent.click(await screen.findByLabelText("启用备用模型"));
+    const toggle = await screen.findByLabelText("启用备用模型");
+    expect(screen.queryByLabelText("备用模型：claude-haiku-4-5（Claude）")).not.toBeInTheDocument();
+    fireEvent.click(toggle);
     expect(screen.queryByText("disabled-model")).not.toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("备用模型：claude-haiku-4-5（Claude）"));
     fireEvent.click(screen.getByLabelText("备用模型：claude-sonnet-4-5（Claude）"));

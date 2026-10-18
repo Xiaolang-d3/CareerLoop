@@ -172,6 +172,7 @@ class AgentRunResult(BaseModel):
     model_selection: dict[str, Any] = Field(default_factory=dict)
     assets: list[dict[str, Any]] = Field(default_factory=list)
     output_blocks: list[dict[str, Any]] = Field(default_factory=list)
+    image_generation_prompt: str | None = None
     status: Literal["done", "failed", "waiting_user", "cancelled"] = "done"
     error: ToolError | None = None
     events: list[ToolEvent] = Field(default_factory=list)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 
@@ -84,6 +85,15 @@ def model_protocol_candidates(
     if primary in {"anthropic", "gemini"}:
         return (primary, "openai")
     return (primary, "responses") if primary == "openai" else (primary,)
+
+
+def is_image_generation_model(model_name: str, configured: str | None = "auto", base_url: str = "") -> bool:
+    """Whether this adapter supports generating image output, not image input."""
+    if resolve_model_protocol(model_name, configured, base_url) == "images":
+        return True
+    return normalize_model_protocol(configured) in {"auto", "responses"} and bool(
+        re.match(r"^grok-4\.7(?:[-.]|$)", model_name, re.I)
+    )
 
 
 def base_url_for_protocol(

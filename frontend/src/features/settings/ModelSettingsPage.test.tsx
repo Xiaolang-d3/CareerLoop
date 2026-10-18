@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { cleanup, fireEvent, render as baseRender, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render as baseRender, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultAgentSettings } from "../../constants";
 import type { AgentSettings, ModelCapabilityReport, ModelServiceMonitor } from "../../types";
@@ -103,6 +103,16 @@ describe("ModelSettingsPage", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+  });
+
+  it("shows the saved model, key state and connection status without opening the dialog", () => {
+    baseRender(<ModelSettingsPage {...props()} />);
+    const summary = screen.getByRole("heading", { name: "当前模型" }).closest("section");
+    expect(summary).not.toBeNull();
+    expect(within(summary!).getByText("gpt-5.5")).toBeInTheDocument();
+    expect(within(summary!).getByText("密钥已配置")).toBeInTheDocument();
+    expect(within(summary!).getByText("运行正常")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("keeps fields in a dialog and restores focus after cancel", () => {

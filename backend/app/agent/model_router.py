@@ -97,6 +97,85 @@ def bind_model_stages(
     return result
 
 
+def _replace_executor(connection: dict[str, Any], chosen: dict[str, Any], reason: str) -> dict[str, Any]:
+    chosen = {**chosen, "selection_reason": reason, "policy_version": connection["policy_version"]}
+    stages = deepcopy(connection["stage_connections"])
+    stages["execute"] = chosen
+    return {
+        **connection, **chosen, "stage_connections": stages,
+        "stage_selections": {stage: internal_model_selection(value) for stage, value in stages.items()},
+    }
+
+
+def bind_image_model(connection: dict[str, Any], *, catalog: dict[str, Any], resolve: Callable) -> dict[str, Any]:
+    """Choose an enabled image executor once, before any call or run binding."""
+    from ..model_protocol import is_image_generation_model, resolve_model_protocol
+
+    def eligible(value: dict[str, Any]) -> bool:
+        capability = value.get("capabilities", {}).get("image_generation", "unknown")
+        return (
+            is_image_generation_model(value["model_name"], value.get("model_protocol", "auto"), value.get("model_base_url", ""))
+            and ("api_key" not in value or bool(value["api_key"]))
+            and capability != "unsupported"
+            and (not connection.get("strict_capabilities") or capability == "supported")
+        )
+
+    if eligible(connection):
+        return connection
+    connections = {item["id"]: item for item in catalog["connections"]}
+    candidates = []
+    for profile in catalog["profiles"]:
+        source = connections.get(profile["connection_id"])
+        if not profile["enabled"] or not source or not source["enabled"] or not source.get("api_key_configured"):
+            continue
+        candidate = {**profile, "model_protocol": source["protocol"], "model_base_url": source.get("effective_base_url", "")}
+        if eligible(candidate):
+            candidates.append(candidate)
+    # Prefer dedicated Images adapters; stable catalog order breaks ties.
+    candidates.sort(key=lambda item: (
+        resolve_model_protocol(item["model_name"], item["model_protocol"], item["model_base_url"]) != "images",
+        item.get("capabilities", {}).get("image_generation") != "supported",
+    ))
+    if not candidates:
+        raise ValueError("已识别为生图请求，但没有可用的生图模型。请在设置中启用支持生图的模型并配置凭证；严格能力模式还需确认图片生成能力。")
+    chosen = resolve(candidates[0]["id"])
+    # Recheck after resolution, in case configuration changed before binding.
+    if not eligible(chosen):
+        raise ValueError("生图模型配置已变化，请重新发送请求")
+    return _replace_executor(connection, chosen, "image_intent")
+
+
+def bind_text_model(connection: dict[str, Any], *, catalog: dict[str, Any], resolve: Callable) -> dict[str, Any]:
+    """A pure Images selection must not receive questions or classification."""
+    from ..model_protocol import resolve_model_protocol
+
+    sources = {item["id"]: item for item in catalog["connections"]}
+    candidates = []
+    for profile in catalog["profiles"]:
+        source = sources.get(profile["connection_id"])
+        if not profile["enabled"] or not source or not source["enabled"]:
+            continue
+        if resolve_model_protocol(profile["model_name"], source["protocol"], source.get("effective_base_url", "")) == "images":
+            continue
+        if not source.get("api_key_configured") and source["protocol"] != "ollama":
+            continue
+        candidates.append(profile)
+    preferred = [catalog.get("effective_execution_profile_id"), catalog.get("default_profile_id")]
+    candidates.sort(key=lambda item: preferred.index(item["id"]) if item["id"] in preferred else len(preferred))
+    if not candidates:
+        raise ValueError("已识别为文字请求，但没有可用的聊天模型。请在设置中配置并启用聊天模型。")
+    chosen = resolve(candidates[0]["id"])
+    if resolve_model_protocol(chosen["model_name"], chosen.get("model_protocol"), chosen.get("model_base_url", "")) == "images":
+        raise ValueError("聊天模型配置已变化，请重新发送请求")
+    result = _replace_executor(connection, chosen, "text_intent")
+    # Classification/planning may have inherited the same Images default.
+    for stage, value in result["stage_connections"].items():
+        if resolve_model_protocol(value["model_name"], value.get("model_protocol"), value.get("model_base_url", "")) == "images":
+            result["stage_connections"][stage] = {**result["stage_connections"]["execute"]}
+    result["stage_selections"] = {stage: internal_model_selection(value) for stage, value in result["stage_connections"].items()}
+    return result
+
+
 class ModelRouter:
     def __init__(self, connections: dict[str, dict[str, Any]], providers: dict[str, Any], *, strict_capabilities: bool = False) -> None:
         self._connections = deepcopy(connections)

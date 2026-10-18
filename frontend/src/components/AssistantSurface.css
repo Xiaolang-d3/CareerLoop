@@ -46,8 +46,6 @@
 .assistant-popup .chat-workspace .chat-composer .composer-input { min-height: 100px !important; padding: 8px !important; border-radius: 14px !important; box-shadow: 0 4px 16px #30266e0a !important; }
 .assistant-popup .chat-workspace .chat-composer .composer-input textarea { min-height: 40px !important; max-height: 100px; font-size: 14px !important; }
 .assistant-popup .chat-workspace .chat-session-tool { min-width: 34px; min-height: 34px; }
-.assistant-popup .chat-workspace .composer-drafts { justify-content: flex-start; gap: 6px; }
-.assistant-popup .chat-workspace .composer-drafts button { font-size: 12px; padding: 6px 10px; height: auto; }
 .assistant-popup .chat-workspace .research-panel,
 .assistant-popup .conversation-history-panel.drawer-open { position: absolute; inset: 0; width: 100%; height: 100%; max-width: 100%; box-sizing: border-box; border-radius: 0; z-index: 10; }
 .assistant-popup .research-panel-backdrop { display: none; }

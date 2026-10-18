@@ -72,9 +72,6 @@
 .home-act:hover, .home-act.open { background: var(--home-hover-2) !important; color: var(--home-text) !important; }
 .home-bookmark.on { color: var(--home-accent) !important; }
 .home-bookmark.on svg { fill: currentColor; }
-.home-card--art.home-no-img { background: linear-gradient(180deg, hsl(var(--home-hue, 230) 70% 97%) 0, var(--home-panel) 160px); }
-.home-card--art.home-no-img::before { content: ""; position: absolute; left: 16px; right: 16px; top: 0; height: 3px; border-radius: 0 0 3px 3px; background: linear-gradient(90deg, hsl(var(--home-hue, 230) 60% 50%), transparent); }
-:root[data-theme="dark"] .home-page .home-card--art.home-no-img { background: linear-gradient(180deg, hsl(var(--home-hue, 230) 30% 13%) 0, var(--home-panel) 160px); }
 .home-repo, .home-stack-row { border-color: var(--home-line-2); }
 .home-repo:first-child, .home-stack-row:first-child { border-top-color: transparent; }
 .home-repo:hover, .home-repo:focus-within { background: var(--home-hover); }
@@ -108,6 +105,14 @@
 .home-menu button:focus-visible { outline-offset: -2px; }
 .home-dialog-description, .home-field span { color: var(--home-text-3); }
 .home-field input, .home-field textarea { background: var(--home-panel-2); border-color: var(--home-line); color: var(--home-text); }
+.home-field select { background: var(--home-panel-2); border-color: var(--home-line); color: var(--home-text); }
+.home-digest-section { background: var(--home-panel-2); border-color: var(--home-line-2); }
+.home-digest-section h3 { color: var(--home-text-2); }
+.home-digest-section li::before { background: var(--home-accent); }
+.home-digest-status, .home-digest-foot, .home-digest-warning { color: var(--home-text-3); }
+.home-digest-foot { border-top-color: var(--home-line-2); }
+.home-digest-error { background: var(--home-danger-bg); border-color: var(--home-danger-line); color: var(--home-danger-text); }
+.home-digest-error button { color: var(--home-danger-text); }
 .home-dialog-error { color: var(--home-danger-text); }
 .home-toast { color: #fff; background: #18181b; border-color: transparent; box-shadow: var(--home-shadow-popup); }
 .home-toast button { color: #b4b4ff; }

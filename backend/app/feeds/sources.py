@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -18,6 +19,8 @@ import httpx
 
 
 MAX_RESPONSE_BYTES = 2_000_000
+MAX_ARTICLE_HEAD_BYTES = 256_000
+MAX_ARTICLE_IMAGE_LOOKUPS = 6
 REPOSITORY_PATTERN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9_.-]{1,100}\Z")
 TOPICS = ("AI", "Agent", "MCP", "RAG", "评测", "开发工具")
 _ALLOWED_FETCH_HOSTS = {"openai.com", "www.anthropic.com", "github.com", "api.github.com"}
@@ -54,7 +57,7 @@ def normalize_repository(value: str) -> str:
     return repo
 
 
-def _fetch(url: str) -> str:
+def _fetch(url: str, *, head_only: bool = False) -> str:
     parsed = urlsplit(url)
     if parsed.scheme != "https" or parsed.hostname not in _ALLOWED_FETCH_HOSTS or parsed.username or parsed.port not in (None, 443):
         raise ValueError("不允许采集该地址")
@@ -66,11 +69,17 @@ def _fetch(url: str) -> str:
             if response.is_redirect:
                 raise ValueError("来源返回了不支持的重定向")
             declared = response.headers.get("content-length", "")
-            if declared.isdigit() and int(declared) > MAX_RESPONSE_BYTES:
+            if not head_only and declared.isdigit() and int(declared) > MAX_RESPONSE_BYTES:
                 raise ValueError("来源内容超过大小限制")
             content = bytearray()
-            for chunk in response.iter_bytes():
+            for chunk in response.iter_bytes(chunk_size=8192):
                 content.extend(chunk)
+                if head_only:
+                    end = content.lower().find(b"</head>")
+                    if end >= 0:
+                        return content[:min(end + 7, MAX_ARTICLE_HEAD_BYTES)].decode("utf-8", errors="replace")
+                    if len(content) >= MAX_ARTICLE_HEAD_BYTES:
+                        return content[:MAX_ARTICLE_HEAD_BYTES].decode("utf-8", errors="replace")
                 if len(content) > MAX_RESPONSE_BYTES:
                     raise ValueError("来源内容超过大小限制")
             return content.decode("utf-8", errors="replace")
@@ -229,6 +238,104 @@ class _TreeParser(HTMLParser):
             self.stack[-1].children.append(data)
 
 
+def parse_article_image(content: str, article_url: str) -> str | None:
+    """Use explicit publisher cover metadata, never a random body or related image."""
+    tree = _TreeParser(content).root
+    metadata = tree.all("meta")
+    for key in ("og:image:secure_url", "og:image", "twitter:image", "twitter:image:src"):
+        for node in metadata:
+            name = (node.attrs.get("property") or node.attrs.get("name", "")).lower()
+            value = node.attrs.get("content", "").strip()
+            if name == key and value:
+                image = safe_public_url(urljoin(article_url, value), image=True)
+                if image:
+                    return image
+    return None
+
+
+def parse_article_published_at(content: str) -> str | None:
+    """Read explicit publication metadata, never modification or incidental dates."""
+    tree = _TreeParser(content).root
+    keys = {"article:published_time", "og:published_time", "pubdate", "datepublished", "parsely-pub-date"}
+    for node in tree.all("meta"):
+        name = (node.attrs.get("property") or node.attrs.get("name", "")).casefold()
+        if name in keys:
+            value = published_date(node.attrs.get("content"))
+            if value:
+                return value
+    # Script text is deliberately omitted by _TreeParser. Use a dedicated
+    # metadata parser to retain JSON-LD without interpreting page instructions.
+    class PublicationParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.in_json = False
+            self.parts = []
+            self.documents = []
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "script":
+                self.in_json = (dict(attrs).get("type") or "").casefold() == "application/ld+json"
+                self.parts = []
+
+        def handle_data(self, data):
+            if self.in_json:
+                self.parts.append(data)
+
+        def handle_endtag(self, tag):
+            if tag == "script" and self.in_json:
+                self.documents.append("".join(self.parts))
+                self.in_json = False
+
+    parser = PublicationParser()
+    parser.feed(content)
+    for document in parser.documents:
+        try:
+            payload = json.loads(document)
+        except (ValueError, TypeError):
+            continue
+        nodes = payload if isinstance(payload, list) else [payload]
+        for node in list(nodes):
+            if isinstance(node, dict) and isinstance(node.get("@graph"), list):
+                nodes.extend(node["@graph"])
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            kinds = node.get("@type", [])
+            kinds = [kinds] if isinstance(kinds, str) else kinds
+            if not isinstance(kinds, list) or not any(kind in {"Article", "NewsArticle", "BlogPosting", "TechArticle", "ScholarlyArticle"} for kind in kinds if isinstance(kind, str)):
+                continue
+            value = node.get("datePublished")
+            if isinstance(value, str) and (date_value := published_date(value)):
+                return date_value
+    return None
+
+
+def fetch_article_published_at(url: str) -> str | None:
+    if not safe_public_url(url):
+        return None
+    return parse_article_published_at(_fetch(url, head_only=True))
+
+
+def with_article_images(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Bound optional lookups to leading cards; failures must not lose the feed."""
+    candidates = [item for item in items[:MAX_ARTICLE_IMAGE_LOOKUPS]
+                  if (not item.get("image_url") or urlsplit(item["image_url"]).path.lower().endswith(".svg"))
+                  and safe_public_url(item.get("url"))]
+
+    def cover(item: dict[str, Any]) -> str | None:
+        try:
+            return parse_article_image(_fetch(item["url"], head_only=True), item["url"])
+        except (httpx.HTTPError, ValueError):
+            return None
+
+    if candidates:
+        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="home-cover") as executor:
+            for item, image in zip(candidates, executor.map(cover, candidates)):
+                if image:
+                    item["image_url"] = image
+    return items
+
+
 def _number(value: str) -> int | None:
     match = re.search(r"\d[\d,]*", value)
     return int(match.group().replace(",", "")) if match else None
@@ -332,7 +439,7 @@ def parse_releases(content: str, repo: str) -> list[dict[str, Any]]:
 def fetch_source(source: Source) -> list[dict[str, Any]]:
     content = _fetch(source.url)
     if source.kind == "news":
-        return parse_rss(content)
+        return with_article_images(parse_rss(content))
     if source.kind == "github":
         return parse_trending(content)
     if source.kind == "practice":

@@ -46,7 +46,7 @@ class ChatStreamingApiTest(unittest.TestCase):
 
     def with_runtime(self, runtime, action):
         original = main_module.get_agent_runtime
-        main_module.get_agent_runtime = lambda: runtime
+        main_module.get_agent_runtime = lambda *args, **kwargs: runtime
         try:
             return action()
         finally:

@@ -130,3 +130,113 @@ def test_fetch_refuses_redirects(monkeypatch):
     monkeypatch.setattr(sources.httpx, "Client", lambda **kwargs: client_type(transport=transport, **kwargs))
     with pytest.raises(httpx.HTTPStatusError):
         sources._fetch("https://github.com/trending?since=daily")
+
+
+def test_article_cover_prefers_publisher_metadata_and_checks_image_origin():
+    html = '''<head><meta name="twitter:image" content="https://cdn.openai.com/twitter.png">
+    <meta property="og:image" content="https://evil.test/cover.png">
+    <meta property="og:image" content="https://images.ctfassets.net/real.png?w=1600&amp;h=900"></head>
+    <body><img src="https://cdn.openai.com/unrelated.png"></body>'''
+    assert sources.parse_article_image(html, "https://openai.com/index/test/") == "https://images.ctfassets.net/real.png?w=1600&h=900"
+    assert sources.parse_article_image('<meta property="og:image" content="/cover.png">', "https://openai.com/index/test/") == "https://openai.com/cover.png"
+    assert sources.parse_article_image('<meta name="twitter:image" content="https://cdn.openai.com/twitter.png">', "https://openai.com/index/test/") == "https://cdn.openai.com/twitter.png"
+    assert sources.parse_article_image('<img src="https://cdn.openai.com/related.png">', "https://openai.com/index/test/") is None
+    assert sources.parse_article_image('<meta property="og:image" content="http://127.0.0.1/private">', "https://openai.com/index/test/") is None
+
+
+def test_cover_enrichment_is_bounded_preserves_existing_images_and_ignores_failures(monkeypatch):
+    called = []
+
+    def fetch(url, *, head_only=False):
+        called.append(url)
+        assert head_only
+        if url.endswith("/1"):
+            raise httpx.TimeoutException("unavailable")
+        return '<meta property="og:image" content="https://cdn.openai.com/cover.png">'
+
+    monkeypatch.setattr(sources, "_fetch", fetch)
+    items = [{"url": f"https://openai.com/index/{index}", "image_url": None} for index in range(10)]
+    items[0]["image_url"] = "https://cdn.openai.com/original.png"
+    items[2]["url"] = "https://evil.test/article"
+    assert sources.with_article_images(items) is items
+    assert set(called) == {f"https://openai.com/index/{index}" for index in (1, 3, 4, 5)}
+    assert items[0]["image_url"] == "https://cdn.openai.com/original.png"
+    assert items[1]["image_url"] is None
+    assert items[3]["image_url"] == "https://cdn.openai.com/cover.png"
+    assert all(item["image_url"] is None for item in items[6:])
+
+
+def test_news_fetch_enriches_missing_rss_cover(monkeypatch):
+    def fetch(url, *, head_only=False):
+        if not head_only:
+            return RSS
+        return '<head><meta property="og:image" content="https://cdn.openai.com/mcp.png"></head>'
+
+    monkeypatch.setattr(sources, "_fetch", fetch)
+    items = sources.fetch_source(sources.configured_sources([])[0])
+    assert items[0]["image_url"] == "https://cdn.openai.com/agent.png"
+    assert items[1]["image_url"] == "https://cdn.openai.com/mcp.png"
+
+
+def test_practice_fetch_does_not_request_article_covers(monkeypatch):
+    calls = []
+
+    def fetch(url, *, head_only=False):
+        calls.append(url)
+        assert not head_only
+        return ENGINEERING
+
+    monkeypatch.setattr(sources, "_fetch", fetch)
+    source = next(item for item in sources.configured_sources([]) if item.kind == "practice")
+    assert sources.fetch_source(source)[0]["title"] == "Agent tools"
+    assert calls == [source.url]
+
+
+def test_engineering_prefers_article_cover_to_svg_and_retains_svg_on_failure(monkeypatch):
+    item = {"url": "https://www.anthropic.com/engineering/agent-tools", "image_url": "https://www-cdn.anthropic.com/list.svg"}
+    monkeypatch.setattr(sources, "_fetch", lambda url, **kwargs: '<meta property="og:image" content="https://www-cdn.anthropic.com/article.png">')
+    assert sources.with_article_images([dict(item)])[0]["image_url"] == "https://www-cdn.anthropic.com/article.png"
+    monkeypatch.setattr(sources, "_fetch", lambda url, **kwargs: "<head></head>")
+    assert sources.with_article_images([dict(item)])[0]["image_url"] == item["image_url"]
+
+
+def test_article_head_fetch_stops_before_body_even_when_document_is_large(monkeypatch):
+    head = b'<head><meta property="og:image" content="https://cdn.openai.com/cover.png"></head>'
+
+    class Stream(httpx.SyncByteStream):
+        def __iter__(self):
+            yield head + b" " * (8192 - len(head))
+            pytest.fail("read the article body after receiving its head")
+
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, stream=Stream(), headers={"content-length": "5000000"}))
+    client_type = httpx.Client
+    monkeypatch.setattr(sources.httpx, "Client", lambda **kwargs: client_type(transport=transport, **kwargs))
+    assert sources._fetch("https://openai.com/index/article", head_only=True) == head.decode()
+
+
+def test_article_head_fetch_has_a_separate_size_limit(monkeypatch):
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=b"x" * 100))
+    client_type = httpx.Client
+    monkeypatch.setattr(sources.httpx, "Client", lambda **kwargs: client_type(transport=transport, **kwargs))
+    monkeypatch.setattr(sources, "MAX_ARTICLE_HEAD_BYTES", 20)
+    assert sources._fetch("https://openai.com/index/article", head_only=True) == "x" * 20
+
+
+@pytest.mark.parametrize("html", [
+    '<meta property="article:published_time" content="2026-10-18T12:00:00+08:00">',
+    '<script type="application/ld+json">{"@type":"NewsArticle","datePublished":"2026-10-18T04:00:00Z"}</script>',
+    '<script type="application/ld+json">{"@graph":[{"@type":"BlogPosting","datePublished":"2026-10-18T04:00:00Z"}]}</script>',
+])
+def test_publisher_date_uses_explicit_publication_metadata(html):
+    assert sources.parse_article_published_at(html) == "2026-10-18T04:00:00Z"
+
+
+@pytest.mark.parametrize("html", [
+    '<meta property="article:modified_time" content="2026-10-18T04:00:00Z">',
+    '<script type="application/ld+json">{"@type":"Article","dateModified":"2026-10-18T04:00:00Z"}</script>',
+    '<script type="application/ld+json">{"@type":"Organization","datePublished":"2026-10-18T04:00:00Z"}</script>',
+    '<script type="application/ld+json">invalid json</script>',
+    '<script type>ignored</script><body>Today is October 18, 2026</body>',
+])
+def test_publisher_date_never_guesses_from_updated_or_incidental_dates(html):
+    assert sources.parse_article_published_at(html) is None

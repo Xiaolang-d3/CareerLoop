@@ -9,10 +9,11 @@ from pydantic import BaseModel, Field
 
 from app.agent.approval_policy import APPROVE_OPTION_LABEL as TOOL_APPROVE_LABEL
 from app.agent.approval_policy import DECLINE_OPTION_LABEL as TOOL_DECLINE_LABEL
+from app.agent.capability_resolver import TaskRoute
 from app.agent.egress_policy import APPROVE_OPTION_LABEL, DECLINE_OPTION_LABEL
 from app.agent.orchestration import route_task
-from app.agent.runtime import AgentRuntime, _tool_call_fingerprint
-from app.domain import AgentMessage, AgentRunSnapshot, AgentClarification, ClarificationOption, ModelResponse, ModelStreamEvent, ToolCall, ToolDefinition, ToolError, ToolResult
+from app.agent.runtime import AgentRuntime, RunContext, _tool_call_fingerprint
+from app.domain import AgentMessage, AgentPlan, AgentPlanStep, AgentRunSnapshot, AgentClarification, ClarificationOption, ModelResponse, ModelStreamEvent, ToolCall, ToolDefinition, ToolError, ToolResult
 from app.search_options import WebSearchOptions
 from app.models import ModelProviderError, ModelProviderRegistry
 from app.tooling import ToolSpec
@@ -664,6 +665,73 @@ class ResultGovernanceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         event = next(item for item in result.events if item.tool_name == "test_huge_note")
         self.assertIs(event.data["truncated"], True)
         self.assertEqual({key: value for key, value in event.data.items() if key != "arguments"}, data)
+
+
+class RunContextSurfaceTest(unittest.TestCase):
+    """Tool surface narrowing is centralized for fresh, resumed and replanned runs."""
+
+    def _runtime(self) -> AgentRuntime:
+        return runtime_for(
+            ScriptedModel([]),
+            CountingTool("search_library"),
+            AskUserTool(),
+        )
+
+    def _context(self, *, allowed=(), plan=None) -> RunContext:
+        return RunContext(
+            provider=None,
+            platform="test",
+            run_id=None,
+            user_content="你好",
+            conversation_id=None,
+            task_id=None,
+            event_callback=None,
+            web_search_mode="auto",
+            route=TaskRoute(
+                kind="conversation",
+                needs_plan=False,
+                allowed_tools=tuple(allowed),
+                required_tools=(),
+            ),
+            plan=plan,
+            messages=[],
+            events=[],
+            interrupt_tools={"ask_user"},
+        )
+
+    def test_fresh_run_without_plan_exposes_only_interrupt_tools(self) -> None:
+        ctx = self._context()
+
+        self._runtime()._apply_tool_surface(ctx)
+
+        self.assertEqual(ctx.executable_tools, {"ask_user"})
+        self.assertEqual({item.name for item in ctx.tool_definitions}, {"ask_user"})
+
+    def test_resume_falls_back_to_route_allowed_tools(self) -> None:
+        ctx = self._context(allowed=("search_library",))
+
+        self._runtime()._apply_tool_surface(ctx, fallback_to_allowed=True)
+
+        self.assertEqual(ctx.executable_tools, {"ask_user", "search_library"})
+
+    def test_plan_overrides_allowed_fallback(self) -> None:
+        plan = AgentPlan(
+            goal="检索资料",
+            route="conversation",
+            steps=[
+                AgentPlanStep(
+                    id="step-1",
+                    title="检索资料",
+                    tool_name="search_library",
+                    risk="read_only",
+                )
+            ],
+        )
+        ctx = self._context(allowed=("get_library_context",), plan=plan)
+
+        self._runtime()._apply_tool_surface(ctx, fallback_to_allowed=True)
+
+        self.assertEqual(ctx.executable_tools, {"ask_user", "search_library"})
 
 
 if __name__ == "__main__":

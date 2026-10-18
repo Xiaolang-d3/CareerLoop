@@ -1,8 +1,12 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { ApiError } from "../../api/client";
-import type { FetchJson, HomeFeedResponse } from "./types";
+import type { FetchJson, HomeDigest, HomeFeedResponse } from "./types";
 import { useHomeFeed } from "./useHomeFeed";
+
+function digestBlock(overrides: Partial<HomeDigest> = {}): HomeDigest {
+  return { status: "unconfigured", profile_id: "", model_name: "", generated_at: null, date: null, error: "", overview: "", sections: [], ...overrides };
+}
 
 function snapshot(patch: Partial<HomeFeedResponse> = {}): HomeFeedResponse {
   return {
@@ -21,8 +25,9 @@ function snapshot(patch: Partial<HomeFeedResponse> = {}): HomeFeedResponse {
     updates: [],
     practices: [],
     sources: [],
-    preferences: { topics: ["Agent"], repositories: [] },
+    preferences: { topics: ["Agent"], repositories: [], digest_profile_id: "" },
     item_states: {},
+    digest: digestBlock(),
     refreshing: false,
     last_synced_at: "2026-10-08T08:00:00Z",
     ...patch
@@ -165,7 +170,7 @@ describe("useHomeFeed", () => {
   });
 
   it("persists interest preferences and polls the resulting refresh", async () => {
-    const preferences = { topics: ["Agent", "MCP"], repositories: ["example/agent-sdk"] };
+    const preferences = { topics: ["Agent", "MCP"], repositories: ["example/agent-sdk"], digest_profile_id: "p1" };
     const fetchJson = mockClient()
       .mockResolvedValueOnce(snapshot())
       .mockResolvedValueOnce(snapshot({ preferences, refreshing: true }))
@@ -255,7 +260,7 @@ describe("useHomeFeed", () => {
     await settle();
 
     await act(async () => {
-      await expect(result.current.savePreferences({ topics: [], repositories: ["invalid"] }))
+      await expect(result.current.savePreferences({ topics: [], repositories: ["invalid"], digest_profile_id: "" }))
         .rejects.toThrow("仓库格式必须为 owner/repo");
     });
     expect(result.current.feed).toEqual(cached);
@@ -274,7 +279,7 @@ describe("useHomeFeed", () => {
   it("ignores late responses from a replaced account client and aborts its requests", async () => {
     const previous = deferred<HomeFeedResponse>();
     const oldClient = mockClient().mockReturnValue(previous.promise);
-    const currentFeed = snapshot({ preferences: { topics: ["RAG"], repositories: [] } });
+    const currentFeed = snapshot({ preferences: { topics: ["RAG"], repositories: [], digest_profile_id: "" } });
     const currentClient = mockClient().mockResolvedValue(currentFeed);
     const { result, rerender } = renderHook(({ client }) => useHomeFeed(client), { initialProps: { client: oldClient } });
     await settle();
@@ -319,5 +324,47 @@ describe("useHomeFeed", () => {
     expect(result.current.feed?.news).toEqual([]);
     expect(result.current.feed?.bookmarks).toEqual([{ kind: "news", item: savedArticle }]);
     expect(fetchJson).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps polling while the digest is generating and stops once it is ready", async () => {
+    const generating = digestBlock({ status: "generating", profile_id: "p1" });
+    const ready = digestBlock({ status: "ready", profile_id: "p1", overview: "今日总览", generated_at: "2026-10-08T09:00:00Z" });
+    const fetchJson = mockClient()
+      .mockResolvedValueOnce(snapshot({ digest: generating }))
+      .mockResolvedValueOnce(snapshot({ digest: ready }));
+    const { result } = renderHook(() => useHomeFeed(fetchJson));
+    await settle();
+    expect(result.current.feed?.digest.status).toBe("generating");
+    await act(() => vi.advanceTimersByTimeAsync(2_000));
+    expect(fetchJson).toHaveBeenCalledTimes(2);
+    expect(result.current.feed?.digest.status).toBe("ready");
+    await act(() => vi.advanceTimersByTimeAsync(20_000));
+    expect(fetchJson).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("deduplicates digest regeneration and surfaces its notice and failure", async () => {
+    const ready = digestBlock({ status: "ready", profile_id: "p1", overview: "今日总览" });
+    const fetchJson = mockClient()
+      .mockResolvedValueOnce(snapshot())
+      .mockRejectedValueOnce(new Error("请先在兴趣设置中选择日报模型"))
+      .mockResolvedValueOnce(snapshot({ digest: ready }));
+    const { result } = renderHook(() => useHomeFeed(fetchJson));
+    await settle();
+
+    await act(async () => {
+      await expect(result.current.generateDigest()).rejects.toThrow("请先在兴趣设置中选择日报模型");
+    });
+    expect(fetchJson).toHaveBeenNthCalledWith(2, "/home/feed/digest", expect.objectContaining({ method: "POST" }));
+    expect(result.current.error).toBe("请先在兴趣设置中选择日报模型");
+
+    await act(async () => {
+      const first = result.current.generateDigest();
+      const second = result.current.generateDigest();
+      expect(second).toBe(first);
+      await first;
+    });
+    expect(fetchJson).toHaveBeenCalledTimes(3);
+    expect(result.current.notice).toBe("已开始生成今日日报");
   });
 });

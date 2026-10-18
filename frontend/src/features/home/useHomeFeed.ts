@@ -14,11 +14,16 @@ type FeedRequest = {
 type FeedSession = {
   active: boolean;
   backgroundRefreshing: boolean;
+  digestGenerating: boolean;
+  curationGenerating: boolean;
+  curationAvailable: boolean;
   queue: Promise<void>;
   timer: number | null;
   controller: AbortController | null;
   reloadTask: Promise<void> | null;
   refreshTask: Promise<void> | null;
+  digestTask: Promise<void> | null;
+  curationTask: Promise<void> | null;
   request: (request: FeedRequest) => Promise<void>;
 };
 
@@ -40,11 +45,16 @@ export function useHomeFeed(fetchJson: FetchJson) {
     const session: FeedSession = {
       active: true,
       backgroundRefreshing: false,
+      digestGenerating: false,
+      curationGenerating: false,
+      curationAvailable: false,
       queue: Promise.resolve(),
       timer: null,
       controller: null,
       reloadTask: null,
       refreshTask: null,
+      digestTask: null,
+      curationTask: null,
       request: async () => undefined
     };
     sessionRef.current = session;
@@ -60,7 +70,7 @@ export function useHomeFeed(fetchJson: FetchJson) {
     };
 
     const schedulePoll = () => {
-      if (!session.active || !session.backgroundRefreshing || session.timer !== null) return;
+      if (!session.active || (!session.backgroundRefreshing && !session.digestGenerating && !session.curationGenerating) || session.timer !== null) return;
       session.timer = window.setTimeout(() => {
         session.timer = null;
         // Requests share a queue so an old poll cannot overwrite a saved preference
@@ -78,9 +88,15 @@ export function useHomeFeed(fetchJson: FetchJson) {
         setError(null);
         if (refresh) setRefreshing(true);
         try {
+          if (path === "/home/feed/curation" && !session.curationAvailable) {
+            throw new Error("请先启用每日资讯精选并选择日报模型");
+          }
           const snapshot = await fetchJson<HomeFeedResponse>(path, { ...options, signal: controller.signal });
           if (!session.active) return;
           session.backgroundRefreshing = snapshot.refreshing;
+          session.digestGenerating = snapshot.digest?.status === "generating";
+          session.curationGenerating = snapshot.curation?.status === "generating";
+          session.curationAvailable = snapshot.preferences.curation_enabled === true && Boolean(snapshot.preferences.digest_profile_id);
           setFeed(snapshot);
           setRefreshing(snapshot.refreshing);
           if (successNotice) setNotice(successNotice);
@@ -89,6 +105,8 @@ export function useHomeFeed(fetchJson: FetchJson) {
           // Keep the previous feed visible, and stop polling after a transport or
           // authentication failure. A manual retry starts a new polling cycle.
           session.backgroundRefreshing = false;
+          session.digestGenerating = false;
+          session.curationGenerating = false;
           setRefreshing(false);
           const message = errorMessage(reason);
           setError(message);
@@ -160,6 +178,41 @@ export function useHomeFeed(fetchJson: FetchJson) {
     });
   }, []);
 
+  const generateDigest = useCallback((): Promise<void> => {
+    const session = sessionRef.current;
+    if (!session?.active) return Promise.resolve();
+    if (session.digestTask) return session.digestTask;
+    const task = session.request({
+      path: "/home/feed/digest",
+      options: { method: "POST" },
+      throwOnError: true,
+      notice: "已开始生成今日日报"
+    });
+    session.digestTask = task;
+    void task.catch(() => undefined).finally(() => {
+      if (session.digestTask === task) session.digestTask = null;
+    });
+    return task;
+  }, []);
+
+  const regenerateCuration = useCallback((): Promise<void> => {
+    const session = sessionRef.current;
+    if (!session?.active) return Promise.resolve();
+    if (session.curationTask) return session.curationTask;
+    if (session.curationGenerating) return Promise.resolve();
+    const task = session.request({
+      path: "/home/feed/curation",
+      options: { method: "POST" },
+      throwOnError: true,
+      notice: "已开始筛选今日资讯"
+    });
+    session.curationTask = task;
+    void task.catch(() => undefined).finally(() => {
+      if (session.curationTask === task) session.curationTask = null;
+    });
+    return task;
+  }, []);
+
   const setItemState = useCallback((id: string, patch: Partial<HomeItemState>): Promise<void> => {
     const session = sessionRef.current;
     if (!session?.active) return Promise.resolve();
@@ -177,5 +230,5 @@ export function useHomeFeed(fetchJson: FetchJson) {
     });
   }, []);
 
-  return { feed, loading, error, refreshing, notice, setNotice, refresh, reload, savePreferences, setItemState };
+  return { feed, loading, error, refreshing, notice, setNotice, refresh, reload, savePreferences, setItemState, generateDigest, regenerateCuration };
 }
