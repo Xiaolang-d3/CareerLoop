@@ -10,7 +10,7 @@ from app import db, secret_store
 from app.agent import bootstrap, settings
 from app.agent.model_binding import internal_model_selection
 from app.agent.model_catalog import add_model_profile, get_profile_connection, update_model_profile
-from app.agent.model_router import ModelRouter, bind_model_stages, get_routing_policy, save_routing_policy
+from app.agent.model_router import ModelRouter, bind_image_model, bind_model_stages, bind_text_model, get_routing_policy, save_routing_policy
 from app.agent.orchestration import TaskRoute
 from app.db import init_db
 from app.domain import AgentMessage, ModelRequest, ModelResponse, ToolDefinition
@@ -238,3 +238,103 @@ def test_stage_provider_keeps_detected_protocol_reasoning_and_prices(catalog, mo
     assert callable(constructed[-1]["on_protocol_detected"])
     assert constructed[-1]["price_per_million_input"] == 2
     assert constructed[-1]["price_per_million_output"] == 8
+
+
+def image_catalog(profiles):
+    return {
+        "connections": [{"id": "images-service", "protocol": "images", "effective_base_url": "https://images.example.test/v1", "enabled": True, "api_key_configured": True}],
+        "profiles": [{"id": "image-profile", "connection_id": "images-service", "model_name": "gpt-image-2", "enabled": True, "capabilities": {"image_generation": "unknown"}}],
+    }
+
+
+def test_image_intent_binds_image_executor_and_freezes_it_on_restore(catalog, monkeypatch):
+    _, profiles = catalog
+    image = {**profiles["explicit"], "model_name": "gpt-image-2", "model_protocol": "images", "profile_id": "image-profile"}
+    resolve = lambda profile_id=None, **kwargs: image if (kwargs.get("selection") or {}).get("profile_id", profile_id) == "image-profile" else profiles["default"]
+    monkeypatch.setattr(bootstrap, "get_profile_connection", resolve)
+    monkeypatch.setattr(bootstrap, "get_routing_policy", lambda: {"roles": {}, "version": 1, "strict_capabilities": False})
+    monkeypatch.setattr("app.agent.model_catalog.get_model_catalog", lambda: image_catalog(profiles))
+    monkeypatch.setattr(bootstrap, "build_model_provider", lambda **kwargs: SimpleNamespace(name="fake"))
+    runtime = bootstrap.get_agent_runtime(user_content="生成一张小猫玩小鱼玩具图")
+    bound = runtime.model_selection
+    assert bound["model_name"] == "gpt-image-2" and bound["selection_reason"] == "image_intent"
+    assert bound["stage_selections"]["execute"]["profile_id"] == "image-profile"
+    assert bound["stage_selections"]["classify"]["profile_id"] == profiles["default"]["profile_id"]
+    # Changing the current catalog cannot reroute an already-bound run.
+    monkeypatch.setattr("app.agent.model_catalog.get_model_catalog", lambda: pytest.fail("restore must not inspect current catalog"))
+    restored = bootstrap.get_agent_runtime(selection=bound, user_content="生成一张不同的图")
+    assert restored.model_selection["stage_selections"] == bound["stage_selections"]
+    # Automatic image selection never changes the normal account default.
+    assert bootstrap.get_agent_runtime().model_selection["profile_id"] == profiles["default"]["profile_id"]
+
+
+@pytest.mark.parametrize("blocked", ["profile_disabled", "connection_disabled", "no_credential", "unsupported", "strict_unknown", "vision_only"])
+def test_image_routing_rejects_unavailable_candidates_before_resolution(catalog, blocked):
+    path, profiles = catalog
+    connection = bind(profiles, path)
+    available = image_catalog(profiles)
+    profile, source = available["profiles"][0], available["connections"][0]
+    if blocked == "profile_disabled": profile["enabled"] = False
+    elif blocked == "connection_disabled": source["enabled"] = False
+    elif blocked == "no_credential": source["api_key_configured"] = False
+    elif blocked == "unsupported": profile["capabilities"]["image_generation"] = "unsupported"
+    elif blocked == "strict_unknown": connection["strict_capabilities"] = True
+    else:
+        source["protocol"] = "openai"
+        profile.update(model_name="vision-chat", capabilities={"vision": "supported"})
+    with pytest.raises(ValueError, match="没有可用的生图模型"):
+        bind_image_model(connection, catalog=available, resolve=lambda *_: pytest.fail("ineligible model must not resolve"))
+
+
+def test_image_routing_prefers_selected_compatible_model(catalog):
+    path, profiles = catalog
+    connection = {**bind(profiles, path), "model_name": "grok-4.7", "model_protocol": "responses"}
+    assert bind_image_model(connection, catalog=image_catalog(profiles), resolve=lambda *_: pytest.fail("keep selected image model")) is connection
+
+
+@pytest.mark.parametrize("prompt", ["你好", "生成图片需要多少钱", "帮我生成一张猫图的提示词"])
+def test_text_requests_do_not_inspect_image_catalog(catalog, monkeypatch, prompt):
+    monkeypatch.setattr("app.agent.model_catalog.get_model_catalog", lambda: pytest.fail("text must not route to images"))
+    monkeypatch.setattr(bootstrap, "build_model_provider", lambda **kwargs: SimpleNamespace(name="fake"))
+    runtime = bootstrap.get_agent_runtime(user_content=prompt)
+    assert runtime.model_selection["model_name"] == "default"
+
+
+@pytest.mark.parametrize("prompt", ["你好", "生成图片需要多少钱", "帮我生成一张猫图的提示词"])
+def test_images_selection_automatically_uses_chat_for_text(catalog, monkeypatch, prompt):
+    _, profiles = catalog
+    image = {**profiles["explicit"], "model_name": "gpt-image-2", "model_protocol": "images", "profile_id": "image-profile"}
+    resolve = lambda profile_id=None, **kwargs: image if profile_id == "image-profile" else profiles["default"]
+    available = {
+        "default_profile_id": profiles["default"]["profile_id"],
+        "profiles": [{"id": profiles["default"]["profile_id"], "connection_id": "text-service", "model_name": "default", "enabled": True}],
+        "connections": [{"id": "text-service", "protocol": "openai", "enabled": True, "api_key_configured": True}],
+    }
+    monkeypatch.setattr(bootstrap, "get_profile_connection", resolve)
+    monkeypatch.setattr(bootstrap, "get_routing_policy", lambda: {"roles": {}, "version": 1, "strict_capabilities": False})
+    monkeypatch.setattr("app.agent.model_catalog.get_model_catalog", lambda: available)
+    monkeypatch.setattr(bootstrap, "build_model_provider", lambda **kwargs: SimpleNamespace(name="fake"))
+    runtime = bootstrap.get_agent_runtime("image-profile", user_content=prompt)
+    assert runtime.model_selection["model_name"] == "default"
+    assert runtime.model_selection["selection_reason"] == "text_intent"
+    assert runtime.model_selection["stage_selections"]["execute"]["profile_id"] == profiles["default"]["profile_id"]
+
+
+def test_text_routing_replaces_image_classification_and_planning(catalog):
+    path, profiles = catalog
+    connection = bind(profiles, path)
+    for value in connection["stage_connections"].values():
+        value.update(model_name="gpt-image-2", model_protocol="images")
+    available = {
+        "profiles": [{"id": "chat", "connection_id": "chat-service", "model_name": "chat", "enabled": True}],
+        "connections": [{"id": "chat-service", "protocol": "openai", "enabled": True, "api_key_configured": True}],
+    }
+    routed = bind_text_model(connection, catalog=available, resolve=lambda _: profiles["default"])
+    assert all(value["model_name"] == "default" for value in routed["stage_connections"].values())
+    assert all(value["selection_reason"] == "text_intent" for value in routed["stage_selections"].values())
+
+
+def test_text_routing_without_chat_model_does_not_send_to_images(catalog):
+    path, profiles = catalog
+    with pytest.raises(ValueError, match="没有可用的聊天模型"):
+        bind_text_model(bind(profiles, path), catalog=image_catalog(profiles), resolve=lambda *_: pytest.fail("do not call Images"))

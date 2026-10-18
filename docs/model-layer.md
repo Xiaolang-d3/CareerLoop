@@ -58,7 +58,11 @@ ChatRuntime ─► ConfiguredModelProvider (档案参数 / 推理强度)
 
 每次调用估算费用写入 `model_service_events.cost_usd`：档案自定义价格优先，其次 LiteLLM 计算的 `response_cost`，再按用量 × 价格表；Ollama 记 0；未知模型留空。监控摘要返回 `estimated_cost_usd`、`priced_requests`、`unpriced_requests`、`fallback_requests`。只用服务商返回的 token 数，不调用分词器。
 
+首页日报与新增的「今日值得看」共用已保存的文本档案和 `feeds/digest.py` 单次请求适配，但分别标记 `stage=digest` / `stage=curation`（`selection_reason=home_digest` / `home_curation`），不进入对话模型路由或记忆。精选显式启用后每天访问首页自动最多一次文本调用，最大输出 2800 tokens，手动重新筛选另计请求；原日报仍独立调用与计费。没有新增厂商 SDK、模型协议或依赖；`daily-news-curator/SKILL.md` 是本地提示资源，由 sidecar 的 `--add-data` 一起打包，缺失时在外部搜索/模型调用前失败。
+
 `response_format`（结构化输出）与提示缓存（Anthropic `cache_control`）经 `ModelRequest.response_format` / `prompt_cache` 透传。
+
+首页摘要任务在档案的 `reasoning_effort` 为空时使用调用级 `low` 默认值，显式档案设置仍优先；不写回模型档案，也不影响对话路由。现有 `model_timeout_seconds` 保持不变；`asyncio.timeout` 的外层取消发生时，由摘要适配补记一次 `request_timeout` 监控事件并保留原调用身份，监控写入失败不能覆盖原超时。服务商已返回的普通错误仍由 provider 自行记录，不额外重复写入。真实验证与边界见 [home-digest-timeout-qa.md](home-digest-timeout-qa.md)。
 
 ## 离线与安全
 
@@ -96,7 +100,9 @@ ChatRuntime ─► ConfiguredModelProvider (档案参数 / 推理强度)
 
 当前 schema 为 v30：统一合入阶段路由、聊天图片成果和 LiteLLM 模型层。两个开发分支曾分别使用 v29，新增字段不同；启动时从任一 v29 补齐另一侧的表与列，从 v27/v28 也可直接升级。原记录与迁移名称保留，升级前自动备份到 `.upgrade-backups/before-schema-v30/`，不重新索引既有 v27 及以后的资料。
 
-生图请求走原生 Responses 的图片专用路径，保留图片与进度事件，绕过 Completion Router 和参数重试；文本调用继续使用 LiteLLM、推理参数和备用模型。阶段路由独立设置模型时，也沿用该档案的实际协议、推理强度与自定义计价。Packy `images` 协议同样绕过 Completion Router：`litellm_router.route_target_for_connection` 显式拒绝把图片模型注册为聊天备用模型，图片请求由原生 `OpenAIImagesProvider` 处理（见 `docs/image-generation.md`）。
+明确生图时先加载内置 `image-design` Markdown 指引并附到原始需求后，不增加文字模型调用；技能加载失败在生图操作创建和付费调用之前返回，实际提交提示词随图片结果保留（见 `docs/image-generation.md`）。生图请求走原生 Responses 的图片专用路径，保留图片与进度事件，绕过 Completion Router 和参数重试；文本调用继续使用 LiteLLM、推理参数和备用模型。阶段路由独立设置模型时，也沿用该档案的实际协议、推理强度与自定义计价。Packy `images` 协议同样绕过 Completion Router：`litellm_router.route_target_for_connection` 显式拒绝把图片模型注册为聊天备用模型，图片请求由原生 `OpenAIImagesProvider` 处理（见 `docs/image-generation.md`）。
+
+聊天新运行在 bootstrap 绑定阶段按本轮指令选择兼容执行模型；明确续图指令由聊天入口先沿连续生图上下文补齐画面要求，补齐输入持久化后不在恢复时重算：明确生图保留当前可生图模型，否则优先选择已启用、有凭证的 Images 档案，再选 Grok 4.7 原生生图；选择 Images 后发起普通文字请求则使用已配置的聊天执行模型，并避免分类/规划调用纯图片接口。`model_protocol.is_image_generation_model` 只承认已接入的 Images 或 Grok 4.7 auto/Responses 路径，不把视觉输入能力等同于生图能力。未知能力沿用严格模式门禁，缺少模型时请求前提示。`image_intent` / `text_intent` 连同最终阶段模型版本在首次调用前冻结，恢复不重新路由；本轮选择不会写回账户默认或对话配置，也不是失败后的备用重试。详见 [按当轮意图选择模型](agent.md#按当轮意图选择图片或文字模型2026-10-17)。
 
 ## 回滚
 

@@ -17,6 +17,7 @@ describe("model settings layout regression", () => {
     );
     expect(pageStyles).not.toMatch(/\.model-monitor-card\s*\{[^}]*grid-column:\s*3/);
     expect(pageStyles).not.toContain("max-width: 1360px");
+    expect(pageStyles).toMatch(/\.model-settings-dialog\s*\{[^}]*background:\s*#fff/);
     expect(workspaceStyles).not.toContain("min(1360px, 100%)");
   });
 });

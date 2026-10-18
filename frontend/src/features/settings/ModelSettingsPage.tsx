@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, ChevronDown, Eye, EyeOff, Gauge, Image, LoaderCircle, RefreshCw, Save, ScanSearch, Wrench } from "lucide-react";
+import { Activity, CheckCircle2, ChevronDown, Cpu, Eye, EyeOff, Gauge, Image, LoaderCircle, RefreshCw, Save, ScanSearch, TriangleAlert, Wrench } from "lucide-react";
 import { ActionButton } from "../../components/ui/ActionButton";
 import type { AgentSettings, ModelCapabilityFlag, ModelCapabilityReport, ModelServiceMonitor } from "../../types";
 import { CAPABILITY_SOURCE_LABELS, formatContextTokens, formatUsd } from "./modelCapabilities";
@@ -226,7 +226,19 @@ export function ModelSettingsPage({
   return (
     <section className="model-settings-page">
       <section className="settings-card model-settings-card model-current-summary">
-        <div><h3>当前模型</h3><strong>{savedSettings.model_name || "尚未配置"}</strong><p>{savedSettings.model_base_url || "使用服务商默认地址"}</p></div>
+        <span className="model-current-icon" aria-hidden="true"><Cpu size={18} /></span>
+        <div className="model-current-copy">
+          <h3>当前模型</h3>
+          <strong>{savedSettings.model_name || "尚未配置"}</strong>
+          <p>{savedSettings.model_base_url || "使用服务商默认地址"}</p>
+          <div className="model-current-meta">
+            <em className={savedSettings.api_key_configured ? "success" : "warning"}>
+              {savedSettings.api_key_configured ? <CheckCircle2 size={12} aria-hidden="true" /> : <TriangleAlert size={12} aria-hidden="true" />}
+              {savedSettings.api_key_configured ? "密钥已配置" : "待配置密钥"}
+            </em>
+            {monitor ? <em className={monitor.status}>{statusLabels[monitor.status]}</em> : null}
+          </div>
+        </div>
         <ActionButton variant="primary" onClick={() => { setManualModel(false); setModelSearch(""); setShowKey(false); setDialogOpen(true); }}>配置模型</ActionButton>
       </section>
       {dialogOpen && <ModelSettingsDialog title="配置模型" locked={fieldsBusy} onClose={closeDialog}>
