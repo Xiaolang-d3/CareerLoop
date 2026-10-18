@@ -4,17 +4,6 @@ import "./run-process.css";
 import "./research-sources.css";
 import { MarkdownContent, SourceFavicon, sourceDomain, type WebSource } from "./ChatMarkdown";
 export type { WebSource } from "./ChatMarkdown";
-const STARTER_PROMPTS: Array<{
-  draft: string;
-  title: string;
-  needsSources?: boolean;
-  enableWebSearch?: boolean;
-}> = [
-    { draft: "帮我梳理已保存的资料，先总结重点，再指出还缺什么。", title: "梳理已保存资料", needsSources: true },
-    { draft: "帮我分析这份材料，先总结重点，再指出值得继续追问的地方。", title: "分析一份材料" },
-    { draft: "帮我查找并核对这个主题的公开信息：", title: "查找公开信息", enableWebSearch: true },
-    { draft: "根据我的要求起草一份内容。用途、读者和要点是：", title: "起草一份内容" }
-  ];
 import type { AgentRunResult, ChatClarification, ChatMessage, ChatSessionContext } from "./types";
 import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { searchMetadataFromAgent, type SearchMetadata } from "./searchMetadata";
@@ -23,6 +12,7 @@ import { AttachmentPreviewContext } from "./AttachmentPreviewDialog";
 import { ResultActionsContext } from "./result-types";
 import { HistoryAttachment } from "./HistoryAttachment";
 import { GeneratedImage } from "./GeneratedImage";
+import { ImageGenerationProgress } from "./ImageGenerationProgress";
 import { ActionBarPrimitive, ComposerPrimitive, MessagePrimitive, type AppendMessage, type MessageState } from "@assistant-ui/react";
 import { BookOpen, Check, CheckCircle2, ChevronDown, ChevronRight, CircleHelp, Copy, LoaderCircle, Pencil, RefreshCw, Search, X } from "lucide-react";
 
@@ -95,7 +85,7 @@ export function EditMessageComposer() {
   );
 }
 
-const STREAMING_THINKING_TITLE = "正在整理要点";
+const WAITING_MODEL_TITLE = "正在等待模型响应";
 
 const GENERIC_TASK_MESSAGE = /^(?:正在执行(?:\s+\S+)?|running|in progress)$/i;
 
@@ -107,7 +97,7 @@ const TOOL_ACTIVITY_LABELS: Record<string, string> = {
   get_library_context: "正在读取知识库",
   search_library: "正在检索资料",
   propose_library_knowledge: "正在添加待确认知识",
-  agent_thinking: STREAMING_THINKING_TITLE,
+  agent_thinking: "正在思考",
   agent_planner: "正在规划步骤",
   model_provider: "正在生成回答",
   completion_validator: "正在补齐必要步骤",
@@ -192,18 +182,27 @@ function workLineFromEvent(
   return TOOL_ACTIVITY_LABELS[event.tool_name] || "";
 }
 
+function latestEvents(agent?: AgentRunResult) {
+  const merged = new Map<string, AgentRunResult["events"][number]>();
+  for (const event of agent?.events ?? []) {
+    const previous = merged.get(event.tool_call_id);
+    merged.set(event.tool_call_id, { ...previous, ...event, data: { ...previous?.data, ...event.data } });
+  }
+  return [...merged.values()];
+}
+
 export function thinkingHeaderCopy(agent: AgentRunResult | undefined, streaming: boolean): { title: string; currentTask?: string } {
   if (!streaming) return { title: "思考过程" };
 
-  const events = agent?.events ?? [];
+  const events = latestEvents(agent);
   const steps = planStepsFromAgent(agent);
   const runningEvent = [...events].reverse().find((event) => event.status === "running");
   const runningStep = [...steps].reverse().find((step) => step.status === "running")
-    ?? steps.find((step) => step.tool_name === runningEvent?.tool_name);
+    ?? (runningEvent ? steps.find((step) => step.tool_name === runningEvent.tool_name) : undefined);
   const currentTool = runningEvent?.tool_name || runningStep?.tool_name;
   const title = currentTool
     ? (TOOL_ACTIVITY_LABELS[currentTool] ?? "正在执行任务")
-    : STREAMING_THINKING_TITLE;
+    : WAITING_MODEL_TITLE;
 
   const eventForTask = runningEvent && runningEvent.tool_name !== "agent_thinking" ? runningEvent : undefined;
   const liveWork = eventForTask ? workLineFromEvent(eventForTask, steps) : "";
@@ -225,12 +224,7 @@ const COMPLETED_ACTIVITY_LABELS: Record<string, string> = {
 
 function processEntries(agent: AgentRunResult | undefined, streaming: boolean) {
   const steps = planStepsFromAgent(agent);
-  const merged = new Map<string, AgentRunResult["events"][number]>();
-  for (const event of agent?.events ?? []) {
-    const previous = merged.get(event.tool_call_id);
-    merged.set(event.tool_call_id, { ...previous, ...event, data: { ...previous?.data, ...event.data } });
-  }
-  return [...merged.values()].flatMap((event) => {
+  return latestEvents(agent).flatMap((event) => {
     if (event.tool_name === "agent_thinking") {
       const text = event.message.trim();
       return text && !ROUTE_SUMMARY_MESSAGE.test(text)
@@ -246,6 +240,11 @@ function processEntries(agent: AgentRunResult | undefined, streaming: boolean) {
     if (!streaming && event.status === "running") text = text.replace(/^正在/, "");
     return text ? [{ id: event.tool_call_id, text, thought: false, status: event.status, tool: event.tool_name, event }] : [];
   });
+}
+
+function isImagePending(agent: AgentRunResult | undefined, streaming: boolean, stopping: boolean) {
+  return streaming && !stopping && !agent?.assets?.length
+    && latestEvents(agent).some((event) => event.tool_name === "image_generation");
 }
 
 export function RunProcess({ agent, streaming, stopping = false, content = "" }: {
@@ -275,7 +274,7 @@ export function RunProcess({ agent, streaming, stopping = false, content = "" }:
     : !streaming && typeof agent?.duration_ms === "number" && Number.isFinite(agent.duration_ms)
       ? Math.max(0, agent.duration_ms) : null;
   const current = thinkingHeaderCopy(agent, streaming);
-  const generating = content.trim() && !agent?.events.some((event) => event.status === "running" && event.tool_name !== "agent_thinking");
+  const generating = content.trim() && !latestEvents(agent).some((event) => event.status === "running" && event.tool_name !== "agent_thinking");
   const terminalError = !streaming && agent?.status === "failed" ? agent.error?.message?.trim() : undefined;
   const entries = processEntries(agent, streaming).flatMap((entry) => {
     if (!terminalError || entry.thought || entry.text !== terminalError) return [entry];
@@ -287,6 +286,10 @@ export function RunProcess({ agent, streaming, stopping = false, content = "" }:
   const liveEntry = [...entries].reverse().find(entry => !entry.thought && entry.status === "running");
   const title = streaming ? stopping ? "正在停止生成" : generating ? "正在生成回复" : liveEntry?.text || current.currentTask || current.title
     : elapsed !== null ? `用时 ${formatExecutionTime(elapsed)}` : "思考与执行过程";
+  // The header already describes the active image operation. Keep other
+  // records, and restore this operation's record when it finishes.
+  const visibleEntries = entries.filter(entry => !(streaming && entry.id === liveEntry?.id && entry.tool === "image_generation"));
+  const compactProgress = streaming && !visibleEntries.length;
   const imageFailure = agent?.events.some(event => event.tool_name === "image_generation") && !agent?.assets?.length;
   const outcome = !streaming ? agent?.status === "failed" ? imageFailure ? "未生成图片" : "生成失败"
     : agent?.status === "cancelled" ? "已停止" : agent?.status === "waiting_user" ? "等待确认" : "" : "";
@@ -306,30 +309,34 @@ export function RunProcess({ agent, streaming, stopping = false, content = "" }:
   function inspect() {
     following.current = false;
   }
+  if (isImagePending(agent, streaming, stopping)) return null;
   if (!streaming && !entries.length && !outcome && elapsed === null) return null;
+  const headerContent = <>
+    {streaming ? <LoaderCircle size={14} className="spinning" aria-hidden="true" /> : null}
+    <span className={`run-current-content${streaming && !stopping ? " is-current-execution" : ""}`} role={streaming ? "status" : undefined} title={title}>{title}</span>
+    {streaming && elapsed !== null ? <small>已用时 {formatExecutionTime(elapsed)}</small> : null}
+    {outcome ? <span className={`run-process-outcome${agent?.status === "failed" ? " is-failed" : ""}`}>{outcome}</span> : null}
+  </>;
   return (
-    <section className={`run-process${streaming ? " is-running" : ""}${expanded ? " is-expanded" : ""}`} aria-label="思考与执行过程">
-      <button type="button" className="run-process-toggle" aria-expanded={expanded} aria-controls={bodyId}
+    <section className={`run-process${streaming ? " is-running" : ""}${expanded && !compactProgress ? " is-expanded" : ""}`} aria-label="思考与执行过程">
+      {compactProgress ? <div className="run-process-toggle is-static">{headerContent}</div> : <button type="button" className="run-process-toggle" aria-expanded={expanded} aria-controls={bodyId}
         aria-label={`${expanded ? "收起" : "展开"}思考与执行过程`} onClick={() => setExpanded((open) => !open)}>
-        {streaming ? <LoaderCircle size={14} className="spinning" aria-hidden="true" /> : null}
-        <span className={`run-current-content${streaming && !stopping ? " is-current-execution" : ""}`} role={streaming ? "status" : undefined} title={title}>{title}</span>
-        {streaming && elapsed !== null ? <small>已用时 {formatExecutionTime(elapsed)}</small> : null}
-        {outcome ? <span className={`run-process-outcome${agent?.status === "failed" ? " is-failed" : ""}`}>{outcome}</span> : null}
+        {headerContent}
         <ChevronDown size={15} className="run-process-chevron" aria-hidden="true" />
-      </button>
-      <div id={bodyId} className="run-process-fixed" hidden={!expanded}>
+      </button>}
+      {!compactProgress ? <div id={bodyId} className="run-process-fixed" hidden={!expanded}>
         <div ref={scrollRef} className="run-process-scroll" tabIndex={0} role="region" aria-label="执行记录，可滚动查看"
           onScroll={() => {
             const node = scrollRef.current;
             if (!node) return;
             following.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 24;
           }}>
-          {entries.map((entry) => entry.thought
+          {visibleEntries.map((entry) => entry.thought
             ? <p key={entry.id} className="run-process-thought">{entry.text}</p>
             : <ToolCallDetails key={entry.id} event={entry.event} title={entry.text} streaming={streaming} stopping={stopping} now={now} onInspect={inspect} />)}
-          {!entries.length ? <p className="run-process-empty">{streaming ? "等待模型响应…" : "未记录更多过程信息。"}</p> : null}
+          {!visibleEntries.length ? <p className="run-process-empty">{streaming ? "等待模型响应…" : "未记录更多过程信息。"}</p> : null}
         </div>
-      </div>
+      </div> : null}
       {!streaming ? <RunErrorNote run={agent} content={content} /> : null}
     </section>
   );
@@ -376,26 +383,6 @@ export function ComposerClarification({
         <p className="composer-clarification-hint">答当前问题则继续；换一件事直接说，或点结束任务</p>
       ) : null}
     </section>
-  );
-}
-
-export function StarterPromptList({
-  onFill,
-  hasSources
-}: {
-  onFill: (draft: string, enableWebSearch?: boolean) => void;
-  hasSources: boolean;
-}) {
-  const prompts = STARTER_PROMPTS.filter((item) => !item.needsSources || hasSources);
-  if (!prompts.length) return null;
-  return (
-    <div className="composer-drafts" aria-label="可选草稿">
-      {prompts.map(({ draft, enableWebSearch, title }) => (
-        <button key={title} type="button" onClick={() => onFill(draft, enableWebSearch)}>
-          {title}
-        </button>
-      ))}
-    </div>
   );
 }
 
@@ -585,13 +572,14 @@ export function ChatTurn({ state, chatBusy, stopping = false }: { state: Message
   const resultContent = resultOnlyContent(source.content, Boolean(thoughtEvent?.message));
   const failed = source.payload?.agent?.status === "failed";
   const assets = source.payload?.agent?.assets ?? [];
+  const imagePending = isImagePending(source.payload?.agent, isActiveAssistant, stopping);
   const blocks = source.payload?.agent?.output_blocks ?? [];
   const seenAssets = new Set<string>();
   const imageBlock = (id: string) => {
     const asset = assets.find(item => item.id === id);
     if (!asset || seenAssets.has(id)) return null;
     seenAssets.add(id);
-    return <GeneratedImage key={id} asset={asset} messageId={source.id} />;
+    return <GeneratedImage key={id} asset={asset} messageId={source.id} prompt={source.payload?.agent?.image_generation_prompt} />;
   };
   const webSources = webSourcesFromAgent(source.payload?.agent);
   const openResearch = (selectedSource?: number) => {
@@ -604,9 +592,8 @@ export function ChatTurn({ state, chatBusy, stopping = false }: { state: Message
         {source.role === "assistant" ? (
           <>
             <RunProcess agent={source.payload?.agent} streaming={isActiveAssistant} stopping={stopping && isActiveAssistant} content={resultContent} />
-            {assets.length && blocks.length ? <section className="message-result message-dialog" aria-label="输出结果">{blocks.map((block, index) => block.type === "image" ? imageBlock(block.asset_id) : <MarkdownContent key={`text-${index}`} sources={webSources} streaming={isActiveAssistant} onOpenSource={openResearch}>{block.text}</MarkdownContent>)}{assets.filter(asset => !seenAssets.has(asset.id)).map(asset => imageBlock(asset.id))}</section> : <>
+            {imagePending ? <section className="message-image-output" aria-label="输出结果"><ImageGenerationProgress /></section> : assets.length ? <section className="message-image-output" aria-label="输出结果">{blocks.length ? blocks.map((block, index) => block.type === "image" ? imageBlock(block.asset_id) : <MarkdownContent key={`text-${index}`} sources={webSources} streaming={isActiveAssistant} onOpenSource={openResearch}>{block.text}</MarkdownContent>) : resultContent ? <MarkdownContent sources={webSources} streaming={isActiveAssistant} onOpenSource={openResearch}>{resultContent}</MarkdownContent> : null}{assets.filter(asset => !seenAssets.has(asset.id)).map(asset => imageBlock(asset.id))}</section> : <>
               {resultContent ? <section className="message-result message-dialog" aria-label="输出结果"><MarkdownContent sources={webSources} streaming={isActiveAssistant} onOpenSource={openResearch}>{resultContent}</MarkdownContent></section> : null}
-              {assets.map(asset => imageBlock(asset.id))}
             </>}
             {!isActiveAssistant ? <div className="message-footer">
               <div className="message-footer-tools">

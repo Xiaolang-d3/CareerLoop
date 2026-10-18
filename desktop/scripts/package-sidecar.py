@@ -136,6 +136,8 @@ def main() -> None:
             "--specpath", str(work),
             "--add-data", f"{BACKEND / 'app' / 'password_policy.json'}{os.pathsep}app",
             "--add-data", f"{BACKEND / 'app' / 'password_policy-LICENSE.txt'}{os.pathsep}app",
+            "--add-data", f"{BACKEND / 'app' / 'agent' / 'skills' / 'image-design' / 'SKILL.md'}{os.pathsep}app/agent/skills/image-design",
+            "--add-data", f"{BACKEND / 'app' / 'agent' / 'skills' / 'daily-news-curator' / 'SKILL.md'}{os.pathsep}app/agent/skills/daily-news-curator",
             # These are development or optional-model dependencies.  Runtime
             # imports are lazy and already fall back when an optional parser is
             # not installed; including them turns a compact local API into a

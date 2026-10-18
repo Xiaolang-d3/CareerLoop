@@ -22,16 +22,35 @@ def image_generation_intent(text: str, *, image_model_selected: bool = False) ->
     # Only an instruction in this turn enables the billed native tool. Quoted
     # documents, past turns and requests to explain image generation do not.
     first = text.strip().split("\n", 1)[0]
+    instruction_block = text.strip().split("\n\n", 1)[0]
     if re.search(r"(?:图片|图像)(?:的(?:原理|功能|接口|能力)|功能|接口|能力|是什么|支持吗|怎么用)", first):
         return False
-    if re.match(r"^(?:能否|可以|能不能|你能|你可以).*(?:吗|[?？])$", first):
+    if re.search(r"(?:图片|图像|插画|海报|壁纸|封面|照片|图)(?:的)?(?:提示词|prompt|原理|教程|代码|费用|价格)", first, re.I):
         return False
-    if not image_model_selected and re.search(r"(?:思维导图|流程图|时序图|架构图|折线图|柱状图|饼图|Mermaid)", first, re.I) and not re.search(r"图片|图像|插画|海报", first):
+    if re.search(r"(?:只(?:要|需)|仅(?:要|需)|先(?:给|写|提供)).{0,12}(?:提示词|prompt)|不要(?:生成|绘制|画).{0,12}(?:图片|图像)", instruction_block, re.I):
+        return False
+    if not image_model_selected and re.search(r"(?:图表|思维导图|流程图|时序图|架构图|折线图|柱状图|饼图|Mermaid)", first, re.I) and not re.search(r"图片|图像|插画|海报", first):
         return False
     if re.match(r"^(?:请|帮我)?生成(?:图片|图像)(?:需要|有什么|怎么|是否)", first):
         return False
-    return bool(re.match(r"^(?:(?:请|帮我|给我|能否|可以|用\s*Grok|为我)\s*)*(?:画(?:一|个|张|出)|绘制|生成.{0,18}(?:图片|图像|插画|海报|壁纸|封面)|设计.{0,12}(?:海报|插画))", first, re.I)
-                or re.match(r"^(?:please\s+)?(?:generate|create|draw|paint)\s+(?:an?\s+)?(?:image|picture|illustration|poster|painting|photo)\b", first, re.I))
+    # Strip polite framing without imposing a short subject-length limit. A
+    # concrete request such as “能不能生成一张小猫图？” is still an instruction.
+    instruction = re.sub(r"^(?:(?:请你|请|帮我|帮忙|给我|能不能|可不可以|能否|可以|你能|你可以|麻烦你|麻烦|我想要|我想|我要|用\s*Grok|为我)\s*)+", "", first, flags=re.I)
+    if re.fullmatch(r"(?:生成|绘制|画|生图)(?:图片|图像|图)?(?:吗|么)?[?？。！!]*", instruction):
+        return False
+    if re.match(r"^(?:生成|制作|设计)(?:一(?:个|段|份))?\s*(?:Python|JavaScript|JS|TypeScript|TS)?\s*(?:代码|程序|脚本|接口|教程|文档|提示词|prompt)", instruction, re.I):
+        return False
+    if re.search(r"\b(?:image|picture|photo|poster)(?:\s+generation)?\s+(?:prompt|code|tutorial)\b", first, re.I):
+        return False
+    if re.match(r"^(?:(?:please|can you|could you|would you)\s+)*(?:generate|create)\s+(?:an?\s+)?(?:(?:Python|JavaScript|TypeScript)\s+)?(?:code|program|script|tutorial|prompt)\b", first, re.I):
+        return False
+    if re.fullmatch(r"(?:can|could|would)\s+you\s+(?:generate|create|draw|paint)\s+(?:an?\s+)?(?:images?|pictures?|photos?|illustrations?)\s*[?？]?", first, re.I):
+        return False
+    return bool(
+        re.match(r"^(?:画(?:一|个|张|出|幅)|绘制|(?:生成|制作|做一张|设计).*(?:图片|图像|插画|海报|壁纸|封面|照片|图|banner))", instruction, re.I)
+        or re.match(r"^(?:一张|一幅).+(?:图片|图像|插画|海报|壁纸|封面|照片|图)[。！!？?]*$", instruction)
+        or re.match(r"^(?:(?:please|can you|could you|would you)\s+)*(?:generate|create|draw|paint)\s+.*\b(?:image|picture|illustration|poster|painting|photo)\b", first, re.I)
+    )
 
 
 def begin_generation(operation_id: str, conversation_id: int, selection: dict[str, Any], db_path=None) -> dict | None:
@@ -66,7 +85,7 @@ def _confined(root: Path, path: Path) -> Path:
     return resolved
 
 
-def persist_images(operation_id: str, response: ModelResponse, model_name: str, db_path=None) -> dict:
+def persist_images(operation_id: str, response: ModelResponse, model_name: str, db_path=None, *, prompt: str | None = None) -> dict:
     if not response.images:
         from ..models.openai_responses import IMAGE_NOT_EXECUTED_MESSAGE
         raise ModelProviderError("image_generation_not_executed", IMAGE_NOT_EXECUTED_MESSAGE)
@@ -128,6 +147,8 @@ def persist_images(operation_id: str, response: ModelResponse, model_name: str, 
             if not blocks:
                 blocks = ([{"type": "text", "text": response.content}] if response.content else []) + [{"type": "image", "asset_id": asset["id"]} for asset in assets]
             result = {"content": response.content, "assets": assets, "output_blocks": blocks}
+            if prompt:
+                result["image_generation_prompt"] = prompt
             conn.execute("UPDATE chat_image_operations SET status='done',result_json=? WHERE id=?", (json_dump(result), operation_id))
         return result
     except OSError as exc:
@@ -138,6 +159,25 @@ def persist_images(operation_id: str, response: ModelResponse, model_name: str, 
         for path in written:
             path.unlink(missing_ok=True)
         raise
+
+
+def with_generation_prompts(messages: list[dict], conversation_id: int, db_path=None) -> list[dict]:
+    """Expose the saved request for legacy image replies without reconstructing it."""
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT r.assistant_message_id, r.user_content FROM agent_execution_runs r "
+            "WHERE r.conversation_id=? AND r.status='completed' AND EXISTS "
+            "(SELECT 1 FROM chat_image_assets a WHERE a.conversation_id=r.conversation_id "
+            "AND a.message_id=r.assistant_message_id)", (conversation_id,),
+        ).fetchall()
+    prompts = {row["assistant_message_id"]: row["user_content"].strip() for row in rows}
+    for message in messages:
+        agent = (message.get("payload") or {}).get("agent")
+        if isinstance(agent, dict) and agent.get("assets") and not agent.get("image_generation_prompt"):
+            prompt = prompts.get(message["id"])
+            if prompt:
+                agent["image_generation_prompt"] = prompt
+    return messages
 
 
 def asset_metadata(asset_id: str, db_path=None) -> dict:

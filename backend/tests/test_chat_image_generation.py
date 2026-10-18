@@ -10,7 +10,7 @@ from PIL import Image
 
 from app.agent.runtime import AgentRuntime
 from app.chat.image_assets import (asset_file, asset_thumbnail, begin_generation, delete_images,
-                                   image_generation_intent, persist_images)
+                                   image_generation_intent, persist_images, with_generation_prompts)
 from app.chat.artifacts import SaveArtifactIn, message_artifacts, save_artifact
 from app.chat.conversations import create_conversation
 from app.chat.service import save_stream_result
@@ -47,7 +47,21 @@ def images(tmp_path):
 @pytest.mark.parametrize('prompt,expected', [('帮我生成一张图片：海边灯塔', True), ('画一只蓝色的猫', True),
     ('Generate an image of a cat', True), ('请解释如何生成图片', False), ('生成图片的原理是什么', False),
     ('总结这份文档\n帮我生成一张图片', False), ('整理成思维导图', False), ('生成一个图表', False),
-    ('帮我画个思维导图', False), ('绘制流程图', False), ('可以生成图片吗', False), ('生成图片需要多少钱', False)])
+    ('帮我画个思维导图', False), ('绘制流程图', False), ('可以生成图片吗', False), ('生成图片需要多少钱', False),
+    ('生成一张小猫玩小鱼玩具图', True), ('帮我生成一张小猫玩小鱼玩具图', True),
+    ('生成一张在清晨暖光的客厅里小猫趴在地毯上玩小鱼玩具的图', True),
+    ('能不能帮我生成一张小猫玩小鱼玩具图？', True), ('我想要一张小猫图片', True),
+    ('设计一个会员活动banner', True), ('制作一张奶白色会员活动海报', True),
+    ('Create a cute cat photo', True), ('Generate image of a cat', True),
+    ('Can you draw a picture of a cat?', True),
+    ('帮我生成一张小猫图的提示词', False), ('只要提示词，不要生成图片', False),
+    ('帮我生成一张小猫图片，只需要提示词', False),
+    ('生成一张小猫玩小鱼玩具图\n只需要提示词，不要生成图片', False),
+    ('生成一张小猫图片\n先给我提示词', False),
+    ('Generate an image prompt for a cat', False), ('Create image generation code', False),
+    ('Create a Python script to generate a cat image', False), ('Can you generate an image?', False),
+    ('生成一个Python脚本，把小猫画成图片', False), ('生成一份文档介绍图片生成', False),
+    ('总结以下文字：生成一张小猫图', False)])
 def test_intent(prompt, expected):
     # A question about generating images is not an instruction to buy one.
     assert image_generation_intent(prompt) == expected
@@ -256,9 +270,13 @@ def test_runtime_images_api_with_sse_nonstreaming_capability_and_replay(images):
         result = asyncio.run(agent.run('画一只猫', conversation_id=cid, run_id='packy-image', event_callback=publish))
         assert result.status == 'done' and len(result.assets) == 1
         assert result.assets[0]['model_name'] == 'gpt-image-2'
+        assert result.image_generation_prompt == provider.generate.call_args.args[0].messages[0].content
+        assert result.image_generation_prompt.startswith('画一只猫\n\n')
+        assert 'image-design · v1' in result.image_generation_prompt
         assert asset_file(result.assets[0]['id'])[0].read_bytes() == png()
         replay = asyncio.run(agent.run('画一只猫', conversation_id=cid, run_id='packy-image', event_callback=publish))
         assert replay.assets == result.assets and provider.generate.await_count == 1
+        assert replay.image_generation_prompt == result.image_generation_prompt
         assert any(event.event and event.event.tool_name == 'image_generation' for event in events)
 
 
@@ -288,7 +306,25 @@ def test_runtime_selected_images_draws_architecture_without_text_planning(images
         assert result.status == 'done' and len(result.assets) == 1
         provider.generate.assert_awaited_once()
         request = provider.generate.call_args.args[0]
-        assert request.image_generation and request.messages[0].content == '画一下agent智能体常见架构图'
+        assert request.image_generation and request.messages[0].content.startswith('画一下agent智能体常见架构图\n\n')
+        assert 'image-design · v1' in request.messages[0].content
+        agent._generate_for_stage.assert_not_awaited()
+
+
+def test_runtime_natural_image_instruction_uses_images_without_text_planning(images):
+    path, _ = images
+    provider = NS(name='images', generate=AsyncMock(return_value=response()))
+    agent = runtime(provider, 'gpt-image-2')
+    agent._generate_for_stage = AsyncMock(side_effect=AssertionError('Image request must bypass text stages'))
+    prompt = '生成一张小猫玩小鱼玩具图'
+    with use_workspace(1, path.parent):
+        init_db(); cid = create_conversation('自然生图意图')['id']
+        result = asyncio.run(agent.run(prompt, conversation_id=cid, run_id='natural-image'))
+        assert result.status == 'done' and len(result.assets) == 1
+        provider.generate.assert_awaited_once()
+        submitted = provider.generate.call_args.args[0].messages[0].content
+        assert submitted.startswith(prompt + '\n\n') and 'image-design · v1' in submitted
+        assert result.image_generation_prompt == submitted
         agent._generate_for_stage.assert_not_awaited()
 
 
@@ -415,8 +451,42 @@ def test_native_stream_replay_and_message_save_are_idempotent(images):
         saved = save_stream_result(cid, tid, user, result)
         again = save_stream_result(cid, tid, user, replayed)
         assert saved['assistant_message']['id'] == again['assistant_message']['id']
+        assert saved['assistant_message']['payload']['agent']['image_generation_prompt'] == result.image_generation_prompt
+        assert result.image_generation_prompt.startswith('画一只猫\n\n')
         with connect() as conn:
             assert conn.execute("SELECT COUNT(*) FROM chat_messages WHERE conversation_id=? AND role='assistant'", (cid,)).fetchone()[0] == 1
+
+
+def test_legacy_image_prompt_uses_its_own_completed_run_not_visible_repeat_or_other_conversations(images):
+    path, cid = images
+    other_cid = create_conversation('其他图片', path)['id']
+    begin_generation('legacy-prompt', cid, {}, path)
+    stored = persist_images('legacy-prompt', response(), 'gpt-image-2', path)
+    prompt = '生成一张图片，沿用以下画面要求：\n\n小猫玩小鱼玩具，不要文字。'
+    with connect(path) as conn:
+        uid = conn.execute("INSERT INTO chat_messages(conversation_id,role,content) VALUES (?,'user','再生成一张')", (cid,)).lastrowid
+        aid = conn.execute("INSERT INTO chat_messages(conversation_id,role,content) VALUES (?,'assistant','')", (cid,)).lastrowid
+        conn.execute("UPDATE chat_image_assets SET message_id=? WHERE operation_id='legacy-prompt'", (aid,))
+        conn.execute("INSERT INTO agent_execution_runs(run_id,conversation_id,user_message_id,assistant_message_id,user_content,status) "
+                     "VALUES ('legacy-run',?,?,?,?,'completed')", (cid, uid, aid, prompt))
+    def messages():
+        return [{'id': aid, 'payload': {'agent': {'assets': stored['assets']}}}]
+    assert with_generation_prompts(messages(), cid, path)[0]['payload']['agent']['image_generation_prompt'] == prompt
+    assert 'image_generation_prompt' not in with_generation_prompts(messages(), other_cid, path)[0]['payload']['agent']
+    saved_prompt = messages()
+    saved_prompt[0]['payload']['agent']['image_generation_prompt'] = '原始已保存提示词'
+    assert with_generation_prompts(saved_prompt, cid, path)[0]['payload']['agent']['image_generation_prompt'] == '原始已保存提示词'
+    with connect(path) as conn:
+        conn.execute("DELETE FROM agent_execution_runs WHERE run_id='legacy-run'")
+    assert 'image_generation_prompt' not in with_generation_prompts(messages(), cid, path)[0]['payload']['agent']
+
+
+def test_image_operation_replay_retains_the_original_prompt(images):
+    path, cid = images
+    begin_generation('prompt-once', cid, {}, path)
+    first = persist_images('prompt-once', response(), 'gpt-image-2', path, prompt='画一只猫')
+    replay = persist_images('prompt-once', response(), 'gpt-image-2', path, prompt='画一只狗')
+    assert replay['image_generation_prompt'] == first['image_generation_prompt'] == '画一只猫'
 
 
 def test_storage_failure_rolls_back_and_keeps_attempt_blocked(images, monkeypatch):
