@@ -8,6 +8,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextvars import ContextVar
 from copy import deepcopy
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any, Literal
@@ -174,6 +175,37 @@ def _tool_call_fingerprint(name: str, arguments: dict) -> str:
         default=str,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+@dataclass
+class RunContext:
+    """Mutable state of one run, threaded through the tool loop.
+
+    The loop used to receive this state as two dozen keyword arguments. Keeping
+    it on one object makes the boundary explicit: helpers that pause, replan or
+    checkpoint read and write the same run instead of restating it.
+    """
+
+    provider: Any
+    platform: str
+    run_id: str | None
+    user_content: str
+    conversation_id: int | None
+    task_id: int | None
+    event_callback: StreamCallback | None
+    web_search_mode: str
+    route: TaskRoute
+    plan: AgentPlan | None
+    messages: list[AgentMessage]
+    events: list[ToolEvent]
+    interrupt_tools: set[str]
+    executable_tools: set[str] = field(default_factory=set)
+    tool_definitions: list[Any] = field(default_factory=list)
+    completed_tools: set[str] = field(default_factory=set)
+    completed_tool_calls: set[str] = field(default_factory=set)
+    repeated_tool_calls: dict[str, int] = field(default_factory=dict)
+    replan_used: bool = False
+    citation_retry_used: bool = False
 
 
 class AgentRuntime:
@@ -534,7 +566,6 @@ class AgentRuntime:
         messages = [*conversation_history]
         planned_tools = {step.tool_name for step in plan.steps} if plan is not None else set()
         interrupt_tools = INTERRUPT_TOOLS & set(self._tools.names())
-        executable_tools = planned_tools | interrupt_tools
         if plan is not None:
             messages.append(
                 AgentMessage(
@@ -596,41 +627,23 @@ class AgentRuntime:
                     ),
                 )
             )
-        tool_definitions = [
-            definition
-            for definition in self._tools.definitions()
-            if definition.name in executable_tools
-        ]
-        self._append_visible_tools(messages, executable_tools)
-        citation_retry_used = False
-        replan_used = False
-        completed_tools: set[str] = set()
-        completed_tool_calls: set[str] = set()
-        repeated_tool_calls: dict[str, int] = {}
-
-        return await self._run_tool_loop(
+        ctx = RunContext(
             provider=provider,
-            selected_platform=selected_platform,
+            platform=selected_platform,
+            run_id=run_id,
             user_content=user_content,
             conversation_id=conversation_id,
             task_id=task_id,
             event_callback=event_callback,
+            web_search_mode=web_search_mode,
             route=route,
             plan=plan,
             messages=messages,
             events=events,
             interrupt_tools=interrupt_tools,
-            executable_tools=executable_tools,
-            tool_definitions=tool_definitions,
-            citation_retry_used=citation_retry_used,
-            replan_used=replan_used,
-            start_round=1,
-            web_search_mode=web_search_mode,
-            completed_tools=completed_tools,
-            completed_tool_calls=completed_tool_calls,
-            repeated_tool_calls=repeated_tool_calls,
-            run_id=run_id,
         )
+        self._apply_tool_surface(ctx)
+        return await self._run_tool_loop(ctx, start_round=1)
 
     async def _resume_run(
         self,
@@ -677,6 +690,26 @@ class AgentRuntime:
         ]
         await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=events[0]))
         messages = [*resume.messages]
+        ctx = RunContext(
+            provider=provider,
+            platform=selected_platform,
+            run_id=run_id,
+            user_content=user_content,
+            conversation_id=conversation_id,
+            task_id=task_id,
+            event_callback=event_callback,
+            web_search_mode=web_search_mode,
+            route=route,
+            plan=plan,
+            messages=messages,
+            events=events,
+            interrupt_tools=INTERRUPT_TOOLS & set(self._tools.names()),
+            completed_tools=set(resume.completed_tools),
+            completed_tool_calls=set(resume.completed_tool_calls),
+            repeated_tool_calls=dict(resume.repeated_tool_calls),
+            replan_used=resume.replan_used,
+            citation_retry_used=resume.citation_retry_used,
+        )
         approval = self._approval_context.get()
         if resume.resume_mode == "waiting_user":
             messages.append(
@@ -691,6 +724,7 @@ class AgentRuntime:
                 if decision.declined:
                     route = _drop_web_from_route(route)
                     plan = _drop_tool_from_plan(plan, route)
+                    ctx.route, ctx.plan = route, plan
                     egress.revoke()
                     messages.append(
                         AgentMessage(
@@ -736,19 +770,10 @@ class AgentRuntime:
                     events.append(event)
                     await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
                     return self._waiting_result(
+                        ctx,
                         content=content,
-                        selected_platform=selected_platform,
                         round_number=resume.rounds_used,
                         error=ToolError(code=APPROVAL_REQUIRED, message=content),
-                        events=events,
-                        route=route,
-                        plan=plan,
-                        messages=messages,
-                        replan_used=resume.replan_used,
-                        citation_retry_used=resume.citation_retry_used,
-                        completed_tools=set(resume.completed_tools),
-                        completed_tool_calls=set(resume.completed_tool_calls),
-                        repeated_tool_calls=dict(resume.repeated_tool_calls),
                     )
             elif approval is not None and approval.pending is not None:
                 pending = approval.pending
@@ -756,6 +781,7 @@ class AgentRuntime:
                 if decision.declined:
                     route = _drop_tool_from_route(route, pending.tool_name)
                     plan = _drop_tool_from_plan(plan, route)
+                    ctx.route, ctx.plan = route, plan
                     approval.clear_pending()
                     messages.append(
                         AgentMessage(
@@ -787,19 +813,10 @@ class AgentRuntime:
                     events.append(event)
                     await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
                     return self._waiting_result(
+                        ctx,
                         content=content,
-                        selected_platform=selected_platform,
                         round_number=resume.rounds_used,
                         error=ToolError(code=TOOL_APPROVAL_REQUIRED, message=content),
-                        events=events,
-                        route=route,
-                        plan=plan,
-                        messages=messages,
-                        replan_used=resume.replan_used,
-                        citation_retry_used=resume.citation_retry_used,
-                        completed_tools=set(resume.completed_tools),
-                        completed_tool_calls=set(resume.completed_tool_calls),
-                        repeated_tool_calls=dict(resume.repeated_tool_calls),
                     )
             else:
                 messages.append(
@@ -818,94 +835,46 @@ class AgentRuntime:
                     ),
                 )
             )
-        planned_tools = {step.tool_name for step in plan.steps} if plan is not None else set()
-        interrupt_tools = INTERRUPT_TOOLS & set(self._tools.names())
-        executable_tools = (planned_tools or set(route.allowed_tools)) | interrupt_tools
-        tool_definitions = [
-            definition
-            for definition in self._tools.definitions()
-            if definition.name in executable_tools
-        ]
-        self._append_visible_tools(messages, executable_tools)
-        return await self._run_tool_loop(
-            provider=provider,
-            selected_platform=selected_platform,
-            user_content=user_content,
-            conversation_id=conversation_id,
-            task_id=task_id,
-            event_callback=event_callback,
-            route=route,
-            plan=plan,
-            messages=messages,
-            events=events,
-            interrupt_tools=interrupt_tools,
-            executable_tools=executable_tools,
-            tool_definitions=tool_definitions,
-            citation_retry_used=resume.citation_retry_used,
-            replan_used=resume.replan_used,
-            start_round=resume.rounds_used + 1,
-            web_search_mode=web_search_mode,
-            completed_tools=set(resume.completed_tools),
-            completed_tool_calls=set(resume.completed_tool_calls),
-            repeated_tool_calls=dict(resume.repeated_tool_calls),
-            run_id=run_id,
-        )
+        self._apply_tool_surface(ctx, fallback_to_allowed=True)
+        return await self._run_tool_loop(ctx, start_round=resume.rounds_used + 1)
 
     def _waiting_result(
         self,
+        ctx: RunContext,
         *,
         content: str,
-        selected_platform: str,
         round_number: int,
         error: ToolError | None,
-        events: list[ToolEvent],
-        route: TaskRoute,
-        plan: AgentPlan | None,
-        messages: list[AgentMessage],
-        replan_used: bool,
-        citation_retry_used: bool,
-        completed_tools: set[str],
-        completed_tool_calls: set[str],
-        repeated_tool_calls: dict[str, int],
+        clarification: AgentClarification | None = None,
     ) -> AgentRunResult:
         snapshot = self._build_snapshot(
-            route=route,
-            plan=plan,
-            messages=messages,
-            replan_used=replan_used,
-            citation_retry_used=citation_retry_used,
+            ctx,
             rounds_used=round_number,
-            completed_tools=completed_tools,
-            completed_tool_calls=completed_tool_calls,
-            repeated_tool_calls=repeated_tool_calls,
             resume_mode="waiting_user",
-            clarification=clarification_from_events(events),
+            clarification=(
+                clarification
+                if clarification is not None
+                else clarification_from_events(ctx.events)
+            ),
         )
         return AgentRunResult(
             content=content,
             provider=self._model_provider,
             model_selection=self._current_model_selection(),
-            platform=selected_platform,
+            platform=ctx.platform,
             rounds=round_number,
             status="waiting_user",
             error=error,
-            events=events,
-            plan=plan,
+            events=ctx.events,
+            plan=ctx.plan,
             snapshot=snapshot,
         )
 
     def _build_snapshot(
         self,
+        ctx: RunContext,
         *,
-        route: TaskRoute,
-        plan: AgentPlan | None,
-        messages: list[AgentMessage],
-        replan_used: bool,
-        citation_retry_used: bool,
         rounds_used: int,
-        completed_tools: set[str],
-        completed_tool_calls: set[str],
-        repeated_tool_calls: dict[str, int],
         resume_mode: Literal["waiting_user", "checkpoint"] = "checkpoint",
         clarification: AgentClarification | None = None,
     ) -> AgentRunSnapshot:
@@ -917,52 +886,29 @@ class AgentRuntime:
             approved_search_queries=list(egress.approved) if egress else [],
             pending_search_queries=list(egress.pending) if egress else [],
             resume_mode=resume_mode,
-            route_kind=route.kind,
-            needs_plan=route.needs_plan,
-            allowed_tools=list(route.allowed_tools),
-            required_tools=list(route.required_tools),
-            plan=plan,
-            messages=messages,
-            replan_used=replan_used,
-            citation_retry_used=citation_retry_used,
+            route_kind=ctx.route.kind,
+            needs_plan=ctx.route.needs_plan,
+            allowed_tools=list(ctx.route.allowed_tools),
+            required_tools=list(ctx.route.required_tools),
+            plan=ctx.plan,
+            messages=ctx.messages,
+            replan_used=ctx.replan_used,
+            citation_retry_used=ctx.citation_retry_used,
             rounds_used=rounds_used,
             clarification=clarification,
-            completed_tools=sorted(completed_tools),
-            completed_tool_calls=sorted(completed_tool_calls),
-            repeated_tool_calls=repeated_tool_calls,
+            completed_tools=sorted(ctx.completed_tools),
+            completed_tool_calls=sorted(ctx.completed_tool_calls),
+            repeated_tool_calls=ctx.repeated_tool_calls,
             approved_tool_fingerprints=list(approval.approved) if approval else [],
             pending_tool_approval=approval.pending if approval else None,
         )
 
-    def _checkpoint_run(
-        self,
-        run_id: str | None,
-        *,
-        route: TaskRoute,
-        plan: AgentPlan | None,
-        messages: list[AgentMessage],
-        replan_used: bool,
-        citation_retry_used: bool,
-        rounds_used: int,
-        completed_tools: set[str],
-        completed_tool_calls: set[str],
-        repeated_tool_calls: dict[str, int],
-    ) -> None:
-        if self._run_store is None or run_id is None:
+    def _checkpoint_run(self, ctx: RunContext, *, rounds_used: int) -> None:
+        if self._run_store is None or ctx.run_id is None:
             return
         self._run_store.checkpoint(
-            run_id,
-            self._build_snapshot(
-                route=route,
-                plan=plan,
-                messages=messages,
-                replan_used=replan_used,
-                citation_retry_used=citation_retry_used,
-                rounds_used=rounds_used,
-                completed_tools=completed_tools,
-                completed_tool_calls=completed_tool_calls,
-                repeated_tool_calls=repeated_tool_calls,
-            ),
+            ctx.run_id,
+            self._build_snapshot(ctx, rounds_used=rounds_used),
         )
 
     def _arguments_valid(self, tool_call: ToolCall) -> bool:
@@ -987,73 +933,79 @@ class AgentRuntime:
             )
         )
 
-    async def _run_tool_loop(
+    def _apply_tool_surface(
         self,
+        ctx: RunContext,
         *,
-        provider,
-        selected_platform: str,
-        user_content: str,
-        conversation_id: int | None,
-        task_id: int | None,
-        event_callback: StreamCallback | None,
-        route: TaskRoute,
-        plan: AgentPlan | None,
-        messages: list[AgentMessage],
-        events: list[ToolEvent],
-        interrupt_tools: set[str],
-        executable_tools: set[str],
-        tool_definitions: list,
-        citation_retry_used: bool,
-        replan_used: bool,
-        start_round: int,
-        web_search_mode: str,
-        completed_tools: set[str],
-        completed_tool_calls: set[str],
-        repeated_tool_calls: dict[str, int],
-        run_id: str | None,
-    ) -> AgentRunResult:
-        """Execute the bounded model/tool loop for a fresh or resumed run."""
+        fallback_to_allowed: bool = False,
+    ) -> None:
+        """Narrow the model-visible tools to the planned surface.
+
+        A fresh run without a plan exposes interrupt tools only; a resumed run
+        falls back to the route's allowed tools when no plan was persisted.
+        """
+        planned = (
+            {step.tool_name for step in ctx.plan.steps}
+            if ctx.plan is not None
+            else set()
+        )
+        executable = planned or (
+            set(ctx.route.allowed_tools) if fallback_to_allowed else set()
+        )
+        ctx.executable_tools = executable | ctx.interrupt_tools
+        ctx.tool_definitions = [
+            definition
+            for definition in self._tools.definitions()
+            if definition.name in ctx.executable_tools
+        ]
+        self._append_visible_tools(ctx.messages, ctx.executable_tools)
+
+    async def _run_tool_loop(self, ctx: RunContext, *, start_round: int) -> AgentRunResult:
+        """Execute the bounded model/tool loop for a fresh or resumed run.
+
+        Everything the loop shares with pausing, checkpointing and replanning
+        lives on ``ctx``; the loop only owns per-round counters.
+        """
+        selected_platform = ctx.platform
+        user_content = ctx.user_content
+        conversation_id = ctx.conversation_id
+        task_id = ctx.task_id
+        event_callback = ctx.event_callback
+        run_id = ctx.run_id
+        web_search_mode = ctx.web_search_mode
+        route = ctx.route
+        messages = ctx.messages
+        events = ctx.events
+        completed_tools = ctx.completed_tools
+        completed_tool_calls = ctx.completed_tool_calls
+        repeated_tool_calls = ctx.repeated_tool_calls
         tool_specs = {spec.name: spec for spec in self._tools.specs()}
         unresolved_error: ToolError | None = None
         invalid_argument_retries = 0
         rejected_completions: set[tuple[str, ...]] = set()
-        self._checkpoint_run(
-            run_id,
-            route=route,
-            plan=plan,
-            messages=messages,
-            replan_used=replan_used,
-            citation_retry_used=citation_retry_used,
-            rounds_used=max(0, start_round - 1),
-            completed_tools=completed_tools,
-            completed_tool_calls=completed_tool_calls,
-            repeated_tool_calls=repeated_tool_calls,
-        )
+        self._checkpoint_run(ctx, rounds_used=max(0, start_round - 1))
         for round_number in range(start_round, self._max_tool_rounds + 1):
             if self._cancel_requested(run_id):
                 return self._cancelled_run_result(
-                    selected_platform, round_number - 1, events, plan
+                    selected_platform, round_number - 1, events, ctx.plan
                 )
             await self._publish(event_callback, AgentStreamEvent(type="text_reset"))
             try:
                 completion = validate_completion(
-                    route, events, plan, completed_tools, tool_specs=tool_specs
+                    route, events, ctx.plan, completed_tools, tool_specs=tool_specs
                 )
                 response = await self._generate_response_with_retry(
-                    provider,
+                    ctx,
                     ModelRequest(
                         messages=messages,
-                        tools=tool_definitions,
+                        tools=ctx.tool_definitions,
                         tool_choice=completion.tool_choice,
                     ),
-                    event_callback,
-                    events=events,
                     round_number=round_number,
-                    run_id=run_id,
                 )
             except _RunCancellationRequested:
                 return self._cancelled_run_result(
-                    selected_platform, round_number, events, plan
+                    selected_platform, round_number, events, ctx.plan
                 )
             except ModelProviderError as exc:
                 event = ToolEvent(
@@ -1075,7 +1027,7 @@ class AgentRuntime:
                     status="failed",
                     error=ToolError(code=exc.code, message=str(exc), retryable=exc.retryable),
                     events=events,
-                    plan=plan,
+                    plan=ctx.plan,
                 )
             except Exception:
                 event = ToolEvent(
@@ -1097,11 +1049,11 @@ class AgentRuntime:
                     status="failed",
                     error=ToolError(code="unknown_model_error", message="模型服务发生未知异常"),
                     events=events,
-                    plan=plan,
+                    plan=ctx.plan,
                 )
             if not response.tool_calls:
                 completion = validate_completion(
-                    route, events, plan, completed_tools, tool_specs=tool_specs
+                    route, events, ctx.plan, completed_tools, tool_specs=tool_specs
                 )
                 if not completion.complete:
                     signature = completion.missing_tools
@@ -1137,7 +1089,7 @@ class AgentRuntime:
                                 retryable=True,
                             ),
                             events=events,
-                            plan=plan,
+                            plan=ctx.plan,
                         )
                     rejected_completions.add(signature)
                     if response.content:
@@ -1145,18 +1097,7 @@ class AgentRuntime:
                     messages.append(
                         AgentMessage(role="system", content=completion.repair_prompt())
                     )
-                    self._checkpoint_run(
-                        run_id,
-                        route=route,
-                        plan=plan,
-                        messages=messages,
-                        replan_used=replan_used,
-                        citation_retry_used=citation_retry_used,
-                        rounds_used=round_number,
-                        completed_tools=completed_tools,
-                        completed_tool_calls=completed_tool_calls,
-                        repeated_tool_calls=repeated_tool_calls,
-                    )
+                    self._checkpoint_run(ctx, rounds_used=round_number)
                     continue
 
             if response.content and not response.tool_calls:
@@ -1166,8 +1107,8 @@ class AgentRuntime:
                         response.content,
                         allowed_source_urls,
                     )
-                    if not citations_valid and not citation_retry_used:
-                        citation_retry_used = True
+                    if not citations_valid and not ctx.citation_retry_used:
+                        ctx.citation_retry_used = True
                         event = ToolEvent(
                             round=round_number,
                             tool_call_id=f"citation-validation-{round_number}",
@@ -1193,19 +1134,8 @@ class AgentRuntime:
                                 ),
                             )
                         )
-                        tool_definitions = []
-                        self._checkpoint_run(
-                            run_id,
-                            route=route,
-                            plan=plan,
-                            messages=messages,
-                            replan_used=replan_used,
-                            citation_retry_used=citation_retry_used,
-                            rounds_used=round_number,
-                            completed_tools=completed_tools,
-                            completed_tool_calls=completed_tool_calls,
-                            repeated_tool_calls=repeated_tool_calls,
-                        )
+                        ctx.tool_definitions = []
+                        self._checkpoint_run(ctx, rounds_used=round_number)
                         continue
                     if not citations_valid:
                         return AgentRunResult(
@@ -1223,9 +1153,9 @@ class AgentRuntime:
                                 message=citation_error,
                             ),
                             events=events,
-                            plan=plan,
+                            plan=ctx.plan,
                         )
-                    if citation_retry_used:
+                    if ctx.citation_retry_used:
                         event = ToolEvent(
                             round=round_number,
                             tool_call_id=f"citation-validation-{round_number}",
@@ -1248,7 +1178,7 @@ class AgentRuntime:
                     status="failed" if unresolved_error else "done",
                     error=unresolved_error,
                     events=events,
-                    plan=plan,
+                    plan=ctx.plan,
                 )
             if not response.tool_calls:
                 return AgentRunResult(
@@ -1263,7 +1193,7 @@ class AgentRuntime:
                         message="模型没有返回可执行工具或最终回答",
                     ),
                     events=events,
-                    plan=plan,
+                    plan=ctx.plan,
                 )
             assistant_payload: dict[str, Any] = {
                 "tool_calls": [call.model_dump(mode="json") for call in response.tool_calls]
@@ -1288,9 +1218,9 @@ class AgentRuntime:
             for tool_call in response.tool_calls:
                 if self._cancel_requested(run_id):
                     return self._cancelled_run_result(
-                        selected_platform, round_number, events, plan
+                        selected_platform, round_number, events, ctx.plan
                     )
-                if tool_call.name not in executable_tools:
+                if tool_call.name not in ctx.executable_tools:
                     message = f"风险门已阻止计划外工具：{tool_call.name}"
                     event = ToolEvent(
                         round=round_number,
@@ -1314,7 +1244,7 @@ class AgentRuntime:
                         status="failed",
                         error=ToolError(code="tool_not_planned", message=message),
                         events=events,
-                        plan=plan,
+                        plan=ctx.plan,
                     )
                 egress = self._egress_context.get()
                 if (
@@ -1358,19 +1288,10 @@ class AgentRuntime:
                             )
                         )
                         return self._waiting_result(
+                            ctx,
                             content=content,
-                            selected_platform=selected_platform,
                             round_number=round_number,
                             error=ToolError(code=APPROVAL_REQUIRED, message=content),
-                            events=events,
-                            route=route,
-                            plan=plan,
-                            messages=messages,
-                            replan_used=replan_used,
-                            citation_retry_used=citation_retry_used,
-                            completed_tools=completed_tools,
-                            completed_tool_calls=completed_tool_calls,
-                            repeated_tool_calls=repeated_tool_calls,
                         )
                 approval = self._approval_context.get()
                 spec = tool_specs[tool_call.name]
@@ -1417,39 +1338,24 @@ class AgentRuntime:
                             )
                         )
                         return self._waiting_result(
+                            ctx,
                             content=content,
-                            selected_platform=selected_platform,
                             round_number=round_number,
                             error=ToolError(code=TOOL_APPROVAL_REQUIRED, message=content),
-                            events=events,
-                            route=route,
-                            plan=plan,
-                            messages=messages,
-                            replan_used=replan_used,
-                            citation_retry_used=citation_retry_used,
-                            completed_tools=completed_tools,
-                            completed_tool_calls=completed_tool_calls,
-                            repeated_tool_calls=repeated_tool_calls,
                         )
                 fingerprint, replayed, loop_failure = await self._guard_repeated_tool_call(
-                    tool_call=tool_call,
+                    ctx,
+                    tool_call,
                     round_number=round_number,
-                    selected_platform=selected_platform,
-                    event_callback=event_callback,
-                    events=events,
-                    messages=messages,
-                    plan=plan,
-                    completed_tool_calls=completed_tool_calls,
-                    repeated_tool_calls=repeated_tool_calls,
                 )
                 if loop_failure is not None:
                     return loop_failure
                 if replayed:
                     continue
                 plan_step = next(
-                    (step for step in plan.steps if step.tool_name == tool_call.name),
+                    (step for step in ctx.plan.steps if step.tool_name == tool_call.name),
                     None,
-                ) if plan is not None else None
+                ) if ctx.plan is not None else None
                 if plan_step is not None:
                     plan_step.status = "running"
                 tool_started_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
@@ -1488,7 +1394,7 @@ class AgentRuntime:
                     )
                 except _RunCancellationRequested:
                     return self._cancelled_run_result(
-                        selected_platform, round_number, events, plan
+                        selected_platform, round_number, events, ctx.plan
                     )
                 event = ToolEvent(
                     round=round_number,
@@ -1560,32 +1466,20 @@ class AgentRuntime:
                             result.error is None
                             or result.error.code not in {"tool_timeout", "tool_execution_failed"}
                         )
-                        and not replan_used
-                        and plan is not None
+                        and not ctx.replan_used
+                        and ctx.plan is not None
                         and route.needs_plan
                     ):
                         replanned = await self._replan_same_lane(
-                            provider=provider,
-                            user_content=user_content,
-                            route=route,
+                            ctx,
                             failed_tool=tool_call.name,
                             error_message=result.message,
-                            event_callback=event_callback,
-                            events=events,
-                            messages=messages,
                             round_number=round_number,
                         )
                         if replanned is not None:
-                            replan_used = True
-                            plan = replanned
-                            planned_tools = {step.tool_name for step in plan.steps}
-                            executable_tools = planned_tools | interrupt_tools
-                            tool_definitions = [
-                                definition
-                                for definition in self._tools.definitions()
-                                if definition.name in executable_tools
-                            ]
-                            self._append_visible_tools(messages, executable_tools)
+                            ctx.replan_used = True
+                            ctx.plan = replanned
+                            self._apply_tool_surface(ctx)
                             round_error = None
                             break
                     return AgentRunResult(
@@ -1597,37 +1491,17 @@ class AgentRuntime:
                         status="failed",
                         error=round_error,
                         events=events,
-                        plan=plan,
+                        plan=ctx.plan,
                     )
                 if result.status == "waiting_approval":
                     return self._waiting_result(
+                        ctx,
                         content=result.message,
-                        selected_platform=selected_platform,
                         round_number=round_number,
                         error=result.error,
-                        events=events,
-                        route=route,
-                        plan=plan,
-                        messages=messages,
-                        replan_used=replan_used,
-                        citation_retry_used=citation_retry_used,
-                        completed_tools=completed_tools,
-                        completed_tool_calls=completed_tool_calls,
-                        repeated_tool_calls=repeated_tool_calls,
                     )
             unresolved_error = round_error
-            self._checkpoint_run(
-                run_id,
-                route=route,
-                plan=plan,
-                messages=messages,
-                replan_used=replan_used,
-                citation_retry_used=citation_retry_used,
-                rounds_used=round_number,
-                completed_tools=completed_tools,
-                completed_tool_calls=completed_tool_calls,
-                repeated_tool_calls=repeated_tool_calls,
-            )
+            self._checkpoint_run(ctx, rounds_used=round_number)
         return AgentRunResult(
             content=f"Agent 已达到最大工具调用轮数（{self._max_tool_rounds}），本次执行已终止，请缩小任务范围后重新提问。",
             provider=self._model_provider,
@@ -1637,7 +1511,7 @@ class AgentRuntime:
             status="failed",
             error=ToolError(code="round_limit_reached", message="Agent 已达到最大工具调用轮数"),
             events=events,
-            plan=plan,
+            plan=ctx.plan,
         )
 
     def _cancel_requested(self, run_id: str | None) -> bool:
@@ -1781,23 +1655,19 @@ class AgentRuntime:
 
     async def _guard_repeated_tool_call(
         self,
-        *,
+        ctx: RunContext,
         tool_call: ToolCall,
+        *,
         round_number: int,
-        selected_platform: str,
-        event_callback: StreamCallback | None,
-        events: list[ToolEvent],
-        messages: list[AgentMessage],
-        plan: AgentPlan | None,
-        completed_tool_calls: set[str],
-        repeated_tool_calls: dict[str, int],
     ) -> tuple[str, bool, AgentRunResult | None]:
+        events = ctx.events
+        messages = ctx.messages
         fingerprint = _tool_call_fingerprint(tool_call.name, tool_call.arguments)
-        if fingerprint not in completed_tool_calls:
+        if fingerprint not in ctx.completed_tool_calls:
             return fingerprint, False, None
 
-        repeat_count = repeated_tool_calls.get(fingerprint, 0) + 1
-        repeated_tool_calls[fingerprint] = repeat_count
+        repeat_count = ctx.repeated_tool_calls.get(fingerprint, 0) + 1
+        ctx.repeated_tool_calls[fingerprint] = repeat_count
         terminal = repeat_count >= 2
         event = ToolEvent(
             round=round_number,
@@ -1817,7 +1687,7 @@ class AgentRuntime:
         )
         events.append(event)
         await self._publish(
-            event_callback,
+            ctx.event_callback,
             AgentStreamEvent(type="agent_event", event=event),
         )
         messages.append(
@@ -1842,12 +1712,12 @@ class AgentRuntime:
                 content="Agent 重复调用同一个已完成工具，本次执行已终止，请重试。",
                 provider=self._model_provider,
                 model_selection=self._current_model_selection(),
-                platform=selected_platform,
+                platform=ctx.platform,
                 rounds=round_number,
                 status="failed",
                 error=error,
                 events=events,
-                plan=plan,
+                plan=ctx.plan,
             )
         messages.append(
             AgentMessage(
@@ -1862,17 +1732,14 @@ class AgentRuntime:
 
     async def _replan_same_lane(
         self,
+        ctx: RunContext,
         *,
-        provider,
-        user_content: str,
-        route: TaskRoute,
         failed_tool: str,
         error_message: str,
-        event_callback: StreamCallback | None,
-        events: list[ToolEvent],
-        messages: list[AgentMessage],
         round_number: int,
     ) -> AgentPlan | None:
+        events = ctx.events
+        route = ctx.route
         event = ToolEvent(
             round=round_number,
             tool_call_id=f"agent-replan-{round_number}",
@@ -1882,17 +1749,17 @@ class AgentRuntime:
             data={"replan": True, "failed_tool": failed_tool, "route": route.kind},
         )
         events.append(event)
-        await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
+        await self._publish(ctx.event_callback, AgentStreamEvent(type="agent_event", event=event))
         try:
             tool_specs = {spec.name: spec for spec in self._tools.specs()}
             response = await self._generate_for_stage(
-                provider, "plan",
+                ctx.provider, "plan",
                 ModelRequest(
                     messages=[
                         AgentMessage(
                             role="user",
                             content=replan_prompt(
-                                user_content,
+                                ctx.user_content,
                                 route,
                                 failed_tool,
                                 error_message,
@@ -1902,7 +1769,7 @@ class AgentRuntime:
                     ]
                 )
             )
-            plan = parse_plan(response, user_content, route, tool_specs)
+            plan = parse_plan(response, ctx.user_content, route, tool_specs)
         except Exception:
             failed = ToolEvent(
                 round=round_number,
@@ -1913,7 +1780,7 @@ class AgentRuntime:
                 data={"replan": True, "failed_tool": failed_tool, "route": route.kind},
             )
             events.append(failed)
-            await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=failed))
+            await self._publish(ctx.event_callback, AgentStreamEvent(type="agent_event", event=failed))
             return None
         done = ToolEvent(
             round=round_number,
@@ -1924,8 +1791,8 @@ class AgentRuntime:
             data={"replan": True, "route": route.kind, "plan": plan.model_dump(mode="json")},
         )
         events.append(done)
-        await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=done))
-        messages.append(
+        await self._publish(ctx.event_callback, AgentStreamEvent(type="agent_event", event=done))
+        ctx.messages.append(
             AgentMessage(
                 role="system",
                 content=(
@@ -2092,6 +1959,7 @@ class AgentRuntime:
 
     async def _generate_image_run(self, provider, prompt, platform, conversation_id, callback, run_id, image_urls) -> AgentRunResult:
         from ..chat.image_assets import begin_generation, persist_images
+        from .image_design_skill import image_design_prompt
         from ..observability.model_context import public_model_selection
 
         events: list[ToolEvent] = []
@@ -2117,7 +1985,8 @@ class AgentRuntime:
                 raise ModelProviderError("image_conversation_required", "请在聊天对话中生成图片")
             if image_urls:
                 raise ModelProviderError("image_edit_not_supported", "当前支持文字生图；基于附件的图片编辑尚未接入")
-            image_request = ModelRequest(messages=[AgentMessage(role="user", content=prompt)], image_generation=True)
+            design_prompt = image_design_prompt(prompt)
+            image_request = ModelRequest(messages=[AgentMessage(role="user", content=design_prompt)], image_generation=True)
             # Reject a known unsupported capability before marking a paid
             # attempt as started and before any provider call.
             self._select_stage_model(provider, "execute", image_request, streaming=callback is not None)
@@ -2129,7 +1998,7 @@ class AgentRuntime:
                 # Native generation may have completed upstream when a transport
                 # fails. Neither runtime retries nor protocol fallback are safe.
                 response = await self._await_with_cancellation(self._generate_response(provider, image_request, callback), run_id)
-                cached = persist_images(operation_id, response, str(execute["model_name"]))
+                cached = persist_images(operation_id, response, str(execute["model_name"]), prompt=design_prompt)
             event = ToolEvent(round=1, tool_call_id=f"image-{operation_id}", tool_name="image_generation", status="done", message=f"已生成 {len(cached['assets'])} 张图片")
             events.append(event)
             await self._publish(callback, AgentStreamEvent(type="agent_event", event=event))
@@ -2224,20 +2093,19 @@ class AgentRuntime:
 
     async def _generate_response_with_retry(
         self,
-        provider,
+        ctx: RunContext,
         request: ModelRequest,
-        event_callback: StreamCallback | None,
         *,
-        events: list[ToolEvent],
         round_number: int,
-        run_id: str | None = None,
     ) -> ModelResponse:
         """Retry transient model failures inside the current bounded round."""
+        event_callback = ctx.event_callback
+        events = ctx.events
         for retry_number in range(self._max_model_retries + 1):
             try:
                 response = await self._await_with_cancellation(
-                    self._generate_response(provider, request, event_callback),
-                    run_id,
+                    self._generate_response(ctx.provider, request, event_callback),
+                    ctx.run_id,
                 )
                 if retry_number:
                     event = ToolEvent(
