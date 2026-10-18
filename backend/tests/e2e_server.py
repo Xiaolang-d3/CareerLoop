@@ -65,7 +65,8 @@ def main() -> None:
                     return ModelResponse(content="知识已提交，等待你确认。")
                 return ModelResponse(content="已根据资料库完成：" + "\n".join(documents))
 
-        def test_runtime():
+        def test_runtime(profile_id=None, *, selection=None, user_content=None):
+            """Mirror get_agent_runtime's signature: e2e always uses the local test model."""
             models = ModelProviderRegistry()
             models.register("e2e", LocalTestModel())
             return AgentRuntime(
