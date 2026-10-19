@@ -169,6 +169,8 @@ Tavily 自动模式开启 `auto_parameters` 并省略 `topic`，显式固定 `se
 
 默认上限：`MODEL_MAX_TOOL_ROUNDS=8`，单次工具超时 `TOOL_EXECUTION_TIMEOUT_SECONDS=60`，模型与安全工具重试预算分别为 `MODEL_RETRY_ATTEMPTS=1`、`TOOL_RETRY_ATTEMPTS=1`。同一对话同时只允许一个运行中的任务（HTTP 409）。
 
+轮次预算耗尽不是静默截断：运行以 `status=failed`、`stop_reason=round_limit_reached` 结束，但保留本轮已产出的正文，并在其后以引用块附上终止原因；本轮只有工具调用、没有正文时只返回该说明。保留范围限定在本次运行新产生的消息，不会回捞历史对话里的回答。已执行成功的工具事件照常随结果返回。
+
 每轮顺序：
 
 1. `route_task()`：`detect_kind` 先给关键词 `kind`；`capability_resolver` 再把「车道基线能力 + 文本能力信号」解析成当前注册表上的 `allowed_tools` / `required_tools`。联网开关只决定 `search_public_web` 是否进入可信工具面，不改写路由文本。关键词未命中且仍为 `conversation` 时，额外一次模型调用只分类 `kind`（`ROUTE_LABELS` 之一），分类只改 kind、随后同样经能力解析；`hello`、`你好`、`test` 等确定性的简单问候/连通性测试直接走对话，不花一次分类调用。解析失败或输出工具名则保持 `conversation`。分类器不能点名工具。
