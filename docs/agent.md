@@ -72,6 +72,10 @@ flowchart TB
 | 任务调度 | 聊天为进程内 `asyncio.Task`，首页为工作区绑定线程；SQLite 保存状态与恢复依据，不承担独立 worker 调度 |
 | Sites 副本 | 工作区另有独立前端仓库，经本机 `8001 → 8000` 转发访问后端；不属于此仓库的 Agent 执行层 |
 
+`main.py` 的公开静态资源白名单包含当前灯灯图标、品牌标志、favicon 和产品介绍背景；浏览器图片请求无需会话即可读取这些固定路径，业务接口和未列出的文件仍需认证。`/assets/` 的哈希构建资源可长期缓存，根目录品牌图片不使用 immutable 缓存。
+
+CD 可通过 `CAREERLOOP_MAINTENANCE_FILE` 指定维护标记：标记存在时除 `/health` 外均返回禁止缓存的 503 和 `Retry-After`，候选版本尚未验证前不接收用户写入。部署管理器先停服备份，再切换代码并校验认证库及全部工作区；未完成事务恢复后才放行流量。具体边界与首次启用见[持续部署](continuous-deployment.md)。
+
 ## 对话运行时
 
 入口：[`api/chat.py`](../backend/app/api/chat.py) 的 `POST /ag-ui` → [`chat/execution.py`](../backend/app/chat/execution.py)。运行状态集中在 `RunContext`；新任务与恢复任务共用 `_run_tool_loop`。

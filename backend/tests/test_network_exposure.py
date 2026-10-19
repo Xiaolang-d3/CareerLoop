@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import pytest
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 
 from app import auth, db
 from app.config import Settings, get_settings
-from app.main import FRONTEND_DIST_DIR, app, static_asset_cache_control
+from app.main import FRONTEND_DIST_DIR, app, require_login, static_asset_cache_control
 
 
 @pytest.fixture(autouse=True)
@@ -135,3 +137,47 @@ def test_public_brand_asset_path_bypasses_login() -> None:
     assert response.status_code == expected_status
     # careerloop-mark.svg 已随品牌切换移除；白名单不应再放行不存在的文件。
     assert client.get("/careerloop-mark.svg").status_code == 401
+
+
+@pytest.mark.parametrize("filename", [
+    "dengdeng-icon-v1.png",
+    "dengdeng-mark-v1.png",
+    "dengdeng-favicon-v1.png",
+    "intro-surface-v1.webp",
+])
+def test_current_public_images_load_without_authorization(tmp_path, filename: str) -> None:
+    # Exercise the production middleware and a real static mount even when CI
+    # has not built frontend/dist. Browsers do not attach bearer tokens to img.
+    asset_content = b"public image fixture"
+    (tmp_path / filename).write_bytes(asset_content)
+    (tmp_path / "private.png").write_bytes(b"not a public asset")
+    static_app = FastAPI()
+    static_app.middleware("http")(require_login)
+    static_app.mount("/", StaticFiles(directory=tmp_path), name="frontend")
+    client = TestClient(static_app)
+
+    response = client.get(f"/{filename}")
+
+    assert response.status_code == 200
+    assert response.content == asset_content
+    assert response.headers["content-type"].startswith("image/")
+    assert "immutable" not in response.headers.get("cache-control", "")
+    assert client.get("/private.png").status_code == 401
+    assert client.get("/library").status_code == 401
+
+
+def test_deployment_maintenance_blocks_visitors_until_activation_finishes(tmp_path, monkeypatch):
+    flag = tmp_path / "maintenance"
+    flag.touch()
+    monkeypatch.setenv("CAREERLOOP_MAINTENANCE_FILE", str(flag))
+    client = TestClient(app)
+
+    for path in ("/", "/auth/config", "/library", "/dengdeng-icon-v1.png"):
+        response = client.get(path)
+        assert response.status_code == 503
+        assert response.headers["retry-after"] == "30"
+        assert response.headers["cache-control"] == "no-store"
+    assert client.get("/health").status_code == 200
+    assert client.post("/auth/register", json={"email": "new@example.com", "password": "a-long-test-password"}).status_code == 503
+    flag.unlink()
+    assert client.get("/auth/config").status_code == 200

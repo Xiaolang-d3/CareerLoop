@@ -80,6 +80,8 @@ CareerLoop/
 | [桌面版](docs/desktop.md) | Tauri 打包、sidecar 架构与构建 |
 | [联网搜索](docs/web-search.md) | Tavily 与 AgentSearch 配置 |
 | [开发与验证](docs/development.md) | 测试、CI/CD、可选依赖与架构边界 |
+| [Mac 公网上线计划](docs/mac-cloudflare-deployment-plan.md) | 固定域名隧道、公众注册准备、备份与 Windows 迁移 |
+| [GitHub 持续部署](docs/continuous-deployment.md) | main 通过 CI 后发布、Mac 自动更新、数据保护与部署 skill |
 | [智能体架构](docs/agent.md) | 智能体层维护文档 |
 | [模型层说明](docs/model-layer.md) | 模型连接、协议与备用策略 |
 | [文件库架构](docs/file-library-architecture.md) | 资料导入、检索与长期使用 |

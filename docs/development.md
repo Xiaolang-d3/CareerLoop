@@ -66,7 +66,8 @@ cd backend
 ## 持续集成与发布
 
 - 推送 `main` 或打开 PR 时运行 [CI](../.github/workflows/ci.yml)：`backend-tests`、`frontend-unit`、`frontend-e2e`，由 `ci-gate` 汇总。E2E 在 Linux/macOS 执行，macOS 检查固定截图，Linux 检查几何尺寸和真实交互。PR 改动智能体相关代码时额外检查 `docs/agent.md`。
-- 本地优先架构没有远程部署目标。推送 `v*` 标签时运行 [Release](../.github/workflows/release.yml)：复用 CI，打包前端 `dist`，并创建 GitHub Release。
+- `main` 的 push CI 成功后运行 [CD](../.github/workflows/cd.yml)，将同一 SHA 的后端和已验证前端发布为 `deploy-<SHA>` 预发布包；Mac 拉取、校验、隔离冒烟测试后切换应用。需要先完成一次性服务启用，详见[持续部署](continuous-deployment.md)。PR 和失败 CI 不发布，CD 不重建现有 Cloudflare 隧道。
+- 推送 `v*` 标签时运行 [Release](../.github/workflows/release.yml)：复用 CI，打包前端 `dist`，并创建 GitHub Release；与网站 CD 的预发布标签分开。
 
 ## 贡献流程
 
