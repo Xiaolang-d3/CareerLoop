@@ -140,8 +140,8 @@
 }
 .fl-view-switch button[aria-pressed="true"] {
   color: var(--fl-brand);
-  background: var(--fl-panel);
-  box-shadow: 0 1px 4px #20213a12;
+  background: var(--fl-soft);
+  box-shadow: 0 1px 3px #20213a0c;
 }
 .fl-header-actions {
   display: flex;
@@ -345,13 +345,22 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 6px 0;
-  font-size: 12px !important;
-  color: var(--fl-muted) !important;
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid var(--fl-line) !important;
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--fl-secondary) !important;
   white-space: nowrap;
 }
 .fl-sort:hover {
   color: var(--fl-brand) !important;
+  background: var(--fl-subtle);
+}
+.fl-sort[aria-pressed="true"] {
+  color: var(--fl-brand) !important;
+  background: var(--fl-soft);
+  border-color: color-mix(in srgb, var(--fl-brand) 28%, var(--fl-line)) !important;
 }
 .fl-selection-dock {
   position: sticky;
@@ -953,7 +962,7 @@
 @container library-browser (max-width: 560px) {
   .fl-search-row { gap: 10px; }
   .fl-view-controls { gap: 8px; }
-  .fl-sort { justify-content: center; width: 28px; }
+  .fl-sort { justify-content: center; width: 34px; padding-inline: 0; }
   .fl-sort span { display: none; }
   .fl-files-heading { gap: 8px; }
   .fl-selection-actions { gap: 6px; width: 100%; }
