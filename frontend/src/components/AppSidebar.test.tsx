@@ -34,20 +34,36 @@ describe("AppSidebar", () => {
     expect(props.onGoHome).toHaveBeenCalledOnce();
   });
 
-  it("keeps the collapse control in the sidebar footer", () => {
+  it("identifies the controlled navigation and reports the expanded state", () => {
     renderSidebar();
     const toggle = screen.getByRole("button", { name: "收起侧边栏" });
-    expect(toggle.closest(".sidebar-toggle-footer")).toBeTruthy();
-    expect(toggle.closest(".brand")).toBeNull();
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(toggle).toHaveAttribute("aria-controls", "app-primary-navigation");
+    expect(document.getElementById(toggle.getAttribute("aria-controls")!)).toBe(
+      screen.getByRole("navigation", { name: "主导航" })
+    );
   });
 
-  it("keeps accessible names and click behavior on the icon-only bottom toggle", () => {
+  it("keeps home navigation separate from the named sidebar toggle", () => {
     const expanded = renderSidebar();
     fireEvent.click(screen.getByRole("button", { name: "收起侧边栏" }));
     expect(expanded.onToggle).toHaveBeenCalledOnce();
     cleanup();
     const collapsed = renderSidebar(undefined, true);
-    fireEvent.click(screen.getByRole("button", { name: "展开侧边栏" }));
+    const toggle = screen.getByRole("button", { name: "展开侧边栏" });
+    const logo = toggle.querySelector("img");
+    expect(logo).toHaveAttribute("src", "/dengdeng-icon-v1.png");
+    expect(logo).toHaveAttribute("alt", "");
+    expect(logo?.parentElement).toHaveAttribute("aria-hidden", "true");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(document.getElementById(toggle.getAttribute("aria-controls")!)).toBe(
+      screen.getByRole("navigation", { name: "主导航" })
+    );
+    fireEvent.click(toggle);
+    expect(collapsed.onToggle).toHaveBeenCalledOnce();
+    expect(collapsed.onGoHome).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "返回首页" }));
+    expect(collapsed.onGoHome).toHaveBeenCalledOnce();
     expect(collapsed.onToggle).toHaveBeenCalledOnce();
   });
 
@@ -67,24 +83,22 @@ describe("AppSidebar", () => {
     expect(within(desktopNav).getAllByRole("button").map((item) => item.getAttribute("aria-label"))).toEqual([
       "首页",
       "AI 工作区",
-      "文件库",
-      "设置"
+      "文件库"
     ]);
     expect(screen.queryByText("快速搜索…")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "机会中心" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "资料库" })).not.toBeInTheDocument();
   });
 
-  it("opens home, library, the AI workspace, and settings from the sidebar", () => {
+  it("opens home, library, and the AI workspace from the sidebar", () => {
     const props = renderSidebar();
     fireEvent.click(screen.getAllByRole("button", { name: "首页" })[0]);
     fireEvent.click(screen.getAllByRole("button", { name: "AI 工作区" })[0]);
     fireEvent.click(screen.getAllByRole("button", { name: "文件库" })[0]);
-    fireEvent.click(screen.getAllByRole("button", { name: "设置" })[0]);
     expect(props.onSelectNav).toHaveBeenCalledWith("dashboard");
     expect(props.onSelectNav).toHaveBeenCalledWith("chat");
     expect(props.onSelectNav).toHaveBeenCalledWith("library");
-    expect(props.onSelectNav).toHaveBeenCalledWith("settings");
+    expect(props.onSelectNav).toHaveBeenCalledTimes(3);
   });
 
   it("prefetches a module when its navigation item is hovered", () => {
@@ -103,15 +117,18 @@ describe("AppSidebar", () => {
     expect(within(mobile).getByRole("button", { name: "首页" })).toBeInTheDocument();
     expect(within(mobile).getByRole("button", { name: "文件库" })).toBeInTheDocument();
     expect(within(mobile).getByRole("button", { name: "AI 工作区" })).toHaveAttribute("aria-current", "page");
-    expect(within(mobile).getByRole("button", { name: "设置" })).toBeInTheDocument();
+    expect(within(mobile).getAllByRole("button").map((item) => item.getAttribute("aria-label"))).toEqual([
+      "首页", "AI 工作区", "文件库"
+    ]);
     fireEvent.click(within(mobile).getByRole("button", { name: "AI 工作区" }));
     expect(props.onSelectNav).toHaveBeenCalledWith("chat");
   });
 
-  it("highlights library, the AI workspace, and settings on matching pages", () => {
+  it("keeps settings pages out of product navigation and highlights the current workspace destination", () => {
     renderSidebar(undefined, false, "settings", { settingsPage: "library" });
     const libraryNav = screen.getByRole("navigation", { name: "主导航" });
-    expect(within(libraryNav).getByRole("button", { name: "设置" })).toHaveAttribute("aria-current", "page");
+    expect(within(libraryNav).queryByRole("button", { name: "设置" })).not.toBeInTheDocument();
+    expect(within(libraryNav).queryByRole("button", { current: "page" })).not.toBeInTheDocument();
     expect(within(libraryNav).getByRole("button", { name: "文件库" })).not.toHaveAttribute("aria-current");
     cleanup();
 
@@ -128,9 +145,7 @@ describe("AppSidebar", () => {
 
     renderSidebar(undefined, false, "settings", { settingsPage: "overview" });
     const settingsNav = screen.getByRole("navigation", { name: "主导航" });
-    expect(within(settingsNav).getByRole("button", { name: "设置" })).toHaveAttribute("aria-current", "page");
-    cleanup();
-
+    expect(within(settingsNav).queryByRole("button", { current: "page" })).not.toBeInTheDocument();
   });
 
   it("does not expose retired opportunity or analysis product entries", () => {

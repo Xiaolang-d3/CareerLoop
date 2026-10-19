@@ -77,6 +77,125 @@ test.beforeEach(async ({ page }) => {
   await mockCurrentProduct(page);
 });
 
+for (const theme of ["light", "dark"] as const) {
+  test(`sidebar account and logo control remain reachable in ${theme}`, async ({ page }) => {
+    await page.addInitScript(value => localStorage.setItem("careerloop-theme", value), theme);
+    await page.setViewportSize({ width: 874, height: 770 });
+    await page.goto("/#/chat/1");
+    const sidebar = page.locator("aside.sidebar");
+    const account = page.getByRole("button", { name: "账号菜单", exact: true });
+    const evidenceDir = resolve("..", "..", "output", "sidebar-navigation");
+    await mkdir(evidenceDir, { recursive: true });
+
+    for (const width of [874, 1280]) {
+      await page.setViewportSize({ width, height: 770 });
+      await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("button")).toHaveText([
+        "首页", "AI 工作区", "文件库"
+      ]);
+
+      for (const collapsed of [false, true]) {
+        const toggle = page.getByRole("button", { name: collapsed ? "展开侧边栏" : "收起侧边栏", exact: true });
+        await expect(toggle).toHaveAttribute("aria-expanded", String(!collapsed));
+        await expect.poll(async () => Math.round((await sidebar.boundingBox())!.width)).toBe(collapsed ? 72 : 232);
+        const [sideBox, accountBox, toggleBox, brandBox] = await Promise.all([
+          sidebar.boundingBox(), account.boundingBox(), toggle.boundingBox(), sidebar.locator(".brand").boundingBox()
+        ]);
+        expect(accountBox!.y + accountBox!.height).toBeGreaterThan(sideBox!.y + sideBox!.height - 24);
+        expect(accountBox!.x).toBeGreaterThanOrEqual(sideBox!.x + 8);
+        expect(accountBox!.x + accountBox!.width).toBeLessThan(sideBox!.x + sideBox!.width);
+        expect(toggleBox!.y).toBeGreaterThanOrEqual(brandBox!.y);
+        expect(toggleBox!.y + toggleBox!.height).toBeLessThanOrEqual(brandBox!.y + brandBox!.height);
+        expect(toggleBox!.x + toggleBox!.width).toBeLessThanOrEqual(brandBox!.x + brandBox!.width);
+        if (collapsed) {
+          await expect(sidebar.getByRole("button", { name: "返回首页", exact: true })).toBeHidden();
+          expect(toggleBox!.width).toBe(40);
+          expect(toggleBox!.height).toBe(40);
+          expect(Math.abs(toggleBox!.x + toggleBox!.width / 2 - sideBox!.x - sideBox!.width / 2)).toBeLessThanOrEqual(1);
+          expect(toggleBox!.y).toBeCloseTo(brandBox!.y, 0);
+          const logo = toggle.locator(".sidebar-toggle-logo");
+          const icon = toggle.locator(".sidebar-toggle-icon");
+          await account.focus();
+          await page.mouse.move(width - 4, 766);
+          await expect(logo).toHaveCSS("opacity", "1");
+          await expect(icon).toHaveCSS("opacity", "0");
+          await expect(logo.locator("img")).toBeVisible();
+          expect(await logo.locator("img").evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+          await toggle.hover();
+          await expect(logo).toHaveCSS("opacity", "0");
+          await expect(icon).toHaveCSS("opacity", "1");
+          await page.mouse.move(width - 4, 766);
+          await expect(logo).toHaveCSS("opacity", "1");
+          await expect(icon).toHaveCSS("opacity", "0");
+          await page.keyboard.press("Tab");
+          await toggle.focus();
+          await expect(toggle).toBeFocused();
+          await expect(logo).toHaveCSS("opacity", "0");
+          await expect(icon).toHaveCSS("opacity", "1");
+        } else {
+          const home = sidebar.getByRole("button", { name: "返回首页", exact: true });
+          await expect(home).toBeVisible();
+          const homeBox = (await home.boundingBox())!;
+          expect(toggleBox!.x).toBeGreaterThanOrEqual(homeBox.x + homeBox.width);
+          expect(toggleBox!.x + toggleBox!.width / 2).toBeGreaterThan(brandBox!.x + brandBox!.width / 2);
+          expect(toggleBox!.y + toggleBox!.height / 2).toBeCloseTo(homeBox.y + homeBox.height / 2, 0);
+          await expect(toggle.locator(".sidebar-toggle-icon")).toHaveCSS("opacity", "1");
+        }
+
+        await account.click();
+        const menu = page.getByRole("menu", { name: "账号菜单" });
+        await expect(menu).toBeVisible();
+        await expect(menu.getByRole("menuitem")).toHaveText(["账号与安全", "设置", "退出登录"]);
+        const menuBox = (await menu.boundingBox())!;
+        expect(menuBox.x).toBeGreaterThanOrEqual(0);
+        expect(menuBox.y).toBeGreaterThanOrEqual(0);
+        expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(width);
+        await menu.press("Escape");
+        await expect(account).toBeFocused();
+        await page.screenshot({ path: resolve(evidenceDir, `sidebar-${width}-${collapsed ? "collapsed" : "expanded"}-${theme}.png`), animations: "disabled" });
+        await toggle.click();
+        await expect(page.getByRole("button", { name: collapsed ? "收起侧边栏" : "展开侧边栏", exact: true }))
+          .toHaveAttribute("aria-expanded", String(collapsed));
+      }
+    }
+    await page.getByRole("button", { name: "收起侧边栏", exact: true }).click();
+    await expect(sidebar).toHaveClass(/collapsed/);
+    await page.setViewportSize({ width: 390, height: 770 });
+    await expect(page.getByRole("button", { name: "展开侧边栏", exact: true })).toBeHidden();
+    const mobileHome = sidebar.getByRole("button", { name: "返回首页", exact: true });
+    await expect(mobileHome).toBeInViewport();
+    await mobileHome.click();
+    await expect(page).toHaveURL(/#\/home$/);
+  });
+}
+
+test("mobile navigation keeps settings reachable through the account menu", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("careerloop-sidebar:e2e@local.test", "collapsed"));
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 770 });
+    await page.goto("/#/chat/1");
+    await expect(page.getByRole("navigation", { name: "移动端主导航" }).getByRole("button")).toHaveText([
+      "首页", "AI 工作区", "文件库"
+    ]);
+    await expect(page.getByRole("button", { name: /[收展][起开]侧边栏/ })).toBeHidden();
+    await expect(page.locator("aside.sidebar")).toHaveClass(/collapsed/);
+    await expect(page.getByRole("button", { name: "返回首页", exact: true })).toBeInViewport();
+    const account = page.getByRole("button", { name: "账号菜单", exact: true });
+    await expect(account).toBeInViewport();
+    await account.click();
+    const menu = page.getByRole("menu", { name: "账号菜单" });
+    await expect(menu.getByRole("menuitem")).toHaveText(["账号与安全", "设置", "退出登录"]);
+    const menuBox = (await menu.boundingBox())!;
+    expect(menuBox.x).toBeGreaterThanOrEqual(0);
+    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(width);
+    expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(770);
+    await menu.getByRole("menuitem", { name: "设置", exact: true }).click();
+    await expect(page).toHaveURL(/#\/settings$/);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await page.getByRole("button", { name: "返回首页", exact: true }).click();
+    await expect(page).toHaveURL(/#\/home$/);
+  }
+});
+
 test("long conversations keep one scroll viewport without blank space above the composer", async ({ page }) => {
   const source = { title: "参考资料", url: "https://example.com/reference", domain: "example.com" };
   const messages = Array.from({ length: 6 }, (_, index) => [
