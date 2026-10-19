@@ -4,13 +4,16 @@
   align-items: center;
   flex: 0 0 auto;
   margin-top: auto;
-  padding: 16px 4px 8px;
+  padding: 16px 4px 0;
   overflow: visible;
 }
-.app-shell.has-chat-dock .sidebar.context-navigation .sidebar-toggle-footer { margin-top: 0; }
 .app-shell.has-chat-dock .sidebar.context-navigation .sidebar-identity-slot .sidebar-identity {
   width: 56px;
   min-height: 44px;
+}
+.app-shell.has-chat-dock .sidebar.context-navigation .sidebar-identity:focus-visible {
+  outline: 2px solid var(--home-accent, var(--color-brand));
+  outline-offset: 3px;
 }
 .app-shell.has-chat-dock .sidebar.context-navigation .sidebar-identity-slot .app-identity-menu {
   top: auto;
@@ -21,6 +24,36 @@
 }
 
 @media (min-width: 821px) {
+  /* Straddle only the navigation border; the content retains its own gutter. */
+  .app-shell.has-chat-dock .sidebar.context-navigation > .sidebar-edge-toggle {
+    position: absolute;
+    z-index: 1;
+    top: 50%;
+    right: -14px;
+    display: grid;
+    width: 28px;
+    height: 40px;
+    margin: 0;
+    padding: 0;
+    border-radius: 10px;
+    color: var(--home-text-2, var(--color-text-secondary));
+    border-color: var(--home-line, var(--color-border));
+    background: var(--home-panel, var(--color-surface));
+    box-shadow: 0 2px 6px rgba(37, 28, 80, .06);
+    transform: translateY(-50%);
+  }
+  .app-shell.has-chat-dock .sidebar.context-navigation > .sidebar-edge-toggle:hover {
+    color: var(--home-accent-text, var(--color-brand-strong));
+    border-color: var(--home-accent, var(--color-brand));
+    background: var(--home-accent-soft, var(--color-brand-soft));
+  }
+  .app-shell.has-chat-dock .sidebar.context-navigation > .sidebar-edge-toggle:active {
+    transform: translateY(-50%);
+  }
+  .app-shell.has-chat-dock .sidebar.context-navigation > .sidebar-edge-toggle:focus-visible {
+    outline: 2px solid var(--home-accent, var(--color-brand));
+    outline-offset: 3px;
+  }
   .app-shell.has-chat-dock .sidebar.context-navigation.collapsed .sidebar-identity-slot {
     justify-content: center;
     padding-inline: 0;
@@ -31,6 +64,7 @@
 
 @media (max-width: 820px) {
   .app-shell.has-chat-dock .sidebar.context-navigation { z-index: 60; }
+  .app-shell.has-chat-dock .sidebar.context-navigation > .sidebar-edge-toggle { display: none; }
   .app-shell.has-chat-dock .sidebar.context-navigation .sidebar-identity-slot {
     margin-top: 0;
     padding: 0;

@@ -149,6 +149,7 @@ describe("App identity placement", () => {
     fireEvent.change(draft, { target: { value: "尚未发送的计划" } });
     const navigation = within(screen.getByRole("navigation", { name: "主导航" }));
     expect(screen.queryByRole("navigation", { name: "AI 工作区模块" })).not.toBeInTheDocument();
+    expect(navigation.queryByRole("button", { name: "设置" })).not.toBeInTheDocument();
     fireEvent.click(navigation.getByRole("button", { name: "文件库" }));
     await screen.findByRole("heading", { name: "测试文件库" });
     expect(window.location.hash).toBe("#/chat/library");
@@ -162,10 +163,13 @@ describe("App identity placement", () => {
     expect(window.location.hash).toBe("#/chat/7");
     fireEvent.click(navigation.getByRole("button", { name: "文件库" }));
     await screen.findByRole("heading", { name: "测试文件库" });
-    fireEvent.click(screen.getByRole("button", { name: "账号菜单" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "文件库管理" }));
-    await waitFor(() => expect(window.location.hash).toBe("#/settings/library"));
-    expect(await screen.findByRole("navigation", { name: "设置路径" })).toHaveTextContent("文件库管理");
+    const accountTrigger = screen.getByRole("button", { name: "账号菜单" });
+    expect(accountTrigger).not.toHaveClass("active");
+    fireEvent.click(accountTrigger);
+    expect(screen.queryByRole("menuitem", { name: "文件库管理" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: "设置" }));
+    await screen.findByRole("heading", { name: "测试设置概览" });
+    expect(window.location.hash).toBe("#/settings");
   });
   it.each([
     ["#/home", "测试首页"],
@@ -192,6 +196,7 @@ describe("App identity placement", () => {
     await screen.findByRole("heading", { name: "测试账号设置" });
     expect(window.location.hash).toBe("#/settings/account");
     expect(expectSidebarIdentity(container)).toBe(trigger);
+    expect(trigger).toHaveClass("active");
     expect(screen.queryByRole("menu", { name: "账号菜单" })).not.toBeInTheDocument();
 
     fireEvent.click(trigger);
@@ -200,13 +205,17 @@ describe("App identity placement", () => {
     await screen.findByRole("heading", { name: "测试设置概览" });
     expect(window.location.hash).toBe("#/settings");
     expect(expectSidebarIdentity(container)).toBe(trigger);
+    expect(trigger).toHaveClass("active");
     expect(screen.queryByRole("menu", { name: "账号菜单" })).not.toBeInTheDocument();
   });
 
   it("opens the account menu after collapsing the sidebar", async () => {
     const { container } = renderApp();
     await screen.findByRole("heading", { name: "测试首页" });
-    fireEvent.click(screen.getByRole("button", { name: "收起侧边栏" }));
+    const toggle = screen.getByRole("button", { name: "收起侧边栏" });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(toggle);
+    expect(screen.getByRole("button", { name: "展开侧边栏" })).toHaveAttribute("aria-expanded", "false");
     const trigger = expectSidebarIdentity(container);
     expect(trigger.closest("aside")).toHaveClass("collapsed");
 

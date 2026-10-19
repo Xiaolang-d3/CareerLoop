@@ -77,6 +77,75 @@ test.beforeEach(async ({ page }) => {
   await mockCurrentProduct(page);
 });
 
+for (const theme of ["light", "dark"] as const) {
+  test(`sidebar account and edge control remain reachable in ${theme}`, async ({ page }) => {
+    await page.addInitScript(value => localStorage.setItem("careerloop-theme", value), theme);
+    await page.setViewportSize({ width: 874, height: 770 });
+    await page.goto("/#/chat/1");
+    const sidebar = page.locator("aside.sidebar");
+    const account = page.getByRole("button", { name: "账号菜单", exact: true });
+    const evidenceDir = resolve("..", "..", "output", "sidebar-navigation");
+    await mkdir(evidenceDir, { recursive: true });
+
+    for (const width of [874, 1280]) {
+      await page.setViewportSize({ width, height: 770 });
+      await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("button")).toHaveText([
+        "首页", "AI 工作区", "文件库"
+      ]);
+
+      for (const collapsed of [false, true]) {
+        const toggle = page.getByRole("button", { name: collapsed ? "展开侧边栏" : "收起侧边栏", exact: true });
+        await expect(toggle).toHaveAttribute("aria-expanded", String(!collapsed));
+        await expect.poll(async () => Math.round((await sidebar.boundingBox())!.width)).toBe(collapsed ? 72 : 232);
+        const [sideBox, accountBox, toggleBox] = await Promise.all([
+          sidebar.boundingBox(), account.boundingBox(), toggle.boundingBox()
+        ]);
+        expect(accountBox!.y + accountBox!.height).toBeGreaterThan(sideBox!.y + sideBox!.height - 24);
+        expect(accountBox!.x).toBeGreaterThanOrEqual(sideBox!.x + 8);
+        expect(accountBox!.x + accountBox!.width).toBeLessThan(sideBox!.x + sideBox!.width);
+        expect(Math.abs(toggleBox!.x + toggleBox!.width / 2 - sideBox!.x - sideBox!.width)).toBeLessThanOrEqual(2);
+        expect(toggleBox!.y + toggleBox!.height / 2).toBeCloseTo(sideBox!.y + sideBox!.height / 2, 0);
+
+        await account.click();
+        const menu = page.getByRole("menu", { name: "账号菜单" });
+        await expect(menu).toBeVisible();
+        await expect(menu.getByRole("menuitem")).toHaveText(["账号与安全", "设置", "退出登录"]);
+        const menuBox = (await menu.boundingBox())!;
+        expect(menuBox.x).toBeGreaterThanOrEqual(0);
+        expect(menuBox.y).toBeGreaterThanOrEqual(0);
+        expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(width);
+        await menu.press("Escape");
+        await expect(account).toBeFocused();
+        await page.screenshot({ path: resolve(evidenceDir, `sidebar-${width}-${collapsed ? "collapsed" : "expanded"}-${theme}.png`), animations: "disabled" });
+        await toggle.click();
+      }
+    }
+  });
+}
+
+test("mobile navigation keeps settings reachable through the account menu", async ({ page }) => {
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 770 });
+    await page.goto("/#/chat/1");
+    await expect(page.getByRole("navigation", { name: "移动端主导航" }).getByRole("button")).toHaveText([
+      "首页", "AI 工作区", "文件库"
+    ]);
+    await expect(page.getByRole("button", { name: /[收展][起开]侧边栏/ })).toBeHidden();
+    const account = page.getByRole("button", { name: "账号菜单", exact: true });
+    await expect(account).toBeInViewport();
+    await account.click();
+    const menu = page.getByRole("menu", { name: "账号菜单" });
+    await expect(menu.getByRole("menuitem")).toHaveText(["账号与安全", "设置", "退出登录"]);
+    const menuBox = (await menu.boundingBox())!;
+    expect(menuBox.x).toBeGreaterThanOrEqual(0);
+    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(width);
+    expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(770);
+    await menu.getByRole("menuitem", { name: "设置", exact: true }).click();
+    await expect(page).toHaveURL(/#\/settings$/);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+  }
+});
+
 test("long conversations keep one scroll viewport without blank space above the composer", async ({ page }) => {
   const source = { title: "参考资料", url: "https://example.com/reference", domain: "example.com" };
   const messages = Array.from({ length: 6 }, (_, index) => [
