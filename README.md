@@ -80,6 +80,7 @@ CareerLoop/
 | [桌面版](docs/desktop.md) | Tauri 打包、sidecar 架构与构建 |
 | [联网搜索](docs/web-search.md) | Tavily 与 AgentSearch 配置 |
 | [开发与验证](docs/development.md) | 测试、CI/CD、可选依赖与架构边界 |
+| [GitHub 开发协作](docs/github-collaboration.md) | Agents 角色、临时开发环境与 Projects 看板 |
 | [Mac 公网上线计划](docs/mac-cloudflare-deployment-plan.md) | 固定域名隧道、公众注册准备、备份与 Windows 迁移 |
 | [GitHub 持续部署](docs/continuous-deployment.md) | main 通过 CI 后发布、Mac 自动更新、数据保护与部署 skill |
 | [智能体架构](docs/agent.md) | 智能体层维护文档 |

@@ -1,17 +1,15 @@
 import {
-  ChevronsLeft,
-  ChevronsRight,
   Folder,
   Home,
   MessageCircle,
-  Settings
+  PanelLeft
 } from "lucide-react";
 import { type ReactNode } from "react";
 import { sidebarHighlightForView, type SidebarHighlight } from "../constants";
 import type { ViewKey } from "../types";
 import type { SettingsPage } from "../routing";
 
-export type ProductNavKey = "dashboard" | "chat" | "library" | "settings";
+export type ProductNavKey = "dashboard" | "chat" | "library";
 
 type PrefetchPage = "chat" | "library" | "dashboard" | "settings";
 
@@ -36,8 +34,6 @@ type AppSidebarProps = {
   identity?: ReactNode;
 };
 
-const MOBILE_KEYS: ProductNavKey[] = ["dashboard", "chat", "library", "settings"];
-
 export function AppSidebar({
   collapsed,
   activeView,
@@ -57,12 +53,6 @@ export function AppSidebar({
     { key: "chat", label: "AI 工作区", icon: <MessageCircle size={18} />, active: isActive("chat"), prefetch: "chat", onClick: () => onSelectNav("chat") },
     { key: "library", label: "文件库", icon: <Folder size={18} />, active: isActive("library"), prefetch: "library", onClick: () => onSelectNav("library") }
   ];
-
-  const secondaryItems: SidebarItem[] = [
-    { key: "settings", label: "设置", icon: <Settings size={18} />, active: isActive("settings"), prefetch: "settings", onClick: () => onSelectNav("settings") }
-  ];
-
-  const mobileItems = [...primaryItems, ...secondaryItems].filter((item) => MOBILE_KEYS.includes(item.key));
 
   function renderItem(item: SidebarItem, extraClass = "") {
     return (
@@ -93,24 +83,33 @@ export function AppSidebar({
             <small>一起想清楚，一步步做好</small>
           </span>
         </button>
+        <button
+          className="sidebar-toggle sidebar-header-toggle"
+          type="button"
+          onClick={onToggle}
+          title={collapsed ? "展开侧边栏" : "收起侧边栏"}
+          aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}
+          aria-expanded={!collapsed}
+          aria-controls="app-primary-navigation"
+        >
+          {collapsed ? (
+            <span className="sidebar-toggle-logo" aria-hidden="true">
+              <img src="/dengdeng-icon-v1.png" alt="" />
+            </span>
+          ) : null}
+          <PanelLeft className="sidebar-toggle-icon" size={20} strokeWidth={1.8} aria-hidden="true" />
+        </button>
       </div>
 
-      <nav className="nav nav-desktop" aria-label="主导航">
+      <nav className="nav nav-desktop" id="app-primary-navigation" aria-label="主导航">
         {primaryItems.map((item) => renderItem(item))}
-        {secondaryItems.map((item) => renderItem(item))}
       </nav>
 
       <nav className="nav nav-mobile" aria-label="移动端主导航">
-        {mobileItems.map((item) => renderItem(item, "mobile-nav-item"))}
+        {primaryItems.map((item) => renderItem(item, "mobile-nav-item"))}
       </nav>
 
       {identity ? <div className="sidebar-identity-slot">{identity}</div> : null}
-
-      <div className="sidebar-toggle-footer">
-        <button className="sidebar-toggle sidebar-bottom-toggle" type="button" onClick={onToggle} title={collapsed ? "展开侧边栏" : "收起侧边栏"} aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}>
-          {collapsed ? <ChevronsRight size={16} strokeWidth={2.1} /> : <ChevronsLeft size={16} strokeWidth={2.1} />}
-        </button>
-      </div>
     </aside>
   );
 }

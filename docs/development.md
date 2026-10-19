@@ -72,3 +72,5 @@ cd backend
 ## 贡献流程
 
 贡献、分支、提交与验证规则见 [`CONTRIBUTING.md`](../CONTRIBUTING.md)。
+
+仓库的 Copilot 开发/只读审查角色、临时环境准备与 Projects 看板约定见 [GitHub 开发协作](github-collaboration.md)。角色配置不触发付费任务，也不启用线上部署。

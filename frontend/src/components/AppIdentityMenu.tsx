@@ -1,9 +1,9 @@
-import { ChevronDown, LogOut, Settings, ShieldCheck, UserRound } from "lucide-react";
+import { ChevronDown, LogOut, Settings, ShieldCheck } from "lucide-react";
 import { KeyboardEvent as ReactKeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import type { ViewKey } from "../types";
 import type { SettingsPage } from "../routing";
 
-type PrefetchPage = "library" | "account" | "settings";
+type PrefetchPage = "account" | "settings";
 
 export type AppIdentityMenuProps = {
   userEmail?: string;
@@ -11,7 +11,6 @@ export type AppIdentityMenuProps = {
   avatarUrl?: string | null;
   activeView?: ViewKey;
   settingsPage?: SettingsPage;
-  onOpenProfile: () => void;
   onOpenAccount?: () => void;
   onOpenSettings?: () => void;
   onLogout: () => void;
@@ -28,7 +27,6 @@ export function AppIdentityMenu({
   avatarUrl,
   activeView,
   settingsPage,
-  onOpenProfile,
   onOpenAccount,
   onOpenSettings,
   onLogout,
@@ -41,7 +39,7 @@ export function AppIdentityMenu({
   const menuId = useId();
   const displayName = accountName?.trim() || userEmail?.split("@")[0] || "本地账户";
   const accountActive = activeView === "settings" && settingsPage === "account";
-  const libraryActive = activeView === "settings" && settingsPage === "library";
+  const settingsActive = activeView === "settings";
 
   useEffect(() => {
     if (!open) return;
@@ -94,7 +92,7 @@ export function AppIdentityMenu({
     }}>
       <button
         ref={triggerRef}
-        className={`sidebar-identity ${accountActive || libraryActive ? "active" : ""}`}
+        className={`sidebar-identity ${settingsActive ? "active" : ""}`}
         type="button"
         onClick={() => { openingFocus.current = "first"; setOpen((current) => !current); }}
         onKeyDown={(event) => {
@@ -126,18 +124,6 @@ export function AppIdentityMenu({
             <small title={userEmail}>{userEmail}</small>
           </div>
           <div role="group" aria-label="账户与设置">
-            <button
-              type="button"
-              role="menuitem"
-              tabIndex={-1}
-              aria-current={libraryActive ? "page" : undefined}
-              onClick={() => closeAnd(onOpenProfile)}
-              onMouseEnter={() => onPrefetchPage?.("library")}
-              onFocus={() => onPrefetchPage?.("library")}
-            >
-              <UserRound size={16} aria-hidden="true" />
-              文件库管理
-            </button>
             {onOpenAccount ? (
               <button
                 type="button"
@@ -157,7 +143,7 @@ export function AppIdentityMenu({
                 type="button"
                 role="menuitem"
                 tabIndex={-1}
-                aria-current={activeView === "settings" && settingsPage === "overview" ? "page" : undefined}
+                aria-current={settingsActive && !accountActive ? "page" : undefined}
                 onClick={() => closeAnd(onOpenSettings)}
                 onMouseEnter={() => onPrefetchPage?.("settings")}
                 onFocus={() => onPrefetchPage?.("settings")}
