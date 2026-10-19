@@ -984,6 +984,9 @@ class AgentRuntime:
         invalid_argument_retries = 0
         rejected_completions: set[tuple[str, ...]] = set()
         self._checkpoint_run(ctx, rounds_used=max(0, start_round - 1))
+        # Messages appended after this point belong to the current run; anything
+        # earlier is conversation history and must not be surfaced as a result.
+        first_new_message = len(messages)
         for round_number in range(start_round, self._max_tool_rounds + 1):
             if self._cancel_requested(run_id):
                 return self._cancelled_run_result(
@@ -1502,8 +1505,20 @@ class AgentRuntime:
                     )
             unresolved_error = round_error
             self._checkpoint_run(ctx, rounds_used=round_number)
+        notice = (
+            f"Agent 已达到最大工具调用轮数（{self._max_tool_rounds}），"
+            "本次执行已终止，请缩小任务范围后重新提问。"
+        )
+        partial = next(
+            (
+                message.content.strip()
+                for message in reversed(messages[first_new_message:])
+                if message.role == "assistant" and message.content.strip()
+            ),
+            "",
+        )
         return AgentRunResult(
-            content=f"Agent 已达到最大工具调用轮数（{self._max_tool_rounds}），本次执行已终止，请缩小任务范围后重新提问。",
+            content=f"{partial}\n\n> {notice}" if partial else notice,
             provider=self._model_provider,
             model_selection=self._current_model_selection(),
             platform=selected_platform,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import unittest
 from datetime import datetime
@@ -732,6 +733,82 @@ class RunContextSurfaceTest(unittest.TestCase):
         self._runtime()._apply_tool_surface(ctx, fallback_to_allowed=True)
 
         self.assertEqual(ctx.executable_tools, {"ask_user", "search_library"})
+
+
+class RoundLimitKeepsPartialTextTest(unittest.TestCase):
+    """轮次预算耗尽时保留本轮正文，但绝不回捞历史回答。"""
+
+    def _run(self, model, *, history=()):
+        runtime = runtime_for(model, CountingTool("search_library"), max_rounds=1)
+        ctx = RunContext(
+            provider=model,
+            platform="test",
+            run_id=None,
+            user_content="帮我分析这些资料",
+            conversation_id=None,
+            task_id=None,
+            event_callback=None,
+            web_search_mode="auto",
+            route=TaskRoute(
+                kind="conversation",
+                needs_plan=False,
+                allowed_tools=("search_library",),
+                required_tools=(),
+            ),
+            plan=AgentPlan(
+                goal="查资料",
+                route="conversation",
+                steps=[
+                    AgentPlanStep(
+                        id="s1", title="查资料", tool_name="search_library", risk="read_only"
+                    )
+                ],
+            ),
+            messages=[*history],
+            events=[],
+            interrupt_tools={"ask_user"},
+        )
+        runtime._apply_tool_surface(ctx)
+        return asyncio.run(runtime._run_tool_loop(ctx, start_round=1))
+
+    @staticmethod
+    def _tool_only_model():
+        return ScriptedModel([
+            ModelResponse(
+                tool_calls=[ToolCall(id="c1", name="search_library", arguments={"q": "a"})]
+            )
+        ])
+
+    def test_keeps_last_round_text_before_the_notice(self) -> None:
+        model = ScriptedModel([
+            ModelResponse(
+                content="已经查到关键线索",
+                tool_calls=[ToolCall(id="c1", name="search_library", arguments={"q": "a"})],
+            )
+        ])
+
+        result = self._run(model)
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.stop_reason, "round_limit_reached")
+        self.assertTrue(result.content.startswith("已经查到关键线索"))
+        self.assertIn("最大工具调用轮数", result.content)
+
+    def test_without_text_returns_the_notice_only(self) -> None:
+        result = self._run(self._tool_only_model())
+
+        self.assertEqual(
+            result.content,
+            "Agent 已达到最大工具调用轮数（1），本次执行已终止，请缩小任务范围后重新提问。",
+        )
+
+    def test_does_not_reuse_an_answer_from_history(self) -> None:
+        result = self._run(
+            self._tool_only_model(),
+            history=[AgentMessage(role="assistant", content="上一轮的旧回答")],
+        )
+
+        self.assertNotIn("上一轮的旧回答", result.content)
 
 
 if __name__ == "__main__":
