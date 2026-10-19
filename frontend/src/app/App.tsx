@@ -905,7 +905,6 @@ export function App({
       avatarUrl={avatarUrl}
       activeView={activeView}
       settingsPage={appRoute.section === "settings" ? appRoute.page : undefined}
-      onOpenProfile={() => navigateRoute({ section: "settings", page: "library" })}
       onOpenAccount={() => navigateRoute({ section: "settings", page: "account" })}
       onOpenSettings={() => navigateRoute({ section: "settings", page: "overview" })}
       onLogout={onLogout}
@@ -917,7 +916,6 @@ export function App({
     if (key === "dashboard") navigateRoute({ section: "dashboard" });
     else if (key === "chat") navigateRoute({ section: "chat", conversationId: currentConversationId ?? undefined });
     else if (key === "library") navigateRoute({ section: "chat", page: "library" });
-    else if (key === "settings") navigateRoute({ section: "settings", page: "overview" });
   }
 
   async function useLibraryForChat(sourceIds: number[]) {
