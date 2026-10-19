@@ -11,7 +11,7 @@ export function LibraryCollections({ collections, selectedId, busy, onSelect, on
 }) {
   const selected = collections.find((item) => item.id === selectedId);
   return <div className="fl-collection-scope">
-    <label className="fl-scope-select" title="主题集合可跨目录整理，同一文件可加入多个主题">
+    <label className={`fl-scope-select${selected ? " is-active" : ""}`} title="主题集合可跨目录整理，同一文件可加入多个主题">
       <Layers3 size={15} />
       <select aria-label="选择主题集合" value={selectedId ?? "all"} onChange={(event) => onSelect(event.target.value === "all" ? null : Number(event.target.value))}>
         <option value="all">主题集合</option>

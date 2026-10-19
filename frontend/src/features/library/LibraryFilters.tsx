@@ -31,8 +31,10 @@ export function LibraryFilters({ filters, onChange }: {
     }
   }}>
     <div className="fl-filter-summary">
-      <button ref={trigger} type="button" aria-expanded={open} aria-controls={panelId} className={active ? "is-filtered" : ""} onClick={() => setOpen(!open)}>
-        <SlidersHorizontal size={15} />筛选<ChevronDown size={14} />
+      <button ref={trigger} type="button" aria-label="筛选" aria-expanded={open} aria-controls={panelId} className={active ? "is-filtered" : ""} onClick={() => setOpen(!open)}>
+        <SlidersHorizontal size={15} />筛选
+        {active && <span className="fl-filter-count" aria-label={`${labels.length} 个筛选条件`}>{labels.length}</span>}
+        <ChevronDown className="fl-filter-chevron" size={14} aria-hidden="true" />
       </button>
       {active && <span>{labels.join(" · ")}</span>}
     </div>
