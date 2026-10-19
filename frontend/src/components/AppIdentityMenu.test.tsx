@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppIdentityMenu } from "./AppIdentityMenu";
+import type { SettingsPage } from "../routing";
 
 describe("AppIdentityMenu", () => {
   afterEach(cleanup);
@@ -10,7 +11,6 @@ describe("AppIdentityMenu", () => {
       <AppIdentityMenu
         userEmail="owner@example.com"
         accountName="小林"
-        onOpenProfile={vi.fn()}
         onLogout={vi.fn()}
       />
     );
@@ -32,7 +32,7 @@ describe("AppIdentityMenu", () => {
 
   it("separates the account name from the complete email when no nickname is set", () => {
     const email = "a-very-long-account-name@example.com";
-    render(<AppIdentityMenu userEmail={email} onOpenProfile={vi.fn()} onLogout={vi.fn()} />);
+    render(<AppIdentityMenu userEmail={email} onLogout={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "账号菜单" }));
     const summary = screen.getByRole("menu").querySelector(".app-identity-summary");
     expect(summary?.querySelector("strong")).toHaveTextContent("a-very-long-account-name");
@@ -42,24 +42,24 @@ describe("AppIdentityMenu", () => {
   });
 
   it("supports keyboard navigation and restores focus on Escape", () => {
-    render(<AppIdentityMenu userEmail="owner@example.com" onOpenProfile={vi.fn()} onOpenAccount={vi.fn()} onOpenSettings={vi.fn()} onLogout={vi.fn()} />);
+    render(<AppIdentityMenu userEmail="owner@example.com" onOpenAccount={vi.fn()} onOpenSettings={vi.fn()} onLogout={vi.fn()} />);
     const trigger = screen.getByRole("button", { name: "账号菜单" });
     fireEvent.keyDown(trigger, { key: "ArrowDown" });
     const menu = screen.getByRole("menu");
-    const profile = screen.getByRole("menuitem", { name: "文件库管理" });
     const account = screen.getByRole("menuitem", { name: "账号与安全" });
+    const settings = screen.getByRole("menuitem", { name: "设置" });
     const logout = screen.getByRole("menuitem", { name: "退出登录" });
-    expect(profile).toHaveFocus();
-    fireEvent.keyDown(menu, { key: "ArrowDown" });
     expect(account).toHaveFocus();
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(settings).toHaveFocus();
     fireEvent.keyDown(menu, { key: "End" });
     expect(logout).toHaveFocus();
     fireEvent.keyDown(menu, { key: "ArrowDown" });
-    expect(profile).toHaveFocus();
+    expect(account).toHaveFocus();
     fireEvent.keyDown(menu, { key: "ArrowUp" });
     expect(logout).toHaveFocus();
     fireEvent.keyDown(menu, { key: "Home" });
-    expect(profile).toHaveFocus();
+    expect(account).toHaveFocus();
     fireEvent.keyDown(menu, { key: "Escape" });
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
@@ -69,26 +69,26 @@ describe("AppIdentityMenu", () => {
   });
 
   it("dismisses on Tab, outside pointer input, and focus leaving the menu", () => {
-    render(<><AppIdentityMenu userEmail="owner@example.com" onOpenProfile={vi.fn()} onLogout={vi.fn()} /><button>菜单之外</button></>);
+    render(<><AppIdentityMenu userEmail="owner@example.com" onOpenAccount={vi.fn()} onLogout={vi.fn()} /><button>菜单之外</button></>);
     const trigger = screen.getByRole("button", { name: "账号菜单" });
     fireEvent.click(trigger);
     fireEvent.keyDown(screen.getByRole("menu"), { key: "Tab" });
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
     fireEvent.click(trigger);
-    fireEvent.blur(screen.getByRole("menuitem", { name: "文件库管理" }), { relatedTarget: null });
+    fireEvent.blur(screen.getByRole("menuitem", { name: "账号与安全" }), { relatedTarget: null });
     expect(screen.getByRole("menu")).toBeInTheDocument();
     fireEvent.pointerDown(document.body);
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     fireEvent.click(trigger);
-    fireEvent.blur(screen.getByRole("menuitem", { name: "文件库管理" }), { relatedTarget: screen.getByRole("button", { name: "菜单之外" }) });
+    fireEvent.blur(screen.getByRole("menuitem", { name: "账号与安全" }), { relatedTarget: screen.getByRole("button", { name: "菜单之外" }) });
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 
   it("keeps the uploaded avatar and closes after settings or logout actions", () => {
     const onOpenSettings = vi.fn();
     const onLogout = vi.fn();
-    render(<AppIdentityMenu userEmail="owner@example.com" avatarUrl="blob:test-avatar" onOpenProfile={vi.fn()} onOpenSettings={onOpenSettings} onLogout={onLogout} />);
+    render(<AppIdentityMenu userEmail="owner@example.com" avatarUrl="blob:test-avatar" onOpenSettings={onOpenSettings} onLogout={onLogout} />);
     const trigger = screen.getByRole("button", { name: "账号菜单" });
     expect(trigger.querySelector("img")).toHaveAttribute("src", "blob:test-avatar");
     fireEvent.click(trigger);
@@ -103,32 +103,33 @@ describe("AppIdentityMenu", () => {
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 
-  it("keeps account destinations out of application navigation", () => {
-    const onOpenProfile = vi.fn();
+  it("keeps the account menu focused on account, settings, and logout", () => {
     const onOpenAccount = vi.fn();
+    const onOpenSettings = vi.fn();
     const onLogout = vi.fn();
 
     render(
       <AppIdentityMenu
         userEmail="owner@example.com"
-        onOpenProfile={onOpenProfile}
         onOpenAccount={onOpenAccount}
+        onOpenSettings={onOpenSettings}
         onLogout={onLogout}
       />
     );
 
     fireEvent.click(screen.getByRole("button", { name: "账号菜单" }));
 
-    expect(screen.getByRole("menuitem", { name: "文件库管理" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "账号与安全" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "退出登录" })).toBeInTheDocument();
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      "账号与安全", "设置", "退出登录"
+    ]);
+    expect(screen.queryByRole("menuitem", { name: "文件库管理" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "文件库" })).not.toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "对话" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: "设置" })).not.toBeInTheDocument();
   });
 
   it("preserves active state, prefetching, and account actions", () => {
-    const onOpenProfile = vi.fn();
     const onOpenAccount = vi.fn();
+    const onOpenSettings = vi.fn();
     const onPrefetchPage = vi.fn();
 
     render(
@@ -136,24 +137,52 @@ describe("AppIdentityMenu", () => {
         userEmail="owner@example.com"
         activeView="settings"
         settingsPage="library"
-        onOpenProfile={onOpenProfile}
         onOpenAccount={onOpenAccount}
+        onOpenSettings={onOpenSettings}
         onLogout={vi.fn()}
         onPrefetchPage={onPrefetchPage}
       />
     );
 
     fireEvent.click(screen.getByRole("button", { name: "账号菜单" }));
-    const profile = screen.getByRole("menuitem", { name: "文件库管理" });
-    expect(profile).toHaveAttribute("aria-current", "page");
-    fireEvent.focus(profile);
-    fireEvent.click(profile);
+    const settings = screen.getByRole("menuitem", { name: "设置" });
+    expect(settings).toHaveAttribute("aria-current", "page");
+    fireEvent.focus(settings);
+    fireEvent.click(settings);
 
-    expect(onPrefetchPage).toHaveBeenCalledWith("library");
-    expect(onOpenProfile).toHaveBeenCalledOnce();
+    expect(onPrefetchPage).toHaveBeenCalledWith("settings");
+    expect(onOpenSettings).toHaveBeenCalledOnce();
 
     fireEvent.click(screen.getByRole("button", { name: "账号菜单" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "账号与安全" }));
+    const account = screen.getByRole("menuitem", { name: "账号与安全" });
+    fireEvent.mouseEnter(account);
+    fireEvent.click(account);
+    expect(onPrefetchPage).toHaveBeenCalledWith("account");
+    expect(onPrefetchPage).not.toHaveBeenCalledWith("library");
     expect(onOpenAccount).toHaveBeenCalledOnce();
+  });
+
+  it.each<SettingsPage>(["overview", "account", "library", "model", "appearance", "agent"])(
+    "indicates the active settings destination on %s",
+    (settingsPage) => {
+      render(<AppIdentityMenu userEmail="owner@example.com" activeView="settings" settingsPage={settingsPage}
+        onOpenAccount={vi.fn()} onOpenSettings={vi.fn()} onLogout={vi.fn()} />);
+      const trigger = screen.getByRole("button", { name: "账号菜单" });
+      expect(trigger).toHaveClass("active");
+      fireEvent.click(trigger);
+      const account = screen.getByRole("menuitem", { name: "账号与安全" });
+      const settings = screen.getByRole("menuitem", { name: "设置" });
+      expect(settingsPage === "account" ? account : settings).toHaveAttribute("aria-current", "page");
+      expect(settingsPage === "account" ? settings : account).not.toHaveAttribute("aria-current");
+    }
+  );
+
+  it("does not mark the account menu as active in the file workspace", () => {
+    render(<AppIdentityMenu userEmail="owner@example.com" activeView="chat"
+      onOpenAccount={vi.fn()} onOpenSettings={vi.fn()} onLogout={vi.fn()} />);
+    const trigger = screen.getByRole("button", { name: "账号菜单" });
+    expect(trigger).not.toHaveClass("active");
+    fireEvent.click(trigger);
+    expect(screen.queryByRole("menuitem", { current: "page" })).not.toBeInTheDocument();
   });
 });
