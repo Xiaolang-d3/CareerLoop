@@ -108,6 +108,8 @@ ChatRuntime ─► ConfiguredModelProvider (档案参数 / 推理强度)
 
 ## 回滚
 
+网站持续部署复用成功 CI 的前端构建，Mac 端使用同一 `requirements-lock.txt` 和 `install_deps.sh` 安装运行时并扫描 `.pth`。冒烟检查使用隔离数据、内存凭证和空模型密钥；上线进程不继承开发 `.env` 或 GitHub 凭证，用户模型密钥沿用固定数据目录对应的 Mac 钥匙串引用。CD 发布不执行真实模型请求。工作流和一次性启用步骤见[持续部署](continuous-deployment.md)。
+
 设置环境变量 `DENGDENG_MODEL_BACKEND=native` 即回到原生适配器（OpenAI SDK / httpx 实现，代码保留未删除）。原生模式下备用模型设置会保存但不生效（设置页提示），能力报告不使用 LiteLLM 数据，其余功能（协商、探测、推理回传、监控）不变。未安装 litellm 时自动使用原生模式并打印一次警告；`DENGDENG_MODEL_BACKEND` 取 `litellm`、`native` 以外的值时打印一次警告并按默认 `litellm` 处理。数据库 v30 的新增列与表对原生模式无影响。
 
 ### 降级到旧版本应用
