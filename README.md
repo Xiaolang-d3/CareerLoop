@@ -80,6 +80,7 @@ CareerLoop/
 | [桌面版](docs/desktop.md) | Tauri 打包、sidecar 架构与构建 |
 | [联网搜索](docs/web-search.md) | Tavily 与 AgentSearch 配置 |
 | [开发与验证](docs/development.md) | 测试、CI/CD、可选依赖与架构边界 |
+| [GitHub 开发协作](docs/github-collaboration.md) | Agents 角色、临时开发环境与 Projects 看板 |
 | [智能体架构](docs/agent.md) | 智能体层维护文档 |
 | [模型层说明](docs/model-layer.md) | 模型连接、协议与备用策略 |
 | [文件库架构](docs/file-library-architecture.md) | 资料导入、检索与长期使用 |

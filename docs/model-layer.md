@@ -2,6 +2,8 @@
 
 灯灯通过 [LiteLLM](https://github.com/BerriAI/litellm) **Python SDK**（不是 LiteLLM Proxy 服务器）调用模型。灯灯自己的部分仍由灯灯负责：连接与模型档案（SQLite）、「自动」协议协商并持久化 `detected_protocol`、真实图片探测、推理内容回传、调用监控与成功率、按对话选择模型、按档案设置推理强度。LiteLLM 负责各厂商的请求格式、流式解析、参数适配、错误分类、备用模型路由、重试冷却、模型能力和价格数据。
 
+Copilot 临时开发环境的依赖准备见 [GitHub 开发协作](github-collaboration.md)：`copilot-setup-steps.yml` 复用 `backend/scripts/install_deps.sh` 的开发哈希锁与 `.pth` 扫描，不安装额外模型依赖，也不配置真实模型密钥或发起模型请求。
+
 ## 架构
 
 ```
