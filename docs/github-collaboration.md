@@ -9,9 +9,9 @@
 | 角色 | 用途 | 工具范围 |
 | --- | --- | --- |
 | [dengdeng-developer](../.github/agents/dengdeng-developer.agent.md) | 实现小范围功能、修复、测试与必要文档 | 读、搜索、编辑、执行命令 |
-| [dengdeng-reviewer](../.github/agents/dengdeng-reviewer.agent.md) | 静态审查具体缺陷、账户隔离与数据保护 | 仅读与搜索，不能运行测试或修改文件 |
+| [dengdeng-reviewer](../.github/agents/dengdeng-reviewer.agent.md) | 静态审查具体缺陷、账户隔离与数据保护 | 本地读/搜索及当前仓库的 GitHub 只读工具，不能运行测试或修改文件 |
 
-角色需要手动选择，不自动委派，不固定模型，也不配置额外 MCP 或生产密钥。开发角色的命令执行权限用于 GitHub 临时环境；它不连接线上 Mac、Cloudflare 或真实用户数据。角色文件不授予仓库成员权限，也不替代 `ci-gate` 或维护者的合并判断。
+角色需要手动选择，不自动委派，不固定模型，也不配置额外 MCP 或生产密钥。审查角色的 `github/*` 仅使用 GitHub 云端智能体内置、限当前仓库的只读工具，以取得指定 PR/提交的差异，避免把已有问题误报为新增回归。开发角色的命令执行权限用于 GitHub 临时环境；它不连接线上 Mac、Cloudflare 或真实用户数据。角色文件不授予仓库成员权限，也不替代 `ci-gate` 或维护者的合并判断。
 
 文件合入默认分支后，在仓库 **Agents → 新任务 → 角色选择** 中选择对应角色。GitHub Copilot 云端任务需要账号具备相应付费 Copilot 方案，且该仓库未禁用云端智能体；提交配置文件不代表订阅或任务已经启用。不会因添加角色自动发起付费 AI 任务。
 
