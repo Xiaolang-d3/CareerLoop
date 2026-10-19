@@ -44,18 +44,26 @@ describe("AppSidebar", () => {
     );
   });
 
-  it("keeps accessible names and click behavior on the sidebar toggle", () => {
+  it("keeps home navigation separate from the named sidebar toggle", () => {
     const expanded = renderSidebar();
     fireEvent.click(screen.getByRole("button", { name: "收起侧边栏" }));
     expect(expanded.onToggle).toHaveBeenCalledOnce();
     cleanup();
     const collapsed = renderSidebar(undefined, true);
     const toggle = screen.getByRole("button", { name: "展开侧边栏" });
+    const logo = toggle.querySelector("img");
+    expect(logo).toHaveAttribute("src", "/dengdeng-icon-v1.png");
+    expect(logo).toHaveAttribute("alt", "");
+    expect(logo?.parentElement).toHaveAttribute("aria-hidden", "true");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(document.getElementById(toggle.getAttribute("aria-controls")!)).toBe(
       screen.getByRole("navigation", { name: "主导航" })
     );
     fireEvent.click(toggle);
+    expect(collapsed.onToggle).toHaveBeenCalledOnce();
+    expect(collapsed.onGoHome).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "返回首页" }));
+    expect(collapsed.onGoHome).toHaveBeenCalledOnce();
     expect(collapsed.onToggle).toHaveBeenCalledOnce();
   });
 

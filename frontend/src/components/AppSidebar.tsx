@@ -1,9 +1,8 @@
 import {
-  ChevronsLeft,
-  ChevronsRight,
   Folder,
   Home,
-  MessageCircle
+  MessageCircle,
+  PanelLeft
 } from "lucide-react";
 import { type ReactNode } from "react";
 import { sidebarHighlightForView, type SidebarHighlight } from "../constants";
@@ -84,6 +83,22 @@ export function AppSidebar({
             <small>一起想清楚，一步步做好</small>
           </span>
         </button>
+        <button
+          className="sidebar-toggle sidebar-header-toggle"
+          type="button"
+          onClick={onToggle}
+          title={collapsed ? "展开侧边栏" : "收起侧边栏"}
+          aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}
+          aria-expanded={!collapsed}
+          aria-controls="app-primary-navigation"
+        >
+          {collapsed ? (
+            <span className="sidebar-toggle-logo" aria-hidden="true">
+              <img src="/dengdeng-icon-v1.png" alt="" />
+            </span>
+          ) : null}
+          <PanelLeft className="sidebar-toggle-icon" size={20} strokeWidth={1.8} aria-hidden="true" />
+        </button>
       </div>
 
       <nav className="nav nav-desktop" id="app-primary-navigation" aria-label="主导航">
@@ -95,18 +110,6 @@ export function AppSidebar({
       </nav>
 
       {identity ? <div className="sidebar-identity-slot">{identity}</div> : null}
-
-      <button
-        className="sidebar-toggle sidebar-edge-toggle"
-        type="button"
-        onClick={onToggle}
-        title={collapsed ? "展开侧边栏" : "收起侧边栏"}
-        aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}
-        aria-expanded={!collapsed}
-        aria-controls="app-primary-navigation"
-      >
-        {collapsed ? <ChevronsRight size={16} strokeWidth={2.1} /> : <ChevronsLeft size={16} strokeWidth={2.1} />}
-      </button>
     </aside>
   );
 }
