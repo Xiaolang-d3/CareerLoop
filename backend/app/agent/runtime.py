@@ -8,11 +8,10 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextvars import ContextVar
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any, Literal
-from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import ValidationError
 
@@ -46,6 +45,7 @@ from .approval_policy import (
 )
 from .capability_resolver import is_mixed_run, requests_public_web
 from .completion import validate_completion
+from .citations import apply_citation_patches, canonical_url, cited_urls, evidence_cards, repair_messages
 from .egress_policy import (
     APPROVAL_REQUIRED,
     SEARCH_TOOL_NAME,
@@ -80,7 +80,6 @@ from .tool_executor import ToolExecutor
 StreamCallback = Callable[[AgentStreamEvent], Awaitable[None]]
 WEB_RESEARCH_TOOLS = {"search_public_web"}
 MAX_INVALID_ARGUMENT_RETRIES = 2
-MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\((https?://[^)\s]+)\)")
 COMPANY_REFERENCE_PHRASES = ("这家公司", "该公司", "这个公司", "这家企业", "该企业")
 COMPANY_SUFFIX = r"(?:有限责任公司|股份有限公司|有限公司)"
 COMPANY_CONTEXT_PATTERNS = (
@@ -96,16 +95,7 @@ class _RunCancellationRequested(Exception):
 
 
 def _canonical_citation_url(value: str) -> str:
-    parsed = urlsplit(value.strip())
-    return urlunsplit(
-        (
-            parsed.scheme.lower(),
-            parsed.netloc.lower(),
-            parsed.path.rstrip("/"),
-            parsed.query,
-            "",
-        )
-    )
+    return canonical_url(value)
 
 
 def _web_source_urls(messages: list[AgentMessage]) -> set[str]:
@@ -120,7 +110,7 @@ def _web_source_urls(messages: list[AgentMessage]) -> set[str]:
 
 
 def validate_web_citations(content: str, allowed_urls: set[str]) -> tuple[bool, str]:
-    cited = {_canonical_citation_url(url) for url in MARKDOWN_LINK_RE.findall(content)}
+    cited = cited_urls(content)
     allowed = {_canonical_citation_url(url) for url in allowed_urls}
     if not cited:
         return False, "回答没有使用 Markdown 链接引用本轮搜索来源"
@@ -207,6 +197,8 @@ class RunContext:
     repeated_tool_calls: dict[str, int] = field(default_factory=dict)
     replan_used: bool = False
     citation_retry_used: bool = False
+    citation_draft: str = ""
+    citation_sources: list[dict[str, Any]] = field(default_factory=list)
 
 
 class AgentRuntime:
@@ -741,6 +733,8 @@ class AgentRuntime:
             repeated_tool_calls=dict(resume.repeated_tool_calls),
             replan_used=resume.replan_used,
             citation_retry_used=resume.citation_retry_used,
+            citation_draft=resume.citation_draft,
+            citation_sources=resume.citation_sources,
         )
         approval = self._approval_context.get()
         if resume.resume_mode == "waiting_user":
@@ -926,6 +920,8 @@ class AgentRuntime:
             messages=ctx.messages,
             replan_used=ctx.replan_used,
             citation_retry_used=ctx.citation_retry_used,
+            citation_draft=ctx.citation_draft,
+            citation_sources=ctx.citation_sources,
             rounds_used=rounds_used,
             clarification=clarification,
             completed_tools=sorted(ctx.completed_tools),
@@ -993,6 +989,24 @@ class AgentRuntime:
         ]
         self._append_visible_tools(ctx.messages, ctx.executable_tools)
 
+    async def _citation_failure(self, ctx: RunContext, round_number: int, message: str) -> AgentRunResult:
+        event = ToolEvent(
+            round=round_number, tool_call_id=f"citation-validation-{round_number}",
+            tool_name="citation_validator", status="failed", message=message,
+            data={"original_draft_preserved": bool(ctx.citation_draft)},
+        )
+        ctx.events.append(event)
+        await self._publish(ctx.event_callback, AgentStreamEvent(type="agent_event", event=event))
+        content = ctx.citation_draft + "\n\n> 来源引用校验未完成，已保留原始草稿；请勿将其视为已核验结论。"
+        await self._publish(ctx.event_callback, AgentStreamEvent(type="text_reset"))
+        await self._publish(ctx.event_callback, AgentStreamEvent(type="text_delta", delta=content))
+        return AgentRunResult(
+            content=content, provider=self._model_provider, model_selection=self._current_model_selection(),
+            platform=ctx.platform, rounds=round_number, status="failed",
+            error=ToolError(code="citation_validation_failed", message=message),
+            events=ctx.events, plan=ctx.plan,
+        )
+
     async def _run_tool_loop(self, ctx: RunContext, *, start_round: int) -> AgentRunResult:
         """Execute the bounded model/tool loop for a fresh or resumed run.
 
@@ -1020,30 +1034,42 @@ class AgentRuntime:
         # Messages appended after this point belong to the current run; anything
         # earlier is conversation history and must not be surfaced as a result.
         first_new_message = len(messages)
-        for round_number in range(start_round, self._max_tool_rounds + 1):
+        # Reserve one formatting-only round, including when the last permitted
+        # tool round produced the first answer. It can never execute tools.
+        for round_number in range(start_round, self._max_tool_rounds + 2):
+            repairing_citations = bool(ctx.citation_draft)
+            if round_number > self._max_tool_rounds and not repairing_citations:
+                break
             if self._cancel_requested(run_id):
                 return self._cancelled_run_result(
                     selected_platform, round_number - 1, events, ctx.plan
                 )
-            await self._publish(event_callback, AgentStreamEvent(type="text_reset"))
+            if not repairing_citations:
+                await self._publish(event_callback, AgentStreamEvent(type="text_reset"))
+            else:
+                ctx.tool_definitions = []
+                ctx.executable_tools = set()
             try:
                 completion = validate_completion(
                     route, events, ctx.plan, completed_tools, tool_specs=tool_specs
                 )
                 response = await self._generate_response_with_retry(
-                    ctx,
+                    replace(ctx, event_callback=None) if repairing_citations else ctx,
                     ModelRequest(
                         messages=messages,
                         tools=ctx.tool_definitions,
-                        tool_choice=completion.tool_choice,
+                        tool_choice="none" if repairing_citations else completion.tool_choice,
                     ),
                     round_number=round_number,
+                    record_reasoning=not repairing_citations,
                 )
             except _RunCancellationRequested:
                 return self._cancelled_run_result(
                     selected_platform, round_number, events, ctx.plan
                 )
             except ModelProviderError as exc:
+                if repairing_citations:
+                    return await self._citation_failure(ctx, round_number, str(exc))
                 event = ToolEvent(
                     round=round_number,
                     tool_call_id=f"model-round-{round_number}",
@@ -1066,6 +1092,8 @@ class AgentRuntime:
                     plan=ctx.plan,
                 )
             except Exception:
+                if repairing_citations:
+                    return await self._citation_failure(ctx, round_number, "来源引用修正未能完成")
                 event = ToolEvent(
                     round=round_number,
                     tool_call_id=f"model-round-{round_number}",
@@ -1087,6 +1115,13 @@ class AgentRuntime:
                     events=events,
                     plan=ctx.plan,
                 )
+            if repairing_citations:
+                patched = apply_citation_patches(ctx.citation_draft, ctx.citation_sources, response)
+                if patched is None:
+                    return await self._citation_failure(ctx, round_number, "来源引用修正未返回有效补丁，已保留原始草稿")
+                response = response.model_copy(update={"content": patched})
+                await self._publish(event_callback, AgentStreamEvent(type="text_reset"))
+                await self._publish(event_callback, AgentStreamEvent(type="text_delta", delta=patched))
             if not response.tool_calls:
                 completion = validate_completion(
                     route, events, ctx.plan, completed_tools, tool_specs=tool_specs
@@ -1137,7 +1172,10 @@ class AgentRuntime:
                     continue
 
             if response.content and not response.tool_calls:
-                allowed_source_urls = _web_source_urls(messages)
+                allowed_source_urls = (
+                    {canonical_url(card["url"]) for card in ctx.citation_sources}
+                    if repairing_citations else _web_source_urls(messages)
+                )
                 if allowed_source_urls:
                     citations_valid, citation_error = validate_web_citations(
                         response.content,
@@ -1158,39 +1196,18 @@ class AgentRuntime:
                             event_callback,
                             AgentStreamEvent(type="agent_event", event=event),
                         )
-                        messages.append(AgentMessage(role="assistant", content=response.content))
-                        messages.append(
-                            AgentMessage(
-                                role="system",
-                                content=(
-                                    f"{citation_error}。请仅依据本轮工具返回的 evidence 重写回答；"
-                                    "每项可核验事实后必须添加 Markdown 来源链接，不得添加其他网址。"
-                                    "若证据不足，明确写“暂未核实”，不要猜测。允许引用的网址："
-                                    + "\n".join(sorted(allowed_source_urls))
-                                ),
-                            )
+                        ctx.citation_draft = response.content
+                        ctx.citation_sources = evidence_cards(messages, response.content)
+                        messages[:] = repair_messages(
+                            ctx.plan.goal if ctx.plan else ctx.user_content,
+                            ctx.user_content, ctx.citation_draft, ctx.citation_sources,
                         )
                         ctx.tool_definitions = []
                         self._checkpoint_run(ctx, rounds_used=round_number)
                         continue
                     if not citations_valid:
-                        return AgentRunResult(
-                            content=(
-                                response.content
-                                + "\n\n> 此回答未通过来源引用校验，请勿将其视为已核验结论。"
-                            ),
-                            provider=self._model_provider,
-                            model_selection=self._current_model_selection(),
-                            platform=selected_platform,
-                            rounds=round_number,
-                            status="failed",
-                            error=ToolError(
-                                code="citation_validation_failed",
-                                message=citation_error,
-                            ),
-                            events=events,
-                            plan=ctx.plan,
-                        )
+                        ctx.citation_draft = ctx.citation_draft or response.content
+                        return await self._citation_failure(ctx, round_number, citation_error)
                     if ctx.citation_retry_used:
                         event = ToolEvent(
                             round=round_number,
@@ -2154,6 +2171,7 @@ class AgentRuntime:
         request: ModelRequest,
         *,
         round_number: int,
+        record_reasoning: bool = True,
     ) -> ModelResponse:
         """Retry transient model failures inside the current bounded round."""
         event_callback = ctx.event_callback
@@ -2178,9 +2196,10 @@ class AgentRuntime:
                         event_callback,
                         AgentStreamEvent(type="agent_event", event=event),
                     )
-                await self._record_reasoning(
-                    response, event_callback, events=events, round_number=round_number,
-                )
+                if record_reasoning:
+                    await self._record_reasoning(
+                        response, event_callback, events=events, round_number=round_number,
+                    )
                 self._note_answering_model(response)
                 return response
             except ModelProviderError as exc:

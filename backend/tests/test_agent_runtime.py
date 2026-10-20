@@ -60,7 +60,7 @@ class CountingTool:
         if self.definition.name == "search_public_web":
             data = {
                 "sources": [{"title": "公开资料", "url": "https://example.com/source", "content": "示例信息"}],
-                "evidence": [{"id": "S1", "url": "https://example.com/source", "excerpt": "示例信息"}],
+                "evidence": [{"id": "S1", "url": "https://example.com/source", "excerpt": "示例信息仅用于验证公开来源的引用流程。"}],
             }
         return ToolResult(ok=True, status="done", message="工具完成", data=data)
 
@@ -293,12 +293,15 @@ class CurrentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "failed")
         self.assertEqual(result.error.code, "tool_not_planned")
 
-    async def test_web_answer_is_rewritten_until_it_cites_tool_source(self) -> None:
+    async def test_web_answer_gets_citations_without_rewriting_its_prose(self) -> None:
         model = ScriptedModel([
             ModelResponse(content='{"goal":"联网检索","steps":[{"tool_name":"search_public_web","title":"检索公开网页"}]}'),
             ModelResponse(tool_calls=[ToolCall(id="web-1", name="search_public_web", arguments={"query": "最新信息"})]),
             ModelResponse(content="示例信息。"),
-            ModelResponse(content="示例信息。[来源](https://example.com/source)"),
+            ModelResponse(content=json.dumps({"patches": [{
+                "action": "cite_after", "target": "示例信息。", "source_id": "C1",
+                "quote": "示例信息仅用于验证公开来源的引用流程。",
+            }]}, ensure_ascii=False)),
         ])
         result = await runtime_for(model, CountingTool("search_public_web")).run("联网查一下最新信息")
         self.assertEqual(result.status, "done")

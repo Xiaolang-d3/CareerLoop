@@ -163,10 +163,14 @@ flowchart TB
 | 参数自愈 | `invalid_arguments` 字段摘要回传模型，每次循环最多修正重试 2 次，优先于重规划 |
 | 同车道重规划 | 有计划且 `needs_plan` 时至多一次，不能扩权；blocked、超时、执行异常不走此路径 |
 | 重复成功调用 | 同名同参数第一次重复跳过并要求推进，再次重复返回 `tool_loop_detected` |
-| 完成与引用 | 必需能力未完成先纠正，同一缺失集合再次出现则失败；用过联网工具后，Markdown 引用须来自本轮来源，可重写一次 |
-| 轮次耗尽 | 默认最多 8 轮；以 `round_limit_reached` 失败，保留本次运行最后一条非空助手正文并附终止说明，不回捞历史回答 |
+| 完成与引用 | 必需能力未完成先纠正，同一缺失集合再次出现则失败；用过联网工具后，Markdown 链接须来自本轮来源，支持中文 / UTF-8 编码和带括号的网址，但不放宽业务查询参数或域名匹配 |
+| 引用修正 | [`citations.py`](../backend/app/agent/citations.py) 只接受结构化 `replace_url` / `cite_after` 补丁。来源 ID 必须来自本轮证据卡，支持引文须为对应片段中至少 12 字的连续原文；程序只修改 URL 或追加引用，禁止改写正文、改变任务或再次调用工具 |
+| 修正失败 | 无效补丁、偏题正文、模型异常或二次引用失败均保留首次回答草稿并标记未完成校验，不使用失败的修正覆盖草稿。补丁缓冲处理，不向聊天流输出 JSON 或格式修正推理 |
+| 轮次耗尽 | 默认最多 8 个执行轮次；可额外进行一次无工具的引用修正。普通耗尽以 `round_limit_reached` 失败，保留本次运行最后一条非空助手正文并附终止说明，不回捞历史回答 |
 
 默认单次工具超时 60 秒；可配置项见 [`config.py`](../backend/app/config.py)。[`tools/limits.py`](../backend/app/tools/limits.py) 统一限制结果：message/错误 ≤4000 字符、data 单串 ≤3000、列表/键 ≤50、深度 ≤6、完整 data JSON ≤32000 字符；URL 完整保留或省略，截断标记为 `truncated: true`。治理后的结果用于上下文、快照、账本与事件。
+
+公开检索在中央治理前先压缩重复正文：来源摘要 / 正文各至多 400 字，证据优先保留 800–1600 字，超预算时先缩短证据再减少尾部来源，网址不截断。证据同时优先纳入搜索摘要，避免网页前部导航挤掉查询相关片段。引用修正使用至多 32 张去重证据卡与当前任务、原草稿构成独立上下文，避免重放整个搜索过程。此校验只约束引用身份与补丁范围，不等于事实支持关系已经得到独立审查。
 
 ## 持久化运行状态
 
@@ -177,6 +181,7 @@ flowchart TB
 | `agent_execution_runs` | `runId` 只属于一个对话；保存输入、冻结模型绑定、联网选项、检查点与终态结果 |
 | `agent_run_steps` / `agent_tool_executions` | 保存计划步骤和按 runId + 调用指纹去重的工具结果；done 可回放，中断的安全读取可重做，结果不明的本地写入禁止重放 |
 | 同一 runId 重连 | 复用原输入、选项和模型版本；中断任务从检查点继续，已完成任务重放结果，不重复追加原用户消息 |
+| 引用修正恢复 | `citation_draft` / `citation_sources` 随检查点保存，旧快照默认空值；修正恢复保持无工具状态，不重新搜索或丢失首次草稿 |
 | 等待用户后继续 | `agent_run_snapshots` 保存计划、消息、完成证据与审批状态；下一确认轮使用新 runId，通过 `parent_run_id` / `resumed_by_run_id` 关联。`requires_query_approval` 默认 false，兼容旧快照并跨恢复保留外发边界 |
 | 普通澄清回复 | 点选选项或自定义答复均重新分析来源与计划；带入最近四条用户任务与澄清问题，最新回复优先。不沿用旧的工具限制、工具原文和轮次预算；需要本地资料时可重新读取 |
 | 改口与待批回复 | 明确放弃 / 换题会清快照；待批搜索 / 写入先处理审批回复。断线检查点恢复仍使用原计划，不重复分类与规划 |
@@ -188,7 +193,7 @@ flowchart TB
 
 | 数据路径 | 约束 |
 | --- | --- |
-| 对话记忆 | `chat/service.py` 按开关、上下文条数与清空截点构建历史和摘要；不形成任务策略记忆 |
+| 对话记忆 | `chat/service.py` 按开关、上下文条数与清空截点构建历史和摘要；来源引用校验失败的回答只带入失败状态，不将失败正文作为事实或用户新要求。原始消息仍保留在界面；不形成任务策略记忆 |
 | 文件库来源 | `library_sources` 为权威目录；文件库 UI 新导入默认仅存档，后端服务/旧 API 的 enabled 默认值仍为 true，调用方须显式传入许可 |
 | 自动参考 | 仅已启用、ready、未回收的来源可进入上下文与索引；禁用/回收移除索引，恢复按启用状态重建 |
 | 隐私与长度 | 默认脱敏，单来源可显式 original；`model_context` 每来源最多 4000 字、总量约 12000 字，长资料用检索 |
@@ -234,6 +239,7 @@ flowchart TB
 | `agent/operations.py` | 路由分布、工具成功率与延迟；前端标签需覆盖当前 `ROUTE_LABELS` |
 | `test_agent_runtime.py` / `test_agent_capability_composition.py` / `test_agent_plan_validator.py` | 路由、能力合成、计划、完成义务、循环收敛 |
 | `test_agent_task_adaptation.py` | 社招任务来源选择、歧义澄清、同类任务纠正、联网许可、跨恢复外发确认、检索相关性与片段计数 |
+| `test_agent_citation_recovery.py` | 引用补丁不改正文、偏题 / 异常保留草稿、最后执行轮次后的修正、无工具恢复、URL 编码与括号、证据预算、失败正文不污染历史与摘要 |
 | `test_agent_egress_policy.py` / `test_tool_approval_policy.py` / `test_tool_harness.py` | 审批、中央参数校验、重试与结果治理 |
 | `test_agent_durable_runtime.py` / `test_agent_run_store.py` / `test_chat_streaming.py` | 检查点、账本、幂等、取消与 AG-UI |
 | `test_library_product.py` / `test_library_sources.py` / `test_knowledge.py` | 当前工具白名单、资料许可与检索 |

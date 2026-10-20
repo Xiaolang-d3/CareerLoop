@@ -155,6 +155,8 @@ class AgentRunSnapshot(BaseModel):
     messages: list[AgentMessage] = Field(default_factory=list)
     replan_used: bool = False
     citation_retry_used: bool = False
+    citation_draft: str = ""
+    citation_sources: list[dict[str, Any]] = Field(default_factory=list)
     rounds_used: int = 0
     clarification: AgentClarification | None = None
     completed_tools: list[str] = Field(default_factory=list)

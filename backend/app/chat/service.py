@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import HTTPException
@@ -47,6 +48,19 @@ def default_conversation_id() -> int:
     return create_conversation()["id"]
 
 
+def _history_content(row: Any) -> str:
+    if row["role"] == "assistant":
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except (ValueError, TypeError):
+            payload = {}
+        agent = payload.get("agent") if isinstance(payload, dict) else None
+        error = agent.get("error") if isinstance(agent, dict) else None
+        if isinstance(error, dict) and error.get("code") == "citation_validation_failed":
+            return "上一轮回答未通过来源引用校验，不能作为已核验事实或新的用户要求。"
+    return row["content"]
+
+
 def agent_history(conversation_id: int, before_message_id: int) -> list[AgentMessage]:
     settings = get_agent_settings()
     if not settings["conversation_memory_enabled"]:
@@ -60,7 +74,7 @@ def agent_history(conversation_id: int, before_message_id: int) -> list[AgentMes
         cutoff = conversation["context_cutoff_message_id"] if conversation else 0
         rows = conn.execute(
             """
-            SELECT role, content FROM chat_messages
+            SELECT role, content, payload_json FROM chat_messages
             WHERE conversation_id = ? AND id < ? AND id > ?
               AND role IN ('user', 'assistant')
             ORDER BY id DESC LIMIT ?
@@ -76,7 +90,7 @@ def agent_history(conversation_id: int, before_message_id: int) -> list[AgentMes
             )
         )
     history.extend(
-        AgentMessage(role=row["role"], content=row["content"])
+        AgentMessage(role=row["role"], content=_history_content(row))
         for row in reversed(rows)
     )
     return history
@@ -101,7 +115,7 @@ def refresh_conversation_summary(conversation_id: int) -> None:
         cutoff = conversation["context_cutoff_message_id"] if conversation else 0
         rows = conn.execute(
             """
-            SELECT role, content FROM chat_messages
+            SELECT role, content, payload_json FROM chat_messages
             WHERE conversation_id = ? AND id > ? AND role IN ('user', 'assistant')
             ORDER BY id DESC
             """,
@@ -109,7 +123,7 @@ def refresh_conversation_summary(conversation_id: int) -> None:
         ).fetchall()
         older = list(reversed(rows[limit : limit + 20]))
         summary = "\n".join(
-            f"{'用户目标' if row['role'] == 'user' else 'Agent结论'}：{' '.join(row['content'].split())[:180]}"
+            f"{'用户目标' if row['role'] == 'user' else 'Agent结论'}：{' '.join(_history_content(row).split())[:180]}"
             for row in older
         )
         conn.execute(
