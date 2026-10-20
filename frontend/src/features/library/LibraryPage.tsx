@@ -715,7 +715,7 @@ export function LibraryPage(props: Props) {
                   ))}
                 </nav>
                 <div className="fl-scope-controls">
-                  <label className="fl-scope-select" title="目录是存放位置，一份文件只属于一个目录">
+                  <label className={`fl-scope-select${folderId !== null || unfiled ? " is-active" : ""}`} title="目录是存放位置，一份文件只属于一个目录">
                     <Folder size={14} />
                     <select aria-label="筛选目录" value={unfiled ? "unfiled" : folderId ?? "all"}
                       onChange={(event) => {
@@ -735,9 +735,9 @@ export function LibraryPage(props: Props) {
                     onRename={(id) => show("renameCollection", [id])} onDelete={(id) => show("deleteCollection", [id])} />
                   <LibraryFilters filters={filters} onChange={(next) => { setFilters(next); setSelected([]); }} />
                   <div className="fl-view-controls">
-                    <button type="button" className="fl-sort" aria-label={ascending ? "按时间从新到旧" : "按时间从旧到新"}
+                    <button type="button" className="fl-sort" aria-pressed={ascending} aria-label={ascending ? "按时间从新到旧" : "按时间从旧到新"}
                       title={ascending ? "当前从旧到新，点击切换" : "当前从新到旧，点击切换"} onClick={() => setAscending(!ascending)}>
-                      <ArrowDownUp size={15} /><span>排序</span>
+                      <ArrowDownUp size={15} /><span>{ascending ? "最早优先" : "最新优先"}</span>
                     </button>
                     <div className="fl-view-switch" role="group" aria-label="文件视图">
                       <button type="button" className="fl-icon-button" aria-label="列表视图" title="列表视图" aria-pressed={!grid} onClick={() => setGrid(false)}><List size={16} /></button>

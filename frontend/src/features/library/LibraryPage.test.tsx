@@ -70,13 +70,55 @@ describe("file library", () => {
     fireEvent.click(screen.getByRole("button", { name: "筛选" }));
     expect(screen.queryByLabelText("筛选来源")).not.toBeInTheDocument();
     expect(screen.getByText("对话成果")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "筛选" })).toHaveClass("is-filtered");
+    expect(screen.getByLabelText("1 个筛选条件")).toHaveTextContent("1");
     fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
+    expect(screen.getByRole("button", { name: "筛选" })).not.toHaveClass("is-filtered");
+    expect(screen.queryByLabelText("1 个筛选条件")).not.toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "AI 使用" })).toBeInTheDocument();
     expect(screen.getByRole("table", { name: "文件列表" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "列表视图" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByRole("button", { name: "网格视图" }));
     expect(screen.getByRole("table")).toHaveClass("fl-grid");
     expect(screen.getByRole("button", { name: "网格视图" })).toHaveAttribute("aria-pressed", "true");
+  });
+  it("keeps directory and collection selection visible until filters are cleared", () => {
+    render(<LibraryPage {...props()}
+      collections={[{ id: 10, name: "阅读", source_ids: [7], file_count: 1 }]} />);
+    const directory = screen.getByLabelText("筛选目录");
+    const collection = screen.getByLabelText("选择主题集合");
+    expect(directory.closest("label")).not.toHaveClass("is-active");
+    fireEvent.change(directory, { target: { value: "unfiled" } });
+    expect(directory.closest("label")).toHaveClass("is-active");
+    expect(screen.getByRole("button", { name: "预览 读书笔记" })).toBeInTheDocument();
+    fireEvent.change(directory, { target: { value: "3" } });
+    expect(directory.closest("label")).toHaveClass("is-active");
+    expect(screen.queryByRole("button", { name: "预览 读书笔记" })).not.toBeInTheDocument();
+    fireEvent.change(collection, { target: { value: "10" } });
+    expect(collection.closest("label")).toHaveClass("is-active");
+    expect(screen.getByRole("button", { name: "预览 读书笔记" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
+    expect(directory).toHaveValue("all");
+    expect(collection).toHaveValue("all");
+    expect(directory.closest("label")).not.toHaveClass("is-active");
+    expect(collection.closest("label")).not.toHaveClass("is-active");
+  });
+  it("shows the selected time order and sorts files accordingly", () => {
+    render(<LibraryPage {...props()} sources={[source,
+      { ...source, id: 8, title: "最新笔记", updated_at: "2026-10-19T00:00:00Z" }]} />);
+    const titles = () => within(screen.getByRole("table", { name: "文件列表" }))
+      .getAllByRole("button", { name: /^预览 / }).map((button) => button.getAttribute("aria-label"));
+    const sort = screen.getByRole("button", { name: "按时间从旧到新" });
+    expect(sort).toHaveTextContent("最新优先");
+    expect(sort).toHaveAttribute("aria-pressed", "false");
+    expect(titles()).toEqual(["预览 最新笔记", "预览 读书笔记"]);
+    fireEvent.click(sort);
+    expect(sort).toHaveTextContent("最早优先");
+    expect(sort).toHaveAttribute("aria-pressed", "true");
+    expect(titles()).toEqual(["预览 读书笔记", "预览 最新笔记"]);
+    fireEvent.click(sort);
+    expect(sort).toHaveTextContent("最新优先");
+    expect(titles()).toEqual(["预览 最新笔记", "预览 读书笔记"]);
   });
   it("previews filenames without selecting and opens the reader without loading the file twice", async () => {
     const p = props();
