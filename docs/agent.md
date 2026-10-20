@@ -1,6 +1,6 @@
 # 灯灯智能体
 
-维护基线：2026-10-19，按当前源码校准。代码决定实际行为；本文记录模块关系、执行约束和修改入口。历史变更查 Git，界面细节与接入说明见文末专题链接。
+维护基线：2026-10-20，按当前源码校准。代码决定实际行为；本文记录模块关系、执行约束和修改入口。历史变更查 Git，界面细节与接入说明见文末专题链接。
 
 ## 架构总览
 
@@ -103,7 +103,8 @@ flowchart TB
   Gate -->|允许执行| Execute --> Loop
   Gate -->|需审批| Wait
   Execute -->|ask_user| Wait
-  Wait -->|后续确认轮| Resume
+  Wait -->|审批答复| Resume
+  Wait -->|普通澄清答复| Route
   Loop -->|最终正文| Finish --> Save
 ```
 
@@ -117,19 +118,23 @@ flowchart TB
 | --- | --- | --- |
 | `conversation` | 无；可由文本信号扩展 | 按显式能力请求决定 |
 | `library_search` | `library.read`、`library.search` | 本地资料读取组成功 |
-| `content_creation` | `library.read`、`library.search` | 本地资料读取组成功 |
+| `content_creation` | 无；按所需来源扩展 | 按私人资料 / 公开来源请求决定 |
 | `library_update` | `library.read`、`library.propose` | 生成待确认知识 |
 | `web_search` | `web.search.generic`，需联网许可 | 公开搜索成功 |
 
-规则路由先识别 kind，未命中且不是简单问候时才调用分类模型；分类器只能选 kind。能力解析合并基线与文本信号，联网开关只授权工具面，不改写原文，也不强制每轮搜索。
+规则路由保留明确资料操作和公开查询的快速路径。开放任务、来源未明确的创作、带否定约束的请求以及普通澄清回复调用分类模型，分别返回 `kind`、`sources`（`private_library` / `public_web`，可为空）与 `needs_planning`。任务类型不决定私人资料来源；整理、写作不再默认读取简历或笔记。旧版仅返回 kind 的分类响应仍可解析。
+
+来源需求由当前请求与澄清上下文判断，再与已注册工具、联网开关交集解析；模型不能自行开启联网或添加工具。明确要求私人资料或公开研究时，对应读取 / 搜索成为完成义务。来源不明可用 `ask_user` 澄清，不把缺少私人资料误报为无法整理公开情况。
 
 | 计划模式 | 条件 | 行为 |
 | --- | --- | --- |
 | `none` | 无路由工具 | 不调用规划模型，仍可用中断工具 `ask_user` |
-| `static` | 单一能力组 | 使用确定性计划 |
-| `llm` | 多能力组 | 调用规划模型；解析失败可用兜底计划，规划调用失败则终止 |
+| `static` | 单一能力组且不需综合研究 | 使用确定性计划 |
+| `llm` | 多能力组或 `needs_planning=true` | 调用规划模型；解析失败可用兜底计划，规划调用失败则终止 |
 
 计划必须满足 `required ⊆ planned ⊆ allowed ⊆ registered`；非法计划返回 `plan_validation_failed`。同组资料读取工具可互相满足完成义务，计划替代工具会被冻结。`ask_user` 始终作为中断工具暴露，不加入车道计划。
+
+研究计划可包含 `expected_output` 与 `success_criteria`，前者展示为交付目标；执行提示要求对照交付目标、证据缺口、来源与时间范围作答。这是模型侧检查指引，尚不构成独立的事实正确性评审。计划仍按工具去重，一个工具可在执行循环中发起多次不同查询。
 
 ## 工具目录
 
@@ -140,16 +145,18 @@ flowchart TB
 | `ask_user` | `read_only` | 返回澄清选项并暂停 |
 | `search_public_web` | `external_read` | Tavily / AgentSearch；受联网许可、配置和外发审批约束 |
 | `get_library_context` | `read_only` | 读取已启用资料与已确认知识，尊重记忆开关和隐私模式 |
-| `search_library` | `read_only` | 检索资料片段和已确认知识，返回来源 |
+| `search_library` | `read_only` | 过滤明显无关的近邻，返回资料来源数、片段数与 `evidence_status` |
 | `propose_library_knowledge` | `local_pending_write` | 只创建 pending 知识，用户审核后才能成为 confirmed |
 
 [`ToolExecutor`](../backend/app/agent/tool_executor.py) 依次执行中央参数校验、handler 超时控制、结果大小治理与审计；模型可见工具还受当前计划限制。`image_generation`、`agent_thinking`、`agent_planner`、`model_provider`、校验器与循环防护均是活动事件，不是新增注册工具。
+
+本地检索工具启用 `search_knowledge(relevant_only=True)`：哈希嵌入要求有非通用检索词的文本重合，语义嵌入按单位向量 L2 距离换算的余弦相似度 ≥0.3 筛选；SQL LIKE 回退保留精确匹配。此门槛用于去除明显无关项，不能保证语义相关性或检索完备性。其他检索调用保持原排序兼容。无结果返回 `evidence_status=empty` 并提示调整查询或使用其他已授权来源，不将“检索成功”解释为“有足够证据”，也不据此断言整个库没有相关内容。
 
 ## 审批、重试与收敛
 
 | 情况 | 执行约束 |
 | --- | --- |
-| 混合任务外发 | `EgressPolicy` 对本地资料 + 公开搜索任务逐条展示查询，未批准不请求搜索、不写工具账本；搜索工具出网前再次复核 |
+| 混合任务外发 | `EgressPolicy` 对本地资料 + 公开搜索任务逐条展示查询，未批准不请求搜索、不写工具账本；搜索工具出网前再次复核。重新规划只保留公开工具时，若澄清上下文来自此前私人资料读取，仍保留该边界 |
 | 外发回复 | 批准仅覆盖规范化后的查询；自定义回复替换查询；拒绝移除联网能力。纯公开搜索使用本轮联网许可，不逐条审批 |
 | 待确认写入 | `confirmed_local_write` 调用按工具名与参数指纹审批；批准后执行，拒绝移除工具。当前五工具没有此风险，接缝由测试覆盖 |
 | 模型与安全工具重试 | 默认各 1 次；工具仅在只读、派生分析、外部读取风险且错误明确 retryable 时重试，本地写入不自动重试 |
@@ -170,8 +177,9 @@ flowchart TB
 | `agent_execution_runs` | `runId` 只属于一个对话；保存输入、冻结模型绑定、联网选项、检查点与终态结果 |
 | `agent_run_steps` / `agent_tool_executions` | 保存计划步骤和按 runId + 调用指纹去重的工具结果；done 可回放，中断的安全读取可重做，结果不明的本地写入禁止重放 |
 | 同一 runId 重连 | 复用原输入、选项和模型版本；中断任务从检查点继续，已完成任务重放结果，不重复追加原用户消息 |
-| 等待用户后继续 | `agent_run_snapshots` 保存计划、消息、完成证据与审批状态；下一确认轮使用新 runId，通过 `parent_run_id` / `resumed_by_run_id` 关联 |
-| 改口与待批回复 | 普通澄清中明显换题会清快照并重新路由；待批搜索/写入先处理审批回复，不能当作普通改口 |
+| 等待用户后继续 | `agent_run_snapshots` 保存计划、消息、完成证据与审批状态；下一确认轮使用新 runId，通过 `parent_run_id` / `resumed_by_run_id` 关联。`requires_query_approval` 默认 false，兼容旧快照并跨恢复保留外发边界 |
+| 普通澄清回复 | 点选选项或自定义答复均重新分析来源与计划；带入最近四条用户任务与澄清问题，最新回复优先。不沿用旧的工具限制、工具原文和轮次预算；需要本地资料时可重新读取 |
+| 改口与待批回复 | 明确放弃 / 换题会清快照；待批搜索 / 写入先处理审批回复。断线检查点恢复仍使用原计划，不重复分类与规划 |
 | 启动 / 取消 | 启动将遗留 queued/running 标为 interrupted；取消同时写持久标记与取消进程内任务，调用等待期间每 250ms 检查标记 |
 | 并发 / 查询 | 同一账户同一对话已有执行任务时返回 409；`GET /agent/runs/current` 返回安全摘要，不暴露原始检查点、参数或工具结果 |
 | 损坏记录 | JSON 容错解码并标记 invalid；损坏的模型绑定、检查点与结果不能作为有效恢复或成功回放依据 |
@@ -225,6 +233,7 @@ flowchart TB
 | `observability/model_monitor.py` | 实际模型、阶段、延迟、错误、用量、估算费用和备用回答 |
 | `agent/operations.py` | 路由分布、工具成功率与延迟；前端标签需覆盖当前 `ROUTE_LABELS` |
 | `test_agent_runtime.py` / `test_agent_capability_composition.py` / `test_agent_plan_validator.py` | 路由、能力合成、计划、完成义务、循环收敛 |
+| `test_agent_task_adaptation.py` | 社招任务来源选择、歧义澄清、同类任务纠正、联网许可、跨恢复外发确认、检索相关性与片段计数 |
 | `test_agent_egress_policy.py` / `test_tool_approval_policy.py` / `test_tool_harness.py` | 审批、中央参数校验、重试与结果治理 |
 | `test_agent_durable_runtime.py` / `test_agent_run_store.py` / `test_chat_streaming.py` | 检查点、账本、幂等、取消与 AG-UI |
 | `test_library_product.py` / `test_library_sources.py` / `test_knowledge.py` | 当前工具白名单、资料许可与检索 |

@@ -108,9 +108,12 @@ def search_knowledge(
     source_types: list[str] | None = None,
     limit: int = 5,
     db_path: str | Path | None = None,
+    *,
+    relevant_only: bool = False,
 ) -> list[dict[str, Any]]:
     if not query.strip():
         return []
+    vector_search = True
     with connect(db_path) as conn:
         try:
             if not _ensure_vectors(conn):
@@ -125,6 +128,7 @@ def search_knowledge(
                 (_serialize(get_embedder().embed(query)), max(limit * 4, 12)),
             ).fetchall()
         except Exception:
+            vector_search = False
             # Safe fallback for environments where native extension loading is disabled.
             candidates = conn.execute(
                 "SELECT *, 1.0 AS distance FROM knowledge_chunks WHERE content LIKE ? LIMIT ?",
@@ -132,6 +136,15 @@ def search_knowledge(
             ).fetchall()
     allowed = set(source_types or [])
     rows = [row_to_dict(row) for row in candidates if not allowed or row["source_type"] in allowed]
+    if relevant_only and vector_search:
+        if get_embedder().spec.backend == "hash":
+            # Hash vectors rank lexical features; collisions are not evidence.
+            terms = _query_terms(query)
+            rows = [row for row in rows if any(term in row["content"].casefold() for term in terms)]
+        else:
+            # Embedders produce unit vectors; sqlite-vec reports L2 distance.
+            # A conservative cosine floor removes clearly unrelated neighbours.
+            rows = [row for row in rows if 1.0 - float(row["distance"]) ** 2 / 2 >= 0.3]
     return [
         {
             **row,
@@ -139,6 +152,14 @@ def search_knowledge(
         }
         for row in rows[:limit]
     ]
+
+
+def _query_terms(query: str) -> set[str]:
+    terms = set(re.findall(r"[a-z0-9][a-z0-9.+#-]*", query.casefold()))
+    generic = {"帮我", "一下", "整理", "大家", "情况", "相关", "资料", "信息", "内容", "请问", "关于", "最近", "近期", "我的"}
+    for run in re.findall(r"[\u4e00-\u9fff]+", query):
+        terms.update(run[index:index + 2] for index in range(len(run) - 1))
+    return terms - generic
 
 
 def list_knowledge_chunks(

@@ -64,7 +64,7 @@ class SearchLibraryTool:
         settings = get_agent_settings(self._db_path)
         if not settings["library_memory_enabled"] or not settings["knowledge_memory_enabled"]:
             return ToolResult(ok=True, status="done", data={"excerpts": [], "facts": [], "disabled": True}, message="知识库读取已关闭")
-        matches = search_knowledge(payload.query, source_types=[SOURCE_TYPE], limit=payload.limit, db_path=self._db_path)
+        matches = search_knowledge(payload.query, source_types=[SOURCE_TYPE], limit=payload.limit, db_path=self._db_path, relevant_only=True)
         excerpts = [
             {"id": item["id"], "source_id": item["source_id"], "title": item.get("title") or "资料",
              "content": str(item.get("content") or "")}
@@ -74,7 +74,17 @@ class SearchLibraryTool:
             fact for fact in model_context(self._db_path)["confirmed_facts"]
             if payload.query.casefold() in fact["statement"].casefold()
         ][:payload.limit]
-        return ToolResult(ok=True, status="done", data={"excerpts": excerpts, "facts": facts}, message=f"找到 {len(excerpts) + len(facts)} 条资料")
+        source_count = len({item["source_id"] for item in excerpts})
+        found = bool(excerpts or facts)
+        message = (
+            f"找到 {source_count} 份资料的 {len(excerpts)} 个相关片段、{len(facts)} 条已确认知识"
+            if found else "本次未检索到相关证据，可调整查询或使用其他已授权来源；这不代表资料库中一定不存在相关内容"
+        )
+        return ToolResult(
+            ok=True, status="done",
+            data={"excerpts": excerpts, "facts": facts, "source_count": source_count, "evidence_status": "found" if found else "empty"},
+            message=message,
+        )
 
 
 class ProposeLibraryKnowledgeTool:

@@ -60,6 +60,7 @@ from .orchestration import (
     TaskRoute,
     classifier_prompt,
     parse_plan,
+    parse_task_understanding,
     planner_prompt,
     refine_route_from_classifier,
     replan_prompt,
@@ -71,7 +72,7 @@ from .orchestration import (
 )
 from .plan_builder import fallback_plan, plan_mode
 from .plan_validator import freeze_route_requirements, validate_plan
-from .resume_policy import clarification_from_events, resolve_resume_snapshot
+from .resume_policy import clarification_context, clarification_from_events, needs_reply_replanning, resolve_resume_snapshot
 from .run_store import AgentRunStore, REPLAYABLE_RUN_STATUSES
 from .tool_executor import ToolExecutor
 
@@ -289,6 +290,9 @@ class AgentRuntime:
         run_id: str | None = None,
         model_selection: dict[str, Any] | None = None,
     ) -> AgentRunResult:
+        task_context: str | None = None
+        private_context = False
+        inherited_selection = None
         if resume is None or resume.resume_mode != "checkpoint":
             resume = resolve_resume_snapshot(
                 user_content,
@@ -304,6 +308,7 @@ class AgentRuntime:
             resume = None
         options = web_search_options
         if resume is not None:
+            inherited_selection = resume.model_selection
             inherited = resume.web_search_options
             if inherited is None:
                 original_user = next((message for message in reversed(resume.messages) if message.role == "user"), None)
@@ -313,13 +318,14 @@ class AgentRuntime:
             elif options != inherited:
                 # A confirmation with changed consent is a fresh plan with fresh
                 # tool permissions; completed context is preserved for the model.
-                original_content = "\n".join(message.content for message in resume.messages if message.role == "user")
-                history = [*resume.messages]
-                routing_content = original_content + "\n" + user_content
+                task_context, history, private_context = clarification_context(resume)
                 resume = None
+        if resume is not None and needs_reply_replanning(resume):
+            task_context, history, private_context = clarification_context(resume)
+            resume = None
         if options is not None:
             web_search_mode = legacy_web_search_mode(options)
-        selection = internal_model_selection(model_selection or self._model_selection)
+        selection = internal_model_selection(model_selection or inherited_selection or self._model_selection)
         if resume is not None:
             # A legacy checkpoint has no evidence about its previous model.
             selection = internal_model_selection(resume.model_selection)
@@ -356,6 +362,7 @@ class AgentRuntime:
                 conversation_id=conversation_id, task_id=task_id, event_callback=event_callback,
                 image_urls=image_urls, routing_content=routing_content, web_search_mode=web_search_mode,
                 resume=resume, run_id=run_id,
+                task_context=task_context, private_context=private_context,
             )
             result.model_selection = self._current_model_selection()
             return result
@@ -379,6 +386,8 @@ class AgentRuntime:
         web_search_mode: str = "auto",
         resume: AgentRunSnapshot | None = None,
         run_id: str | None = None,
+        task_context: str | None = None,
+        private_context: bool = False,
     ) -> AgentRunResult:
         provider = self._models.get(self._model_provider)
         selected_platform = platform_name or self._platform_name
@@ -417,12 +426,17 @@ class AgentRuntime:
             available_tools,
             tool_specs=tool_specs,
         )
-        if should_classify_kind(route, routing_text):
+        classification_content = (
+            f"先前用户任务与澄清：\n{task_context}\n本轮最新答复（优先）：\n{user_content}"
+            if task_context is not None else routing_text
+        )
+        needs_public_web = requests_public_web(routing_text)
+        if task_context is not None or should_classify_kind(route, routing_text):
             try:
                 classified = await self._generate_for_stage(
                     provider, "classify",
                     ModelRequest(
-                        messages=[AgentMessage(role="user", content=classifier_prompt(routing_text))],
+                        messages=[AgentMessage(role="user", content=classifier_prompt(classification_content))],
                     )
                 )
                 route = refine_route_from_classifier(
@@ -431,7 +445,14 @@ class AgentRuntime:
                     available_tools,
                     classified,
                     tool_specs=tool_specs,
+                    force=task_context is not None,
                 )
+                understanding = parse_task_understanding(classified)
+                if understanding is not None:
+                    if understanding.sources is not None:
+                        needs_public_web = understanding.kind == "web_search" or "public_web" in understanding.sources
+                    else:
+                        needs_public_web |= understanding.kind == "web_search"
             except ModelProviderError as exc:
                 if exc.code in {"model_capability_unavailable", "model_context_limit", "model_not_configured"}:
                     raise
@@ -444,16 +465,17 @@ class AgentRuntime:
                 tool_call_id="agent-thinking",
                 tool_name="agent_thinking",
                 status="done",
-                message=route_summary(route),
-                data={"route": route.kind, "allowed_tools": list(route.allowed_tools)},
+                message=("已根据最新答复重新分析目标与信息来源。" if task_context is not None else "") + route_summary(route),
+                data={"route": route.kind, "allowed_tools": list(route.allowed_tools), "replanned_after_reply": task_context is not None},
             )
         ]
         await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=events[0]))
         unresolved_error: ToolError | None = None
 
+        task_goal = (f"最新要求：{user_content}\n原任务：{task_context}" if task_context is not None else user_content)
         mode = plan_mode(route, tool_specs)
         if mode == "static":
-            plan = fallback_plan(user_content, route, tool_specs)
+            plan = fallback_plan(task_goal, route, tool_specs)
             event = ToolEvent(
                 round=0,
                 tool_call_id="agent-plan",
@@ -472,12 +494,12 @@ class AgentRuntime:
                         messages=[
                             AgentMessage(
                                 role="user",
-                                content=planner_prompt(user_content, route, tool_specs),
+                                content=planner_prompt(task_goal, route, tool_specs),
                             )
                         ]
                     )
                 )
-                plan = parse_plan(planning_response, user_content, route, tool_specs)
+                plan = parse_plan(planning_response, task_goal, route, tool_specs)
             except ModelProviderError as exc:
                 event = ToolEvent(
                         round=0,
@@ -560,7 +582,7 @@ class AgentRuntime:
             route = freeze_route_requirements(route, plan, tool_specs)
         egress = self._egress_context.get()
         if egress is not None:
-            egress.mixed = is_mixed_run(route, tool_specs)
+            egress.mixed = private_context or is_mixed_run(route, tool_specs)
 
         conversation_history = history or []
         messages = [*conversation_history]
@@ -572,7 +594,10 @@ class AgentRuntime:
                     role="system",
                     content=(
                         "当前任务已经过规划。只执行计划中允许的工具；每次根据工具结果判断下一步。"
+                        f"本次任务的 UTC 日期：{datetime.now(timezone.utc).date().isoformat()}。"
                         "工具失败时不要自行换车道或发明经历；系统最多同车道重规划一次。"
+                        "最终答复须对照 expected_output 和 success_criteria 检查是否回应用户目标；"
+                        "检索无结果、证据不相关或未核实的部分应明确说明，不得仅因工具成功就宣称完成。"
                         "计划："
                         + plan.model_dump_json()
                     ),
@@ -585,7 +610,7 @@ class AgentRuntime:
             ))
         if egress is not None and egress.mixed:
             messages.append(AgentMessage(role="system", content=mixed_run_notice()))
-        if "search_public_web" not in available_tools and requests_public_web(routing_text):
+        if "search_public_web" not in available_tools and needs_public_web:
             messages.append(AgentMessage(
                 role="system",
                 content=(
@@ -669,7 +694,7 @@ class AgentRuntime:
         tool_specs = {spec.name: spec for spec in self._tools.specs()}
         egress = self._egress_context.get()
         if egress is not None:
-            egress.mixed = is_mixed_run(route, tool_specs)
+            egress.mixed = resume.requires_query_approval or is_mixed_run(route, tool_specs)
         events: list[ToolEvent] = [
             ToolEvent(
                 round=0,
@@ -901,6 +926,7 @@ class AgentRuntime:
             repeated_tool_calls=ctx.repeated_tool_calls,
             approved_tool_fingerprints=list(approval.approved) if approval else [],
             pending_tool_approval=approval.pending if approval else None,
+            requires_query_approval=bool(egress and egress.mixed),
         )
 
     def _checkpoint_run(self, ctx: RunContext, *, rounds_used: int) -> None:
@@ -1438,6 +1464,15 @@ class AgentRuntime:
                         },
                     )
                 )
+                if tool_call.name == "search_library" and result.data.get("evidence_status") == "empty":
+                    messages.append(AgentMessage(
+                        role="system",
+                        content=(
+                            "本次本地检索未得到相关证据，不能据此回答事实问题或声称整个资料库没有相关内容。"
+                            "应调整有意义的查询或使用计划中其他已授权来源；避免仅换措辞重复检索。"
+                            "仍无证据时说明具体缺口，只询问真正影响继续执行的信息，不要求重复上传无关资料。"
+                        ),
+                    ))
                 if result.status in {"failed", "blocked"}:
                     if (
                         result.status == "failed"

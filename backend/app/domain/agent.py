@@ -116,6 +116,8 @@ class AgentPlan(BaseModel):
     route: str = Field(min_length=1)
     steps: list[AgentPlanStep] = Field(default_factory=list)
     requires_confirmation: bool = False
+    expected_output: str = Field(default="", max_length=500)
+    success_criteria: list[str] = Field(default_factory=list, max_length=6)
 
 
 class ClarificationOption(BaseModel):
@@ -162,6 +164,7 @@ class AgentRunSnapshot(BaseModel):
     pending_search_queries: list[str] = Field(default_factory=list)
     approved_tool_fingerprints: list[str] = Field(default_factory=list)
     pending_tool_approval: PendingToolApproval | None = None
+    requires_query_approval: bool = False
 
 
 class AgentRunResult(BaseModel):

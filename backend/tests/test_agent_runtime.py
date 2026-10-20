@@ -233,6 +233,7 @@ class CurrentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
         tool = CaptureTool("search_public_web")
         model = ScriptedModel([
+            ModelResponse(content='{"kind":"web_search","sources":["public_web"]}'),
             ModelResponse(tool_calls=[ToolCall(id="research", name="search_public_web", arguments={"query": "这家"})]),
             ModelResponse(content="已研究。[来源](https://example.com/source)"),
         ])
@@ -248,7 +249,10 @@ class CurrentRuntimeTest(unittest.IsolatedAsyncioTestCase):
             clarification=AgentClarification(question="要研究哪家？", options=[ClarificationOption(label="这家")]),
         )
         tool = CountingTool("search_public_web")
-        model = ScriptedModel([ModelResponse(tool_calls=[ToolCall(id="forbidden", name="search_public_web", arguments={})])])
+        model = ScriptedModel([
+            ModelResponse(content='{"kind":"web_search","sources":["public_web"]}'),
+            ModelResponse(tool_calls=[ToolCall(id="forbidden", name="search_public_web", arguments={})]),
+        ])
         result = await runtime_for(model, tool).run("这家", resume=snapshot, run_id="new-confirmation",
                                                   web_search_options=WebSearchOptions(enabled=False, topic="news", provider="tavily"))
         self.assertEqual(tool.calls, 0)
