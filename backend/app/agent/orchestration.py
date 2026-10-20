@@ -123,10 +123,11 @@ def classifier_prompt(content: str) -> str:
     lanes = "\n".join(f"- {kind}: {label}" for kind, label in ROUTE_LABELS.items())
     today = datetime.now(timezone.utc).date().isoformat()
     return f"""分析用户当前要完成的任务及所需的信息来源。当前 UTC 日期：{today}。
-只返回 JSON：{{"kind":"车道名","sources":["private_library","public_web"],"needs_planning":false}}
+只返回 JSON：{{"kind":"车道名","goal":"结合上下文还原的当前完整目标","sources":["private_library","public_web"],"needs_planning":false}}
 允许的车道：
 {lanes}
 规则：kind 描述任务类型，sources 独立描述必要的信息来源，可以为空数组。
+goal 应保留用户要求的主题、范围和交付物；“继续”“第二个”等短回复须结合最近用户请求还原，不得把历史助手的推测当作用户目标。
 private_library 仅用于用户要求基于已保存的私人资料；总结、写作、研究本身不意味着要读取私人资料。
 public_web 用于需要核实的近期情况、市场行情、公众讨论或用户要求的公开检索。一般知识问答、改写用户已提供文本不需要搜索。
 “大家的讨论”可能指公开平台，也可能指用户已有聊天记录；来源不明确时不要自行认定为私人知识库，可先澄清。
@@ -140,6 +141,7 @@ library_search 仅用于检索私人资料。不要因为历史中出现简历�
 
 class TaskUnderstanding(BaseModel):
     kind: Literal["conversation", "library_search", "library_update", "content_creation", "web_search"]
+    goal: str = Field(default="", max_length=300)
     # None supports kind-only output from older configured classifiers.
     sources: list[Literal["private_library", "public_web"]] | None = Field(default=None, max_length=2)
     needs_planning: bool = Field(default=False, strict=True)

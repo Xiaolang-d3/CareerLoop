@@ -106,6 +106,28 @@ def test_research_plan_runs_public_search_without_reading_resume():
     asyncio.run(scenario())
 
 
+def test_short_followup_understands_recent_user_goal_before_planning():
+    async def scenario():
+        complete_goal = "整理近期公开社招行情与平台讨论，不围绕个人简历"
+        understanding = ModelResponse(content=json.dumps({
+            "kind": "content_creation", "goal": complete_goal,
+            "sources": ["public_web"], "needs_planning": True,
+        }))
+        model = ScriptedModel([understanding, PUBLIC_PLAN, web_call(),
+                               ModelResponse(content="公开材料摘要。[来源](https://example.com/source)")])
+        search = CountingTool("search_public_web")
+        result = await runtime_for(model, search).run(
+            "继续", history=[AgentMessage(role="user", content=complete_goal),
+                             AgentMessage(role="assistant", content="此前助手的错误猜测：围绕个人简历")],
+            web_search_options=WebSearchOptions(enabled=True),
+        )
+        assert result.status == "done" and search.calls == 1
+        assert complete_goal in model.requests[0].messages[0].content
+        assert "此前助手的错误猜测" not in model.requests[0].messages[0].content
+        assert complete_goal in model.requests[1].messages[0].content
+    asyncio.run(scenario())
+
+
 def test_ambiguous_discussion_can_clarify_then_replan_for_public_evidence():
     async def scenario():
         model = ScriptedModel([

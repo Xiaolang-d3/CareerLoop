@@ -426,10 +426,16 @@ class AgentRuntime:
             available_tools,
             tool_specs=tool_specs,
         )
+        recent_user_context = "\n".join(
+            message.content[:1000] for message in (history or []) if message.role == "user"
+        )[-4000:]
         classification_content = (
             f"先前用户任务与澄清：\n{task_context}\n本轮最新答复（优先）：\n{user_content}"
-            if task_context is not None else routing_text
+            if task_context is not None else
+            f"最近用户请求（仅供理解指代）：\n{recent_user_context}\n本轮最新请求（优先）：\n{routing_text}"
+            if recent_user_context else routing_text
         )
+        task_goal = (f"最新要求：{user_content}\n原任务：{task_context}" if task_context is not None else user_content)
         needs_public_web = requests_public_web(routing_text)
         if task_context is not None or should_classify_kind(route, routing_text):
             try:
@@ -449,6 +455,8 @@ class AgentRuntime:
                 )
                 understanding = parse_task_understanding(classified)
                 if understanding is not None:
+                    if understanding.goal.strip():
+                        task_goal = understanding.goal.strip()
                     if understanding.sources is not None:
                         needs_public_web = understanding.kind == "web_search" or "public_web" in understanding.sources
                     else:
@@ -472,7 +480,6 @@ class AgentRuntime:
         await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=events[0]))
         unresolved_error: ToolError | None = None
 
-        task_goal = (f"最新要求：{user_content}\n原任务：{task_context}" if task_context is not None else user_content)
         mode = plan_mode(route, tool_specs)
         if mode == "static":
             plan = fallback_plan(task_goal, route, tool_specs)
