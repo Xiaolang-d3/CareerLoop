@@ -157,6 +157,7 @@ class AgentRunSnapshot(BaseModel):
     citation_retry_used: bool = False
     citation_draft: str = ""
     citation_sources: list[dict[str, Any]] = Field(default_factory=list)
+    citation_allowed_urls: list[str] = Field(default_factory=list)
     rounds_used: int = 0
     clarification: AgentClarification | None = None
     completed_tools: list[str] = Field(default_factory=list)

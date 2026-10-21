@@ -80,9 +80,107 @@ def test_runtime_repairs_last_round_without_another_search_or_streaming_json():
         assert result.content == DRAFT.replace("https://invented.example/report", URL)
         assert result.rounds == 3
         assert model.requests[-1].tools == [] and model.requests[-1].tool_choice == "none"
+        assert model.requests[-1].reasoning_effort == "low"
+        assert model.requests[-1].parameters["max_output_tokens"] == 3000
         assert not any('"patches"' in part for part in streamed)
         assert result.events[-1].tool_name == "citation_validator" and result.events[-1].status == "done"
     asyncio.run(scenario())
+
+
+def test_oversized_draft_does_not_start_another_model_request():
+    async def scenario():
+        draft = DRAFT + "超长草稿" * 7000
+        model = ScriptedModel([web_call(), ModelResponse(content=draft)])
+        result = await runtime_for(model, EvidenceTool()).run("联网整理社招讨论")
+        assert result.status == "failed" and result.content.startswith(draft)
+        assert "超出引用修正预算" in result.error.message
+        assert len(model.requests) == 2
+    asyncio.run(scenario())
+
+
+def test_retryable_repair_timeout_is_not_retried():
+    async def scenario():
+        model = ScriptedModel([web_call(), ModelResponse(content=DRAFT),
+            ModelProviderError("request_timeout", "模型超时", retryable=True), patch_response()])
+        tool = EvidenceTool()
+        result = await runtime_for(model, tool).run("联网整理社招讨论")
+        assert result.status == "failed" and result.content.startswith(DRAFT)
+        assert len(model.requests) == 3 and tool.calls == 1
+        assert not any(event.tool_call_id.startswith("model-retry") for event in result.events)
+    asyncio.run(scenario())
+
+
+def test_repair_deadline_cancels_provider_and_preserves_draft(monkeypatch):
+    from app.agent import runtime as runtime_module
+    monkeypatch.setattr(runtime_module, "CITATION_REPAIR_TIMEOUT_SECONDS", 0.01)
+    class HangingRepair(ScriptedModel):
+        cancelled = False
+        async def generate(self, request):
+            if request.tool_choice == "none" and request.reasoning_effort == "low":
+                self.requests.append(request)
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    self.cancelled = True
+            return await super().generate(request)
+    async def scenario():
+        model = HangingRepair([web_call(), ModelResponse(content=DRAFT)])
+        result = await runtime_for(model, EvidenceTool()).run("联网整理社招讨论")
+        assert result.status == "failed" and result.content.startswith(DRAFT)
+        assert "引用修正超时" in result.error.message
+        assert model.cancelled and len(model.requests) == 3
+    asyncio.run(scenario())
+
+
+def test_repair_card_ranking_focuses_on_bad_link_and_preserves_full_allowlist():
+    valid = [f"https://example.com/valid/{i}" for i in range(40)]
+    draft = "\n".join(f"已有结论{i}。[有效]({url})" for i, url in enumerate(valid))
+    claim = "专项招聘活动提供四万七千个社会招聘岗位。"
+    draft += f"\n{claim}[招聘活动](https://unknown.example/child)"
+    source = "https://example.com/parent"
+    messages = [AgentMessage(role="tool", payload={"tool_name": "search_public_web", "sources": [
+        *[{"url": url, "title": "已有资料", "content": "其他就业信息" * 200} for url in valid],
+        {"url": source, "title": "招聘活动", "content": claim * 50},
+    ]})]
+    cards = evidence_cards(messages, draft)
+    assert cards[0]["url"] == source and len(cards) <= 8
+    compact = repair_messages("社招", "整理社招", draft, cards, allowed_urls=set(valid + [source]))
+    payload = json.loads(compact[1].content)
+    assert payload["invalid_urls"] == ["https://unknown.example/child"]
+    assert len(compact[1].content) <= 24000
+    assert payload["draft"] == draft
+    async def scenario():
+        snapshot = AgentRunSnapshot(resume_mode="checkpoint", route_kind="web_search", needs_plan=False,
+            allowed_tools=["search_public_web"], required_tools=["search_public_web"], completed_tools=["search_public_web"], rounds_used=2,
+            citation_retry_used=True, citation_draft=draft, citation_sources=cards, citation_allowed_urls=valid + [source],
+            messages=compact, web_search_options=WebSearchOptions(enabled=True))
+        restored = AgentRunSnapshot.model_validate_json(snapshot.model_dump_json())
+        model = ScriptedModel([patch_response(target="https://unknown.example/child", quote=claim)])
+        result = await runtime_for(model, EvidenceTool(), max_rounds=2).run("整理社招", resume=restored)
+        assert result.status == "done"
+        assert result.content == draft.replace("https://unknown.example/child", source)
+    asyncio.run(scenario())
+
+
+def test_web_model_context_is_bounded_deduplicated_and_does_not_mutate_audit():
+    from app.agent.research_context import MAX_WEB_CONTEXT_CHARS, web_context_messages
+    messages = [AgentMessage(role="user", content="社招讨论"), AgentMessage(role="assistant", payload={"signed_reasoning": "opaque", "tool_calls": []})]
+    for index in range(11):
+        sources = [{"url": f"https://example.com/report/{j}?business=2026", "title": "社招公开报告", "snippet": QUOTE, "content": "重复网页正文" * 400} for j in range(index * 5, index * 5 + 8)]
+        messages.append(AgentMessage(role="tool", tool_call_id=f"tool-{index}", content="找到资料", payload={"tool_name": "search_public_web", "query": f"社招 {index}", "status": "done", "sources": sources, "evidence": build_evidence_bundle(sources)}))
+    before = [m.model_dump_json() for m in messages]
+    projected = web_context_messages(messages)
+    tools = [m for m in projected if m.role == "tool"]
+    assert sum(len(json.dumps(m.payload, ensure_ascii=False)) for m in tools) <= MAX_WEB_CONTEXT_CHARS
+    assert [m.tool_call_id for m in tools] == [f"tool-{i}" for i in range(11)]
+    urls = [s["url"] for m in tools for s in m.payload["sources"]]
+    assert len(urls) == len(set(urls))
+    assert set(urls) == {f"https://example.com/report/{j}?business=2026" for j in range(58)}
+    assert all("?business=2026" in url for url in urls)
+    assert any(len(s["excerpt"]) >= 800 for m in tools for s in m.payload["sources"])
+    assert any(QUOTE in s["excerpt"] for m in tools for s in m.payload["sources"])
+    assert projected[0] is messages[0] and projected[1] is messages[1]
+    assert [m.model_dump_json() for m in messages] == before
 
 @pytest.mark.parametrize("repair", [
     ModelResponse(content="不能把社招统一改成校园招聘；上一份纪要保持原样。"),

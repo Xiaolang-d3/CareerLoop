@@ -13,6 +13,23 @@ from ..domain import AgentMessage, ModelResponse
 # Inline Markdown destinations, including one balanced pair of parentheses.
 _LINK = re.compile(r"\[(?:\\.|[^\]\\])*\]\(\s*(?P<url><?https?://(?:\\.|[^\s()<>\\]|\([^\s()]*\))+>?)\s*\)")
 _PERCENT = re.compile(r"%[0-9a-fA-F]{2}")
+MAX_REPAIR_CONTEXT_CHARS = 24000
+
+
+def _grams(text: str) -> set[str]:
+    text = re.sub(r"\s+", "", text.lower())
+    return {text[index:index + 4] for index in range(max(0, len(text) - 3))}
+
+
+def _repair_focus(draft: str, allowed: set[str]) -> str:
+    # A bad link needs evidence for its sentence, not every other assertion in
+    # the report. Keep enough preceding text to include the cited claim.
+    return "\n".join(
+        draft[max(draft.rfind("\n", 0, match.start()) + 1, match.start() - 500):match.start()]
+        + match.group(0).split("](", 1)[0]
+        for match in _LINK.finditer(draft)
+        if canonical_url(match.group("url")) not in allowed
+    )
 
 
 def canonical_url(value: str) -> str:
@@ -54,11 +71,27 @@ def evidence_cards(messages: list[AgentMessage], draft: str) -> list[dict]:
             if key not in cards or len(excerpt) > len(cards[key]["excerpt"]):
                 cards[key] = card
     cited = cited_urls(draft)
-    ranked = sorted(cards.items(), key=lambda item: (item[0] not in cited, not bool(item[1]["published_at"])))
-    return [{**card, "id": f"C{index}"} for index, (_, card) in enumerate(ranked[:32], start=1)]
+    focus = _repair_focus(draft, set(cards))
+    focus_grams = _grams(focus)
+    ranked = sorted(cards.items(), key=lambda item: (
+        -len(focus_grams & _grams(item[1]["title"] + item[1]["excerpt"])) if focus else item[0] not in cited,
+        not bool(item[1]["published_at"]),
+    ))
+    return [{**card, "id": f"C{index}"} for index, (_, card) in enumerate(ranked[:8 if focus else 16], start=1)]
 
 
-def repair_messages(goal: str, user_request: str, draft: str, cards: list[dict]) -> list[AgentMessage]:
+def repair_messages(goal: str, user_request: str, draft: str, cards: list[dict], *, allowed_urls: set[str] | None = None) -> list[AgentMessage]:
+    allowed = {canonical_url(url) for url in (allowed_urls or {card["url"] for card in cards})}
+    invalid_urls = sorted(cited_urls(draft) - allowed)
+    sources = [{**card, "excerpt": card["excerpt"][:1000], "id": card.get("id") or f"C{index}"} for index, card in enumerate(cards, start=1)]
+    payload = {
+        "current_task": goal, "latest_user_request": user_request,
+        "draft": draft, "invalid_urls": invalid_urls, "sources": sources,
+    }
+    # Keep URLs and the immutable draft intact; omit lower-ranked cards rather
+    # than clipping identities or diluting every evidence excerpt to a few words.
+    while sources and len(json.dumps(payload, ensure_ascii=False)) > MAX_REPAIR_CONTEXT_CHARS:
+        sources.pop()
     return [
         AgentMessage(role="system", content=(
             "本轮仅修正当前回答的来源引用，禁止重新解释用户目标、改写正文或新增事实，禁止调用工具。"
@@ -69,12 +102,10 @@ def repair_messages(goal: str, user_request: str, draft: str, cards: list[dict])
             "\"quote\":\"该来源 excerpt 中支持这句话的连续原文\"}]}。"
             "quote 至少 12 个字符，必须逐字来自该 source_id 对应的 excerpt；target 必须逐字来自 draft。"
             "replace_url 只能替换已存在的 Markdown 链接网址；cite_after 只在原句后添加引用。"
+            "invalid_urls 非空时，只返回修正这些网址所需的 replace_url，不要改动已有的有效引用或追加其他引用。"
             "不能确定来源支持关系时返回空 patches，不得猜测、编造网址、输出改写后的正文或更改社招/校招等主题。"
         )),
-        AgentMessage(role="user", content=json.dumps({
-            "current_task": goal, "latest_user_request": user_request,
-            "draft": draft, "sources": [{**card, "id": card.get("id") or f"C{index}"} for index, card in enumerate(cards, start=1)],
-        }, ensure_ascii=False)),
+        AgentMessage(role="user", content=json.dumps(payload, ensure_ascii=False)),
     ]
 
 

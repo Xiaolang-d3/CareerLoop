@@ -8,7 +8,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextvars import ContextVar
 from copy import deepcopy
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any, Literal
@@ -45,7 +45,8 @@ from .approval_policy import (
 )
 from .capability_resolver import is_mixed_run, requests_public_web
 from .completion import validate_completion
-from .citations import apply_citation_patches, canonical_url, cited_urls, evidence_cards, repair_messages
+from .citations import MAX_REPAIR_CONTEXT_CHARS, apply_citation_patches, canonical_url, cited_urls, evidence_cards, repair_messages
+from .research_context import web_context_messages
 from .egress_policy import (
     APPROVAL_REQUIRED,
     SEARCH_TOOL_NAME,
@@ -80,6 +81,8 @@ from .tool_executor import ToolExecutor
 StreamCallback = Callable[[AgentStreamEvent], Awaitable[None]]
 WEB_RESEARCH_TOOLS = {"search_public_web"}
 MAX_INVALID_ARGUMENT_RETRIES = 2
+CITATION_REPAIR_TIMEOUT_SECONDS = 30
+CITATION_REPAIR_MAX_OUTPUT_TOKENS = 3000
 COMPANY_REFERENCE_PHRASES = ("这家公司", "该公司", "这个公司", "这家企业", "该企业")
 COMPANY_SUFFIX = r"(?:有限责任公司|股份有限公司|有限公司)"
 COMPANY_CONTEXT_PATTERNS = (
@@ -199,6 +202,7 @@ class RunContext:
     citation_retry_used: bool = False
     citation_draft: str = ""
     citation_sources: list[dict[str, Any]] = field(default_factory=list)
+    citation_allowed_urls: list[str] = field(default_factory=list)
 
 
 class AgentRuntime:
@@ -735,6 +739,7 @@ class AgentRuntime:
             citation_retry_used=resume.citation_retry_used,
             citation_draft=resume.citation_draft,
             citation_sources=resume.citation_sources,
+            citation_allowed_urls=resume.citation_allowed_urls,
         )
         approval = self._approval_context.get()
         if resume.resume_mode == "waiting_user":
@@ -922,6 +927,7 @@ class AgentRuntime:
             citation_retry_used=ctx.citation_retry_used,
             citation_draft=ctx.citation_draft,
             citation_sources=ctx.citation_sources,
+            citation_allowed_urls=ctx.citation_allowed_urls,
             rounds_used=rounds_used,
             clarification=clarification,
             completed_tools=sorted(ctx.completed_tools),
@@ -1053,16 +1059,16 @@ class AgentRuntime:
                 completion = validate_completion(
                     route, events, ctx.plan, completed_tools, tool_specs=tool_specs
                 )
-                response = await self._generate_response_with_retry(
-                    replace(ctx, event_callback=None) if repairing_citations else ctx,
-                    ModelRequest(
-                        messages=messages,
-                        tools=ctx.tool_definitions,
-                        tool_choice="none" if repairing_citations else completion.tool_choice,
-                    ),
-                    round_number=round_number,
-                    record_reasoning=not repairing_citations,
-                )
+                if repairing_citations:
+                    response = await self._generate_citation_repair(ctx)
+                else:
+                    response = await self._generate_response_with_retry(
+                        ctx, ModelRequest(
+                            messages=web_context_messages(messages),
+                            tools=ctx.tool_definitions,
+                            tool_choice=completion.tool_choice,
+                        ), round_number=round_number,
+                    )
             except _RunCancellationRequested:
                 return self._cancelled_run_result(
                     selected_platform, round_number, events, ctx.plan
@@ -1173,7 +1179,7 @@ class AgentRuntime:
 
             if response.content and not response.tool_calls:
                 allowed_source_urls = (
-                    {canonical_url(card["url"]) for card in ctx.citation_sources}
+                    set(ctx.citation_allowed_urls) or {canonical_url(card["url"]) for card in ctx.citation_sources}
                     if repairing_citations else _web_source_urls(messages)
                 )
                 if allowed_source_urls:
@@ -1198,9 +1204,11 @@ class AgentRuntime:
                         )
                         ctx.citation_draft = response.content
                         ctx.citation_sources = evidence_cards(messages, response.content)
+                        ctx.citation_allowed_urls = sorted(allowed_source_urls)
                         messages[:] = repair_messages(
                             ctx.plan.goal if ctx.plan else ctx.user_content,
                             ctx.user_content, ctx.citation_draft, ctx.citation_sources,
+                            allowed_urls=allowed_source_urls,
                         )
                         ctx.tool_definitions = []
                         self._checkpoint_run(ctx, rounds_used=round_number)
@@ -2164,6 +2172,29 @@ class AgentRuntime:
         events.append(event)
         if not response.provider_metadata.get("reasoning_streamed"):
             await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
+
+    async def _generate_citation_repair(self, ctx: RunContext) -> ModelResponse:
+        # One bounded formatting attempt, using the immutable draft on restore.
+        messages = repair_messages(
+            ctx.plan.goal if ctx.plan else ctx.user_content, ctx.user_content,
+            ctx.citation_draft, ctx.citation_sources,
+            allowed_urls=set(ctx.citation_allowed_urls) or None,
+        )
+        if len(messages[1].content) > MAX_REPAIR_CONTEXT_CHARS:
+            raise ModelProviderError("citation_repair_budget", "草稿超出引用修正预算，已保留原始草稿")
+        request = ModelRequest(
+            messages=messages, tools=[], tool_choice="none", reasoning_effort="low",
+            parameters={"max_output_tokens": CITATION_REPAIR_MAX_OUTPUT_TOKENS},
+        )
+        try:
+            response = await self._await_with_cancellation(
+                asyncio.wait_for(self._generate_response(ctx.provider, request, None), timeout=CITATION_REPAIR_TIMEOUT_SECONDS),
+                ctx.run_id,
+            )
+        except TimeoutError as exc:
+            raise ModelProviderError("citation_repair_timeout", "来源引用修正超时，已保留原始草稿") from exc
+        self._note_answering_model(response)
+        return response
 
     async def _generate_response_with_retry(
         self,
