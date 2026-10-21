@@ -267,4 +267,4 @@ cd frontend && npm run test && npm run build
 
 新增行为写入对应章节，不再按日期追加整段实施记录。CI 的 `scripts/check-docs-sync.sh` 只检查文件同步，不能代替内容校准。
 
-专题：[账户与会话](account-auth.md) · [文件库](file-library-architecture.md) · [模型层](model-layer.md) · [生图接入](image-generation.md) · [成果归档](chat-results-implementation.md) · [首页资讯](developer-home-plan.md)。
+专题：[账户与会话](account-auth.md) · [文件库](file-library-architecture.md) · [模型层](model-layer.md) · [生图接入](image-generation.md) · [成果归档](chat-results-implementation.md) · [首页资讯](developer-home-plan.md) · [任务完成可靠性研究（设计建议）](agent-reliability-research-2026-10-21.md)。
