@@ -110,6 +110,8 @@ flowchart TB
 
 `runtime.run_stream` 与 `chat/execution.py` 各有事件队列，`chat/ag_ui.py` 负责最终编码；业务模块不依赖 `main.py` 的可变状态。
 
+已初始化的钥匙串连接在配置、模型列表、能力和监控展示时仅校验工作区引用，返回 `credential_status=saved_unverified`，不读取 API Key 或构造模型提供者；前端不为该状态静默读取服务商模型目录。实际对话、显式检测、目录读取和保存仍按原流程读取 / 校验凭证；预览不能用于恢复运行或绕过凭证指纹校验。首次旧配置迁移仍可能访问钥匙串，详见 [模型层](model-layer.md)。
+
 ## 路由与计划
 
 源码：[`orchestration.py`](../backend/app/agent/orchestration.py)、[`capability_resolver.py`](../backend/app/agent/capability_resolver.py)、[`plan_builder.py`](../backend/app/agent/plan_builder.py)、[`plan_validator.py`](../backend/app/agent/plan_validator.py)。

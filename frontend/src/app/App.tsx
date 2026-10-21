@@ -481,7 +481,7 @@ export function App({
     setAgentSettings(clean);
     const keyOptional = modelKeyOptional(next);
     updateModelSettingsEditing(!next.api_key_configured && !keyOptional);
-    if (next.api_key_configured || keyOptional) void discoverModels(clean, { silent: true });
+    if ((next.api_key_configured || keyOptional) && next.credential_status !== "saved_unverified") void discoverModels(clean, { silent: true });
     return clean;
   }
 
@@ -599,7 +599,7 @@ export function App({
     setModelSaveUnknown(null);
     updateModelSettingsEditing(false);
     invalidateDiscovery();
-    if (savedAgentSettings.api_key_configured || modelKeyOptional(savedAgentSettings)) {
+    if ((savedAgentSettings.api_key_configured || modelKeyOptional(savedAgentSettings)) && savedAgentSettings.credential_status !== "saved_unverified") {
       void discoverModels(savedAgentSettings, { silent: true });
     }
   }

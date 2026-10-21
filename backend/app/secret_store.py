@@ -97,6 +97,14 @@ def _reference_account(reference: str, db_path: str | Path | None) -> tuple[str,
     return backend, account
 
 
+def secret_reference_backend(reference: str, db_path: str | Path | None = None) -> str:
+    """Validate a saved reference without unlocking or reading the keychain."""
+    backend, _ = _reference_account(reference, db_path)
+    if backend != _backend():
+        raise SecretStoreUnavailable("当前安全存储与已保存凭证不匹配")
+    return backend
+
+
 def create_model_api_key(value: str, connection_id: str, db_path: str | Path | None = None) -> str:
     secret = value.strip()
     if not secret:

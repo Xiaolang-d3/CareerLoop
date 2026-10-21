@@ -255,6 +255,30 @@ def get_agent_runtime(profile_id: str | None = None, *, selection: dict[str, Any
 
 def get_agent_capabilities() -> dict[str, Any]:
     from .settings import _settings_lock
+    from ..secret_store import secret_backend_name
+
+    if secret_backend_name() == "keyring":
+        # Capability display is not permission to unlock every stage's key.
+        from .model_catalog import get_profile_connection as resolve_profile
+
+        def preview(profile_id=None, **kwargs):
+            return resolve_profile(profile_id, resolve_credentials=False, **kwargs)
+
+        with _settings_lock(None):
+            connection = bind_model_stages(
+                preview(), explicit_profile=False, selection=None,
+                resolve=preview, policy=get_routing_policy(),
+            )
+        configured = connection["api_key_configured"] or not protocol_requires_api_key(connection["resolved_model_protocol"])
+        alias = str(connection["profile_id"]) if configured else ""
+        payload = _capabilities_payload(
+            settings=get_settings(), model_connection=connection,
+            tools=_build_tool_registry(get_settings()), model_providers=[alias] if alias else [],
+            active_model_provider=alias, configured=configured,
+            setup_message=None if configured else SETUP_MESSAGE,
+        )
+        payload["credential_status"] = connection["credential_status"]
+        return payload
 
     with _settings_lock(None):
         model_connection = get_profile_connection()
