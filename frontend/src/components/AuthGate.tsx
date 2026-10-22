@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, RefObject, useEffect, useRef, useState } from "react";
-import { Eye, EyeOff } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Lock } from "lucide-react";
 import { ApiError, createApiClient } from "../api/client";
 import { AuthSession, AuthUser, validateSession } from "../features/auth/session";
 import { useAuthSession } from "../features/auth/useAuthSession";
@@ -263,7 +263,10 @@ export function AuthGate({ apiBase, children, publicPage }: { apiBase: string; c
             <img className="auth-logo" src="/dengdeng-icon-v1.png" alt="" draggable={false} />
             <h1 className="auth-eyebrow">灯灯</h1>
           </div>
-          <h2 className="auth-form-title">{creating ? "创建本地账户" : "登录本地账户"}</h2>
+          <div className="auth-heading">
+            <h2 className="auth-form-title">{creating ? "创建本地账户" : "登录本地账户"}</h2>
+            <p className="auth-subtitle">{creating ? "几秒钟即可开始，数据只留在这台设备" : "欢迎回来，继续你的工作空间"}</p>
+          </div>
           {notice ? <p className="auth-notice" role="status">{notice}</p> : null}
           {pendingCreation ? <p className="auth-create-notice" role="status">该邮箱尚未注册。确认邮箱无误后，点击「创建并登录」将使用当前邮箱和密码创建本地账户，并自动登录。</p> : null}
           <div className="auth-fields">
@@ -348,7 +351,7 @@ export function AuthGate({ apiBase, children, publicPage }: { apiBase: string; c
             ) : null}
           </div>
           <label className="auth-remember"><input type="checkbox" checked={remember} disabled={busy} onChange={(event) => setRemember(event.target.checked)} />保持登录</label>
-          <p className="auth-local-note">账户、资料和对话只保存在这台设备上，不是云端账号。</p>
+          <p className="auth-local-note"><Lock size={13} aria-hidden="true" /><span>账户、资料和对话只保存在这台设备上，不是云端账号。</span></p>
           {error && !fieldErrors.password ? (
             <p className="auth-error" role="alert">
               <span>{error}</span>
@@ -356,7 +359,10 @@ export function AuthGate({ apiBase, children, publicPage }: { apiBase: string; c
               {errorKind === "network" ? <button type="button" className="auth-error-action" onClick={() => { setError(""); setErrorKind(""); setBootNonce((value) => value + 1); }}>重新连接</button> : null}
             </p>
           ) : null}
-          <button className="auth-submit" type="submit" disabled={busy || cooldown > 0} aria-busy={busy}>{cooldown ? `${cooldown} 秒后重试` : busy ? (creating ? "正在创建…" : "正在登录…") : pendingCreation ? "创建并登录" : registering ? "创建账号" : "登录"}</button>
+          <button className="auth-submit" type="submit" disabled={busy || cooldown > 0} aria-busy={busy}>
+            <span>{cooldown ? `${cooldown} 秒后重试` : busy ? (creating ? "正在创建…" : "正在登录…") : pendingCreation ? "创建并登录" : registering ? "创建账号" : "登录"}</span>
+            {!busy && !cooldown ? <ArrowRight size={16} aria-hidden="true" /> : null}
+          </button>
           <p className="auth-mode-switch">
             {pendingCreation ? (
               <button type="button" onClick={() => switchMode(false)} disabled={busy}>返回登录</button>

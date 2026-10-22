@@ -36,16 +36,17 @@
 :root[data-theme="dark"] .app-shell.has-chat-dock .content { background: var(--color-bg); color: var(--color-text); }
 :root[data-theme="dark"] .app-topbar { background: var(--color-bg); border-color: var(--color-border); }
 :root[data-theme="dark"] :is(.app-topbar-context h1, .sidebar.shell-light .brand strong, .app-identity-name) { color: var(--color-text); }
-:root[data-theme="dark"] :is(.app-identity-menu, .sidebar-identity-menu, .conversation-dialog, .ui-panel-emphasis, .account-card, .library-foundation-card, .library-source-workspace, .auth-card, .auth-form-panel) { background: var(--color-surface); border-color: var(--color-border); color: var(--color-text); }
+:root[data-theme="dark"] :is(.app-identity-menu, .sidebar-identity-menu, .conversation-dialog, .ui-panel-emphasis, .account-card, .library-foundation-card, .library-source-workspace, .auth-form-panel) { background: var(--color-surface); border-color: var(--color-border); color: var(--color-text); }
 :root[data-theme="dark"] :is(.app-identity-menu button, .sidebar-identity-menu button, .sidebar-identity, .account-avatar-actions button) { color: var(--color-text-secondary); }
-:root[data-theme="dark"] :is(.account-settings-page, .model-settings-page, .settings-workspace, .conversation-dialog, .auth-card, .auth-form-panel) :is(input:not([type="radio"]):not([type="checkbox"]), textarea, select) { color: var(--color-text); background: var(--color-surface-subtle); border-color: var(--color-border-strong); }
+:root[data-theme="dark"] :is(.account-settings-page, .model-settings-page, .settings-workspace, .conversation-dialog, .auth-form-panel) :is(input:not([type="radio"]):not([type="checkbox"]), textarea, select) { color: var(--color-text); background: var(--color-surface-subtle); border-color: var(--color-border-strong); }
 :root[data-theme="dark"] :is(.sidebar .sidebar-toggle, .account-avatar-actions button, .model-settings-card, .model-monitor-card, .agent-window-switch button.active) { background: var(--color-surface); border-color: var(--color-border); }
 :root[data-theme="dark"] :is(.ui-button-primary, .account-primary-button, .file-library .fl-button.primary) { color: #fff; background: #6d59d3; border-color: #6d59d3; }
 :root[data-theme="dark"] :is(.ui-button-primary, .account-primary-button, .file-library .fl-button.primary):hover:not(:disabled) { background: #7c67e3; border-color: #7c67e3; }
 :root[data-theme="dark"] .model-settings-notice { background: var(--color-warning-soft); border-color: var(--color-warning); color: var(--color-warning); }
 :root[data-theme="dark"] .global-notice-toast { background: var(--color-success-soft); color: var(--color-success); border-color: var(--color-success); }
 :root[data-theme="dark"] .error-banner { background: var(--color-danger-soft); color: var(--color-danger); border-color: var(--color-danger); }
-:root[data-theme="dark"] .auth-gate { background: var(--color-bg); }
+/* 登录页固定亮色：深色主题下只把页面底色统一为亮色，卡片沿用自身样式。 */
+:root[data-theme="dark"]:has(.auth-gate) { background: #f7f6fb; }
 
 /* Conversation panels retain the same palette as the shell, including popups. */
 :root[data-theme="dark"] .chat-workspace :is(.research-panel, .conversation-history-panel, .research-process-list > li:has(button[aria-expanded="true"]), .research-source-detail, .research-source-list > button.is-active, .research-source-list > button:hover, .research-source-list > button:focus-visible) { background: var(--color-surface); border-color: var(--color-border); }
@@ -85,13 +86,10 @@
   --fl-danger-bg: var(--color-danger-soft);
 }
 :root[data-theme="dark"] :is(.action-dialog, .auth-status-card, .auth-email-suggestions) { color: var(--color-text); background: var(--color-surface); border-color: var(--color-border); }
-:root[data-theme="dark"] :is(.action-dialog input, .auth-email-suggestions button, .auth-card label) { color: var(--color-text-secondary); }
+:root[data-theme="dark"] :is(.action-dialog input, .auth-email-suggestions button) { color: var(--color-text-secondary); }
 :root[data-theme="dark"] .action-dialog input { background: var(--color-surface-subtle); border-color: var(--color-border-strong); }
 :root[data-theme="dark"] .app-identity-menu button:hover,
 :root[data-theme="dark"] .auth-email-suggestions button:hover { background: var(--color-surface-subtle); color: var(--color-text); }
-:root[data-theme="dark"] .auth-status-retry,
-:root[data-theme="dark"] .auth-submit { background: #6d59d3; color: #fff; }
-:root[data-theme="dark"] .auth-veil { background: rgba(17,17,23,.8); }
 :root[data-theme="dark"] .chat-workspace .message-markdown :is(h1, h2, h3, h4, h5, h6) { color: var(--color-text); }
 :root[data-theme="dark"] .chat-workspace .message-markdown a { color: var(--color-brand-strong); }
 :root[data-theme="dark"] .chat-workspace .message-markdown blockquote { color: var(--color-text-secondary); border-color: var(--color-brand); }
