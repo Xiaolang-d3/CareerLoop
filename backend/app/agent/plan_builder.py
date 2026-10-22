@@ -16,7 +16,7 @@ def plan_mode(route: TaskRoute, tool_specs: dict[str, ToolSpec] | None = None) -
     if not route.allowed_tools:
         return "none"
     groups = {capability_group(specs[name]) for name in route.allowed_tools if name in specs}
-    return "llm" if len(groups) >= 2 else "static"
+    return "llm" if route.needs_plan or len(groups) >= 2 else "static"
 
 
 def fallback_plan(

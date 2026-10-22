@@ -22,7 +22,7 @@ CAPABILITY_ORDER = (
 # Baseline capabilities per lane kind. Content signals may add more.
 KIND_CAPABILITIES: dict[str, tuple[str, ...]] = {
     "library_search": (LIBRARY_READ_CAPABILITY, LIBRARY_SEARCH_CAPABILITY),
-    "content_creation": (LIBRARY_READ_CAPABILITY, LIBRARY_SEARCH_CAPABILITY),
+    "content_creation": (),
     "library_update": (LIBRARY_READ_CAPABILITY, KNOWLEDGE_PROPOSAL_CAPABILITY),
     "web_search": (WEB_SEARCH_CAPABILITY,),
 }
@@ -30,7 +30,7 @@ KIND_CAPABILITIES: dict[str, tuple[str, ...]] = {
 # Explicit completion obligations per lane kind, resolved on the current surface.
 KIND_REQUIRED_CAPABILITIES: dict[str, tuple[str, ...]] = {
     "library_search": (LIBRARY_READ_CAPABILITY,),
-    "content_creation": (LIBRARY_READ_CAPABILITY,),
+    "content_creation": (),
     "library_update": (KNOWLEDGE_PROPOSAL_CAPABILITY,),
     "web_search": (WEB_SEARCH_CAPABILITY,),
 }
@@ -93,6 +93,7 @@ class CapabilityRequest:
     need_public_web: bool = False
     need_knowledge_proposal: bool = False
     user_explicitly_requested_web: bool = False
+    needs_synthesis: bool = False
 
 
 def _contains(text: str, phrases: tuple[str, ...]) -> bool:
@@ -133,7 +134,7 @@ def capability_request_for_content(content: str, kind: str) -> CapabilityRequest
         # signals in the text describe the payload, not a request to read files.
         use_library = False
     else:
-        use_library = kind in {"library_search", "content_creation"} or requests_private_library(text)
+        use_library = kind == "library_search" or requests_private_library(text)
     explicit_web = is_explicit_web_request(text)
     return CapabilityRequest(
         intent_kind=kind,
@@ -191,6 +192,8 @@ def resolve_capabilities(
         requested.add(WEB_SEARCH_CAPABILITY)
     if request.need_knowledge_proposal:
         requested.add(KNOWLEDGE_PROPOSAL_CAPABILITY)
+    if not web_search_allowed:
+        requested.discard(WEB_SEARCH_CAPABILITY)
 
     allowed: list[str] = []
     for capability in CAPABILITY_ORDER:
@@ -201,6 +204,8 @@ def resolve_capabilities(
             allowed.append(tool)
 
     required_capabilities = list(KIND_REQUIRED_CAPABILITIES.get(kind, ()))
+    if request.use_private_library:
+        required_capabilities.append(LIBRARY_READ_CAPABILITY)
     if request.user_explicitly_requested_web and web_search_allowed:
         required_capabilities.append(WEB_SEARCH_CAPABILITY)
     if request.need_knowledge_proposal:
@@ -223,7 +228,7 @@ def resolve_capabilities(
     }
     return TaskRoute(
         kind=kind,
-        needs_plan=len(groups) >= 2,
+        needs_plan=request.needs_synthesis or len(groups) >= 2,
         allowed_tools=tuple(allowed),
         required_tools=tuple(required),
     )

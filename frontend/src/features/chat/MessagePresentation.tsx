@@ -5,7 +5,7 @@ import "./research-sources.css";
 import { MarkdownContent, SourceFavicon, sourceDomain, type WebSource } from "./ChatMarkdown";
 export type { WebSource } from "./ChatMarkdown";
 import type { AgentRunResult, ChatClarification, ChatMessage, ChatSessionContext } from "./types";
-import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { searchMetadataFromAgent, type SearchMetadata } from "./searchMetadata";
 import { webSearchTopicLabels } from "./webSearchOptions";
 import { AttachmentPreviewContext } from "./AttachmentPreviewDialog";
@@ -14,7 +14,7 @@ import { HistoryAttachment } from "./HistoryAttachment";
 import { GeneratedImage } from "./GeneratedImage";
 import { ImageGenerationProgress } from "./ImageGenerationProgress";
 import { ActionBarPrimitive, ComposerPrimitive, MessagePrimitive, type AppendMessage, type MessageState } from "@assistant-ui/react";
-import { BookOpen, Check, CheckCircle2, ChevronDown, ChevronRight, CircleHelp, Copy, LoaderCircle, Pencil, RefreshCw, Search, X } from "lucide-react";
+import { BookOpen, Check, CheckCircle2, ChevronDown, ChevronRight, CircleHelp, Copy, LoaderCircle, Pencil, RefreshCw, Search, Trash2, X } from "lucide-react";
 
 function resultOnlyContent(content: string, hasThoughtSummary: boolean): string {
   if (!hasThoughtSummary) return content;
@@ -66,6 +66,8 @@ type ResearchPanelActions = {
 };
 
 export const ResearchPanelActionsContext = createContext<ResearchPanelActions | null>(null);
+export const QuoteSelectionContext = createContext<((quote: string) => void) | null>(null);
+export const DeleteTurnContext = createContext<((userMessageId: number) => Promise<void>) | null>(null);
 
 export function EditMessageComposer() {
   return (
@@ -557,9 +559,14 @@ function SearchMetadataContent({ metadata }: { metadata: SearchMetadata[] }) {
 
 export function ChatTurn({ state, chatBusy, stopping = false }: { state: MessageState; chatBusy: boolean; stopping?: boolean }) {
   const researchPanel = useContext(ResearchPanelActionsContext);
+  const quoteSelection = useContext(QuoteSelectionContext);
+  const deleteTurn = useContext(DeleteTurnContext);
   const openAttachment = useContext(AttachmentPreviewContext);
   const openResult = useContext(ResultActionsContext);
   const source = state.metadata.custom.source as ChatMessage | undefined;
+  const [quoted, setQuoted] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  useEffect(() => { setQuoted(""); setConfirmDelete(false); }, [source?.id]);
   if (!source) return null;
   const modelSelection = source.payload?.agent?.model_selection ?? source.payload?.model_selection;
   const answerModelName = modelSelection?.answered_model_name?.trim()
@@ -586,15 +593,28 @@ export function ChatTurn({ state, chatBusy, stopping = false }: { state: Message
     researchPanel?.openDetails(source.payload?.agent, webSources, selectedSource);
   };
 
+  function captureSelection(event: MouseEvent<HTMLDivElement>) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest(".message-quote-action")) return;
+    const selection = window.getSelection();
+    const text = selection?.toString().trim() ?? "";
+    if (!quoteSelection || source?.role !== "assistant" || isActiveAssistant || !text || !selection || selection.rangeCount === 0 || !event.currentTarget.contains(selection.anchorNode)) {
+      setQuoted("");
+      return;
+    }
+    setQuoted(text.slice(0, 2000));
+  }
+
   return (
     <MessagePrimitive.Root className={`message ${source.role}`}>
-      <div className="message-content">
+      <div className="message-content" onMouseUp={captureSelection}>
         {source.role === "assistant" ? (
           <>
             <RunProcess agent={source.payload?.agent} streaming={isActiveAssistant} stopping={stopping && isActiveAssistant} content={resultContent} />
             {imagePending ? <section className="message-image-output" aria-label="输出结果"><ImageGenerationProgress /></section> : assets.length ? <section className="message-image-output" aria-label="输出结果">{blocks.length ? blocks.map((block, index) => block.type === "image" ? imageBlock(block.asset_id) : <MarkdownContent key={`text-${index}`} sources={webSources} streaming={isActiveAssistant} onOpenSource={openResearch}>{block.text}</MarkdownContent>) : resultContent ? <MarkdownContent sources={webSources} streaming={isActiveAssistant} onOpenSource={openResearch}>{resultContent}</MarkdownContent> : null}{assets.filter(asset => !seenAssets.has(asset.id)).map(asset => imageBlock(asset.id))}</section> : <>
               {resultContent ? <section className="message-result message-dialog" aria-label="输出结果"><MarkdownContent sources={webSources} streaming={isActiveAssistant} onOpenSource={openResearch}>{resultContent}</MarkdownContent></section> : null}
             </>}
+            {quoted ? <button type="button" className="message-quote-action" onMouseDown={(event) => event.preventDefault()} onClick={() => { quoteSelection?.(quoted); setQuoted(""); }}>针对这段提问</button> : null}
             {!isActiveAssistant ? <div className="message-footer">
               <div className="message-footer-tools">
                 <WebSourcesPanel sources={webSources} onOpen={() => openResearch()} />
@@ -622,7 +642,9 @@ export function ChatTurn({ state, chatBusy, stopping = false }: { state: Message
             <ActionBarPrimitive.Root className="message-actions user-message-actions" hideWhenRunning>
               <MessageCopyButton content={source.content} label="复制消息" />
               <ActionBarPrimitive.Edit className="message-icon-action" aria-label="编辑消息" title="编辑消息"><Pencil size={14} aria-hidden="true" /></ActionBarPrimitive.Edit>
+              {deleteTurn && source.id > 0 && !confirmDelete ? <button type="button" className="message-icon-action" aria-label="删除这轮问答" title="只删除这轮问答" onClick={() => setConfirmDelete(true)}><Trash2 size={14} aria-hidden="true" /></button> : null}
             </ActionBarPrimitive.Root>
+            {confirmDelete ? <button type="button" className="message-quote-action message-turn-delete" aria-label="确认删除这轮问答" onClick={() => void deleteTurn?.(source.id)}>确认删除</button> : null}
           </>
         )}
       </div>

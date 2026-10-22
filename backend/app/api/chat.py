@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import sqlite3
 from typing import Any
 from ag_ui.core import RunAgentInput
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse, FileResponse, Response
 from pydantic import ValidationError
 from .dependencies import require_conversation
-from ..chat.contracts import ChatMessageIn
+from ..chat.contracts import ChatMessageIn, RestoreChatMessagesIn
 from ..chat.conversations import end_active_task
-from ..db import connect, row_to_dict, rows_to_dicts
+from ..db import connect, json_dump, row_to_dict, rows_to_dicts
 from ..agent.snapshots import clear_run_snapshot
 from ..chat.service import (
     default_conversation_id as _default_conversation_id,
@@ -91,15 +92,11 @@ def rewind_chat_messages(message_id: int, conversation_id: int | None = None) ->
             raise HTTPException(status_code=404, detail="消息不存在")
         if message["role"] != "user":
             raise HTTPException(status_code=400, detail="只能从用户消息开始回退")
-        from ..chat.image_assets import delete_images
-        delete_images(resolved_id, message_cutoff=message_id)
-        deleted = conn.execute(
-            "DELETE FROM chat_messages WHERE conversation_id = ? AND id >= ?",
-            (resolved_id, message_id),
-        ).rowcount
+        removed = _delete_message_range(conn, resolved_id, message_id, None)
         conversation = conn.execute(
             "SELECT title FROM conversations WHERE id = ?", (resolved_id,)
         ).fetchone()
+        previous_title = conversation["title"] if conversation else None
         generated_title = " ".join(message["content"].strip().split())[:28] or "新对话"
         next_title = "新对话" if conversation and conversation["title"] == generated_title else conversation["title"]
         conn.execute(
@@ -117,9 +114,146 @@ def rewind_chat_messages(message_id: int, conversation_id: int | None = None) ->
     _refresh_conversation_summary(resolved_id)
     return {
         "rewound": True,
-        "deleted": deleted,
+        "deleted": len(removed),
         "source_message": row_to_dict(message),
+        "messages": removed,
+        "previous_title": previous_title,
     }
+
+
+@router.delete("/chat/messages/{message_id}/turn")
+def delete_chat_turn(message_id: int, conversation_id: int | None = None) -> dict[str, Any]:
+    """Delete one user question and the assistant replies before the next user message."""
+    resolved_id = conversation_id or _default_conversation_id()
+    require_conversation(resolved_id)
+    if is_chat_running(resolved_id):
+        raise HTTPException(status_code=409, detail="请先停止当前生成任务")
+
+    with connect() as conn:
+        message = conn.execute(
+            "SELECT * FROM chat_messages WHERE id = ? AND conversation_id = ?",
+            (message_id, resolved_id),
+        ).fetchone()
+        if message is None:
+            raise HTTPException(status_code=404, detail="消息不存在")
+        if message["role"] != "user":
+            raise HTTPException(status_code=400, detail="只能删除用户消息所在的一轮")
+        nxt = conn.execute(
+            """
+            SELECT id FROM chat_messages
+            WHERE conversation_id = ? AND id > ? AND role = 'user'
+            ORDER BY id ASC LIMIT 1
+            """,
+            (resolved_id, message_id),
+        ).fetchone()
+        end_exclusive = nxt["id"] if nxt else None
+        removed = _delete_message_range(conn, resolved_id, message_id, end_exclusive)
+        if end_exclusive is None:
+            conversation = conn.execute(
+                "SELECT title FROM conversations WHERE id = ?", (resolved_id,)
+            ).fetchone()
+            generated_title = " ".join(message["content"].strip().split())[:28] or "新对话"
+            next_title = "新对话" if conversation and conversation["title"] == generated_title else conversation["title"]
+            conn.execute(
+                """
+                UPDATE conversations
+                SET title = ?, context_cutoff_message_id = MIN(context_cutoff_message_id, ?),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (next_title, max(message_id - 1, 0), resolved_id),
+            )
+
+    if end_exclusive is None:
+        end_active_task(resolved_id)
+        clear_run_snapshot(resolved_id)
+    _refresh_conversation_summary(resolved_id)
+    return {"deleted": len(removed), "messages": removed}
+
+
+@router.post("/chat/messages/restore")
+def restore_chat_messages(payload: RestoreChatMessagesIn) -> dict[str, Any]:
+    """Write previously rewound text rows back by their original ids."""
+    require_conversation(payload.conversation_id)
+    if is_chat_running(payload.conversation_id):
+        raise HTTPException(status_code=409, detail="请先停止当前生成任务")
+    ids = [item.id for item in payload.messages]
+    if len(ids) != len(set(ids)):
+        raise HTTPException(status_code=422, detail="消息 ID 不能重复")
+    start = min(ids)
+    from ..chat.image_assets import delete_images
+    delete_images(payload.conversation_id, message_cutoff=start)
+    try:
+        with connect() as conn:
+            conn.execute(
+                "DELETE FROM chat_messages WHERE conversation_id = ? AND id >= ?",
+                (payload.conversation_id, start),
+            )
+            existing_tasks = {
+                row["id"]
+                for row in conn.execute(
+                    "SELECT id FROM conversation_tasks WHERE conversation_id = ?",
+                    (payload.conversation_id,),
+                ).fetchall()
+            }
+            for item in sorted(payload.messages, key=lambda message: message.id):
+                created_at = item.created_at.strip() if item.created_at else None
+                conn.execute(
+                    """
+                    INSERT INTO chat_messages
+                        (id, conversation_id, task_id, role, content, payload_json, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+                    """,
+                    (
+                        item.id,
+                        payload.conversation_id,
+                        item.task_id if item.task_id in existing_tasks else None,
+                        item.role,
+                        item.content,
+                        json_dump(item.payload or {}),
+                        created_at or None,
+                    ),
+                )
+            if payload.previous_title is not None:
+                title = payload.previous_title.strip()[:80] or "新对话"
+                conn.execute(
+                    "UPDATE conversations SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (title, payload.conversation_id),
+                )
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="这些消息无法按原编号恢复") from exc
+    _refresh_conversation_summary(payload.conversation_id)
+    return {"restored": len(payload.messages)}
+
+
+def _delete_message_range(conn, conversation_id: int, start_id: int, end_exclusive: int | None) -> list[dict[str, Any]]:
+    if end_exclusive is None:
+        rows = conn.execute(
+            "SELECT * FROM chat_messages WHERE conversation_id = ? AND id >= ? ORDER BY id ASC",
+            (conversation_id, start_id),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT * FROM chat_messages
+            WHERE conversation_id = ? AND id >= ? AND id < ?
+            ORDER BY id ASC
+            """,
+            (conversation_id, start_id, end_exclusive),
+        ).fetchall()
+    from ..chat.image_assets import delete_images
+    delete_images(conversation_id, message_cutoff=start_id, message_before=end_exclusive)
+    if end_exclusive is None:
+        conn.execute(
+            "DELETE FROM chat_messages WHERE conversation_id = ? AND id >= ?",
+            (conversation_id, start_id),
+        )
+    else:
+        conn.execute(
+            "DELETE FROM chat_messages WHERE conversation_id = ? AND id >= ? AND id < ?",
+            (conversation_id, start_id, end_exclusive),
+        )
+    return rows_to_dicts(rows)
 
 
 def _ag_ui_message_content(payload: RunAgentInput) -> str:

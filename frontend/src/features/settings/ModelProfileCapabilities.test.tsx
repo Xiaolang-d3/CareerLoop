@@ -77,10 +77,11 @@ describe("ModelConnectionManager capability panel", () => {
     render(<ModelConnectionManager catalog={catalog} loading={false} busy={false} error="" fetchJson={fetchJson as unknown as Client}
       onReload={vi.fn()} onMutate={vi.fn().mockResolvedValue(true)} onDefaultChanged={vi.fn()} />);
     expect(fetchJson).not.toHaveBeenCalled();
-    expect(screen.getByLabelText("deepseek-chat 推理强度")).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "deepseek-chat 能力与上下文" }));
+    fireEvent.click(screen.getByRole("button", { name: /主连接/ }));
+    fireEvent.click(screen.getByRole("button", { name: "deepseek-chat 设置" }));
+    fireEvent.click(screen.getByText("更多选项"));
     await screen.findByText("200K");
-    await waitFor(() => expect(screen.getByLabelText("deepseek-chat 推理强度")).toBeDisabled());
-    expect(screen.getByLabelText("deepseek-chat 推理强度")).toHaveAttribute("title", expect.stringContaining("不支持推理"));
+    await waitFor(() => expect(screen.getByRole("option", { name: "深度" })).toBeDisabled());
+    expect(screen.getByText(/此模型不支持调整思考程度/)).toBeInTheDocument();
   });
 });

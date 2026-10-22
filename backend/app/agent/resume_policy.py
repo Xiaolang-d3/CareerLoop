@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from ..domain import AgentClarification, AgentRunSnapshot, ToolEvent
+from ..domain import AgentClarification, AgentMessage, AgentRunSnapshot, ToolEvent
 from .orchestration import detect_kind
 
 ABANDON_PHRASES = (
@@ -99,6 +99,10 @@ def should_abandon_snapshot(
         # The run is paused on a tool confirmation card. Any reply that is not
         # an explicit abandon stays on the card until it is answered.
         return False
+    if snapshot.clarification is not None:
+        # An answer can change sources without abandoning the original goal.
+        # The runtime re-understands ordinary replies instead of freezing a lane.
+        return False
     kind = detect_kind(routing_text or text)
     return kind not in {"conversation", snapshot.route_kind}
 
@@ -114,3 +118,38 @@ def resolve_resume_snapshot(
     if should_abandon_snapshot(text, snapshot, routing_text=routing_text):
         return None
     return snapshot
+
+
+def needs_reply_replanning(snapshot: AgentRunSnapshot) -> bool:
+    """A clarification answer may change scope even when the lane stays the same.
+
+    Reconnection and pending approvals retain their immutable plan/permissions.
+    Ordinary clarification answers get a fresh source and plan assessment.
+    """
+    return (
+        snapshot.resume_mode == "waiting_user"
+        and not snapshot.pending_search_queries
+        and snapshot.pending_tool_approval is None
+    )
+
+
+def clarification_context(snapshot: AgentRunSnapshot) -> tuple[str, list[AgentMessage], bool]:
+    """Preserve user intent without carrying the obsolete plan into a new run."""
+    user_messages = [message for message in snapshot.messages if message.role == "user"][-4:]
+    context = "\n".join(message.content[:1000] for message in user_messages)
+    history = [AgentMessage(role="user", content=message.content[:1000]) for message in user_messages]
+    if snapshot.clarification is not None:
+        question = snapshot.clarification.question[:200]
+        options = "；".join(
+            f"{index}. {option.label[:40]}：{option.send[:200]}"
+            for index, option in enumerate(snapshot.clarification.options[:6], start=1)
+        )
+        if options:
+            question += f"\n选项：{options}"
+        context += f"\n上轮待澄清问题：{question}"
+        history.append(AgentMessage(role="assistant", content=question))
+    # A clarification itself can mention private facts read in the previous run.
+    private_context = snapshot.requires_query_approval or bool(
+        {"get_library_context", "search_library"} & set(snapshot.completed_tools)
+    )
+    return context, history, private_context

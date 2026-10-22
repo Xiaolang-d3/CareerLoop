@@ -28,6 +28,9 @@ def test_real_search_adapter_http_contract_reaches_curated_home_snapshot(home_wo
     assert result["status"] == "ready"
     assert len(result["items"]) == 1
     assert len(requests) == 3
+    combined_queries = " ".join(payload["query"] for _, payload in requests)
+    assert all(topic in combined_queries for topic in ("multimodal", "open weights", "pricing", "评测"))
+    assert not any(publisher in combined_queries for publisher in ("OpenAI", "Claude", "Gemini", "DeepSeek", "Qwen", "Hunyuan"))
     assert all(path == "/search" and payload["topic"] == "news" and payload["max_results"] == 8 for path, payload in requests)
     assert all(payload["include_raw_content"] == "markdown" for _, payload in requests)
 

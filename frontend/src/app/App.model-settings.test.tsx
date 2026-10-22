@@ -140,6 +140,20 @@ afterEach(() => {
 });
 
 describe("App model settings", () => {
+  it("does not silently discover models or authenticate saved keychain credentials on load", async () => {
+    mockApi(Promise.resolve({ ...savedSettings, credential_status: "saved_unverified" }));
+    renderApp();
+    expect(await screen.findByText("密钥已保存，使用时授权")).toBeInTheDocument();
+    await act(async () => {});
+    expect(api.fetchJson.mock.calls.some(([path]) => path === "/agent/models/discover")).toBe(false);
+    expect(api.fetchJson.mock.calls.some(([path]) => path === "/agent/model-monitor/check")).toBe(false);
+    fireEvent.click(await screen.findByRole("button", { name: "配置模型" }));
+    expect(await screen.findByLabelText("API Key")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    await act(async () => {});
+    expect(api.fetchJson.mock.calls.some(([path]) => path === "/agent/models/discover")).toBe(false);
+  });
+
   it("waits for saved configuration before editing and preserves other preferences when saving three fields", async () => {
     const initialSettings = deferred<AgentSettings>();
     mockApi(initialSettings.promise);
@@ -525,8 +539,12 @@ describe("App model settings", () => {
     renderApp();
     await screen.findByRole("heading", { name: "连接与模型" });
     expect(screen.getByText(savedSettings.model_name, { selector: ".model-current-summary strong" })).toBeInTheDocument();
-    fireEvent.click(screen.getAllByRole("button", { name: "设为默认" })[1]);
+    fireEvent.click(screen.getByRole("button", { name: /备用连接/ }));
+    fireEvent.click(screen.getByRole("button", { name: "second-model 设置" }));
+    fireEvent.click(screen.getByText("更多选项"));
+    fireEvent.click(screen.getByRole("button", { name: "设为默认" }));
     await waitFor(() => expect(screen.getByText("second-model", { selector: ".model-current-summary strong" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "关闭模型设置" }));
     await modelField("模型名称");
     expect(screen.getByLabelText("Base URL")).toHaveValue("https://second.example.test/v1");
     expect(await modelField("API Key")).toHaveValue("");

@@ -3,15 +3,20 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Literal
 
-from pydantic import ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from ..domain import AgentPlan, AgentPlanStep, ModelResponse
 from ..tooling import TOOL_SPECS, ToolSpec
 from .capability_resolver import (
     WEB_SEARCH_CAPABILITY,
+    CapabilityRequest,
     TaskRoute,
     capability_request_for_content,
+    requests_private_library,
+    requests_public_web,
     resolve_capabilities,
 )
 from .plan_builder import fallback_plan
@@ -100,8 +105,12 @@ def route_task(
 
 
 def should_classify_kind(route: TaskRoute, content: str) -> bool:
-    """Only classify when keyword detection left the turn as open conversation."""
-    if route.kind != "conversation":
+    """Understand open tasks and creation requests with unspecified sources."""
+    if any(phrase in content for phrase in ("不要", "不需要", "不用", "无需", "不围绕")):
+        return True
+    if route.kind not in {"conversation", "content_creation"}:
+        return False
+    if route.kind == "content_creation" and (requests_private_library(content) or requests_public_web(content)):
         return False
     normalized = (content or "").strip().lower().rstrip("!！?？。,. ")
     if not normalized or normalized in SIMPLE_CONVERSATION_MESSAGES:
@@ -110,19 +119,35 @@ def should_classify_kind(route: TaskRoute, content: str) -> bool:
 
 
 def classifier_prompt(content: str) -> str:
-    """Ask the model for a lane name only. Tool names are intentionally absent."""
+    """Separate the user's objective from the sources needed to achieve it."""
     lanes = "\n".join(f"- {kind}: {label}" for kind, label in ROUTE_LABELS.items())
-    return f"""判断下面这条用户消息属于哪条工作任务车道。
-只返回 JSON：{{"kind":"车道名"}}
+    today = datetime.now(timezone.utc).date().isoformat()
+    return f"""分析用户当前要完成的任务及所需的信息来源。当前 UTC 日期：{today}。
+只返回 JSON：{{"kind":"车道名","goal":"结合上下文还原的当前完整目标","sources":["private_library","public_web"],"needs_planning":false}}
 允许的车道：
 {lanes}
-规则：只选一个车道；不确定则 kind 为 conversation；不要输出工具名；不要解释。
+规则：kind 描述任务类型，sources 独立描述必要的信息来源，可以为空数组。
+goal 应保留用户要求的主题、范围和交付物；“继续”“第二个”等短回复须结合最近用户请求还原，不得把历史助手的推测当作用户目标。
+private_library 仅用于用户要求基于已保存的私人资料；总结、写作、研究本身不意味着要读取私人资料。
+public_web 用于需要核实的近期情况、市场行情、公众讨论或用户要求的公开检索。一般知识问答、改写用户已提供文本不需要搜索。
+“大家的讨论”可能指公开平台，也可能指用户已有聊天记录；来源不明确时不要自行认定为私人知识库，可先澄清。
+澄清后的最新答复优先于旧任务中的推测；不围绕个人简历、改看公开情况时应重新选择来源。
+library_search 仅用于检索私人资料。不要因为历史中出现简历就选私人来源。
+只选一个车道；不确定则 kind 为 conversation；不要输出工具名；不要解释。来源需求不等于联网授权，程序会另行检查许可。
+研究、比较、综合行情与多来源讨论需要 needs_planning=true；单个事实查询、一般问答和简单改写为 false。
 用户消息：
 {content}"""
 
 
-def parse_classified_kind(response: ModelResponse) -> str | None:
-    """Accept only a ROUTE_LABELS kind. Tool names and unknown keys are ignored."""
+class TaskUnderstanding(BaseModel):
+    kind: Literal["conversation", "library_search", "library_update", "content_creation", "web_search"]
+    goal: str = Field(default="", max_length=300)
+    # None supports kind-only output from older configured classifiers.
+    sources: list[Literal["private_library", "public_web"]] | None = Field(default=None, max_length=2)
+    needs_planning: bool = Field(default=False, strict=True)
+
+
+def parse_task_understanding(response: ModelResponse) -> TaskUnderstanding | None:
     if response.tool_calls or not response.content.strip():
         return None
     raw = response.content.strip()
@@ -130,15 +155,15 @@ def parse_classified_kind(response: ModelResponse) -> str | None:
     if fenced:
         raw = fenced.group(1)
     try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
+        return TaskUnderstanding.model_validate_json(raw)
+    except (ValidationError, ValueError):
         return None
-    if not isinstance(payload, dict):
-        return None
-    kind = str(payload.get("kind") or "").strip()
-    if kind in TOOL_POLICIES or kind not in ROUTE_LABELS:
-        return None
-    return kind
+
+
+def parse_classified_kind(response: ModelResponse) -> str | None:
+    """Accept only a ROUTE_LABELS kind. Tool names and unknown keys are ignored."""
+    understanding = parse_task_understanding(response)
+    return understanding.kind if understanding is not None else None
 
 
 def refine_route_from_classifier(
@@ -148,13 +173,33 @@ def refine_route_from_classifier(
     response: ModelResponse,
     *,
     tool_specs: dict[str, ToolSpec] | None = None,
+    force: bool = False,
 ) -> TaskRoute:
-    """Apply a kind-only classifier result. Invalid output leaves the keyword route."""
-    if not should_classify_kind(route, content):
+    """Resolve semantic source needs against the caller's trusted tool surface."""
+    if not force and not should_classify_kind(route, content):
         return route
-    classified = parse_classified_kind(response)
-    if classified is None:
+    understanding = parse_task_understanding(response)
+    if understanding is None:
         return route
+    classified = understanding.kind
+    if understanding.sources is not None:
+        sources = set(understanding.sources)
+        if classified == "library_search" and "private_library" not in sources:
+            classified = "conversation"
+        specs = tool_specs or TOOL_SPECS
+        surface = {name: spec for name, spec in specs.items() if name in available_tools}
+        return resolve_capabilities(
+            CapabilityRequest(
+                intent_kind=classified,
+                use_private_library="private_library" in sources,
+                need_public_web="public_web" in sources,
+                need_knowledge_proposal=classified == "library_update",
+                user_explicitly_requested_web="public_web" in sources,
+                needs_synthesis=understanding.needs_planning,
+            ),
+            registered_specs=surface,
+            web_search_allowed=any(WEB_SEARCH_CAPABILITY in spec.capabilities for spec in surface.values()),
+        )
     return build_task_route(
         classified,
         content,
@@ -242,7 +287,7 @@ def replan_prompt(
 {tool_lines}
 
 返回且只返回 JSON：
-{{"goal":"一句话目标","steps":[{{"tool_name":"工具名","title":"用户可理解的步骤"}}]}}
+{{"goal":"一句话目标","expected_output":"要交付的具体结果","success_criteria":["可检查的完成条件"],"steps":[{{"tool_name":"工具名","title":"用户可理解的步骤"}}]}}
 规则：不得换车道；不得添加未列出的工具；不得把未检索到的信息写成事实；
 优先选择尚未失败的工具；只有没有替代工具时才重试失败工具；不要输出思维过程。"""
 
@@ -257,15 +302,17 @@ def planner_prompt(
         f"- {name}: {specs[name].title}，风险={specs[name].risk}"
         for name in route.allowed_tools
     )
-    return f"""为下面的工作任务生成简短、可执行、可审计的 JSON 计划。
+    return f"""为下面的工作任务生成简短、可执行、可审计的 JSON 计划。当前 UTC 日期：{datetime.now(timezone.utc).date().isoformat()}。
 任务：{goal}
 路由：{route.kind}
 只允许使用以下工具：
 {tool_lines}
 
 返回且只返回 JSON：
-{{"goal":"一句话目标","steps":[{{"tool_name":"工具名","title":"用户可理解的步骤"}}]}}
-规则：按依赖顺序排列；不必使用所有工具；不得添加未列出的工具；不要输出思维过程。"""
+{{"goal":"一句话目标","expected_output":"要交付的具体结果","success_criteria":["可检查的完成条件"],"steps":[{{"tool_name":"工具名","title":"要取得什么证据及用途"}}]}}
+规则：先明确范围、信息来源与交付物；按依赖顺序排列；不必使用所有工具；不得添加未列出的工具；不要输出思维过程。
+公开研究应区分事实数据与社区个体讨论，核对时间与来源；私人资料仅在用户要求时使用。
+检索无结果或不相关时应调整查询或使用其他已授权来源，不能把工具调用成功当作目标已完成。"""
 
 
 def parse_plan(
@@ -333,5 +380,8 @@ def parse_plan(
         goal=parsed_goal or "完成当前工作任务",
         route=route.kind,
         steps=steps,
+        expected_output=str(payload.get("expected_output") or "")[:500],
+        success_criteria=[item[:200] for item in payload.get("success_criteria", []) if isinstance(item, str)][:6]
+        if isinstance(payload.get("success_criteria"), list) else [],
         requires_confirmation=any(step.risk == "confirmed_local_write" for step in steps),
     )

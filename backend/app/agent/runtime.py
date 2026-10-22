@@ -12,7 +12,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any, Literal
-from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import ValidationError
 
@@ -46,6 +45,8 @@ from .approval_policy import (
 )
 from .capability_resolver import is_mixed_run, requests_public_web
 from .completion import validate_completion
+from .citations import MAX_REPAIR_CONTEXT_CHARS, apply_citation_patches, canonical_url, cited_urls, evidence_cards, repair_messages
+from .research_context import web_context_messages
 from .egress_policy import (
     APPROVAL_REQUIRED,
     SEARCH_TOOL_NAME,
@@ -60,6 +61,7 @@ from .orchestration import (
     TaskRoute,
     classifier_prompt,
     parse_plan,
+    parse_task_understanding,
     planner_prompt,
     refine_route_from_classifier,
     replan_prompt,
@@ -71,7 +73,7 @@ from .orchestration import (
 )
 from .plan_builder import fallback_plan, plan_mode
 from .plan_validator import freeze_route_requirements, validate_plan
-from .resume_policy import clarification_from_events, resolve_resume_snapshot
+from .resume_policy import clarification_context, clarification_from_events, needs_reply_replanning, resolve_resume_snapshot
 from .run_store import AgentRunStore, REPLAYABLE_RUN_STATUSES
 from .tool_executor import ToolExecutor
 
@@ -79,7 +81,8 @@ from .tool_executor import ToolExecutor
 StreamCallback = Callable[[AgentStreamEvent], Awaitable[None]]
 WEB_RESEARCH_TOOLS = {"search_public_web"}
 MAX_INVALID_ARGUMENT_RETRIES = 2
-MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\((https?://[^)\s]+)\)")
+CITATION_REPAIR_TIMEOUT_SECONDS = 30
+CITATION_REPAIR_MAX_OUTPUT_TOKENS = 3000
 COMPANY_REFERENCE_PHRASES = ("这家公司", "该公司", "这个公司", "这家企业", "该企业")
 COMPANY_SUFFIX = r"(?:有限责任公司|股份有限公司|有限公司)"
 COMPANY_CONTEXT_PATTERNS = (
@@ -95,16 +98,7 @@ class _RunCancellationRequested(Exception):
 
 
 def _canonical_citation_url(value: str) -> str:
-    parsed = urlsplit(value.strip())
-    return urlunsplit(
-        (
-            parsed.scheme.lower(),
-            parsed.netloc.lower(),
-            parsed.path.rstrip("/"),
-            parsed.query,
-            "",
-        )
-    )
+    return canonical_url(value)
 
 
 def _web_source_urls(messages: list[AgentMessage]) -> set[str]:
@@ -119,7 +113,7 @@ def _web_source_urls(messages: list[AgentMessage]) -> set[str]:
 
 
 def validate_web_citations(content: str, allowed_urls: set[str]) -> tuple[bool, str]:
-    cited = {_canonical_citation_url(url) for url in MARKDOWN_LINK_RE.findall(content)}
+    cited = cited_urls(content)
     allowed = {_canonical_citation_url(url) for url in allowed_urls}
     if not cited:
         return False, "回答没有使用 Markdown 链接引用本轮搜索来源"
@@ -206,6 +200,9 @@ class RunContext:
     repeated_tool_calls: dict[str, int] = field(default_factory=dict)
     replan_used: bool = False
     citation_retry_used: bool = False
+    citation_draft: str = ""
+    citation_sources: list[dict[str, Any]] = field(default_factory=list)
+    citation_allowed_urls: list[str] = field(default_factory=list)
 
 
 class AgentRuntime:
@@ -289,6 +286,9 @@ class AgentRuntime:
         run_id: str | None = None,
         model_selection: dict[str, Any] | None = None,
     ) -> AgentRunResult:
+        task_context: str | None = None
+        private_context = False
+        inherited_selection = None
         if resume is None or resume.resume_mode != "checkpoint":
             resume = resolve_resume_snapshot(
                 user_content,
@@ -304,6 +304,7 @@ class AgentRuntime:
             resume = None
         options = web_search_options
         if resume is not None:
+            inherited_selection = resume.model_selection
             inherited = resume.web_search_options
             if inherited is None:
                 original_user = next((message for message in reversed(resume.messages) if message.role == "user"), None)
@@ -313,13 +314,14 @@ class AgentRuntime:
             elif options != inherited:
                 # A confirmation with changed consent is a fresh plan with fresh
                 # tool permissions; completed context is preserved for the model.
-                original_content = "\n".join(message.content for message in resume.messages if message.role == "user")
-                history = [*resume.messages]
-                routing_content = original_content + "\n" + user_content
+                task_context, history, private_context = clarification_context(resume)
                 resume = None
+        if resume is not None and needs_reply_replanning(resume):
+            task_context, history, private_context = clarification_context(resume)
+            resume = None
         if options is not None:
             web_search_mode = legacy_web_search_mode(options)
-        selection = internal_model_selection(model_selection or self._model_selection)
+        selection = internal_model_selection(model_selection or inherited_selection or self._model_selection)
         if resume is not None:
             # A legacy checkpoint has no evidence about its previous model.
             selection = internal_model_selection(resume.model_selection)
@@ -356,6 +358,7 @@ class AgentRuntime:
                 conversation_id=conversation_id, task_id=task_id, event_callback=event_callback,
                 image_urls=image_urls, routing_content=routing_content, web_search_mode=web_search_mode,
                 resume=resume, run_id=run_id,
+                task_context=task_context, private_context=private_context,
             )
             result.model_selection = self._current_model_selection()
             return result
@@ -379,6 +382,8 @@ class AgentRuntime:
         web_search_mode: str = "auto",
         resume: AgentRunSnapshot | None = None,
         run_id: str | None = None,
+        task_context: str | None = None,
+        private_context: bool = False,
     ) -> AgentRunResult:
         provider = self._models.get(self._model_provider)
         selected_platform = platform_name or self._platform_name
@@ -417,12 +422,23 @@ class AgentRuntime:
             available_tools,
             tool_specs=tool_specs,
         )
-        if should_classify_kind(route, routing_text):
+        recent_user_context = "\n".join(
+            message.content[:1000] for message in (history or []) if message.role == "user"
+        )[-4000:]
+        classification_content = (
+            f"先前用户任务与澄清：\n{task_context}\n本轮最新答复（优先）：\n{user_content}"
+            if task_context is not None else
+            f"最近用户请求（仅供理解指代）：\n{recent_user_context}\n本轮最新请求（优先）：\n{routing_text}"
+            if recent_user_context else routing_text
+        )
+        task_goal = (f"最新要求：{user_content}\n原任务：{task_context}" if task_context is not None else user_content)
+        needs_public_web = requests_public_web(routing_text)
+        if task_context is not None or should_classify_kind(route, routing_text):
             try:
                 classified = await self._generate_for_stage(
                     provider, "classify",
                     ModelRequest(
-                        messages=[AgentMessage(role="user", content=classifier_prompt(routing_text))],
+                        messages=[AgentMessage(role="user", content=classifier_prompt(classification_content))],
                     )
                 )
                 route = refine_route_from_classifier(
@@ -431,7 +447,16 @@ class AgentRuntime:
                     available_tools,
                     classified,
                     tool_specs=tool_specs,
+                    force=task_context is not None,
                 )
+                understanding = parse_task_understanding(classified)
+                if understanding is not None:
+                    if understanding.goal.strip():
+                        task_goal = understanding.goal.strip()
+                    if understanding.sources is not None:
+                        needs_public_web = understanding.kind == "web_search" or "public_web" in understanding.sources
+                    else:
+                        needs_public_web |= understanding.kind == "web_search"
             except ModelProviderError as exc:
                 if exc.code in {"model_capability_unavailable", "model_context_limit", "model_not_configured"}:
                     raise
@@ -444,8 +469,8 @@ class AgentRuntime:
                 tool_call_id="agent-thinking",
                 tool_name="agent_thinking",
                 status="done",
-                message=route_summary(route),
-                data={"route": route.kind, "allowed_tools": list(route.allowed_tools)},
+                message=("已根据最新答复重新分析目标与信息来源。" if task_context is not None else "") + route_summary(route),
+                data={"route": route.kind, "allowed_tools": list(route.allowed_tools), "replanned_after_reply": task_context is not None},
             )
         ]
         await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=events[0]))
@@ -453,7 +478,7 @@ class AgentRuntime:
 
         mode = plan_mode(route, tool_specs)
         if mode == "static":
-            plan = fallback_plan(user_content, route, tool_specs)
+            plan = fallback_plan(task_goal, route, tool_specs)
             event = ToolEvent(
                 round=0,
                 tool_call_id="agent-plan",
@@ -472,12 +497,12 @@ class AgentRuntime:
                         messages=[
                             AgentMessage(
                                 role="user",
-                                content=planner_prompt(user_content, route, tool_specs),
+                                content=planner_prompt(task_goal, route, tool_specs),
                             )
                         ]
                     )
                 )
-                plan = parse_plan(planning_response, user_content, route, tool_specs)
+                plan = parse_plan(planning_response, task_goal, route, tool_specs)
             except ModelProviderError as exc:
                 event = ToolEvent(
                         round=0,
@@ -560,7 +585,7 @@ class AgentRuntime:
             route = freeze_route_requirements(route, plan, tool_specs)
         egress = self._egress_context.get()
         if egress is not None:
-            egress.mixed = is_mixed_run(route, tool_specs)
+            egress.mixed = private_context or is_mixed_run(route, tool_specs)
 
         conversation_history = history or []
         messages = [*conversation_history]
@@ -572,7 +597,10 @@ class AgentRuntime:
                     role="system",
                     content=(
                         "当前任务已经过规划。只执行计划中允许的工具；每次根据工具结果判断下一步。"
+                        f"本次任务的 UTC 日期：{datetime.now(timezone.utc).date().isoformat()}。"
                         "工具失败时不要自行换车道或发明经历；系统最多同车道重规划一次。"
+                        "最终答复须对照 expected_output 和 success_criteria 检查是否回应用户目标；"
+                        "检索无结果、证据不相关或未核实的部分应明确说明，不得仅因工具成功就宣称完成。"
                         "计划："
                         + plan.model_dump_json()
                     ),
@@ -585,7 +613,7 @@ class AgentRuntime:
             ))
         if egress is not None and egress.mixed:
             messages.append(AgentMessage(role="system", content=mixed_run_notice()))
-        if "search_public_web" not in available_tools and requests_public_web(routing_text):
+        if "search_public_web" not in available_tools and needs_public_web:
             messages.append(AgentMessage(
                 role="system",
                 content=(
@@ -669,7 +697,7 @@ class AgentRuntime:
         tool_specs = {spec.name: spec for spec in self._tools.specs()}
         egress = self._egress_context.get()
         if egress is not None:
-            egress.mixed = is_mixed_run(route, tool_specs)
+            egress.mixed = resume.requires_query_approval or is_mixed_run(route, tool_specs)
         events: list[ToolEvent] = [
             ToolEvent(
                 round=0,
@@ -709,6 +737,9 @@ class AgentRuntime:
             repeated_tool_calls=dict(resume.repeated_tool_calls),
             replan_used=resume.replan_used,
             citation_retry_used=resume.citation_retry_used,
+            citation_draft=resume.citation_draft,
+            citation_sources=resume.citation_sources,
+            citation_allowed_urls=resume.citation_allowed_urls,
         )
         approval = self._approval_context.get()
         if resume.resume_mode == "waiting_user":
@@ -894,6 +925,9 @@ class AgentRuntime:
             messages=ctx.messages,
             replan_used=ctx.replan_used,
             citation_retry_used=ctx.citation_retry_used,
+            citation_draft=ctx.citation_draft,
+            citation_sources=ctx.citation_sources,
+            citation_allowed_urls=ctx.citation_allowed_urls,
             rounds_used=rounds_used,
             clarification=clarification,
             completed_tools=sorted(ctx.completed_tools),
@@ -901,6 +935,7 @@ class AgentRuntime:
             repeated_tool_calls=ctx.repeated_tool_calls,
             approved_tool_fingerprints=list(approval.approved) if approval else [],
             pending_tool_approval=approval.pending if approval else None,
+            requires_query_approval=bool(egress and egress.mixed),
         )
 
     def _checkpoint_run(self, ctx: RunContext, *, rounds_used: int) -> None:
@@ -960,6 +995,24 @@ class AgentRuntime:
         ]
         self._append_visible_tools(ctx.messages, ctx.executable_tools)
 
+    async def _citation_failure(self, ctx: RunContext, round_number: int, message: str) -> AgentRunResult:
+        event = ToolEvent(
+            round=round_number, tool_call_id=f"citation-validation-{round_number}",
+            tool_name="citation_validator", status="failed", message=message,
+            data={"original_draft_preserved": bool(ctx.citation_draft)},
+        )
+        ctx.events.append(event)
+        await self._publish(ctx.event_callback, AgentStreamEvent(type="agent_event", event=event))
+        content = ctx.citation_draft + "\n\n> 来源引用校验未完成，已保留原始草稿；请勿将其视为已核验结论。"
+        await self._publish(ctx.event_callback, AgentStreamEvent(type="text_reset"))
+        await self._publish(ctx.event_callback, AgentStreamEvent(type="text_delta", delta=content))
+        return AgentRunResult(
+            content=content, provider=self._model_provider, model_selection=self._current_model_selection(),
+            platform=ctx.platform, rounds=round_number, status="failed",
+            error=ToolError(code="citation_validation_failed", message=message),
+            events=ctx.events, plan=ctx.plan,
+        )
+
     async def _run_tool_loop(self, ctx: RunContext, *, start_round: int) -> AgentRunResult:
         """Execute the bounded model/tool loop for a fresh or resumed run.
 
@@ -987,30 +1040,42 @@ class AgentRuntime:
         # Messages appended after this point belong to the current run; anything
         # earlier is conversation history and must not be surfaced as a result.
         first_new_message = len(messages)
-        for round_number in range(start_round, self._max_tool_rounds + 1):
+        # Reserve one formatting-only round, including when the last permitted
+        # tool round produced the first answer. It can never execute tools.
+        for round_number in range(start_round, self._max_tool_rounds + 2):
+            repairing_citations = bool(ctx.citation_draft)
+            if round_number > self._max_tool_rounds and not repairing_citations:
+                break
             if self._cancel_requested(run_id):
                 return self._cancelled_run_result(
                     selected_platform, round_number - 1, events, ctx.plan
                 )
-            await self._publish(event_callback, AgentStreamEvent(type="text_reset"))
+            if not repairing_citations:
+                await self._publish(event_callback, AgentStreamEvent(type="text_reset"))
+            else:
+                ctx.tool_definitions = []
+                ctx.executable_tools = set()
             try:
                 completion = validate_completion(
                     route, events, ctx.plan, completed_tools, tool_specs=tool_specs
                 )
-                response = await self._generate_response_with_retry(
-                    ctx,
-                    ModelRequest(
-                        messages=messages,
-                        tools=ctx.tool_definitions,
-                        tool_choice=completion.tool_choice,
-                    ),
-                    round_number=round_number,
-                )
+                if repairing_citations:
+                    response = await self._generate_citation_repair(ctx)
+                else:
+                    response = await self._generate_response_with_retry(
+                        ctx, ModelRequest(
+                            messages=web_context_messages(messages),
+                            tools=ctx.tool_definitions,
+                            tool_choice=completion.tool_choice,
+                        ), round_number=round_number,
+                    )
             except _RunCancellationRequested:
                 return self._cancelled_run_result(
                     selected_platform, round_number, events, ctx.plan
                 )
             except ModelProviderError as exc:
+                if repairing_citations:
+                    return await self._citation_failure(ctx, round_number, str(exc))
                 event = ToolEvent(
                     round=round_number,
                     tool_call_id=f"model-round-{round_number}",
@@ -1033,6 +1098,8 @@ class AgentRuntime:
                     plan=ctx.plan,
                 )
             except Exception:
+                if repairing_citations:
+                    return await self._citation_failure(ctx, round_number, "来源引用修正未能完成")
                 event = ToolEvent(
                     round=round_number,
                     tool_call_id=f"model-round-{round_number}",
@@ -1054,6 +1121,13 @@ class AgentRuntime:
                     events=events,
                     plan=ctx.plan,
                 )
+            if repairing_citations:
+                patched = apply_citation_patches(ctx.citation_draft, ctx.citation_sources, response)
+                if patched is None:
+                    return await self._citation_failure(ctx, round_number, "来源引用修正未返回有效补丁，已保留原始草稿")
+                response = response.model_copy(update={"content": patched})
+                await self._publish(event_callback, AgentStreamEvent(type="text_reset"))
+                await self._publish(event_callback, AgentStreamEvent(type="text_delta", delta=patched))
             if not response.tool_calls:
                 completion = validate_completion(
                     route, events, ctx.plan, completed_tools, tool_specs=tool_specs
@@ -1104,7 +1178,10 @@ class AgentRuntime:
                     continue
 
             if response.content and not response.tool_calls:
-                allowed_source_urls = _web_source_urls(messages)
+                allowed_source_urls = (
+                    set(ctx.citation_allowed_urls) or {canonical_url(card["url"]) for card in ctx.citation_sources}
+                    if repairing_citations else _web_source_urls(messages)
+                )
                 if allowed_source_urls:
                     citations_valid, citation_error = validate_web_citations(
                         response.content,
@@ -1125,39 +1202,20 @@ class AgentRuntime:
                             event_callback,
                             AgentStreamEvent(type="agent_event", event=event),
                         )
-                        messages.append(AgentMessage(role="assistant", content=response.content))
-                        messages.append(
-                            AgentMessage(
-                                role="system",
-                                content=(
-                                    f"{citation_error}。请仅依据本轮工具返回的 evidence 重写回答；"
-                                    "每项可核验事实后必须添加 Markdown 来源链接，不得添加其他网址。"
-                                    "若证据不足，明确写“暂未核实”，不要猜测。允许引用的网址："
-                                    + "\n".join(sorted(allowed_source_urls))
-                                ),
-                            )
+                        ctx.citation_draft = response.content
+                        ctx.citation_sources = evidence_cards(messages, response.content)
+                        ctx.citation_allowed_urls = sorted(allowed_source_urls)
+                        messages[:] = repair_messages(
+                            ctx.plan.goal if ctx.plan else ctx.user_content,
+                            ctx.user_content, ctx.citation_draft, ctx.citation_sources,
+                            allowed_urls=allowed_source_urls,
                         )
                         ctx.tool_definitions = []
                         self._checkpoint_run(ctx, rounds_used=round_number)
                         continue
                     if not citations_valid:
-                        return AgentRunResult(
-                            content=(
-                                response.content
-                                + "\n\n> 此回答未通过来源引用校验，请勿将其视为已核验结论。"
-                            ),
-                            provider=self._model_provider,
-                            model_selection=self._current_model_selection(),
-                            platform=selected_platform,
-                            rounds=round_number,
-                            status="failed",
-                            error=ToolError(
-                                code="citation_validation_failed",
-                                message=citation_error,
-                            ),
-                            events=events,
-                            plan=ctx.plan,
-                        )
+                        ctx.citation_draft = ctx.citation_draft or response.content
+                        return await self._citation_failure(ctx, round_number, citation_error)
                     if ctx.citation_retry_used:
                         event = ToolEvent(
                             round=round_number,
@@ -1438,6 +1496,15 @@ class AgentRuntime:
                         },
                     )
                 )
+                if tool_call.name == "search_library" and result.data.get("evidence_status") == "empty":
+                    messages.append(AgentMessage(
+                        role="system",
+                        content=(
+                            "本次本地检索未得到相关证据，不能据此回答事实问题或声称整个资料库没有相关内容。"
+                            "应调整有意义的查询或使用计划中其他已授权来源；避免仅换措辞重复检索。"
+                            "仍无证据时说明具体缺口，只询问真正影响继续执行的信息，不要求重复上传无关资料。"
+                        ),
+                    ))
                 if result.status in {"failed", "blocked"}:
                     if (
                         result.status == "failed"
@@ -2106,12 +2173,36 @@ class AgentRuntime:
         if not response.provider_metadata.get("reasoning_streamed"):
             await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
 
+    async def _generate_citation_repair(self, ctx: RunContext) -> ModelResponse:
+        # One bounded formatting attempt, using the immutable draft on restore.
+        messages = repair_messages(
+            ctx.plan.goal if ctx.plan else ctx.user_content, ctx.user_content,
+            ctx.citation_draft, ctx.citation_sources,
+            allowed_urls=set(ctx.citation_allowed_urls) or None,
+        )
+        if len(messages[1].content) > MAX_REPAIR_CONTEXT_CHARS:
+            raise ModelProviderError("citation_repair_budget", "草稿超出引用修正预算，已保留原始草稿")
+        request = ModelRequest(
+            messages=messages, tools=[], tool_choice="none", reasoning_effort="low",
+            parameters={"max_output_tokens": CITATION_REPAIR_MAX_OUTPUT_TOKENS},
+        )
+        try:
+            response = await self._await_with_cancellation(
+                asyncio.wait_for(self._generate_response(ctx.provider, request, None), timeout=CITATION_REPAIR_TIMEOUT_SECONDS),
+                ctx.run_id,
+            )
+        except TimeoutError as exc:
+            raise ModelProviderError("citation_repair_timeout", "来源引用修正超时，已保留原始草稿") from exc
+        self._note_answering_model(response)
+        return response
+
     async def _generate_response_with_retry(
         self,
         ctx: RunContext,
         request: ModelRequest,
         *,
         round_number: int,
+        record_reasoning: bool = True,
     ) -> ModelResponse:
         """Retry transient model failures inside the current bounded round."""
         event_callback = ctx.event_callback
@@ -2136,9 +2227,10 @@ class AgentRuntime:
                         event_callback,
                         AgentStreamEvent(type="agent_event", event=event),
                     )
-                await self._record_reasoning(
-                    response, event_callback, events=events, round_number=round_number,
-                )
+                if record_reasoning:
+                    await self._record_reasoning(
+                        response, event_callback, events=events, round_number=round_number,
+                    )
                 self._note_answering_model(response)
                 return response
             except ModelProviderError as exc:

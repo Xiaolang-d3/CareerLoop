@@ -1,0 +1,38 @@
+[
+  {
+    "description": "社招讨论来源未明时不默认读取私人简历",
+    "vars": {
+      "task": "classify",
+      "query": "帮我整理一下这段时间社招情况，与大家的讨论",
+      "model_output": "{\"kind\":\"content_creation\",\"sources\":[]}",
+      "expected": {"kind": "content_creation", "empty_tools": true}
+    }
+  },
+  {
+    "description": "公开社招研究的任务类型和来源独立",
+    "vars": {
+      "task": "classify",
+      "query": "帮我整理这段时间公开社招行情与平台讨论",
+      "model_output": "{\"kind\":\"content_creation\",\"sources\":[\"public_web\"],\"needs_planning\":true}",
+      "expected": {"kind": "content_creation", "allowed_tools": ["search_public_web"]}
+    }
+  },
+  {
+    "description": "不围绕简历的纠正不会重新加入私人来源",
+    "vars": {
+      "task": "classify",
+      "query": "不需要围绕我的简历，看一下大家的情况",
+      "model_output": "{\"kind\":\"content_creation\",\"sources\":[\"public_web\"],\"needs_planning\":true}",
+      "expected": {"kind": "content_creation", "allowed_tools": ["search_public_web"]}
+    }
+  },
+  {
+    "description": "简单创作无需自动读取资料或搜索",
+    "vars": {
+      "task": "classify",
+      "query": "写一篇关于春天的短文",
+      "model_output": "{\"kind\":\"content_creation\",\"sources\":[]}",
+      "expected": {"kind": "content_creation", "empty_tools": true}
+    }
+  }
+]

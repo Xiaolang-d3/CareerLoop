@@ -39,4 +39,17 @@ describe("tool call display projection", () => {
     expect(toolCallDetails(event("propose_library_knowledge", { proposals: [{ statement: "每周整理笔记", id: "private-id" }] }), false))
       .toEqual([{ text: "每周整理笔记" }]);
   });
+
+  it("distinguishes evidence sources from chunks and an empty result", () => {
+    expect(toolCallDetails(event("search_library", {
+      source_count: 1, evidence_status: "found",
+      excerpts: [{ title: "讨论记录" }, { title: "讨论记录" }], facts: []
+    }), false)).toEqual([{ text: "找到 1 份资料的 2 个相关片段、0 条已确认知识：讨论记录" }]);
+    expect(toolCallDetails(event("search_library", {
+      source_count: 0, evidence_status: "empty", excerpts: [], facts: []
+    }), false)).toEqual([{ text: "本次未检索到相关证据。" }]);
+    expect(toolCallDetails(event("agent_planner", { plan: {
+      expected_output: "有来源的行情摘要", steps: [{ title: "检索招聘报告和公开讨论" }]
+    } }), false)).toEqual([{ label: "交付目标", text: "有来源的行情摘要" }, { text: "检索招聘报告和公开讨论" }]);
+  });
 });

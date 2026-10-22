@@ -7,7 +7,8 @@ import { ResultDialog } from "../features/chat/ResultDialog";
 import { ResultActionsContext } from "../features/chat/result-types";
 import { AttachmentThumbnailContext } from "../features/chat/HistoryAttachment";
 import { defaultWebSearchOptions, pendingWebSearchOptions, webSearchConfigurationIssue } from "../features/chat/webSearchOptions";
-import { textFromAppendMessage, WebSource, webSourcesFromAgent, ResearchPanelActionsContext, EditMessageComposer, RunProcess, ComposerClarification, ChatContextChips, ResearchPanel, ChatTurn } from "../features/chat/MessagePresentation";
+import { quoteForComposer } from "../features/chat/conversationActions";
+import { textFromAppendMessage, WebSource, webSourcesFromAgent, ResearchPanelActionsContext, QuoteSelectionContext, DeleteTurnContext, EditMessageComposer, RunProcess, ComposerClarification, ChatContextChips, ResearchPanel, ChatTurn } from "../features/chat/MessagePresentation";
 
 import type { AgentRunResult, ChatMessage, ChatAttachment, WebSearchOptions, ChatClarificationOption, ChatClarification, ChatWorkspaceProps } from "../features/chat/types";
 
@@ -21,9 +22,12 @@ import "./ChatModelSelection.css";
 
 import { AssistantRuntimeProvider, ComposerPrimitive, ThreadPrimitive, type ThreadMessageLike, useExternalStoreRuntime } from "@assistant-ui/react";
 
+import { flushTapSync } from "@assistant-ui/tap";
 import { useAui, useAuiState } from "@assistant-ui/store";
 
-import { ArrowUp, ArrowUpRight, FileText, History, ImagePlus, LoaderCircle, Paperclip, Plus, RefreshCw, Square, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, ArrowUpRight, Download, FileText, History, ImagePlus, LoaderCircle, Paperclip, Plus, RefreshCw, Square, TriangleAlert, X } from "lucide-react";
+
+const MAX_ATTACHMENTS = 8;
 
 function asClarificationOption(value: unknown, index: number): ChatClarificationOption | null {
   if (!value || typeof value !== "object") return null;
@@ -75,16 +79,40 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   const searchIssue = webSearchConfigurationIssue(props.webSearchOptions, props.webSearchCapabilities);
   const localDrafts = useRef(new Map<number, string>());
   const drafts = props.composerDrafts ?? localDrafts.current;
+  const auiRef = useRef(aui);
+  auiRef.current = aui;
+  const persistDraftsRef = useRef(props.onPersistComposerDrafts);
+  persistDraftsRef.current = props.onPersistComposerDrafts;
   useLayoutEffect(() => {
     const id = props.currentConversationId;
-    aui.composer().setText(id ? drafts.get(id) ?? "" : "");
+    // `aui` is a new object after setText. Reloading on that identity change
+    // would replace a just-inserted quote with the previous draft.
+    const composer = auiRef.current.composer();
+    flushTapSync(() => {
+      composer.setText(id ? drafts.get(id) ?? "" : "");
+    });
     return () => {
       if (!id) return;
-      const text = aui.composer().getState().text;
+      const text = auiRef.current.composer().getState().text;
       if (text) drafts.set(id, text);
       else drafts.delete(id);
+      persistDraftsRef.current?.();
     };
-  }, [aui, drafts, props.currentConversationId]);
+  }, [drafts, props.currentConversationId]);
+
+  useEffect(() => {
+    const flush = () => {
+      const id = props.currentConversationId;
+      if (id) {
+        const text = aui.composer().getState().text;
+        if (text) drafts.set(id, text);
+        else drafts.delete(id);
+      }
+      props.onPersistComposerDrafts?.();
+    };
+    window.addEventListener("pagehide", flush);
+    return () => window.removeEventListener("pagehide", flush);
+  }, [aui, drafts, props.currentConversationId, props.onPersistComposerDrafts]);
 
   useLayoutEffect(() => {
     const input = props.chatInputRef.current;
@@ -210,26 +238,51 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [conversationListOpen, researchPanelOpen]);
 
-  async function selectAttachment(file?: File) {
-    if (!file || props.attachmentBusy) return;
+  function applyQuote(selected: string) {
+    const next = quoteForComposer(selected, aui.composer().getState().text);
+    flushTapSync(() => {
+      aui.composer().setText(next);
+    });
+    const id = props.currentConversationId;
+    if (id) {
+      if (next) drafts.set(id, next);
+      else drafts.delete(id);
+    }
+    props.onPersistComposerDrafts?.();
+    window.requestAnimationFrame(() => props.chatInputRef.current?.focus());
+  }
+
+  async function acceptAttachment(file: File): Promise<"added" | "invalid" | "failed"> {
     const filename = file.name.toLowerCase();
-    try {
-      if (file.type.startsWith("image/") || /\.(png|jpe?g|webp)$/.test(filename)) {
-        await props.onUpload(file);
-        return;
-      }
-      if (/\.(pdf|docx|txt|md)$/.test(filename)) {
-        await props.onUpload(file);
-        return;
-      }
+    const supported = file.type.startsWith("image/") || /\.(png|jpe?g|webp|pdf|docx|txt|md)$/.test(filename);
+    if (!supported) {
       props.onAttachmentInvalid("仅支持图片（PNG、JPG、WEBP）或文档（PDF、DOCX、TXT、MD）。");
+      return "invalid";
+    }
+    try {
+      await props.onUpload(file);
+      return "added";
     } catch {
-      // The parent already exposes the localized upload/parse error to the user.
+      return "failed";
+    }
+  }
+
+  async function selectAttachments(files: File[]) {
+    if (!files.length || props.attachmentBusy) return;
+    const room = MAX_ATTACHMENTS - props.pendingAttachments.length;
+    if (room <= 0) {
+      props.onAttachmentInvalid("一次最多附加 8 个文件。");
+      return;
+    }
+    const batch = files.slice(0, room);
+    if (files.length > room) props.onAttachmentInvalid("一次最多附加 8 个文件，多出的没有添加。");
+    for (const file of batch) {
+      if (await acceptAttachment(file) === "failed") break;
     }
   }
 
   function handleAttachmentChange(event: ChangeEvent<HTMLInputElement>) {
-    void selectAttachment(event.target.files?.[0]);
+    void selectAttachments(Array.from(event.target.files ?? []));
     event.currentTarget.value = "";
   }
 
@@ -241,25 +294,31 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setIsDraggingAttachment(false);
-    void selectAttachment(event.dataTransfer.files?.[0]);
+    void selectAttachments(Array.from(event.dataTransfer.files ?? []));
   }
 
   function handleComposerPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
-    const clipboardFile = Array.from(event.clipboardData.files)[0];
-    if (!clipboardFile || props.attachmentBusy) return;
-    const filename = clipboardFile.name.toLowerCase();
-    const supported = clipboardFile.type.startsWith("image/") || /\.(pdf|docx|txt|md)$/.test(filename);
-    if (!supported) return;
+    const clipboardFiles = Array.from(event.clipboardData.files);
+    if (!clipboardFiles.length || props.attachmentBusy) return;
+    const supported = clipboardFiles.flatMap((clipboardFile, index) => {
+      const filename = clipboardFile.name.toLowerCase();
+      const accepted = clipboardFile.type.startsWith("image/") || /\.(png|jpe?g|webp|pdf|docx|txt|md)$/.test(filename);
+      if (!accepted) return [];
+      if (clipboardFile.name) return [clipboardFile];
+      const extension = clipboardFile.type.split("/")[1] || "png";
+      const suffix = clipboardFiles.length > 1 ? `-${index + 1}` : "";
+      return [new File([clipboardFile], `粘贴的图片${suffix}.${extension}`, { type: clipboardFile.type })];
+    });
+    if (!supported.length) return;
     event.preventDefault();
-    const file = clipboardFile.name
-      ? clipboardFile
-      : new File([clipboardFile], `粘贴的图片.${clipboardFile.type.split("/")[1] || "png"}`, { type: clipboardFile.type });
-    void selectAttachment(file);
+    void selectAttachments(supported);
   }
 
   return (
     <section className={`chat-workspace ${props.density === "dock" ? "is-dock" : "is-page"} ${props.focused ? "is-focused" : ""} ${props.messages.length ? "has-history" : "is-empty"} ${props.chatBusy ? "is-running" : ""} ${researchPanelOpen ? "has-research-panel" : ""}`}>
       <ResearchPanelActionsContext.Provider value={{ openDetails: openResearchDetails }}>
+      <QuoteSelectionContext.Provider value={applyQuote}>
+      <DeleteTurnContext.Provider value={props.onDeleteTurn ?? null}>
       <AttachmentPreviewContext.Provider value={setExpandedPreview}>
       <AssetOriginalContext.Provider value={props.onLoadAttachment}>
       <AttachmentThumbnailContext.Provider value={props.onLoadAttachmentThumbnail}>
@@ -287,6 +346,16 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
               title="对话记录"
             >
               <History size={16} /><span>记录</span>
+            </button>
+            <button
+              className="chat-session-tool"
+              type="button"
+              onClick={props.onExportConversation}
+              disabled={!props.onExportConversation || (!props.messages.some((message) => message.id > 0) && props.hiddenMessageCount === 0)}
+              aria-label="导出对话"
+              title="导出对话"
+            >
+              <Download size={16} /><span>导出</span>
             </button>
           </div>
         </header>
@@ -354,6 +423,13 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             </section>
           ) : null}
 
+          {props.replacementUndo?.conversationId === props.currentConversationId && !props.chatBusy ? (
+            <section className="chat-retry-prompt" role="status" aria-label="撤销替换">
+              <RefreshCw size={14} />
+              <span>已替换本轮及后续消息。生成的图片无法恢复。</span>
+              <button type="button" onClick={() => void props.onUndoReplacement?.()}>撤销</button>
+            </section>
+          ) : null}
           {props.modelChecking ? <div className="chat-retry-prompt" role="status">正在检查模型服务…</div> : null}
           {props.modelUnavailable || props.sendError || (props.retryDraft && !props.chatBusy) ? (
             <section
@@ -399,6 +475,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
               ref={attachmentInputRef}
               className="composer-file-input"
               type="file"
+              multiple
               accept=".png,.jpg,.jpeg,.webp,.pdf,.docx,.txt,.md,image/png,image/jpeg,image/webp,application/pdf"
               onChange={handleAttachmentChange}
             />
@@ -463,6 +540,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                 <div className="composer-primary-actions">
                   <ComposerModelPicker
                     configured={props.modelConfigured !== false}
+                    modelSettings={props.modelSettings}
                     currentModelName={props.currentModelName}
                     defaultModelName={props.defaultModelName}
                     profiles={props.modelProfiles ?? []}
@@ -515,6 +593,8 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
       </AttachmentThumbnailContext.Provider>
       </AssetOriginalContext.Provider>
       </AttachmentPreviewContext.Provider>
+      </DeleteTurnContext.Provider>
+      </QuoteSelectionContext.Provider>
       </ResearchPanelActionsContext.Provider>
       <ConversationHistoryPanel
         conversations={props.conversations}
@@ -527,6 +607,9 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
         onRename={props.onRenameConversation}
         onArchive={props.onArchiveConversation}
         onRemove={props.onRemoveConversation}
+        onSearch={props.onSearchConversations}
+        pinnedIds={props.pinnedConversationIds}
+        onTogglePin={props.onTogglePinConversation}
       />
       {conversationListOpen ? <button className="conversation-history-backdrop" type="button" aria-label="关闭对话记录" onClick={() => setConversationListOpen(false)} /> : null}
       {researchPanelOpen ? <button className="research-panel-backdrop" type="button" aria-label="关闭来源详情" onClick={() => closeResearchDetails()} /> : null}

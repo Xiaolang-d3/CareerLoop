@@ -4,10 +4,12 @@ import { useModelDiscovery } from "../features/settings/useModelDiscovery";
 import { useTheme } from "../features/appearance/ThemeProvider";
 import { AppearanceSettingsPage } from "../features/settings/AppearanceSettingsPage";
 import { PageLoading } from "../components/PageLoading";
+import { downloadConversationMarkdown } from "../features/chat/conversationActions";
+import { readIdList, readStringMap, writeIdList, writeStringMap } from "../features/chat/localChatPreferences";
 import { useChatRun } from "../features/chat/useChatRun";
 import { useConversations } from "../features/chat/useConversations";
 import { useLibrary } from "../features/library/useLibrary";
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createApiClient, fetchWithTimeout } from "../api/client";
 import type { AuthUser } from "../components/AuthGate";
 import { AssistantSurface } from "../components/AssistantSurface";
@@ -17,6 +19,7 @@ import { AppIdentityMenu } from "../components/AppIdentityMenu";
 import { AppTopBar } from "../components/AppTopBar";
 import { ConversationDialog } from "../components/ConversationDialog";
 import type { AttachmentConfig, ChatAttachment, ChatComposerDraft, WebSearchOptions } from "../features/chat/types";
+import type { ModelParameterUpdate } from "../features/chat/ComposerModelParameters";
 import type { ArtifactManifest } from "../features/chat/result-types";
 import type { HomeReadableItem } from "../features/home/types";
 import { createHomeAnalysisConversation, homeAnalysisDraft } from "../features/home/analysis-draft";
@@ -156,12 +159,26 @@ export function App({
   const [visibleMessageCount, setVisibleMessageCount] = useState(12);
   const [errorMessage, setErrorMessage] = useState("");
   const [noticeMessage, setNoticeMessage] = useState("");
-  const { invalidateConversationReads, conversations, setConversations, currentConversationId, setCurrentConversationId, conversationBusy, setConversationBusy, conversationDialog, setConversationDialog, refreshConversations, createNewConversation, archiveConversation, renameConversation, removeConversation } = useConversations({ fetchJson, setActiveView, setErrorMessage, setNoticeMessage });
+  const { invalidateConversationReads, conversations, setConversations, currentConversationId, setCurrentConversationId, conversationBusy, setConversationBusy, conversationDialog, setConversationDialog, refreshConversations, searchConversations, createNewConversation, archiveConversation, renameConversation, removeConversation } = useConversations({ fetchJson, setActiveView, setErrorMessage, setNoticeMessage });
   const { libraryEditor, librarySources, libraryFolders, libraryCollections, createLibraryCollection, renameLibraryCollection, deleteLibraryCollection, updateLibraryCollectionSources, organizeLibrarySource, createLibraryFolder, loadLibraryOriginal, searchLibrarySources, confirmedKnowledge, confirmedKnowledgeCount, sourceCount, pendingKnowledge, libraryLoaded, libraryBusy, sourceImportBusy, enhancedDocumentParse, setLibraryEditor, setEnhancedDocumentParse, refreshLibrary, saveLibraryMetadata, importLibraryFiles, createPastedSource, updateLibrarySource, downloadLibrarySource, deleteLibrarySource } = useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, setNoticeMessage });
   const [openLibraryResultId, setOpenLibraryResultId] = useState<number | null>(null);
   const [libraryAttachments, setLibraryAttachments] = useState<{ conversationId: number; attachments: ChatAttachment[] } | null>(null);
   const [homeComposerDraft, setHomeComposerDraft] = useState<ChatComposerDraft | null>(null);
-  const composerDrafts = useMemo(() => new Map<number, string>(), [userEmail]);
+  const composerDrafts = useMemo(() => readStringMap(preferenceKey("careerloop-composer-drafts", userEmail)), [userEmail]);
+  const persistComposerDrafts = useCallback(() => {
+    writeStringMap(preferenceKey("careerloop-composer-drafts", userEmail), composerDrafts);
+  }, [composerDrafts, userEmail]);
+  const [pinnedConversationIds, setPinnedConversationIds] = useState<number[]>(() => readIdList(preferenceKey("careerloop-pinned-conversations", userEmail)));
+  useEffect(() => {
+    setPinnedConversationIds(readIdList(preferenceKey("careerloop-pinned-conversations", userEmail)));
+  }, [userEmail]);
+  function togglePinnedConversation(conversation: Conversation) {
+    setPinnedConversationIds((current) => {
+      const next = current.includes(conversation.id) ? current.filter((id) => id !== conversation.id) : [...current, conversation.id];
+      writeIdList(preferenceKey("careerloop-pinned-conversations", userEmail), next);
+      return next;
+    });
+  }
   const composerSearchDrafts = useMemo(() => new Map<number, WebSearchOptions>(), [userEmail]);
   const { migrateHomeTheme } = useTheme();
   useEffect(() => { migrateHomeTheme(userEmail); }, [migrateHomeTheme, userEmail]);
@@ -173,7 +190,7 @@ export function App({
     homeAnalysisBusyRef.current = false;
     setConversationBusy(false);
   }, [fetchJson, userEmail, setConversationBusy]);
-  const { chatMessages, setChatMessages, chatBusy, setChatBusy, modelUnavailable, setModelUnavailable, sendError, retryChatDraft, setRetryChatDraft, chatAgentRef, taskCancelBusy, setTaskCancelBusy, chatAttachmentBusy, setChatAttachmentBusy, refreshChat, uploadChatAttachment, loadChatAttachment, removeChatAttachment, sendChatMessage, stopChatGeneration, rewindChatToUserMessage, editChatMessage, regenerateChatMessage, cancelCurrentTask } = useChatRun({ apiBase, accessToken, fetchJson, currentConversationId, currentConversationIdRef, modelProfileId: conversations.find(item => item.id === currentConversationId)?.model_profile_id ?? null, setErrorMessage, setNoticeMessage, refreshConversations, onLibraryChanged: refreshLibrary });
+  const { chatMessages, setChatMessages, chatBusy, setChatBusy, modelUnavailable, setModelUnavailable, sendError, retryChatDraft, setRetryChatDraft, replacementUndo, chatAgentRef, taskCancelBusy, setTaskCancelBusy, chatAttachmentBusy, setChatAttachmentBusy, refreshChat, uploadChatAttachment, loadChatAttachment, removeChatAttachment, sendChatMessage, stopChatGeneration, rewindChatToUserMessage, editChatMessage, regenerateChatMessage, undoReplacement, deleteChatTurn, cancelCurrentTask } = useChatRun({ apiBase, accessToken, fetchJson, currentConversationId, currentConversationIdRef, modelProfileId: conversations.find(item => item.id === currentConversationId)?.model_profile_id ?? null, setErrorMessage, setNoticeMessage, refreshConversations, onLibraryChanged: refreshLibrary });
   const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
   const [webSearchCapabilitiesBusy, setWebSearchCapabilitiesBusy] = useState(false);
   const [webSearchCapabilitiesError, setWebSearchCapabilitiesError] = useState("");
@@ -481,7 +498,7 @@ export function App({
     setAgentSettings(clean);
     const keyOptional = modelKeyOptional(next);
     updateModelSettingsEditing(!next.api_key_configured && !keyOptional);
-    if (next.api_key_configured || keyOptional) void discoverModels(clean, { silent: true });
+    if ((next.api_key_configured || keyOptional) && next.credential_status !== "saved_unverified") void discoverModels(clean, { silent: true });
     return clean;
   }
 
@@ -599,7 +616,7 @@ export function App({
     setModelSaveUnknown(null);
     updateModelSettingsEditing(false);
     invalidateDiscovery();
-    if (savedAgentSettings.api_key_configured || modelKeyOptional(savedAgentSettings)) {
+    if ((savedAgentSettings.api_key_configured || modelKeyOptional(savedAgentSettings)) && savedAgentSettings.credential_status !== "saved_unverified") {
       void discoverModels(savedAgentSettings, { silent: true });
     }
   }
@@ -771,6 +788,13 @@ export function App({
     void refreshModelMonitor().catch(() => undefined);
     void refreshModelCapabilities();
     void refreshCapabilities();
+  }
+
+  async function saveComposerModelParameters(profileId: string, revision: number, update: ModelParameterUpdate) {
+    if (chatBusy || modelSelectionBusy || modelCatalog.busy) return false;
+    const saved = await modelCatalog.mutate(`/agent/model-profiles/${encodeURIComponent(profileId)}`, "PATCH", { ...update, expected_revision: revision });
+    if (saved) setNoticeMessage("思考设置已保存，使用此模型的所有对话从后续请求生效。");
+    return saved;
   }
 
   async function resetCurrentContext() {
@@ -1079,17 +1103,17 @@ export function App({
                 modelSettingsReady ? (
                   <ModelSettingsPage
                     error={errorMessage}
-                    routingManager={<ModelRoutingPanel key={userEmail} fetchJson={fetchJson} catalog={modelCatalog.catalog}
+                    routingManager={<><ModelFallbackSettings fetchJson={fetchJson} catalog={modelCatalog.catalog} busy={modelCatalog.busy || agentSettingsBusy} /><ModelRoutingPanel key={userEmail} fetchJson={fetchJson} catalog={modelCatalog.catalog}
                       disabled={agentSettingsBusy || modelCatalog.busy || Boolean(modelSaveUnknown)}
-                      onApplied={async () => { await modelCatalog.reload(); await refreshDefaultModelSelection(); }} />}
-                    connectionManager={<><ModelConnectionManager
+                      onApplied={async () => { await modelCatalog.reload(); await refreshDefaultModelSelection(); }} /></>}
+                    connectionManager={<ModelConnectionManager
                       fetchJson={fetchJson} catalog={modelCatalog.catalog} loading={modelCatalog.loading}
                       busy={modelCatalog.busy || agentSettingsBusy} error={modelCatalog.error}
                       secretWritable={savedAgentSettings.secret_storage_writable}
                       defaultLocked={defaultModelHasDraft || Boolean(modelSaveUnknown)}
                       onReload={modelCatalog.reload} onMutate={modelCatalog.mutate}
                       onDefaultChanged={refreshDefaultModelSelection}
-                    /><ModelFallbackSettings fetchJson={fetchJson} catalog={modelCatalog.catalog} busy={modelCatalog.busy || agentSettingsBusy} /></>}
+                    />}
                     settings={agentSettings}
                     savedSettings={savedAgentSettings}
                     editing={modelSettingsEditing}
@@ -1154,7 +1178,12 @@ export function App({
             serviceModels={composerConnection ? { connection_id: composerConnection.id, connection_name: composerConnection.name || "当前服务", revision: composerConnection.revision, models: composerDiscovery.models.filter(name => !disabledServiceModels.has(name)), busy: composerDiscovery.busy, error: composerDiscovery.error } : undefined}
             onDiscoverServiceModels={composerDiscovery.discover}
             onServiceModelChange={async modelName => { if (composerConnection) await selectConversationModel(null, { connectionId: composerConnection.id, modelName, revision: composerConnection.revision }); }}
-            selectedModelProfileId={currentConversation?.model_profile_id ?? null}
+            selectedModelProfileId={(selectedModelProfile || defaultModelProfile)?.id ?? null}
+            modelSettings={(selectedModelProfile || defaultModelProfile) ? {
+              profile: (selectedModelProfile || defaultModelProfile)!,
+              protocol: composerConnection?.detected_protocol || composerConnection?.model_protocol,
+              fetchJson, onSave: saveComposerModelParameters, error: modelCatalog.error
+            } : undefined}
             modelSelectionBusy={modelSelectionBusy || modelCatalog.busy}
             modelProfileUnavailable={modelProfileUnavailable}
             modelConfigured={capabilities ? capabilities.configured !== false : undefined}
@@ -1237,6 +1266,14 @@ export function App({
             onStop={stopChatGeneration}
             onEdit={editChatMessage}
             onRegenerate={regenerateChatMessage}
+            onDeleteTurn={deleteChatTurn}
+            onExportConversation={() => downloadConversationMarkdown(currentConversation?.title || "对话", chatMessages)}
+            onSearchConversations={searchConversations}
+            pinnedConversationIds={pinnedConversationIds}
+            onTogglePinConversation={togglePinnedConversation}
+            onPersistComposerDrafts={persistComposerDrafts}
+            replacementUndo={replacementUndo}
+            onUndoReplacement={undoReplacement}
             onOpenLibrary={() => navigateRoute({ section: "chat", page: "library" })}
           />
         </Suspense>

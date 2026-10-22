@@ -104,6 +104,8 @@ def validate_plan(
         goal=(plan.goal.strip()[:300] or "完成当前工作任务"),
         route=route.kind,
         steps=steps,
+        expected_output=plan.expected_output,
+        success_criteria=plan.success_criteria,
         requires_confirmation=any(step.risk == "confirmed_local_write" for step in steps),
     )
     return PlanValidationResult(valid=True, normalized_plan=normalized)

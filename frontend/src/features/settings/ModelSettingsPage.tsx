@@ -234,7 +234,7 @@ export function ModelSettingsPage({
           <div className="model-current-meta">
             <em className={savedSettings.api_key_configured ? "success" : "warning"}>
               {savedSettings.api_key_configured ? <CheckCircle2 size={12} aria-hidden="true" /> : <TriangleAlert size={12} aria-hidden="true" />}
-              {savedSettings.api_key_configured ? "密钥已配置" : "待配置密钥"}
+              {savedSettings.credential_status === "saved_unverified" ? "密钥已保存，使用时授权" : savedSettings.api_key_configured ? "密钥已配置" : "待配置密钥"}
             </em>
             {monitor ? <em className={monitor.status}>{statusLabels[monitor.status]}</em> : null}
           </div>
@@ -324,7 +324,7 @@ export function ModelSettingsPage({
       </ModelSettingsDialog>}
       {connectionManager}
       <details className="model-advanced-settings">
-        <summary><strong>高级设置</strong><span>阶段分工与连接诊断</span><ChevronDown size={16} /></summary>
+        <summary><strong>高级设置</strong><span>备用模型、自动分工与诊断</span><ChevronDown size={16} /></summary>
         {routingManager}
         <div className="model-settings-panels">
           <p className="model-diagnostics-note">以下诊断来自已保存的连接。{editing ? "保存修改后可重新检测。" : ""}</p>

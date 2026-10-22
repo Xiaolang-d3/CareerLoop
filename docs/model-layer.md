@@ -2,9 +2,17 @@
 
 灯灯通过 [LiteLLM](https://github.com/BerriAI/litellm) **Python SDK**（不是 LiteLLM Proxy 服务器）调用模型。灯灯自己的部分仍由灯灯负责：连接与模型档案（SQLite）、「自动」协议协商并持久化 `detected_protocol`、真实图片探测、推理内容回传、调用监控与成功率、按对话选择模型、按档案设置推理强度。LiteLLM 负责各厂商的请求格式、流式解析、参数适配、错误分类、备用模型路由、重试冷却、模型能力和价格数据。
 
-Copilot 临时开发环境的依赖准备见 [GitHub 开发协作](github-collaboration.md)：`copilot-setup-steps.yml` 复用 `backend/scripts/install_deps.sh` 的开发哈希锁与 `.pth` 扫描，不安装额外模型依赖，也不配置真实模型密钥或发起模型请求。
+Copilot 临时开发环境的依赖准备见 [GitHub 开发协作](github-collaboration.md)：`copilot-setup-steps.yml` 复用 `backend/scripts/install_deps.sh` 的开发哈希锁与 `.pth` 扫描，不安装额外模型依赖，也不配置真实模型密钥或发起模型请求。本机发布工作流 `cd.yml` 同样使用现有运行时锁与 sidecar 打包，不增加模型依赖、不写入密钥。
 
 ## 架构
+
+### 钥匙串读取与配置预览
+
+本地 macOS 的模型密钥保存在系统钥匙串，SQLite 仅保存工作区隔离的版本引用。已初始化连接的公开设置、模型连接目录、能力报告和调用监控通过配置预览读取元数据，不为展示解密钥匙串；`credential_status=saved_unverified` 表示存在合法的已保存引用，不保证条目仍存在或当前已获授权。前端遇到该状态时不静默读取服务商模型列表，显示“密钥已保存，使用时授权”。
+
+实际对话、用户显式检测 / 读取模型目录、凭证保存校验和历史运行恢复仍读取真实密钥。配置预览不能恢复运行，执行继续校验凭证指纹；没有新增明文密钥缓存、SQLite 密钥字段或钥匙串 ACL 授权。首次旧版凭证迁移仍可能访问系统钥匙串。桌面开发版由本机 Python 进程访问，正式包由打包后的后端进程访问；系统授权提示中的程序名和应用签名相关，发布更新后是否需要重新授权需在实际系统验证。
+
+回归见 `backend/tests/test_keychain_display.py` 与 `frontend/src/app/App.model-settings.test.tsx`，均使用模拟凭证，不读取开发者的真实钥匙串。
 
 ```
 ChatRuntime ─► ConfiguredModelProvider (档案参数 / 推理强度)
@@ -60,7 +68,7 @@ ChatRuntime ─► ConfiguredModelProvider (档案参数 / 推理强度)
 
 每次调用估算费用写入 `model_service_events.cost_usd`：档案自定义价格优先，其次 LiteLLM 计算的 `response_cost`，再按用量 × 价格表；Ollama 记 0；未知模型留空。监控摘要返回 `estimated_cost_usd`、`priced_requests`、`unpriced_requests`、`fallback_requests`。只用服务商返回的 token 数，不调用分词器。
 
-首页日报与新增的「今日值得看」共用已保存的文本档案和 `feeds/digest.py` 单次请求适配，但分别标记 `stage=digest` / `stage=curation`（`selection_reason=home_digest` / `home_curation`），不进入对话模型路由或记忆。精选显式启用后每天访问首页自动最多一次文本调用，最大输出 2800 tokens，手动重新筛选另计请求；原日报仍独立调用与计费。没有新增厂商 SDK、模型协议或依赖；`daily-news-curator/SKILL.md` 是本地提示资源，由 sidecar 的 `--add-data` 一起打包，缺失时在外部搜索/模型调用前失败。
+首页日报与新增的「今日值得看」共用已保存的文本档案和 `feeds/digest.py` 单次请求适配，但分别标记 `stage=digest` / `stage=curation`（`selection_reason=home_digest` / `home_curation`），不进入对话模型路由或记忆。精选显式启用后每天访问首页自动最多一次文本调用，最大输出 2800 tokens，手动重新筛选另计请求；原日报仍独立调用与计费。官方模型评测走 Artificial Analysis Data API（`httpx`，`ARTIFICIAL_ANALYSIS_API_KEY` 仅服务端读取，不进入模型连接或钥匙串）；RSS 动态使用运行时依赖 `feedparser`，没有新增厂商模型 SDK 或协议适配器。`daily-news-curator/SKILL.md` 是本地提示资源，由 sidecar 的 `--add-data` 一起打包，缺失时在外部搜索/模型调用前失败。
 
 `response_format`（结构化输出）与提示缓存（Anthropic `cache_control`）经 `ModelRequest.response_format` / `prompt_cache` 透传。
 
@@ -70,9 +78,9 @@ ChatRuntime ─► ConfiguredModelProvider (档案参数 / 推理强度)
 
 - **只在 `litellm_core.py` 导入 litellm**（测试 `test_only_litellm_core_imports_litellm` 守护）。导入前设置：`LITELLM_LOCAL_MODEL_COST_MAP`、`LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS`、`LITELLM_LOCAL_AUTOROUTER_PRESETS`、`LITELLM_LOCAL_BLOG_POSTS`、`LITELLM_LOCAL_POLICY_TEMPLATES` 为 `True`，`LITELLM_MODE=PRODUCTION`（不加载 `.env`），`LITELLM_TELEMETRY=False`，`LITELLM_RUST=False`。配置后清空 `callbacks` / `success_callback` / `failure_callback`，`turn_off_message_logging=True`，`num_retries=0`（重试只由 Router 策略决定）。
 - 测试 `test_litellm_imports_offline_without_network_attempts` 在禁用 socket 的子进程中导入并读取价格表，断言没有任何网络尝试。
-- 密钥遮盖：上游错误体可能回显 API Key。`app/redaction.py` 的 `redact_secrets` 先精确替换当前连接（路由时含全部备用连接）的密钥，再遮盖 `Bearer`/`sk-`/`AIza`/`api_key=`/`?key=` 等形式；`ModelProviderError` 构造时总会做形式遮盖，LiteLLM `map_litellm_error(..., secrets)`、路由与四个原生适配器的 `_provider_error` 再做精确遮盖，`record_model_service_event` 写库前再遮盖一次。原始异常链（`__cause__`）仍保留上游原文，不写入数据库；日志另有全局遮盖：`app.main` 导入时调用 `install_log_redaction()`，通过日志记录工厂（以及已有 handler 上的 `SecretRedactingFilter`）对每条已启用级别的日志遮盖消息模板与参数（保持参数结构，uvicorn 访问日志照常格式化），并把 `exc_info` 渲染成遮盖后的 `exc_text`，因此 LiteLLM / OpenAI SDK 的 DEBUG 日志、`litellm_provider` 带堆栈的日志以及 `dev.sh` / `start-remote.sh` 写入的 `backend.log` 都不会出现密钥。各适配器构造时用 `remember_secret` 登记密钥（保留最近 256 个），供日志按原文精确遮盖。
+- 密钥遮盖：上游错误体可能回显 API Key。`app/redaction.py` 的 `redact_secrets` 先精确替换当前连接（路由时含全部备用连接）的密钥，再遮盖 `Bearer`/`sk-`/`AIza`/`api_key=`/`?key=` 等形式；`ModelProviderError` 构造时总会做形式遮盖，LiteLLM `map_litellm_error(..., secrets)`、路由与四个原生适配器的 `_provider_error` 再做精确遮盖，`record_model_service_event` 写库前再遮盖一次。原始异常链（`__cause__`）仍保留上游原文，不写入数据库；日志另有全局遮盖：`app.main` 导入时调用 `install_log_redaction()`，通过日志记录工厂（以及已有 handler 上的 `SecretRedactingFilter`）对每条已启用级别的日志遮盖消息模板与参数（保持参数结构，uvicorn 访问日志照常格式化），并把 `exc_info` 渲染成遮盖后的 `exc_text`，因此 LiteLLM / OpenAI SDK 的 DEBUG 日志、`litellm_provider` 带堆栈的日志以及 `dev.sh` / `start-remote.sh` 写入的 `backend/logs/backend.log` 都不会出现密钥。各适配器构造时用 `remember_secret` 登记密钥（保留最近 256 个），供日志按原文精确遮盖。
 - 懒加载：构建 provider 不导入 litellm，第一次模型调用时才导入（源码环境约 1.5–2 秒、打包 sidecar 约 0.65 秒，见 `GET /agent/model-layer` 的 `litellm_import_seconds`）。首次导入可能发生在线程池线程（同步接口，例如能力报告）。`litellm/_logging.py` 会在导入过程中给 `uvicorn.access`、`uvicorn.error`、`asyncio`、`httpx` 等日志器挂过滤器，这些过滤器又会懒加载 `litellm.rust_bridge.*`；如果事件循环线程在导入进行中写日志，两个线程会在模块锁上互锁，导入以 `_DeadlockError` 失败，`litellm` 被移出 `sys.modules`，而过滤器留在原处，此后每次写日志都抛 `KeyError: 'litellm'`，整个服务（含 `/health`）不再响应。`get_litellm()` 因此在导入期间暂存 `litellm.*` 定义的过滤器，导入完成后再挂上，导入失败则丢弃；`tests/test_litellm_cold_start.py` 用真实 uvicorn 冷启动后先请求能力报告来回归。
-- 依赖锁定：`requirements.txt`、`requirements-dev.txt`、`requirements-litellm.in` 只写直接依赖，用 `uv pip compile --universal --generate-hashes --only-binary :all:` 生成三份锁文件（精确版本 + 仅 wheel 哈希，跨 Linux/macOS/Windows 与 Python 3.11–3.13；共有的包版本一致）：
+- 依赖锁定：`requirements.txt`、`requirements-dev.txt`、`requirements-litellm.in` 只写直接依赖，用 `uv pip compile --universal --generate-hashes --only-binary :all:` 生成三份锁文件（精确版本 + 仅 wheel 哈希，跨 Linux/macOS/Windows 与 Python 3.11–3.13；共有的包版本一致）。首页 RSS 解析的直接依赖是 `feedparser`（写入 `requirements.txt` 并重编运行时/开发锁，不进入 LiteLLM 锁）。
   - `requirements-lock.txt`（运行时，约 90 个包，来自 `requirements-lock.in`）：`start-remote.sh`、CI e2e，以及桌面 sidecar 打包所用的环境；不含 pytest、PyInstaller。
   - `requirements-dev-lock.txt`（运行时 + 测试/构建工具，来自 `requirements-dev-lock.in`）：`dev.sh` 与 CI 后端测试。
   - `requirements-build-lock.txt`（仅 PyInstaller 及其依赖，来自 `requirements-build.in`，以开发锁为约束）：桌面构建时装在运行时锁之上，构建环境 `backend/.venv-build` 因此只有运行时包 + PyInstaller；`package-sidecar.py` 每次都先用 `install_deps.sh .venv-build build` 准备该环境，发现 pytest 等开发包则拒绝打包。
