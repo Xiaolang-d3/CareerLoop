@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - name: Require docs when documented code changes
+      - name: Ensure local docs are not tracked
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -46,7 +46,7 @@ jobs:
       - name: Install backend dependencies
         working-directory: backend
         run: |
-          # Runtime + test lock, every package hash-verified (docs/model-layer.md).
+          # Runtime + test lock, every package hash-verified.
           python -m pip install --require-hashes --no-deps --only-binary :all: -r requirements-dev-lock.txt
       - name: Scan for executable .pth files
         # -I -S: no site processing, so no .pth runs before it is scanned.

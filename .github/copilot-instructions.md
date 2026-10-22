@@ -5,7 +5,7 @@
 - `backend/app/`：FastAPI、账户隔离、资料库、模型连接和智能体运行时；测试在 `backend/tests/`。
 - `frontend/src/`：React 19、TypeScript、Vite；单元测试与源码相邻，浏览器测试在 `frontend/e2e/`。
 - `desktop/`：Tauri 壳与 Python sidecar；Web 功能改动不应顺带改动桌面打包。
-- `docs/agent.md`：智能体架构；`docs/model-layer.md`：模型连接与依赖；`docs/development.md`：开发验证。
+- `docs/`：仅在本地维护并被 Git 忽略；新克隆的仓库不包含该目录，也不要求创建它。
 
 ## 变更与验证
 
@@ -15,7 +15,7 @@
 
 - 后端依赖：`sh backend/scripts/install_deps.sh backend/.venv dev`；在 `backend/` 运行 `EMBEDDING_BACKEND=hash .venv/bin/python -m pytest tests -q`，可先指定相关测试文件。
 - 前端依赖：在 `frontend/` 运行 `npm ci`；验证用 `npm run test` 与 `npm run build`；浏览器行为变更按需运行 `npm run test:e2e`。
-- 修改路由、工具、runtime、记忆、阶段或导入循环时同步 `docs/agent.md`；资料库、数据库等变更遵循 `scripts/check-docs-sync.sh` 的文档要求；模型层或依赖变更同步 `docs/model-layer.md`，依赖与对应锁文件一起更新。
+- 修改智能体行为或模型层时同步已有的本地 `docs/agent.md` 或 `docs/model-layer.md`，但不要提交 `docs/`；`scripts/check-docs-sync.sh` 检查该目录未被跟踪。依赖与对应锁文件一起更新。
 
 ## 数据、部署与交付
 

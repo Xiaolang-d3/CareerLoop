@@ -17,7 +17,7 @@
 
 <div align="center">
 
-[快速开始](docs/getting-started.md) · [桌面版](docs/desktop.md) · [智能体架构](docs/agent.md) · [贡献指南](CONTRIBUTING.md) · [问题反馈](https://github.com/Xiaolang-d3/CareerLoop/issues/new/choose)
+[贡献指南](CONTRIBUTING.md) · [问题反馈](https://github.com/Xiaolang-d3/CareerLoop/issues/new/choose)
 
 </div>
 
@@ -53,39 +53,20 @@ CareerLoop/
 │   ├── .env.example
 │   ├── requirements-dev.txt
 │   ├── requirements.txt
-│   ├── requirements-lock.txt # 运行时依赖的哈希锁定文件；开发用 requirements-dev-lock.txt，桌面构建加 requirements-build-lock.txt（见 docs/model-layer.md）
+│   ├── requirements-lock.txt # 运行时依赖的哈希锁定文件；开发用 requirements-dev-lock.txt，桌面构建加 requirements-build-lock.txt
 │   └── requirements-optional.txt # 增强解析、语义向量与 OCR
 ├── frontend/
 │   ├── src/
 │   ├── e2e/
 │   └── package.json
 ├── desktop/            # Tauri 壳、sidecar 打包与桌面冒烟测试
-├── docs/
-│   ├── agent.md        # 智能体层维护文档
-│   ├── model-layer.md  # 模型连接、协议与备用策略
-│   └── file-library-architecture.md
 ├── evals/              # 离线评测
 ├── .github/workflows/  # GitHub Actions
 ├── CHANGELOG.md
 └── scripts/            # 本地启动与停止
 ```
 
-## 文档索引
-
-| 文档 | 内容 |
-| --- | --- |
-| [快速开始](docs/getting-started.md) | 本地启动、配置与模型连接 |
-| [桌面版](docs/desktop.md) | Tauri 打包、sidecar 架构与构建 |
-| [联网搜索](docs/web-search.md) | Tavily 与 AgentSearch 配置 |
-| [开发与验证](docs/development.md) | 测试、CI/CD、可选依赖与架构边界 |
-| [GitHub 开发协作](docs/github-collaboration.md) | Agents 角色、临时开发环境与 Projects 看板 |
-| [Mac 公网上线计划](docs/mac-cloudflare-deployment-plan.md) | 固定域名隧道、公众注册准备、备份与 Windows 迁移 |
-| [GitHub 持续部署](docs/continuous-deployment.md) | main 通过 CI 后发布、Mac 自动更新、数据保护与部署 skill |
-| [智能体架构](docs/agent.md) | 智能体层维护文档 |
-| [模型层说明](docs/model-layer.md) | 模型连接、协议与备用策略 |
-| [文件库架构](docs/file-library-architecture.md) | 资料导入、检索与长期使用 |
-| [生图接入](docs/image-generation.md) | 图片生成模型配置 |
-| [账户与认证](docs/account-auth.md) | 本地账户隔离与会话规则 |
+`docs/` 为本地维护文档，不上传 Git，也不包含在仓库克隆中。开发与提交规则见 [贡献指南](CONTRIBUTING.md)。
 
 ## 从这些任务开始
 
@@ -94,15 +75,14 @@ CareerLoop/
 - **写出一份初稿**：「结合我提供的资料，起草一篇文章，再按我的反馈逐段修改。」
 - **积累可用上下文**：把资料按主题整理，明确开启长期使用；把确认过的知识留给后续对话。
 
-文件库界面新导入的资料默认**仅存档**，不会因上传就自动成为长期依据。"用于对话"带入当时的文本快照；"长期使用"允许后续检索参考。校正提取文字会更新检索依据，不改写上传原件。详见[文件库说明](docs/file-library-architecture.md)。
+文件库界面新导入的资料默认**仅存档**，不会因上传就自动成为长期依据。"用于对话"带入当时的文本快照；"长期使用"允许后续检索参考。校正提取文字会更新检索依据，不改写上传原件。
 
-模型协议、能力与备用策略见[模型层说明](docs/model-layer.md)，图片生成配置见[生图接入说明](docs/image-generation.md)。功能是否可用取决于所选模型、服务权限与本地可选依赖。
+功能是否可用取决于所选模型、服务权限与本地可选依赖。
 
 ## 协作与变更记录
 
 - 贡献、分支、提交与验证规则：[`CONTRIBUTING.md`](CONTRIBUTING.md)
 - 版本与里程碑摘要：[`CHANGELOG.md`](CHANGELOG.md)
-- 智能体维护边界：[`docs/agent.md`](docs/agent.md)
 - 社区行为准则：[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
 - 安全漏洞报告：[`SECURITY.md`](SECURITY.md)；请使用私密报告渠道。
 - 问题反馈、功能建议与使用咨询：[创建 Issue](https://github.com/Xiaolang-d3/CareerLoop/issues/new/choose)
