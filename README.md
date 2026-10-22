@@ -15,8 +15,6 @@
 
 你可以选择自己的模型服务，决定哪些资料只存档、哪些允许长期参考，以及每轮对话是否联网。资料、会话和任务记录保存在本机；使用外部模型或搜索服务时，相关上下文或查询会发送至你配置的服务，**本地存储不等于全程离线**。
 
-当前版本：**2.0.0 开发预览版**。支持浏览器本地运行，桌面版基于 Tauri 2，目前面向 macOS ARM64 内部测试。
-
 <div align="center">
 
 [快速开始](docs/getting-started.md) · [桌面版](docs/desktop.md) · [智能体架构](docs/agent.md) · [贡献指南](CONTRIBUTING.md) · [问题反馈](https://github.com/Xiaolang-d3/CareerLoop/issues/new/choose)
@@ -40,7 +38,7 @@
 
 - 前端：React 19、TypeScript、Vite、Vitest、Playwright
 - 后端：Python 3.11+、FastAPI、Pydantic、LiteLLM SDK 与原生模型适配器
-- 桌面：Tauri 2、Rust、FastAPI sidecar
+- 桌面：Tauri 2、Rust、FastAPI sidecar（当前仅 macOS ARM64 内部测试）
 - 数据：SQLite、sqlite-vec、本地检索（可选 FastEmbed 向量）、本地附件；可选 MinIO
 - 可选联网搜索：[Tavily](https://docs.tavily.com/documentation/api-reference/endpoint/search) API 或独立部署的 [AgentSearch](https://github.com/brcrusoe72/agent-search) 服务
 
