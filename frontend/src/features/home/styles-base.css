@@ -212,3 +212,7 @@
 .home-curation-optin { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
 .home-curation-optin input { width: 16px; height: 16px; margin: 0; accent-color: var(--home-accent); }
 .home-curation-setting p { margin: 8px 0 0; color: var(--home-text-3); font-size: 12px; line-height: 18px; }
+
+.home-source-filter { display: inline-flex; align-items: center; gap: 6px; color: var(--color-text-muted); font-size: 12px; }
+.home-source-filter select { max-width: 140px; min-height: 32px; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: 8px; color: var(--color-text-secondary); background: var(--color-surface); font: inherit; }
+.home-source-filter select:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }

@@ -3,6 +3,7 @@ import { Bookmark, ExternalLink, GitFork, Github, MoreHorizontal, Newspaper, Pac
 import type { HomeArticle, HomeReadableItem, HomeRelease, HomeRepository } from "./types";
 
 export const TOPIC_LABELS: Record<string, string> = {
+  release: "新模型", evaluation: "能力评测", pricing: "价格与成本",
   model: "模型与 API", agent: "Agent 框架", mcp: "MCP", tools: "开发工具",
   tool: "工具调用", memory: "上下文与记忆", rag: "RAG", eval: "评测",
   obs: "可观测性", deploy: "部署", cost: "延迟与成本"

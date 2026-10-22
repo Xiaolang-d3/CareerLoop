@@ -61,6 +61,7 @@ class Settings(BaseModel):
     agent_search_token: str | None = None
     web_research_timeout_seconds: float = Field(default=25, gt=0, le=120)
     web_research_max_sources: int = Field(default=10, ge=3, le=20)
+    artificial_analysis_api_key: str | None = Field(default=None, repr=False, exclude=True)
 
     @property
     def is_loopback_only(self) -> bool:
@@ -131,4 +132,5 @@ def get_settings() -> Settings:
         agent_search_token=os.getenv("AGENT_SEARCH_TOKEN") or None,
         web_research_timeout_seconds=os.getenv("WEB_RESEARCH_TIMEOUT_SECONDS", "25"),
         web_research_max_sources=os.getenv("WEB_RESEARCH_MAX_SOURCES", "10"),
+        artificial_analysis_api_key=(os.getenv("ARTIFICIAL_ANALYSIS_API_KEY") or "").strip() or None,
     )

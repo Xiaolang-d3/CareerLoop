@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from app import workspace
 from app.api.home import router
-from app.feeds import service, sources
+from app.feeds import benchmarks, market, service, sources
 
 
 NOW = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
@@ -20,6 +20,9 @@ ARTICLE = {"id": "article:fixture", "title": "Agent SDK", "summary": "Tools upda
 
 @pytest.fixture
 def home_workspace(tmp_path, monkeypatch):
+    monkeypatch.setattr(market, "enabled", lambda: False)
+    monkeypatch.setattr(benchmarks, "configured", lambda: False)
+    monkeypatch.setattr(service, "_public_cache", service.PublicSourceCache())
     monkeypatch.setattr(service, "_now", lambda: NOW)
     monkeypatch.setattr(service, "_running", set())
     monkeypatch.setattr(service, "_last_started", {})
@@ -72,10 +75,10 @@ def test_error_cooldown_does_not_retry_on_every_poll(home_workspace, immediate_r
     service.get_feed()
     service.get_feed()
     service.get_feed()
-    assert len(called) == 4
+    assert len(called) == len(sources.configured_sources([]))
     monkeypatch.setattr(service, "_now", lambda: NOW + timedelta(minutes=6))
     service.get_feed()
-    assert len(called) == 8
+    assert len(called) == 2 * len(sources.configured_sources([]))
 
 
 def test_rate_limited_source_keeps_snapshot_and_surfaces_retry_message(home_workspace, immediate_refresh, monkeypatch):
@@ -144,7 +147,52 @@ def test_real_background_thread_explicitly_binds_workspace(home_workspace, monke
     assert done.wait(3)
     threads[0].join(timeout=3)
     assert not threads[0].is_alive()
-    assert roots == [home_workspace] * 4
+    assert roots == [home_workspace] * len(sources.configured_sources([]))
+
+
+def test_slow_source_does_not_block_publishing_other_sources(home_workspace, monkeypatch):
+    slow_started = Event()
+    release_slow = Event()
+    healthy_saved = Event()
+    threads = []
+    spawn = workspace.spawn_thread
+    save = service._save
+
+    def tracked_spawn(*args, **kwargs):
+        thread = spawn(*args, **kwargs)
+        threads.append(thread)
+        return thread
+
+    def fetch(source):
+        assert workspace.current_workspace_root() == home_workspace
+        if source.id == "openai-news":
+            slow_started.set()
+            assert release_slow.wait(3)
+            raise httpx.ConnectTimeout("slow source")
+        return []
+
+    def tracked_save(root, payload):
+        save(root, payload)
+        if "github-day" in payload["source_cache"]:
+            healthy_saved.set()
+
+    monkeypatch.setattr(workspace, "spawn_thread", tracked_spawn)
+    monkeypatch.setattr(sources, "fetch_source", fetch)
+    monkeypatch.setattr(service, "_save", tracked_save)
+    try:
+        assert service.start_refresh()
+        assert slow_started.wait(2)
+        assert healthy_saved.wait(2)
+        snapshot = service.get_feed(refresh_if_due=False)
+        assert snapshot["refreshing"] is True
+        statuses = {source["id"]: source for source in snapshot["sources"]}
+        assert statuses["github-day"]["last_success_at"] is not None
+        assert statuses["openai-news"]["last_success_at"] is None
+    finally:
+        release_slow.set()
+        for thread in threads:
+            thread.join(timeout=3)
+    assert service.get_feed(refresh_if_due=False)["refreshing"] is False
 
 
 def test_state_patch_does_not_drop_other_state_or_preferences(home_workspace, immediate_refresh):
@@ -163,6 +211,13 @@ def test_undated_item_stays_null_old_news_is_not_latest(home_workspace, immediat
     old = {**ARTICLE, "id": "old", "published_at": "2025-01-01T12:00:00Z"}
     monkeypatch.setattr(sources, "fetch_source", lambda source: [undated, old] if source.kind == "news" else [])
     assert service.get_feed()["news"] == [undated]
+
+
+def test_low_frequency_publisher_retains_latest_notices_with_original_dates():
+    old = [{**ARTICLE, "id": f"older-{index}", "published_at": f"2026-08-0{index + 1}T12:00:00Z"} for index in range(5)]
+    retained = service._recent_news(old, NOW)
+    assert [item["id"] for item in retained] == ["older-4", "older-3", "older-2"]
+    assert retained[0]["published_at"] == "2026-08-05T12:00:00Z"
 
 
 def test_unsubscribing_during_refresh_cannot_restore_removed_repo(home_workspace, monkeypatch):
@@ -193,7 +248,7 @@ def test_api_routes_return_same_snapshot_and_validate_patch(home_workspace, imme
     with TestClient(app) as client:
         fetched = client.get("/home/feed")
         assert fetched.status_code == 200
-        expected_keys = {"news", "repositories", "updates", "practices", "sources", "preferences", "item_states", "bookmarks", "refreshing", "last_synced_at", "digest", "curation"}
+        expected_keys = {"model_benchmarks", "model_news", "news", "repositories", "updates", "practices", "sources", "preferences", "item_states", "bookmarks", "refreshing", "last_synced_at", "digest", "curation"}
         assert set(fetched.json()) == expected_keys
         refreshed = client.post("/home/feed/refresh")
         assert refreshed.status_code == 200

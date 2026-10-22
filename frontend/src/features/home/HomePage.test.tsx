@@ -10,7 +10,7 @@ const fixtureRepository = (index: number, overrides: Partial<HomeRepository> = {
 const fixtureDigest = (overrides: Partial<HomeDigest> = {}): HomeDigest => ({ status: "ready", profile_id: "p1", model_name: "digest-model", generated_at: "2026-10-08T02:00:00Z", date: "2026-10-08", error: "", overview: "今日总览内容。", sections: [{ key: "news", label: "AI / Agent 动态", points: [{ text: "要点一", url: "https://example.test/news/1" }, { text: "要点二", url: null }] }], ...overrides });
 function fixtureFeed(): HomeFeedResponse {
   return {
-    news: Array.from({ length: 7 }, (_, index) => fixtureArticle(index + 1)),
+    news: Array.from({ length: 9 }, (_, index) => fixtureArticle(index + 1)),
     repositories: { day: Array.from({ length: 9 }, (_, index) => fixtureRepository(index + 1)), week: [fixtureRepository(1, { id: "weekly-1", name: "weekly-repo", rank: 4, period_stars: 80 })] },
     updates: [{ id: "release-1", repo: "owner/framework", name: "测试框架", version: "v2.0.0", previous_version: "v1.0.0", published_at: "2026-10-07T01:00:00Z", changes: ["测试发布说明"], compatibility: "review", url: "https://github.com/owner/framework/releases/tag/v2.0.0" }],
     practices: [fixtureArticle(20, { title: "测试工程实践", category: "rag", tags: ["RAG"], published_at: null })],
@@ -55,11 +55,49 @@ describe("home-metrics", () => {
 });
 
 describe("developer HomePage", () => {
+  it("uses model selection news and its three filters instead of raw company announcements", async () => {
+    const initial = fixtureFeed();
+    initial.model_news = [fixtureArticle(1, { category: "release" }), fixtureArticle(2, { category: "pricing" })];
+    initial.news.push(fixtureArticle(90, { title: "公司融资新闻" }));
+    setup(initial).render();
+    await load();
+    expect(screen.queryByRole("link", { name: "公司融资新闻" })).not.toBeInTheDocument();
+    const categories = screen.getByRole("group", { name: "动态分类" });
+    fireEvent.click(within(categories).getByRole("button", { name: "价格与成本" }));
+    expect(screen.getByRole("link", { name: "测试 Agent 更新 2" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "测试 Agent 更新 1" })).not.toBeInTheDocument();
+    fireEvent.click(within(categories).getByRole("button", { name: "新模型" }));
+    expect(screen.getByRole("link", { name: "测试 Agent 更新 1" })).toBeVisible();
+  });
+  it("keeps chronological order without a vendor quota and can filter every source", async () => {
+    const initial = fixtureFeed();
+    const publishers = ["OpenAI", "Claude", "Gemini", "DeepSeek", "千问", "混元", "新模型实验室"];
+    initial.news = [
+      ...Array.from({ length: 8 }, (_, index) => fixtureArticle(index + 1, { source: "OpenAI", tags: ["AI"] })),
+      ...publishers.slice(1).map((source, index) => fixtureArticle(index + 30, { source, title: `${source} 官方更新`, tags: ["AI"], published_at: "2026-09-01T00:00:00Z" }))
+    ];
+    initial.sources = publishers.map((publisher, index) => ({ id: `source-${index}`, publisher, label: `${publisher} 官方动态`, kind: "news", status: "ready", url: "https://example.test/news", last_success_at: initial.last_synced_at, error: null }));
+    setup(initial).render();
+    await load();
+    const selector = screen.getByRole("combobox", { name: "资讯来源" });
+    expect(within(selector).getAllByRole("option")).toHaveLength(publishers.length + 1);
+    expect(screen.queryByRole("link", { name: "混元 官方更新" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看全部动态" }));
+    for (const publisher of publishers.slice(1)) expect(screen.getByRole("link", { name: `${publisher} 官方更新` })).toBeVisible();
+    fireEvent.change(selector, { target: { value: "DeepSeek" } });
+    expect(screen.getByRole("link", { name: "DeepSeek 官方更新" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "测试 Agent 更新 1" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "千问 官方更新" })).not.toBeInTheDocument();
+    fireEvent.change(selector, { target: { value: "all" } });
+    fireEvent.click(screen.getByRole("button", { name: "查看全部动态" }));
+    expect(screen.getByRole("link", { name: "混元 官方更新" })).toBeVisible();
+  });
+
   it("loads real feed data into four modules and keeps the local clock synchronized", async () => {
     const page = setup(); page.render(); await load();
     expect(page.request).toHaveBeenCalledWith("/home/feed", expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("早上好，测试开发者");
-    for (const title of ["AI / Agent 动态", "GitHub 热榜", "我的技术栈更新", "工程实践精选"]) expect(screen.getByRole("heading", { name: new RegExp(title.replace("/", "\\/")) })).toBeInTheDocument();
+    for (const title of ["模型动态", "GitHub 热榜", "我的技术栈更新", "工程实践精选"]) expect(screen.getByRole("heading", { name: new RegExp(title.replace("/", "\\/")) })).toBeInTheDocument();
     expect(screen.getByLabelText("当前时间")).toHaveTextContent("11:59");
     vi.setSystemTime(new Date(2026, 9, 8, 18, 5));
     act(() => document.dispatchEvent(new Event("visibilitychange")));
@@ -73,7 +111,7 @@ describe("developer HomePage", () => {
     const page = setup(); const view = page.render(); await load();
     fireEvent.click(screen.getByRole("button", { name: "简洁" }));
     expect(screen.getByLabelText("开发者首页")).toHaveAttribute("data-mode", "compact");
-    expect(screen.getByRole("link", { name: "测试 Agent 更新 7" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "测试 Agent 更新 9" })).toBeInTheDocument();
     expect(window.localStorage.getItem("careerloop-home-mode:qa-account")).toBe("compact");
     expect(screen.queryByRole("button", { name: /切换.*主题/ })).not.toBeInTheDocument();
     expect(screen.getByLabelText("开发者首页")).not.toHaveAttribute("data-theme");
@@ -85,11 +123,11 @@ describe("developer HomePage", () => {
 
   it("filters news, resets an empty selection, and expands then collapses the real list", async () => {
     setup().render(); await load();
-    expect(screen.queryByRole("link", { name: "测试 Agent 更新 7" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "测试 Agent 更新 9" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "查看全部动态" }));
-    expect(screen.getByRole("link", { name: "测试 Agent 更新 7" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "测试 Agent 更新 9" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "收起动态" }));
-    fireEvent.click(within(screen.getByRole("group", { name: "动态分类" })).getByRole("button", { name: "开发工具" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "动态分类" })).getByRole("button", { name: "价格与成本" }));
     expect(screen.getByText("没有符合筛选条件的动态")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
     expect(screen.getByRole("link", { name: "测试 Agent 更新 1" })).toBeInTheDocument();

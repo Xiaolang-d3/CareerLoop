@@ -30,12 +30,12 @@ TDD 已实际看到缺少精选快照、缺少 API、无效证据被误判为空
 
 浅色和深色各在 1280、768、390 像素宽度截图；卡片无水平内容溢出。另人工查看浅色宽屏及深色窄屏截图，标题、摘要、推荐理由、日期和证据无截断或不可读问题。生成文件位于工作区 `output/home-curation/`（不提交）：
 
-- `../../output/home-curation/curation-light-1280.png`
-- `../../output/home-curation/curation-light-768.png`
-- `../../output/home-curation/curation-light-390.png`
-- `../../output/home-curation/curation-dark-1280.png`
-- `../../output/home-curation/curation-dark-768.png`
-- `../../output/home-curation/curation-dark-390.png`
+- `../output/home-curation/curation-light-1280.png`
+- `../output/home-curation/curation-light-768.png`
+- `../output/home-curation/curation-light-390.png`
+- `../output/home-curation/curation-dark-1280.png`
+- `../output/home-curation/curation-dark-768.png`
+- `../output/home-curation/curation-dark-390.png`
 
 后端还通过 `httpx.MockTransport` 实际执行 Tavily 请求构造与结果归一化，通过真实模型请求构造路径验证 stage、token 上限和无工具调用；只是服务端响应被确定性夹具替代，不代表验证了真实账号权限、额度或搜索/模型质量。
 
