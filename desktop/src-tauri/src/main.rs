@@ -8,7 +8,7 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[cfg(debug_assertions)]
 use std::{
@@ -191,6 +191,27 @@ struct DesktopApiResponse {
     retry_after: Option<String>,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopStreamEvent {
+    request_id: String,
+    kind: String,
+    status: Option<u16>,
+    content_type: Option<String>,
+    retry_after: Option<String>,
+    chunk_base64: Option<String>,
+    error: Option<String>,
+}
+
+fn emit_stream(app: &tauri::AppHandle, event: DesktopStreamEvent) {
+    // A late or missing WebView listener still receives the full body below.
+    let _ = app.emit("desktop-api-stream", event);
+}
+
+fn is_event_stream(content_type: Option<&str>) -> bool {
+    content_type.is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"))
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DesktopFormField {
@@ -309,6 +330,7 @@ struct DesktopApiRequest {
 
 #[tauri::command]
 async fn desktop_api_request(
+    app: tauri::AppHandle,
     state: tauri::State<'_, RuntimeConfig>,
     tasks: tauri::State<'_, ApiTasks>,
     request: DesktopApiRequest,
@@ -323,7 +345,7 @@ async fn desktop_api_request(
         }
     };
     let id = request.request_id.clone().unwrap_or_else(new_instance_id);
-    let handle = tauri::async_runtime::spawn(perform_api_request(base, request));
+    let handle = tauri::async_runtime::spawn(perform_api_request(app, base, id.clone(), request));
     let abort = handle.inner().abort_handle();
     if !tasks.register(id.clone(), Box::new(move || abort.abort())) {
         return Err("请求已取消或请求标识重复".to_string());
@@ -334,7 +356,9 @@ async fn desktop_api_request(
 }
 
 async fn perform_api_request(
+    app: tauri::AppHandle,
     base: String,
+    request_id: String,
     request: DesktopApiRequest,
 ) -> Result<DesktopApiResponse, String> {
     if !request.path.starts_with('/') {
@@ -382,7 +406,7 @@ async fn perform_api_request(
             .header("Content-Type", "application/json")
             .body(body);
     }
-    let response = builder
+    let mut response = builder
         .send()
         .await
         .map_err(|error| format!("请求 {url} 失败：{error}"))?;
@@ -397,6 +421,77 @@ async fn perform_api_request(
         .get(reqwest::header::RETRY_AFTER)
         .and_then(|value| value.to_str().ok())
         .map(|value| value.to_string());
+    if is_event_stream(content_type.as_deref()) {
+        emit_stream(
+            &app,
+            DesktopStreamEvent {
+                request_id: request_id.clone(),
+                kind: "headers".into(),
+                status: Some(status),
+                content_type: content_type.clone(),
+                retry_after: retry_after.clone(),
+                chunk_base64: None,
+                error: None,
+            },
+        );
+        let mut collected = Vec::new();
+        loop {
+            match response.chunk().await {
+                Ok(Some(chunk)) if !chunk.is_empty() => {
+                    collected.extend_from_slice(&chunk);
+                    emit_stream(
+                        &app,
+                        DesktopStreamEvent {
+                            request_id: request_id.clone(),
+                            kind: "chunk".into(),
+                            status: None,
+                            content_type: None,
+                            retry_after: None,
+                            chunk_base64: Some(BASE64.encode(&chunk)),
+                            error: None,
+                        },
+                    );
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => break,
+                Err(error) => {
+                    let message = format!("读取 {url} 响应失败：{error}");
+                    emit_stream(
+                        &app,
+                        DesktopStreamEvent {
+                            request_id,
+                            kind: "error".into(),
+                            status: None,
+                            content_type: None,
+                            retry_after: None,
+                            chunk_base64: None,
+                            error: Some(message.clone()),
+                        },
+                    );
+                    return Err(message);
+                }
+            }
+        }
+        emit_stream(
+            &app,
+            DesktopStreamEvent {
+                request_id,
+                kind: "end".into(),
+                status: None,
+                content_type: None,
+                retry_after: None,
+                chunk_base64: None,
+                error: None,
+            },
+        );
+        return Ok(DesktopApiResponse {
+            status,
+            body: String::from_utf8_lossy(&collected).into_owned(),
+            body_base64: None,
+            content_type,
+            retry_after,
+        });
+    }
     let bytes = response
         .bytes()
         .await

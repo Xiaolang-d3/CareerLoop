@@ -68,9 +68,9 @@ flowchart TB
 | --- | --- |
 | 前端状态 | `App.tsx` 组合 `useChatRun`、`useConversations`、`useLibrary`；聊天订阅使用 `@ag-ui/client` |
 | 账户隔离 | `main.py` 校验登录会话后绑定 `workspace.py`；业务库位于 `workspaces/<user_id>/careerloop.db`，认证使用独立 `auth.db` |
-| 桌面壳 | Rust 启动 loopback sidecar、分配动态端口并核验 `/health`；Agent 留在 Python。当前 `desktop_api_request` 读完整个响应后返回，SSE 不会实时透传到 WebView |
-| 任务调度 | 聊天为进程内 `asyncio.Task`，首页为工作区绑定线程；SQLite 保存状态与恢复依据，不承担独立 worker 调度 |
-| Sites 副本 | 工作区另有独立前端仓库，经本机 `8001 → 8000` 转发访问后端；不属于此仓库的 Agent 执行层 |
+| 桌面壳 | Rust 启动 loopback sidecar、分配动态端口并核验 `/health`；Agent 留在 Python。`text/event-stream` 经 `desktop-api-stream` 按块推到 WebView，其它响应仍整包返回；事件丢失时回退为完整正文 |
+| 任务调度 | 聊天为进程内 `asyncio.Task`，首页为工作区绑定线程；SQLite 保存状态与恢复依据，不承担独立 worker 调度。退出应用即停止任务，不会在关机后继续生成 |
+| Sites 副本 | 工作区另有独立前端仓库，检出在 `sites/`，不纳入本仓库，也不与 `frontend/` 同步；经本机 `8001 → 8000` 转发访问后端，不属于此仓库的 Agent 执行层 |
 
 `main.py` 的公开静态资源白名单包含当前灯灯图标、品牌标志、favicon 和产品介绍背景；浏览器图片请求无需会话即可读取这些固定路径，业务接口和未列出的文件仍需认证。`/assets/` 的哈希构建资源可长期缓存，根目录品牌图片不使用 immutable 缓存。
 
@@ -185,7 +185,7 @@ flowchart TB
 | 数据路径 | 约束 |
 | --- | --- |
 | 对话记忆 | `chat/service.py` 按开关、上下文条数与清空截点构建历史和摘要；不形成任务策略记忆 |
-| 文件库来源 | `library_sources` 为权威目录；文件库 UI 新导入默认仅存档，后端服务/旧 API 的 enabled 默认值仍为 true，调用方须显式传入许可 |
+| 文件库来源 | `library_sources` 为权威目录；新导入和未传 `enabled` 的服务/API 调用默认仅存档，只有显式 `enabled=true` 才进入检索。已有记录不批量改动 |
 | 自动参考 | 仅已启用、ready、未回收的来源可进入上下文与索引；禁用/回收移除索引，恢复按启用状态重建 |
 | 隐私与长度 | 默认脱敏，单来源可显式 original；`model_context` 每来源最多 4000 字、总量约 12000 字，长资料用检索 |
 | 检索回退 | 缺少 FastEmbed 时使用哈希嵌入；向量检索异常时回退 SQL `LIKE`，两者不是同一层回退 |

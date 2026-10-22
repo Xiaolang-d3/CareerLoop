@@ -63,6 +63,8 @@ cd backend
 
 数据库当前版本为 **31**。旧工作区按版本升级，升级前在工作区 `.upgrade-backups/` 保存一致性备份，保留已有资料、会话与附件；未知格式或来自更新版本的数据库会拒绝修改。备份含原始资料，应与工作区一起保管。智能体、账号隔离与迁移边界见[智能体维护文档](agent.md)。
 
+`sites/` 是独立前端仓库的本地检出，不参与本仓库的界面和智能体实现，不要把它和 `frontend/` 当成两份需要同步的产品代码。聊天和首页都在当前后端进程内执行，没有独立 worker。退出应用会停止进行中的任务；可恢复的状态在 SQLite，不会在关机后继续生成。
+
 ## 持续集成与发布
 
 - 推送 `main` 或打开 PR 时运行 [CI](../.github/workflows/ci.yml)：`backend-tests`、`frontend-unit`、`frontend-e2e`，由 `ci-gate` 汇总。E2E 在 Linux/macOS 执行，macOS 检查固定截图，Linux 检查几何尺寸和真实交互。PR 改动智能体相关代码时额外检查 `docs/agent.md`。

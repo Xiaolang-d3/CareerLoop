@@ -168,7 +168,7 @@ async def library_sources_import(
     files: list[UploadFile] = File(...),
     mode: str = Form(default="fast"),
     privacy_mode: Literal["redacted", "original"] = Form(default="redacted"),
-    enabled: bool = Form(default=True),
+    enabled: bool = Form(default=False),
 ) -> dict[str, Any]:
     results: list[dict[str, Any]] = []
     for file in files:
