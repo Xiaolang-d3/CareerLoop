@@ -13,6 +13,9 @@ node_modules/
 dist/
 .vite/
 
+# Local documentation (never upload)
+/docs/
+
 # Local runtime data
 backend/data/
 backend/logs/

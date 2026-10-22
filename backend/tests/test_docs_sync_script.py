@@ -1,4 +1,4 @@
-"""scripts/check-docs-sync.sh: rules hold for long change lists (no SIGPIPE false negative)."""
+"""CI keeps local docs out of Git without requiring documentation commits."""
 from __future__ import annotations
 
 import shutil
@@ -32,27 +32,39 @@ def _check(tmp_path: Path, files: list[str]) -> subprocess.CompletedProcess[str]
     return subprocess.run(["bash", str(SCRIPT), base, head], cwd=repo, capture_output=True, text=True)
 
 
-# Long lists made `echo | grep -q` die with SIGPIPE (141) and read as "no match".
-FILLER = [f"frontend/src/generated/file_{index:05}.ts" for index in range(6000)]
+@pytest.mark.parametrize("document", ["docs/agent.md", "docs/nested/notes.md", "docs/images/example.png"])
+def test_rejects_tracked_docs(tmp_path, document):
+    result = _check(tmp_path, [document])
+    assert result.returncode == 1
+    assert document in result.stdout
 
 
-@pytest.mark.parametrize("changed", [
-    "backend/app/models/litellm_provider.py",
-    "backend/requirements-lock.txt",
-    "backend/scripts/scan_pth.py",
-    ".github/workflows/ci.yml",
-])
-def test_model_layer_rule_fires_with_long_change_list(tmp_path, changed):
-    result = _check(tmp_path, [changed, *FILLER, "docs/agent.md"])
-    assert result.returncode == 1 and "docs/model-layer.md" in result.stdout
+def test_code_changes_pass_without_docs(tmp_path):
+    result = _check(tmp_path, [
+        "backend/app/agent/runtime.py",
+        "backend/app/models/litellm_provider.py",
+        "backend/requirements-lock.txt",
+        ".github/workflows/ci.yml",
+    ])
+    assert result.returncode == 0, result.stdout
 
 
-def test_agent_rule_fires_with_long_change_list(tmp_path):
-    result = _check(tmp_path, ["backend/app/agent/runtime.py", *FILLER])
-    assert result.returncode == 1 and "docs/agent.md" in result.stdout
+def test_untracking_docs_preserves_local_files_and_passes(tmp_path):
+    repo, base, _ = _repo(tmp_path, ["docs/agent.md"])
+    (repo / ".gitignore").write_text("/docs/\n")
+    subprocess.run(["git", "rm", "-r", "--cached", "docs"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "add", ".gitignore"], cwd=repo, check=True)
+    subprocess.run([
+        "git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "local docs",
+    ], cwd=repo, check=True)
+    result = subprocess.run(["bash", str(SCRIPT), base, "HEAD"], cwd=repo, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout
+    assert (repo / "docs/agent.md").read_text() == "x\n"
+    ignored = subprocess.run(["git", "check-ignore", "docs/agent.md"], cwd=repo, capture_output=True)
+    assert ignored.returncode == 0
 
 
-def test_passes_when_docs_updated(tmp_path):
-    result = _check(tmp_path, ["backend/scripts/install_deps.sh", "backend/app/agent/x.py", *FILLER,
-                               "docs/model-layer.md", "docs/agent.md"])
-    assert result.returncode == 0, result.stdout[-500:]
+def test_invalid_head_fails(tmp_path):
+    repo, base, _ = _repo(tmp_path, ["README.md"])
+    result = subprocess.run(["bash", str(SCRIPT), base, "missing-ref"], cwd=repo, capture_output=True)
+    assert result.returncode != 0

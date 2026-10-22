@@ -2,7 +2,7 @@
 
 ## 项目
 
-灯灯是从对话开始的个人 AI 协作工作台。仓库根目录就是产品本身：后端在 `backend/app/`，桌面端在 `desktop/`（Tauri），前端在 `frontend/src/`，测试分别位于 `backend/tests/`、前端相邻目录和 `frontend/e2e/`。智能体层维护文档为 `docs/agent.md`；改路由、工具、runtime、记忆、阶段或导入循环时必须同步更新。
+灯灯是从对话开始的个人 AI 协作工作台。仓库根目录就是产品本身：后端在 `backend/app/`，桌面端在 `desktop/`（Tauri），前端在 `frontend/src/`，测试分别位于 `backend/tests/`、前端相邻目录和 `frontend/e2e/`。`docs/` 仅在本地维护，不纳入 Git。已有本地 `docs/agent.md` 时，改路由、工具、runtime、记忆、阶段或导入循环仍须同步更新；新克隆的仓库不要求创建该文档。
 
 `sites/dengdeng/` 是灯灯 Sites 版本，独立 Git 仓库，不纳入本仓库。它源自前端快照，资料与登录仍由本机 FastAPI 后端处理，本地转发方式见其 `README.md`。
 
@@ -23,4 +23,4 @@ Python 使用四空格和 `snake_case`；TypeScript 使用两空格、`camelCase
 
 ## 提交
 
-使用中文 Conventional Commit（详见 `CONTRIBUTING.md`），例如 `feat(agent): 增加工具调用`。CI 以 `scripts/check-docs-sync.sh` 校验同步：智能体、资料库、数据库等变更须同步 `docs/agent.md`，模型层与依赖变更须同步 `docs/model-layer.md`。不要提交 `.env`、令牌、个人资料、SQLite 数据、日志或构建产物。PR 说明目的、验证方式及配置/迁移影响；UI 变更附截图。`sites/dengdeng/` 在它自己的仓库里提交。
+使用中文 Conventional Commit（详见 `CONTRIBUTING.md`），例如 `feat(agent): 增加工具调用`。CI 以 `scripts/check-docs-sync.sh` 检查 `docs/` 未被跟踪。智能体、资料库、数据库等变更同步已有的本地 `docs/agent.md`，模型层与依赖变更同步已有的本地 `docs/model-layer.md`，但不要提交这些文档。不要提交 `.env`、令牌、个人资料、SQLite 数据、日志或构建产物。PR 说明目的、验证方式及配置/迁移影响；UI 变更附截图。`sites/dengdeng/` 在它自己的仓库里提交。
