@@ -540,6 +540,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                 <div className="composer-primary-actions">
                   <ComposerModelPicker
                     configured={props.modelConfigured !== false}
+                    modelSettings={props.modelSettings}
                     currentModelName={props.currentModelName}
                     defaultModelName={props.defaultModelName}
                     profiles={props.modelProfiles ?? []}

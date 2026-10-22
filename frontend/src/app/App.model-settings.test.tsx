@@ -539,8 +539,12 @@ describe("App model settings", () => {
     renderApp();
     await screen.findByRole("heading", { name: "连接与模型" });
     expect(screen.getByText(savedSettings.model_name, { selector: ".model-current-summary strong" })).toBeInTheDocument();
-    fireEvent.click(screen.getAllByRole("button", { name: "设为默认" })[1]);
+    fireEvent.click(screen.getByRole("button", { name: /备用连接/ }));
+    fireEvent.click(screen.getByRole("button", { name: "second-model 设置" }));
+    fireEvent.click(screen.getByText("更多选项"));
+    fireEvent.click(screen.getByRole("button", { name: "设为默认" }));
     await waitFor(() => expect(screen.getByText("second-model", { selector: ".model-current-summary strong" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "关闭模型设置" }));
     await modelField("模型名称");
     expect(screen.getByLabelText("Base URL")).toHaveValue("https://second.example.test/v1");
     expect(await modelField("API Key")).toHaveValue("");
