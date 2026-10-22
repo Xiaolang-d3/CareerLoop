@@ -1,6 +1,7 @@
 import type { RefObject } from "react";
 import type { AgentCapabilities, Conversation } from "../../types";
 import type { ResultServices } from "./result-types";
+import type { ComposerModelSettings } from "./ComposerModelParameters";
 
 export type WebSearchTopic = "auto" | "general" | "news" | "finance";
 export type WebSearchSourcePreference = "none" | "technical";
@@ -160,6 +161,7 @@ export type ChatWorkspaceProps = ResultServices & {
   conversationTitle?: string;
   currentModelName?: string;
   modelProfiles?: Array<{ id: string; model_name: string; connection_name: string; connection_id?: string }>;
+  modelSettings?: ComposerModelSettings;
   serviceModels?: { connection_id: string; connection_name: string; revision: number; models: string[]; busy: boolean; error: string };
   onDiscoverServiceModels?: (refresh?: boolean) => Promise<void>;
   onServiceModelChange?: (modelName: string) => Promise<void>;
