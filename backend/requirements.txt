@@ -12,3 +12,4 @@ keyring==25.6.0
 Pillow==12.3.0
 python-dotenv==1.2.2
 httpx==0.28.1
+feedparser==6.0.14

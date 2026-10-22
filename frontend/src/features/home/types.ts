@@ -56,9 +56,10 @@ export type HomeReadableItem = {
 };
 
 export type SourceStatus = {
+  publisher?: string | null;
   id: string;
   label: string;
-  kind: "news" | "github" | "stack" | "practice";
+  kind: "news" | "github" | "stack" | "practice" | "benchmark";
   status: "ready" | "empty" | "error" | "loading";
   url: string;
   last_success_at: string | null;
@@ -128,6 +129,8 @@ export type HomeCuration = {
 
 export type HomeFeedResponse = {
   news: HomeArticle[];
+  model_news?: HomeArticle[];
+  model_benchmarks?: HomeModelBenchmarks;
   repositories: { day: HomeRepository[]; week: HomeRepository[] };
   updates: HomeRelease[];
   practices: HomeArticle[];
@@ -139,4 +142,56 @@ export type HomeFeedResponse = {
   curation?: HomeCuration;
   refreshing: boolean;
   last_synced_at: string | null;
+};
+
+export type HomeModelBenchmark = {
+  id: string;
+  name: string;
+  url: string;
+  creator_id: string;
+  creator: string;
+  intelligence: number | null;
+  coding: number | null;
+  agentic: number | null;
+  input_price: number | null;
+  output_price: number | null;
+  task_cost: number | null;
+  tokens_per_second: number | null;
+  first_token_seconds: number | null;
+};
+
+export type HomeModelBenchmarks = {
+  media?: HomeMediaBoard[];
+  models: HomeModelBenchmark[];
+  status: SourceStatus["status"] | "unconfigured";
+  error: string | null;
+  collected_at: string | null;
+  source_url: string;
+  docs_url: string;
+};
+
+export type HomeMediaModel = {
+  id: string;
+  name: string;
+  url: string;
+  creator_id: string;
+  creator: string;
+  elo: number | null;
+  ci_95: number | null;
+  bba_score: number | null;
+  fdb_score: number | null;
+  tau_voice_score: number | null;
+  wer: number | null;
+};
+
+export type HomeMediaBoard = {
+  id: string;
+  category: "image" | "video" | "speech";
+  label: string;
+  metric: "elo" | "bba_score" | "wer";
+  source_url: string;
+  models: HomeMediaModel[];
+  status: SourceStatus["status"];
+  error: string | null;
+  collected_at: string | null;
 };
