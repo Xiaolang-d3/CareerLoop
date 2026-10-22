@@ -264,7 +264,7 @@ def profile_capability_report(profile_id: str, db_path: str | Path | None = None
     from .model_catalog import get_profile_connection
     from ..models.factory import model_backend
 
-    connection = get_profile_connection(profile_id, db_path)
+    connection = get_profile_connection(profile_id, db_path, resolve_credentials=False)
     protocol = connection.get("detected_protocol") or connection["resolved_model_protocol"]
     litellm_data = None
     if model_backend() == "litellm":

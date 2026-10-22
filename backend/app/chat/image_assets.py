@@ -215,15 +215,30 @@ def asset_thumbnail(asset_id: str, db_path=None) -> bytes:
         return output.getvalue()
 
 
-def delete_images(conversation_id: int, *, message_cutoff: int | None = None, db_path=None) -> None:
+def delete_images(
+    conversation_id: int,
+    *,
+    message_cutoff: int | None = None,
+    message_before: int | None = None,
+    db_path=None,
+) -> None:
+    clauses = ["conversation_id=?"]
+    args: list[object] = [conversation_id]
+    if message_cutoff is not None:
+        clauses.append("message_id>=?")
+        args.append(message_cutoff)
+    if message_before is not None:
+        clauses.append("message_id<?")
+        args.append(message_before)
     with connect(db_path) as conn:
-        condition = "conversation_id=?" + (" AND message_id>=?" if message_cutoff is not None else "")
-        args = (conversation_id, message_cutoff) if message_cutoff is not None else (conversation_id,)
-        rows = conn.execute(f"SELECT id,operation_id,stored_path FROM chat_image_assets WHERE {condition}", args).fetchall()
+        rows = conn.execute(
+            f"SELECT id,operation_id,stored_path FROM chat_image_assets WHERE {' AND '.join(clauses)}",
+            args,
+        ).fetchall()
         for row in rows:
             path = _confined(_root(db_path), resolve_document_dir(db_path) / row["stored_path"])
             path.unlink(missing_ok=True)
             conn.execute("DELETE FROM chat_image_assets WHERE id=?", (row["id"],))
         # Keep attempt markers on rewind: reconnecting the same paid run must not regenerate.
-        if message_cutoff is None:
+        if message_cutoff is None and message_before is None:
             conn.execute("DELETE FROM chat_image_operations WHERE conversation_id=?", (conversation_id,))

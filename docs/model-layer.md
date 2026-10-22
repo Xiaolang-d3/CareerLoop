@@ -6,6 +6,14 @@ Copilot 临时开发环境的依赖准备见 [GitHub 开发协作](github-collab
 
 ## 架构
 
+### 钥匙串读取与配置预览
+
+本地 macOS 的模型密钥保存在系统钥匙串，SQLite 仅保存工作区隔离的版本引用。已初始化连接的公开设置、模型连接目录、能力报告和调用监控通过配置预览读取元数据，不为展示解密钥匙串；`credential_status=saved_unverified` 表示存在合法的已保存引用，不保证条目仍存在或当前已获授权。前端遇到该状态时不静默读取服务商模型列表，显示“密钥已保存，使用时授权”。
+
+实际对话、用户显式检测 / 读取模型目录、凭证保存校验和历史运行恢复仍读取真实密钥。配置预览不能恢复运行，执行继续校验凭证指纹；没有新增明文密钥缓存、SQLite 密钥字段或钥匙串 ACL 授权。首次旧版凭证迁移仍可能访问系统钥匙串。桌面开发版由本机 Python 进程访问，正式包由打包后的后端进程访问；系统授权提示中的程序名和应用签名相关，发布更新后是否需要重新授权需在实际系统验证。
+
+回归见 `backend/tests/test_keychain_display.py` 与 `frontend/src/app/App.model-settings.test.tsx`，均使用模拟凭证，不读取开发者的真实钥匙串。
+
 ```
 ChatRuntime ─► ConfiguredModelProvider (档案参数 / 推理强度)
                  └► RoutedModelProvider        ← 仅当配置了备用模型

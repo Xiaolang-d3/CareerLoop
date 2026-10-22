@@ -104,6 +104,7 @@ export type ModelConnection = {
   detected_protocol?: ResolvedModelProtocol | null;
   protocol_label?: string;
   api_key_configured: boolean;
+  credential_status?: "saved_unverified" | "available" | "missing" | "unavailable";
   enabled: boolean;
   revision: number;
 };
@@ -144,6 +145,7 @@ export type AgentSettings = {
   model_protocol_label?: string;
   api_key: string;
   api_key_configured: boolean;
+  credential_status?: "saved_unverified" | "available" | "missing" | "unavailable";
   connection_id?: string;
   config_revision?: number;
   secret_storage_writable?: boolean;

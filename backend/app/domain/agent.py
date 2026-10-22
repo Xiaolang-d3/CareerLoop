@@ -116,6 +116,8 @@ class AgentPlan(BaseModel):
     route: str = Field(min_length=1)
     steps: list[AgentPlanStep] = Field(default_factory=list)
     requires_confirmation: bool = False
+    expected_output: str = Field(default="", max_length=500)
+    success_criteria: list[str] = Field(default_factory=list, max_length=6)
 
 
 class ClarificationOption(BaseModel):
@@ -153,6 +155,9 @@ class AgentRunSnapshot(BaseModel):
     messages: list[AgentMessage] = Field(default_factory=list)
     replan_used: bool = False
     citation_retry_used: bool = False
+    citation_draft: str = ""
+    citation_sources: list[dict[str, Any]] = Field(default_factory=list)
+    citation_allowed_urls: list[str] = Field(default_factory=list)
     rounds_used: int = 0
     clarification: AgentClarification | None = None
     completed_tools: list[str] = Field(default_factory=list)
@@ -162,6 +167,7 @@ class AgentRunSnapshot(BaseModel):
     pending_search_queries: list[str] = Field(default_factory=list)
     approved_tool_fingerprints: list[str] = Field(default_factory=list)
     pending_tool_approval: PendingToolApproval | None = None
+    requires_query_approval: bool = False
 
 
 class AgentRunResult(BaseModel):

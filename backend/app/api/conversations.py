@@ -20,8 +20,8 @@ router = APIRouter()
 
 
 @router.get("/conversations")
-def conversations_index() -> list[dict[str, Any]]:
-    return list_conversations()
+def conversations_index(q: str | None = None) -> list[dict[str, Any]]:
+    return list_conversations(query=q)
 
 
 @router.post("/conversations")

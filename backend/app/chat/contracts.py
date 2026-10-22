@@ -17,3 +17,18 @@ class ChatMessageIn(BaseModel):
     web_search_source_preference: WebSearchSourcePreference = "none"
     # Expected original binding during retry/regeneration; never chooses a service.
     web_search_provider: WebSearchProvider | None = None
+
+
+class RestoredChatMessage(BaseModel):
+    id: int = Field(gt=0)
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=200_000)
+    payload: dict = Field(default_factory=dict)
+    created_at: str | None = Field(default=None, max_length=64)
+    task_id: int | None = Field(default=None, gt=0)
+
+
+class RestoreChatMessagesIn(BaseModel):
+    conversation_id: int = Field(gt=0)
+    messages: list[RestoredChatMessage] = Field(min_length=1, max_length=500)
+    previous_title: str | None = Field(default=None, max_length=80)

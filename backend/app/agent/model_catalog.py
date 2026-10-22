@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from ..model_connection import normalize_api_root, resolve_model_connection
 from ..model_protocol import PROTOCOL_LABELS, connection_protocol_label, normalize_detected_protocol, normalize_model_protocol, resolve_model_protocol
-from ..secret_store import secret_backend_name, secret_storage_writable, SecretStoreUnavailable
+from ..secret_store import secret_backend_name, secret_storage_writable, secret_reference_backend, SecretStoreUnavailable
 from . import settings
 
 
@@ -104,16 +104,31 @@ def _secret(connection: dict[str, Any], model_name: str, db_path) -> tuple[str, 
     return value, reference.partition(":")[0], ""
 
 
+def _secret_preview(connection: dict[str, Any], model_name: str, db_path) -> tuple[str, str, str, bool, str]:
+    """Display saved state without authenticating to the OS keychain."""
+    reference = str(connection.get("secret_ref") or "none")
+    if reference.startswith("legacy:"):
+        with connect(db_path) as conn:
+            alias = conn.execute("SELECT secret_ref FROM model_credential_aliases WHERE reference=?", (reference,)).fetchone()
+        if alias:
+            reference = alias[0]
+    if reference.startswith("keyring:"):
+        source = secret_reference_backend(reference, db_path)
+        return "", source, "", True, "saved_unverified"
+    value, source, warning = _secret(connection, model_name, db_path)
+    return value, source, warning, bool(value), "available" if value else "missing"
+
+
 def _public_connection(connection: dict[str, Any], db_path) -> dict[str, Any]:
     result = {name: value for name, value in connection.items() if name != "secret_ref"}
     try:
-        value, source, warning = _secret(connection, "", db_path)
+        _, source, warning, configured, status = _secret_preview(connection, "", db_path)
     except SecretStoreUnavailable as exc:
-        value, source, warning = "", "none", str(exc)
+        source, warning, configured, status = "none", str(exc), False, "unavailable"
     detected = normalize_detected_protocol(connection.get("detected_protocol")) if normalize_model_protocol(connection["protocol"]) == "auto" else None
     result.update(detected_protocol=detected, detected_protocol_label=PROTOCOL_LABELS[detected] if detected else None,
                   protocol_label=connection_protocol_label(connection["protocol"], detected, "", connection.get("effective_base_url") or ""))
-    result.update(model_base_url=connection["base_url"], model_protocol=connection["protocol"], api_key_configured=bool(value), api_key_source=source, secret_storage=secret_backend_name(), secret_storage_writable=secret_storage_writable(), secret_migration_warning=warning)
+    result.update(model_base_url=connection["base_url"], model_protocol=connection["protocol"], api_key_configured=configured, credential_status=status, api_key_source=source, secret_storage=secret_backend_name(), secret_storage_writable=secret_storage_writable(), secret_migration_warning=warning)
     return result
 
 
@@ -159,7 +174,9 @@ def get_model_catalog(db_path: str | Path | None = None) -> dict[str, Any]:
     return {"connections": [_public_connection(item, db_path) for item in connections], "profiles": profiles, "default_profile_id": row["default_model_profile_id"], "effective_execution_profile_id": execution_profile, "config_revision": row["config_revision"]}
 
 
-def get_profile_connection(profile_id: str | None = None, db_path: str | Path | None = None, selection: dict[str, Any] | None = None) -> dict[str, Any]:
+def get_profile_connection(profile_id: str | None = None, db_path: str | Path | None = None, selection: dict[str, Any] | None = None, *, resolve_credentials: bool = True) -> dict[str, Any]:
+    if selection is not None and not resolve_credentials:
+        raise ValueError("恢复运行必须校验实际凭证，不能使用配置预览")
     _ensure_catalog(db_path)
     requested = dict(selection or {})
     with connect(db_path) as conn:
@@ -193,13 +210,20 @@ def get_profile_connection(profile_id: str | None = None, db_path: str | Path | 
         live.get(key) == connection.get(key) for key in ("effective_base_url", "protocol", "secret_ref")
     ):
         detected = normalize_detected_protocol(live.get("detected_protocol"))
-    api_key, source, warning = _secret(connection, profile["model_name"], db_path)
+    if resolve_credentials:
+        api_key, source, warning = _secret(connection, profile["model_name"], db_path)
+        configured, status = bool(api_key), "available" if api_key else "missing"
+    else:
+        api_key, source, warning, configured, status = _secret_preview(connection, profile["model_name"], db_path)
     credential_fingerprint = hashlib.sha256(api_key.encode()).hexdigest()
     if requested.get("credential_fingerprint") and not hmac.compare_digest(requested["credential_fingerprint"], credential_fingerprint):
         raise SecretStoreUnavailable("运行绑定的模型凭证已改变，无法恢复原配置；请新建任务")
     resolved = resolve_model_connection({"model_name": profile["model_name"], "model_base_url": connection["effective_base_url"], "model_protocol": connection["protocol"], "api_key": api_key})
     resolved.update(profile_id=profile["id"], connection_id=connection["id"], profile_revision=profile["revision"], connection_revision=connection["revision"], secret_ref=connection["secret_ref"], credential_fingerprint=credential_fingerprint, data_boundary=connection["data_boundary"], parameters=profile["parameters"], capabilities=profile["capabilities"], context_limit=profile["context_limit"], price_per_million_input=profile["price_per_million_input"], price_per_million_output=profile["price_per_million_output"], config_revision=config_revision, connection_configured_base_url=connection["base_url"], api_key_source=source if resolved["api_key"] else "none", secret_migration_warning=warning)
     resolved.update(connection_effective_base_url=connection["effective_base_url"], detected_protocol=detected, reasoning_effort=normalize_reasoning_effort(profile.get("reasoning_effort")))
+    resolved.update(api_key_configured=configured, credential_status=status, api_key_source=source)
+    if not resolve_credentials:
+        resolved.pop("credential_fingerprint", None)
     return resolved
 
 
@@ -516,9 +540,9 @@ def public_default_agent_settings(db_path: str | Path | None = None) -> dict[str
         profile = _profile(conn, row["default_model_profile_id"])
         connection = _connection(conn, profile["connection_id"])
     try:
-        key, source, warning = _secret(connection, profile["model_name"], db_path)
+        key, source, warning, configured, status = _secret_preview(connection, profile["model_name"], db_path)
     except SecretStoreUnavailable as exc:
-        key, source, warning = "", "none", str(exc)
+        key, source, warning, configured, status = "", "none", str(exc), False, "unavailable"
     effective = resolve_model_connection({"model_name": profile["model_name"], "model_base_url": connection["effective_base_url"], "model_protocol": connection["protocol"], "api_key": key})
     from ..models.auto_negotiating import get_negotiated_model_protocol
     detected = normalize_detected_protocol(connection.get("detected_protocol")) if normalize_model_protocol(connection["protocol"]) == "auto" else None
@@ -538,5 +562,5 @@ def public_default_agent_settings(db_path: str | Path | None = None) -> dict[str
         profile_id=profile["id"], connection_id=connection["id"], profile_revision=profile["revision"], connection_revision=connection["revision"],
         predicted_model_protocol=effective["resolved_model_protocol"], resolved_model_protocol=actual or effective["resolved_model_protocol"], detected_model_protocol=actual,
         model_protocol_label=connection_protocol_label(connection["protocol"], actual, profile["model_name"], effective["model_base_url"]),
-        api_key_configured=bool(effective["api_key"]), api_key_source=source if effective["api_key"] else "none", secret_storage=secret_backend_name(), secret_storage_writable=secret_storage_writable(), secret_migration_warning=warning)
+        api_key_configured=configured, credential_status=status, api_key_source=source if configured else "none", secret_storage=secret_backend_name(), secret_storage_writable=secret_storage_writable(), secret_migration_warning=warning)
     return result

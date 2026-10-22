@@ -6,7 +6,8 @@ from ..agent.snapshots import clear_run_snapshot
 from ..db import connect, row_to_dict, rows_to_dicts
 
 
-def list_conversations(db_path: str | Path | None = None) -> list[dict]:
+def list_conversations(db_path: str | Path | None = None, *, query: str | None = None) -> list[dict]:
+    needle = (query or "").strip().casefold()[:200]
     with connect(db_path) as conn:
         rows = conn.execute(
             """
@@ -26,7 +27,18 @@ def list_conversations(db_path: str | Path | None = None) -> list[dict]:
                      c.id DESC
             """
         ).fetchall()
-    return rows_to_dicts(rows)
+        conversations = rows_to_dicts(rows)
+        if not needle:
+            return conversations
+        matched_ids = {
+            row["conversation_id"]
+            for row in conn.execute("SELECT conversation_id, content FROM chat_messages").fetchall()
+            if needle in (row["content"] or "").casefold()
+        }
+    return [
+        item for item in conversations
+        if needle in f"{item.get('title') or ''} {item.get('summary') or ''}".casefold() or item["id"] in matched_ids
+    ]
 
 
 def get_conversation(conversation_id: int, db_path: str | Path | None = None) -> dict | None:

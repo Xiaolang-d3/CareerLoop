@@ -4,10 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND_DIR="$ROOT_DIR/backend"
 FRONTEND_DIR="$ROOT_DIR/frontend"
+BACKEND_LOG_DIR="$BACKEND_DIR/logs"
 LOG_DIR="$ROOT_DIR/logs"
 REMOTE_LOG="$LOG_DIR/cloudflared.log"
 
-mkdir -p "$LOG_DIR"
+mkdir -p "$BACKEND_LOG_DIR" "$LOG_DIR"
 
 if ! command -v cloudflared >/dev/null 2>&1; then
   echo "cloudflared 未安装。请先执行：brew install cloudflared" >&2
@@ -36,10 +37,10 @@ echo "构建前端…"
 # Runtime dependencies only (no pytest/PyInstaller), from the hash-locked file.
 "$BACKEND_DIR/scripts/install_deps.sh" "$BACKEND_DIR/.venv" runtime
 
-: > "$LOG_DIR/remote-backend.log"
+: > "$BACKEND_LOG_DIR/remote-backend.log"
 : > "$REMOTE_LOG"
 screen -dmS careerloop-remote-backend zsh -lc \
-  "cd '$BACKEND_DIR' && BIND_HOST=127.0.0.1 API_DOCS_ENABLED=false env -u PYTHONPATH -u VIRTUAL_ENV -u PYTHONHOME .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 > '$LOG_DIR/remote-backend.log' 2>&1"
+  "cd '$BACKEND_DIR' && BIND_HOST=127.0.0.1 API_DOCS_ENABLED=false env -u PYTHONPATH -u VIRTUAL_ENV -u PYTHONHOME .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 > '$BACKEND_LOG_DIR/remote-backend.log' 2>&1"
 
 for _ in {1..20}; do
   if curl -fsS --max-time 1 http://127.0.0.1:8000/health >/dev/null; then
@@ -49,7 +50,7 @@ for _ in {1..20}; do
 done
 if ! curl -fsS --max-time 2 http://127.0.0.1:8000/health >/dev/null; then
   screen -S careerloop-remote-backend -X quit || true
-  echo "后端没有成功启动；查看 $LOG_DIR/remote-backend.log" >&2
+  echo "后端没有成功启动；查看 $BACKEND_LOG_DIR/remote-backend.log" >&2
   exit 1
 fi
 

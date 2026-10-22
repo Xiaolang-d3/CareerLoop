@@ -294,7 +294,7 @@ async def _discover_connection(connection: dict[str, Any], *, remember: bool = T
 
 @router.get("/agent/models/capabilities")
 def model_capabilities_get(model_name: str = "") -> dict[str, Any]:
-    connection = get_model_connection()
+    connection = get_model_connection(resolve_credentials=False)
     report = infer_model_capabilities(
         model_name.strip() or connection["model_name"],
         provider=connection.get("resolved_model_protocol", "openai"),

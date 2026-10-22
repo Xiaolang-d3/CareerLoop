@@ -273,10 +273,10 @@ def save_agent_settings(values: dict[str, Any], db_path: str | Path | None = Non
     return save_default_agent_settings(values, db_path)
 
 
-def get_model_connection(db_path: str | Path | None = None) -> dict[str, Any]:
+def get_model_connection(db_path: str | Path | None = None, *, resolve_credentials: bool = True) -> dict[str, Any]:
     from .model_catalog import get_profile_connection
 
-    return get_profile_connection(db_path=db_path)
+    return get_profile_connection(db_path=db_path, resolve_credentials=resolve_credentials)
 
 
 def persona_prompt(settings: dict[str, Any]) -> str:

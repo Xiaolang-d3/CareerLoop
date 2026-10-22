@@ -19,6 +19,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
   const [sendError, setSendError] = useState<string | null>(null);
 
   const [retryChatDraft, setRetryChatDraft] = useState<ChatRetryDraft | null>(null);
+  const [replacementUndo, setReplacementUndo] = useState<{ conversationId: number; messages: ChatMessage[]; previousTitle?: string } | null>(null);
 
   const chatAgentRef = useRef<HttpAgentType | null>(null);
 
@@ -26,7 +27,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
 
   const [chatAttachmentBusy, setChatAttachmentBusy] = useState(false);
   const sendingRef = useRef(false);
-  useEffect(() => { setSendError(null); }, [currentConversationId]);
+  useEffect(() => { setSendError(null); setReplacementUndo(null); }, [currentConversationId]);
 
   async function refreshChat(conversationId = currentConversationId) {
     if (!conversationId) return;
@@ -146,6 +147,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
     }
     // Validate the saved search binding before editing/retrying removes history.
     if (rewindMessageId !== undefined) await rewindChatToUserMessage(rewindMessageId);
+    else setReplacementUndo(null);
     const { HttpAgent } = await import("@ag-ui/client");
     const conversationId = targetConversationId;
     const executionRunId = runIdOverride ?? createClientId();
@@ -460,14 +462,63 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
 
   async function rewindChatToUserMessage(userMessageId: number) {
     if (!currentConversationId) throw new Error("请先选择一个对话");
-    await fetchJson(
+    const response = await fetchJson<{ messages?: ChatMessage[]; previous_title?: string | null }>(
       `/chat/messages/${userMessageId}/tail?conversation_id=${currentConversationId}`,
       { method: "DELETE" }
     );
+    const messages = Array.isArray(response?.messages) ? response.messages.filter((message) => message.id > 0) : [];
+    if (messages.length) {
+      setReplacementUndo({
+        conversationId: currentConversationId,
+        messages,
+        ...(typeof response.previous_title === "string" ? { previousTitle: response.previous_title } : {})
+      });
+    }
     await Promise.all([
       refreshChat(currentConversationId),
       refreshConversations(),
     ]);
+  }
+
+  async function undoReplacement() {
+    const snapshot = replacementUndo;
+    if (!snapshot || snapshot.conversationId !== currentConversationId || chatBusy) return;
+    setErrorMessage("");
+    try {
+      await fetchJson("/chat/messages/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversation_id: snapshot.conversationId,
+          previous_title: snapshot.previousTitle ?? null,
+          messages: snapshot.messages.map((message) => ({
+            id: message.id,
+            role: message.role,
+            content: message.content,
+            payload: message.payload ?? {},
+            created_at: message.created_at
+          }))
+        })
+      });
+      setReplacementUndo(null);
+      await Promise.all([refreshChat(snapshot.conversationId), refreshConversations()]);
+      setNoticeMessage("已撤销替换。生成的图片无法恢复。");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "撤销失败");
+    }
+  }
+
+  async function deleteChatTurn(userMessageId: number) {
+    if (!currentConversationId) throw new Error("请先选择一个对话");
+    setErrorMessage("");
+    try {
+      await fetchJson(`/chat/messages/${userMessageId}/turn?conversation_id=${currentConversationId}`, { method: "DELETE" });
+      setReplacementUndo(null);
+      await Promise.all([refreshChat(currentConversationId), refreshConversations()]);
+      setNoticeMessage("已删除这轮问答");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "删除这轮问答失败");
+    }
   }
 
   async function editChatMessage(userMessageId: number, content: string) {
@@ -500,5 +551,5 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
     }
   }
   useEffect(() => () => chatAgentRef.current?.abortRun(), []);
-  return { chatMessages, setChatMessages, chatBusy, setChatBusy, modelUnavailable, setModelUnavailable, sendError, retryChatDraft, setRetryChatDraft, chatAgentRef, taskCancelBusy, setTaskCancelBusy, chatAttachmentBusy, setChatAttachmentBusy, refreshChat, uploadChatAttachment, loadChatAttachment, removeChatAttachment, sendChatMessage, stopChatGeneration, rewindChatToUserMessage, editChatMessage, regenerateChatMessage, cancelCurrentTask };
+  return { chatMessages, setChatMessages, chatBusy, setChatBusy, modelUnavailable, setModelUnavailable, sendError, retryChatDraft, setRetryChatDraft, replacementUndo, chatAgentRef, taskCancelBusy, setTaskCancelBusy, chatAttachmentBusy, setChatAttachmentBusy, refreshChat, uploadChatAttachment, loadChatAttachment, removeChatAttachment, sendChatMessage, stopChatGeneration, rewindChatToUserMessage, editChatMessage, regenerateChatMessage, undoReplacement, deleteChatTurn, cancelCurrentTask };
 }

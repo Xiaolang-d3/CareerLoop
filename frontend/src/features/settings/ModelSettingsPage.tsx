@@ -234,7 +234,7 @@ export function ModelSettingsPage({
           <div className="model-current-meta">
             <em className={savedSettings.api_key_configured ? "success" : "warning"}>
               {savedSettings.api_key_configured ? <CheckCircle2 size={12} aria-hidden="true" /> : <TriangleAlert size={12} aria-hidden="true" />}
-              {savedSettings.api_key_configured ? "密钥已配置" : "待配置密钥"}
+              {savedSettings.credential_status === "saved_unverified" ? "密钥已保存，使用时授权" : savedSettings.api_key_configured ? "密钥已配置" : "待配置密钥"}
             </em>
             {monitor ? <em className={monitor.status}>{statusLabels[monitor.status]}</em> : null}
           </div>

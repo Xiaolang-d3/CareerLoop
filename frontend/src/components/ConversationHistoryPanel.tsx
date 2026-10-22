@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Archive, History, MessageCircle, MoreHorizontal, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { Archive, History, MessageCircle, MoreHorizontal, Pencil, Pin, Plus, Search, Trash2, X } from "lucide-react";
 import type { Conversation } from "../types";
 
 export type ConversationTimeGroup = {
@@ -41,19 +41,26 @@ export function formatConversationTime(value: string, now = new Date()): string 
   }).format(date);
 }
 
-export function groupConversationsByTime(conversations: Conversation[], now = new Date()): ConversationTimeGroup[] {
+export function groupConversationsByTime(conversations: Conversation[], now = new Date(), pinnedIds: number[] = []): ConversationTimeGroup[] {
+  const pinned = new Set(pinnedIds);
   const order = ["今天", "昨天", "最近 7 天", "更早"];
   const buckets = new Map<string, Conversation[]>();
   for (const conversation of conversations) {
+    if (pinned.has(conversation.id)) continue;
     const label = conversationGroupLabel(conversation.last_message_at || conversation.updated_at, now);
     const items = buckets.get(label) ?? [];
     items.push(conversation);
     buckets.set(label, items);
   }
-  return order.flatMap((label) => {
+  const groups = order.flatMap((label) => {
     const items = buckets.get(label);
     return items?.length ? [{ label, items }] : [];
   });
+  const pinnedItems = pinnedIds.flatMap((id) => {
+    const item = conversations.find((conversation) => conversation.id === id);
+    return item ? [item] : [];
+  });
+  return pinnedItems.length ? [{ label: "置顶", items: pinnedItems }, ...groups] : groups;
 }
 
 function conversationSubtitle(conversation: Conversation, now = new Date()): string {
@@ -73,6 +80,9 @@ type Props = {
   onRename: (conversation: Conversation) => void;
   onArchive: (conversation: Conversation) => void;
   onRemove: (conversation: Conversation) => void;
+  onSearch?: (query: string) => Promise<Conversation[]>;
+  pinnedIds?: number[];
+  onTogglePin?: (conversation: Conversation) => void;
 };
 
 export function ConversationHistoryPanel({
@@ -85,16 +95,51 @@ export function ConversationHistoryPanel({
   onCreate,
   onRename,
   onArchive,
-  onRemove
+  onRemove,
+  onSearch,
+  pinnedIds = [],
+  onTogglePin
 }: Props) {
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
   const [query, setQuery] = useState("");
+  const [remoteResults, setRemoteResults] = useState<Conversation[] | null>(null);
+  const [searchPending, setSearchPending] = useState(false);
   const panelRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!onSearch) {
+      setRemoteResults(null);
+      setSearchPending(false);
+      return;
+    }
+    const needle = query.trim();
+    if (!needle) {
+      setRemoteResults(null);
+      setSearchPending(false);
+      return;
+    }
+    setSearchPending(true);
+    setRemoteResults(null);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void onSearch(needle).then((items) => {
+        if (!cancelled) setRemoteResults(items);
+      }).catch(() => {
+        if (!cancelled) setRemoteResults(null);
+      }).finally(() => {
+        if (!cancelled) setSearchPending(false);
+      });
+    }, 200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [onSearch, query]);
   const filtered = useMemo(() => {
+    if (remoteResults) return remoteResults;
     const needle = query.trim().toLocaleLowerCase();
     return conversations.filter((conversation) => !needle || `${conversation.title} ${conversation.summary}`.toLocaleLowerCase().includes(needle));
-  }, [conversations, query]);
-  const groups = useMemo(() => groupConversationsByTime(filtered), [filtered]);
+  }, [conversations, query, remoteResults]);
+  const groups = useMemo(() => groupConversationsByTime(filtered, new Date(), pinnedIds), [filtered, pinnedIds]);
   useEffect(() => setOpenMenuId(null), [query]);
   useEffect(() => {
     if (openMenuId === null) return;
@@ -135,12 +180,12 @@ export function ConversationHistoryPanel({
       </button>
       <label className="conversation-history-search">
         <Search size={14} aria-hidden="true" />
-        <input type="search" aria-label="搜索对话标题或摘要" placeholder="搜索对话…" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
+        <input type="search" aria-label="搜索对话标题、摘要或正文" placeholder="搜索对话…" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
           if (event.key === "Escape" && query) { event.stopPropagation(); setQuery(""); }
         }} />
       </label>
       <div className="conversation-history-list">
-        {!groups.length ? <p className="conversation-history-empty" role="status">{query.trim() ? "没有匹配的对话，试试其他关键词" : "还没有对话，点击上方开始"}</p> : null}
+        {!groups.length && !searchPending ? <p className="conversation-history-empty" role="status">{query.trim() ? "没有匹配的对话，试试其他关键词" : "还没有对话，点击上方开始"}</p> : null}
         {groups.map((group) => (
           <section className="conversation-history-group" key={group.label} aria-label={group.label}>
             <h3>{group.label}</h3>
@@ -165,6 +210,7 @@ export function ConversationHistoryPanel({
                   }}>
                     <button role="menuitem" onClick={() => { onRename(conversation); closeMenu(); }}><Pencil size={13} />重命名</button>
                     <button role="menuitem" onClick={() => { onArchive(conversation); closeMenu(); }}><Archive size={13} />{conversation.status === "active" ? "归档" : "恢复"}</button>
+                    {onTogglePin ? <button role="menuitem" onClick={() => { onTogglePin(conversation); closeMenu(); }}><Pin size={13} />{pinnedIds.includes(conversation.id) ? "取消置顶" : "置顶"}</button> : null}
                     <button className="danger" role="menuitem" onClick={() => { onRemove(conversation); closeMenu(); }}><Trash2 size={13} />删除</button>
                   </div> : null}
                 </div>

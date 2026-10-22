@@ -48,13 +48,21 @@ export function toolCallDetails(event: RunEvent, running: boolean): Detail[] {
     }
   } else if (event.tool_name === "search_library") {
     if (data.disabled === true) details.push({ text: "知识库读取已关闭。" });
+    else if (data.evidence_status === "empty") details.push({ text: "本次未检索到相关证据。" });
     else if (Array.isArray(data.excerpts) || Array.isArray(data.facts)) {
       const excerpts = list(data.excerpts), facts = list(data.facts);
       const titles = [...new Set(excerpts.map(item => text(item.title, 60)).filter(Boolean))].slice(0, 3);
-      details.push({ text: `找到 ${excerpts.length + facts.length} 条相关资料${titles.length ? `：${titles.join("；")}` : "。"}` });
+      const sourceCount = typeof data.source_count === "number" && Number.isInteger(data.source_count) && data.source_count >= 0
+        ? data.source_count : null;
+      const summary = sourceCount === null ? `${excerpts.length + facts.length} 条相关资料`
+        : `${sourceCount} 份资料的 ${excerpts.length} 个相关片段、${facts.length} 条已确认知识`;
+      details.push({ text: `找到 ${summary}${titles.length ? `：${titles.join("；")}` : "。"}` });
     }
   } else if (event.tool_name === "agent_planner") {
-    const steps = list(object(data.plan).steps).map(step => text(step.title, 80)).filter(Boolean).slice(0, 5);
+    const plan = object(data.plan);
+    const output = text(plan.expected_output, 300);
+    if (output) details.push({ label: "交付目标", text: output });
+    const steps = list(plan.steps).map(step => text(step.title, 80)).filter(Boolean).slice(0, 5);
     if (steps.length) details.push({ text: steps.join(" → ") });
   } else if (event.tool_name === "propose_library_knowledge") {
     const statements = list(data.proposals).map(item => text(item.statement, 150)).filter(Boolean).slice(0, 3);

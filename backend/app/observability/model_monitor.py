@@ -99,7 +99,7 @@ def get_model_monitor_snapshot(
     connection: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     window_hours = min(max(hours, 1), 168)
-    connection = connection or get_model_connection(db_path)
+    connection = connection or get_model_connection(db_path, resolve_credentials=False)
     cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
     cutoff_text = cutoff.strftime("%Y-%m-%d %H:%M:%S")
     model_name = connection["model_name"]
@@ -200,7 +200,7 @@ def get_model_monitor_snapshot(
             connection["model_protocol"], _detected_protocol(connection, active_protocol if events else None),
             model_name, configured_base_url,
         ),
-        "api_key_configured": bool(connection["api_key"]),
+        "api_key_configured": connection.get("api_key_configured", bool(connection["api_key"])),
         "window_hours": window_hours,
         "summary": {
             "total_requests": total,

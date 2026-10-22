@@ -85,7 +85,11 @@ def build_evidence_bundle(
     evidence: list[dict[str, Any]] = []
     for index, source in enumerate(sources, start=1):
         domain = str(source.get("domain") or "").lower()
-        excerpt = str(source.get("content") or source.get("snippet") or "").strip()[:1600]
+        content = str(source.get("content") or "").strip()
+        snippet = str(source.get("snippet") or "").strip()
+        # Search snippets usually contain the query-relevant passage; fetched
+        # Markdown can begin with a long navigation menu or login boilerplate.
+        excerpt = (f"{snippet[:600]}\n{content}" if snippet and snippet not in content[:1600] else content or snippet)[:1600]
         if not excerpt:
             continue
         tier, source_type = _source_classification(domain, official_domain)

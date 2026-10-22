@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { createApiClient } from "../../api/client";
 import type { ConversationDialogState } from "../../components/ConversationDialog";
 import type { Conversation, ViewKey } from "../../types";
@@ -16,6 +16,10 @@ export function useConversations({ fetchJson, setActiveView, setErrorMessage, se
   const [conversationBusy, setConversationBusy] = useState(false);
 
   const [conversationDialog, setConversationDialog] = useState<ConversationDialogState | null>(null);
+
+  const searchConversations = useCallback(async (query: string) => {
+    return clientRef.current<Conversation[]>(`/conversations?q=${encodeURIComponent(query)}`);
+  }, []);
 
   async function refreshConversations() {
     const generation = ++readGeneration.current;
@@ -98,5 +102,5 @@ export function useConversations({ fetchJson, setActiveView, setErrorMessage, se
       setConversationBusy(false);
     }
   }
-  return { invalidateConversationReads, conversations, setConversations, currentConversationId, setCurrentConversationId, conversationBusy, setConversationBusy, conversationDialog, setConversationDialog, refreshConversations, createNewConversation, archiveConversation, renameConversation, removeConversation };
+  return { invalidateConversationReads, conversations, setConversations, currentConversationId, setCurrentConversationId, conversationBusy, setConversationBusy, conversationDialog, setConversationDialog, refreshConversations, searchConversations, createNewConversation, archiveConversation, renameConversation, removeConversation };
 }

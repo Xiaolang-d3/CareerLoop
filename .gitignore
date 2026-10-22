@@ -15,6 +15,8 @@ dist/
 
 # Local runtime data
 backend/data/
+backend/logs/
+frontend/logs/
 logs/
 tmp/
 *.log
@@ -46,7 +48,7 @@ evals/promptfoo-errors.log
 # Isolated feature worktrees
 .worktrees/
 
-# Independent frontend checkout; not this repository's UI
+# Independent site checkout; it has its own git history
 sites/
 
 # Local agent / editor tooling — do not commit
@@ -58,6 +60,7 @@ sites/
 
 # Playwright CLI local session artifacts
 .playwright-cli/
+.playwright/
 
 # Impeccable local runtime state
 .impeccable/config.local.json
