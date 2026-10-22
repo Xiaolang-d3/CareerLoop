@@ -82,7 +82,7 @@ function desktopResponse(result: DesktopApiResponse): Response {
   });
 }
 
-function abortReason(signal: AbortSignal | undefined): unknown {
+function abortReason(signal?: AbortSignal | null): unknown {
   return signal?.reason ?? new DOMException("Aborted", "AbortError");
 }
 
@@ -90,7 +90,7 @@ async function openDesktopEventStream(
   invoke: DesktopInvoke,
   listen: DesktopListen,
   request: Record<string, unknown>,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal | null | undefined,
 ): Promise<Response> {
   const requestId = String(request.requestId);
   let unlisten: (() => void) | undefined;
