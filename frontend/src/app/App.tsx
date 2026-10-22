@@ -4,10 +4,12 @@ import { useModelDiscovery } from "../features/settings/useModelDiscovery";
 import { useTheme } from "../features/appearance/ThemeProvider";
 import { AppearanceSettingsPage } from "../features/settings/AppearanceSettingsPage";
 import { PageLoading } from "../components/PageLoading";
+import { downloadConversationMarkdown } from "../features/chat/conversationActions";
+import { readIdList, readStringMap, writeIdList, writeStringMap } from "../features/chat/localChatPreferences";
 import { useChatRun } from "../features/chat/useChatRun";
 import { useConversations } from "../features/chat/useConversations";
 import { useLibrary } from "../features/library/useLibrary";
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createApiClient, fetchWithTimeout } from "../api/client";
 import type { AuthUser } from "../components/AuthGate";
 import { AssistantSurface } from "../components/AssistantSurface";
@@ -156,12 +158,26 @@ export function App({
   const [visibleMessageCount, setVisibleMessageCount] = useState(12);
   const [errorMessage, setErrorMessage] = useState("");
   const [noticeMessage, setNoticeMessage] = useState("");
-  const { invalidateConversationReads, conversations, setConversations, currentConversationId, setCurrentConversationId, conversationBusy, setConversationBusy, conversationDialog, setConversationDialog, refreshConversations, createNewConversation, archiveConversation, renameConversation, removeConversation } = useConversations({ fetchJson, setActiveView, setErrorMessage, setNoticeMessage });
+  const { invalidateConversationReads, conversations, setConversations, currentConversationId, setCurrentConversationId, conversationBusy, setConversationBusy, conversationDialog, setConversationDialog, refreshConversations, searchConversations, createNewConversation, archiveConversation, renameConversation, removeConversation } = useConversations({ fetchJson, setActiveView, setErrorMessage, setNoticeMessage });
   const { libraryEditor, librarySources, libraryFolders, libraryCollections, createLibraryCollection, renameLibraryCollection, deleteLibraryCollection, updateLibraryCollectionSources, organizeLibrarySource, createLibraryFolder, loadLibraryOriginal, searchLibrarySources, confirmedKnowledge, confirmedKnowledgeCount, sourceCount, pendingKnowledge, libraryLoaded, libraryBusy, sourceImportBusy, enhancedDocumentParse, setLibraryEditor, setEnhancedDocumentParse, refreshLibrary, saveLibraryMetadata, importLibraryFiles, createPastedSource, updateLibrarySource, downloadLibrarySource, deleteLibrarySource } = useLibrary({ fetchJson, apiBase, accessToken, setErrorMessage, setNoticeMessage });
   const [openLibraryResultId, setOpenLibraryResultId] = useState<number | null>(null);
   const [libraryAttachments, setLibraryAttachments] = useState<{ conversationId: number; attachments: ChatAttachment[] } | null>(null);
   const [homeComposerDraft, setHomeComposerDraft] = useState<ChatComposerDraft | null>(null);
-  const composerDrafts = useMemo(() => new Map<number, string>(), [userEmail]);
+  const composerDrafts = useMemo(() => readStringMap(preferenceKey("careerloop-composer-drafts", userEmail)), [userEmail]);
+  const persistComposerDrafts = useCallback(() => {
+    writeStringMap(preferenceKey("careerloop-composer-drafts", userEmail), composerDrafts);
+  }, [composerDrafts, userEmail]);
+  const [pinnedConversationIds, setPinnedConversationIds] = useState<number[]>(() => readIdList(preferenceKey("careerloop-pinned-conversations", userEmail)));
+  useEffect(() => {
+    setPinnedConversationIds(readIdList(preferenceKey("careerloop-pinned-conversations", userEmail)));
+  }, [userEmail]);
+  function togglePinnedConversation(conversation: Conversation) {
+    setPinnedConversationIds((current) => {
+      const next = current.includes(conversation.id) ? current.filter((id) => id !== conversation.id) : [...current, conversation.id];
+      writeIdList(preferenceKey("careerloop-pinned-conversations", userEmail), next);
+      return next;
+    });
+  }
   const composerSearchDrafts = useMemo(() => new Map<number, WebSearchOptions>(), [userEmail]);
   const { migrateHomeTheme } = useTheme();
   useEffect(() => { migrateHomeTheme(userEmail); }, [migrateHomeTheme, userEmail]);
@@ -173,7 +189,7 @@ export function App({
     homeAnalysisBusyRef.current = false;
     setConversationBusy(false);
   }, [fetchJson, userEmail, setConversationBusy]);
-  const { chatMessages, setChatMessages, chatBusy, setChatBusy, modelUnavailable, setModelUnavailable, sendError, retryChatDraft, setRetryChatDraft, chatAgentRef, taskCancelBusy, setTaskCancelBusy, chatAttachmentBusy, setChatAttachmentBusy, refreshChat, uploadChatAttachment, loadChatAttachment, removeChatAttachment, sendChatMessage, stopChatGeneration, rewindChatToUserMessage, editChatMessage, regenerateChatMessage, cancelCurrentTask } = useChatRun({ apiBase, accessToken, fetchJson, currentConversationId, currentConversationIdRef, modelProfileId: conversations.find(item => item.id === currentConversationId)?.model_profile_id ?? null, setErrorMessage, setNoticeMessage, refreshConversations, onLibraryChanged: refreshLibrary });
+  const { chatMessages, setChatMessages, chatBusy, setChatBusy, modelUnavailable, setModelUnavailable, sendError, retryChatDraft, setRetryChatDraft, replacementUndo, chatAgentRef, taskCancelBusy, setTaskCancelBusy, chatAttachmentBusy, setChatAttachmentBusy, refreshChat, uploadChatAttachment, loadChatAttachment, removeChatAttachment, sendChatMessage, stopChatGeneration, rewindChatToUserMessage, editChatMessage, regenerateChatMessage, undoReplacement, deleteChatTurn, cancelCurrentTask } = useChatRun({ apiBase, accessToken, fetchJson, currentConversationId, currentConversationIdRef, modelProfileId: conversations.find(item => item.id === currentConversationId)?.model_profile_id ?? null, setErrorMessage, setNoticeMessage, refreshConversations, onLibraryChanged: refreshLibrary });
   const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
   const [webSearchCapabilitiesBusy, setWebSearchCapabilitiesBusy] = useState(false);
   const [webSearchCapabilitiesError, setWebSearchCapabilitiesError] = useState("");
@@ -1237,6 +1253,14 @@ export function App({
             onStop={stopChatGeneration}
             onEdit={editChatMessage}
             onRegenerate={regenerateChatMessage}
+            onDeleteTurn={deleteChatTurn}
+            onExportConversation={() => downloadConversationMarkdown(currentConversation?.title || "对话", chatMessages)}
+            onSearchConversations={searchConversations}
+            pinnedConversationIds={pinnedConversationIds}
+            onTogglePinConversation={togglePinnedConversation}
+            onPersistComposerDrafts={persistComposerDrafts}
+            replacementUndo={replacementUndo}
+            onUndoReplacement={undoReplacement}
             onOpenLibrary={() => navigateRoute({ section: "chat", page: "library" })}
           />
         </Suspense>

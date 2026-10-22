@@ -77,6 +77,12 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
   onLibraryAttachmentsConsumed?: () => void;
   composerDraft?: ChatComposerDraft;
   onComposerDraftConsumed?: () => void;
+  composerDrafts?: Map<number, string>;
+  onPersistComposerDrafts?: () => void;
+  onDeleteTurn?: ChatWorkspaceProps["onDeleteTurn"];
+  onExportConversation?: () => void;
+  replacementUndo?: ChatWorkspaceProps["replacementUndo"];
+  onUndoReplacement?: () => Promise<void>;
 } = {}) {
   const props = {
     onLoadResults: extras.onLoadResults,
@@ -127,7 +133,13 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
     onStop: vi.fn(),
     onEdit: vi.fn(),
     onRegenerate: vi.fn(),
-    onOpenLibrary: vi.fn()
+    onOpenLibrary: vi.fn(),
+    composerDrafts: extras.composerDrafts,
+    onPersistComposerDrafts: extras.onPersistComposerDrafts,
+    onDeleteTurn: extras.onDeleteTurn,
+    onExportConversation: extras.onExportConversation,
+    replacementUndo: extras.replacementUndo,
+    onUndoReplacement: extras.onUndoReplacement
   };
   const view = render(<ChatWorkspace {...props} />);
   return { ...props, view };
@@ -276,6 +288,55 @@ describe("ChatWorkspace", () => {
     expect(input).toHaveValue("尚未发送的草稿");
     expect(p.onSend).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: /回到最新/ })).not.toBeInTheDocument();
+  });
+
+  it("adds every selected file until the eight-file limit", async () => {
+    const p = renderChat([]);
+    let count = 0;
+    p.onUploadAttachment.mockImplementation(async (file: File) => ({ id: `file-${++count}`, kind: "document" as const, original_filename: file.name, parse_status: "parsed" as const }));
+    const files = ["一.txt", "二.txt", "三.txt"].map((name) => new File(["正文"], name, { type: "text/plain" }));
+    const picker = p.view.container.querySelector<HTMLInputElement>("input[type=file]")!;
+    expect(picker.multiple).toBe(true);
+    fireEvent.change(picker, { target: { files } });
+    expect(await screen.findByRole("button", { name: "预览 一.txt" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "预览 二.txt" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "预览 三.txt" })).toBeInTheDocument();
+    expect(p.onUploadAttachment).toHaveBeenCalledTimes(3);
+  });
+
+  it("asks about a selected passage, exports the conversation, and deletes one turn after confirmation", async () => {
+    const onDeleteTurn = vi.fn().mockResolvedValue(undefined);
+    const onExportConversation = vi.fn();
+    const drafts = new Map<number, string>();
+    const p = renderChat([message, assistantMessage("可以核对的句子")], { onDeleteTurn, onExportConversation, composerDrafts: drafts });
+    const passage = screen.getByText("可以核对的句子");
+    const range = document.createRange();
+    range.selectNodeContents(passage);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    fireEvent.mouseUp(passage);
+    fireEvent.click(screen.getByRole("button", { name: "针对这段提问" }));
+    expect(screen.getByRole("textbox", { name: "输入消息" })).toHaveValue("> 可以核对的句子\n\n针对这段：");
+    fireEvent.click(screen.getByRole("button", { name: "导出对话" }));
+    expect(onExportConversation).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "删除这轮问答" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认删除这轮问答" }));
+    expect(onDeleteTurn).toHaveBeenCalledWith(message.id);
+  });
+
+  it("keeps an unsaved draft across a refresh and offers undo after a replacement", () => {
+    const drafts = new Map<number, string>();
+    const onPersistComposerDrafts = vi.fn();
+    const onUndoReplacement = vi.fn().mockResolvedValue(undefined);
+    const p = renderChat([message], { composerDrafts: drafts, onPersistComposerDrafts, replacementUndo: { conversationId: conversation.id }, onUndoReplacement });
+    fireEvent.change(screen.getByRole("textbox", { name: "输入消息" }), { target: { value: "还没发送" } });
+    fireEvent(window, new Event("pagehide"));
+    expect(drafts.get(conversation.id)).toBe("还没发送");
+    expect(onPersistComposerDrafts).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "撤销" }));
+    expect(onUndoReplacement).toHaveBeenCalledOnce();
+    p.view.unmount();
   });
 
   it("opens newly added text attachments locally without sending or removing them", async () => {
@@ -779,7 +840,8 @@ describe("ChatWorkspace", () => {
     expect(header.querySelector(".chat-session-tools")).toBe(screen.getByRole("toolbar", { name: "对话操作" }));
     expect(screen.getByRole("button", { name: "新建对话" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "对话记录" })).toBeInTheDocument();
-    expect(within(header).getAllByRole("button")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "导出对话" })).toBeInTheDocument();
+    expect(within(header).getAllByRole("button")).toHaveLength(3);
     expect(within(header).queryByRole("button", { name: "来源详情" })).not.toBeInTheDocument();
     expect(header.querySelector(".chat-session-tools")).not.toHaveTextContent("新对话");
     expect(header.querySelector(".chat-session-tools")).not.toHaveTextContent("历史");
@@ -1629,7 +1691,7 @@ describe("ChatWorkspace", () => {
       }
     }]);
 
-    expect(within(screen.getByLabelText("对话操作栏")).getAllByRole("button")).toHaveLength(2);
+    expect(within(screen.getByLabelText("对话操作栏")).getAllByRole("button")).toHaveLength(3);
     expect(screen.queryByRole("button", { name: "来源详情" })).not.toBeInTheDocument();
     const sourceDetails = screen.getByRole("button", { name: "查看全部 1 个来源" });
     sourceDetails.focus();

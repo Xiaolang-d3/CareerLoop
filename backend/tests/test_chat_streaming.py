@@ -319,7 +319,64 @@ class ChatStreamingApiTest(unittest.TestCase):
         self.with_runtime(Runtime(), lambda: self.run_ag_ui(conversation["id"], "问题", "run-rewind"))
         messages = self.client.get(f"/chat/messages?conversation_id={conversation['id']}").json()
         response = self.client.delete(f"/chat/messages/{messages[0]['id']}/tail?conversation_id={conversation['id']}")
-        self.assertEqual(response.json()["deleted"], 2)
+        body = response.json()
+        self.assertEqual(body["deleted"], 2)
+        self.assertEqual([item["role"] for item in body["messages"]], ["user", "assistant"])
+        self.assertEqual(body["previous_title"], "回退")
+        self.assertEqual(self.client.get(f"/chat/messages?conversation_id={conversation['id']}").json(), [])
+
+    def test_conversation_search_turn_delete_and_restore(self) -> None:
+        first = self.client.post("/conversations", json={"title": "项目笔记"}).json()
+        second = self.client.post("/conversations", json={"title": "另一段"}).json()
+        opening = save_chat_message("user", "第一问：Straße 方案", {}, conversation_id=first["id"])
+        save_chat_message("assistant", "第一答", {}, conversation_id=first["id"])
+        later = save_chat_message("user", "第二问", {}, conversation_id=first["id"])
+        save_chat_message("assistant", "第二答", {}, conversation_id=first["id"])
+        save_chat_message("user", "无关内容", {}, conversation_id=second["id"])
+
+        matched = self.client.get("/conversations", params={"q": "strasse"}).json()
+        self.assertEqual([item["id"] for item in matched], [first["id"]])
+        truncated = self.client.get("/conversations", params={"q": ("a" * 200) + "strasse"}).json()
+        self.assertEqual(truncated, [])
+
+        deleted = self.client.delete(f"/chat/messages/{opening['id']}/turn?conversation_id={first['id']}")
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(deleted.json()["deleted"], 2)
+        remaining = self.client.get(f"/chat/messages?conversation_id={first['id']}").json()
+        self.assertEqual([item["content"] for item in remaining], ["第二问", "第二答"])
+
+        rewound = self.client.delete(f"/chat/messages/{later['id']}/tail?conversation_id={first['id']}")
+        self.assertEqual(rewound.status_code, 200)
+        snapshot = rewound.json()
+        save_chat_message("user", "替换后的问题", {}, conversation_id=first["id"])
+        save_chat_message("assistant", "替换后的回答", {}, conversation_id=first["id"])
+        restored = self.client.post("/chat/messages/restore", json={
+            "conversation_id": first["id"],
+            "previous_title": snapshot["previous_title"],
+            "messages": [
+                {
+                    "id": item["id"],
+                    "role": item["role"],
+                    "content": item["content"],
+                    "payload": item.get("payload") or {},
+                    "created_at": item["created_at"],
+                }
+                for item in snapshot["messages"]
+            ],
+        })
+        self.assertEqual(restored.status_code, 200)
+        self.assertEqual(restored.json()["restored"], 2)
+        after = self.client.get(f"/chat/messages?conversation_id={first['id']}").json()
+        self.assertEqual([item["id"] for item in after], [item["id"] for item in snapshot["messages"]])
+        self.assertEqual([item["content"] for item in after], ["第二问", "第二答"])
+
+        with patch("app.api.chat.is_chat_running", return_value=True):
+            blocked = self.client.post("/chat/messages/restore", json={
+                "conversation_id": first["id"],
+                "messages": [{"id": after[0]["id"], "role": "user", "content": "不能覆盖"}],
+            })
+        self.assertEqual(blocked.status_code, 409)
+        self.assertEqual(self.client.get(f"/chat/messages?conversation_id={first['id']}").json()[0]["content"], "第二问")
 
     def test_preview_origin_is_allowed_by_cors(self) -> None:
         response = self.client.options("/health", headers={

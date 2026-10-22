@@ -288,6 +288,27 @@
   outline-offset: 2px;
 }
 
+.chat-workspace .message-quote-action {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 8px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--color-brand) 28%, transparent);
+  border-radius: 999px;
+  color: var(--color-brand-strong);
+  background: var(--color-brand-soft);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chat-workspace .message-turn-delete {
+  color: #8d3b46;
+  border-color: color-mix(in srgb, #8d3b46 35%, transparent);
+  background: color-mix(in srgb, #8d3b46 8%, #fff);
+}
+
 .chat-workspace .message-actions button:active:not(:disabled) {
   border-color: color-mix(in srgb, var(--color-brand) 35%, transparent);
 }

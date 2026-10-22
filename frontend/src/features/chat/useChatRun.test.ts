@@ -121,6 +121,34 @@ describe("useChatRun stream reconciliation", () => {
     expect(client.runAgent).not.toHaveBeenCalled();
     expect(result.current.sendError).toContain("历史消息已保留");
     expect(result.current.chatBusy).toBe(false);
+    expect(result.current.replacementUndo).toBeNull();
+  });
+
+  it("restores rewound text after a replacement and drops that undo when a new message is sent", async () => {
+    const { result, fetchJson } = setup();
+    const removed = [userMessage, assistantMessage];
+    act(() => result.current.setChatMessages(removed));
+    fetchJson.mockImplementation(async (path: string) => {
+      if (String(path).includes("/tail?")) return { messages: removed, previous_title: "原标题" };
+      if (String(path).startsWith("/chat/messages?")) return [];
+      return { run: null };
+    });
+    client.runAgent.mockImplementationOnce(async () => emit("onStateSnapshotEvent", { event: { snapshot } }));
+    await act(() => result.current.editChatMessage(userMessage.id, "新的问题"));
+    expect(result.current.replacementUndo?.messages.map((message) => message.id)).toEqual([11, 12]);
+    fetchJson.mockImplementation(async (path: string) => {
+      if (path === "/chat/messages/restore") return { restored: 2 };
+      if (String(path).startsWith("/chat/messages?")) return removed;
+      return { run: null };
+    });
+    await act(() => result.current.undoReplacement());
+    const restore = fetchJson.mock.calls.find(([path]) => path === "/chat/messages/restore");
+    expect(JSON.parse(String(restore?.[1]?.body)).messages.map((message: ChatMessage) => message.content)).toEqual(["测试问题", "测试回答"]);
+    expect(JSON.parse(String(restore?.[1]?.body)).previous_title).toBe("原标题");
+    fetchJson.mockResolvedValue({ run: null });
+    client.runAgent.mockImplementationOnce(async () => emit("onStateSnapshotEvent", { event: { snapshot } }));
+    await act(() => result.current.sendChatMessage("另一句"));
+    expect(result.current.replacementUndo).toBeNull();
   });
 
   it("validates capability support before editing a historical search turn", async () => {

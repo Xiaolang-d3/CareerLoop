@@ -42,7 +42,7 @@ describe("ConversationHistoryPanel", () => {
     view.rerender(<ConversationHistoryPanel {...props} conversations={[conversation, { ...conversation, id: 2, title: longTitle, summary: "Agent 工具研究" }]} />);
     expect(screen.getByTitle(conversation.title)).toHaveAttribute("aria-current", "page");
     expect(screen.getByTitle(longTitle)).toBeInTheDocument();
-    const search = screen.getByRole("searchbox", { name: "搜索对话标题或摘要" });
+    const search = screen.getByRole("searchbox", { name: "搜索对话标题、摘要或正文" });
     fireEvent.change(search, { target: { value: "agent" } });
     expect(screen.queryByTitle(conversation.title)).not.toBeInTheDocument();
     expect(screen.getByTitle(longTitle)).toBeInTheDocument();
@@ -98,6 +98,26 @@ describe("ConversationHistoryPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "关闭对话记录" }));
 
     expect(props.onClose).toHaveBeenCalledOnce();
+  });
+
+  it("pins a conversation above the time groups and can unpin it", () => {
+    const onTogglePin = vi.fn();
+    const pinned = { ...conversation, id: 8, title: "固定项目" };
+    const props = renderPanel();
+    props.view.rerender(<ConversationHistoryPanel {...props} conversations={[conversation, pinned]} pinnedIds={[8]} onTogglePin={onTogglePin} />);
+    expect(screen.getByRole("region", { name: "置顶" })).toContainElement(screen.getByTitle("固定项目"));
+    fireEvent.click(screen.getByRole("button", { name: "固定项目 的更多操作" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "取消置顶" }));
+    expect(onTogglePin).toHaveBeenCalledWith(pinned);
+  });
+
+  it("shows conversations matched by message text from the server", async () => {
+    const onSearch = vi.fn().mockResolvedValue([{ ...conversation, id: 9, title: "正文里的方案" }]);
+    const props = renderPanel();
+    props.view.rerender(<ConversationHistoryPanel {...props} onSearch={onSearch} />);
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索对话标题、摘要或正文" }), { target: { value: "方案细节" } });
+    expect(await screen.findByTitle("正文里的方案")).toBeInTheDocument();
+    expect(onSearch).toHaveBeenCalledWith("方案细节");
   });
 
   it("groups conversations by recency instead of a generic recent label", () => {

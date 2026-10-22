@@ -218,6 +218,14 @@ export type ChatWorkspaceProps = ResultServices & {
   onStop: () => Promise<void>;
   onEdit: (userMessageId: number, content: string) => Promise<void>;
   onRegenerate: (userMessageId: number) => Promise<void>;
+  onDeleteTurn?: (userMessageId: number) => Promise<void>;
+  onExportConversation?: () => void;
+  onSearchConversations?: (query: string) => Promise<Conversation[]>;
+  pinnedConversationIds?: number[];
+  onTogglePinConversation?: (conversation: Conversation) => void;
+  onPersistComposerDrafts?: () => void;
+  replacementUndo?: { conversationId: number } | null;
+  onUndoReplacement?: () => Promise<void>;
   sessionContext?: ChatSessionContext;
   onOpenLibrary?: () => void;
   density?: "page" | "dock";
