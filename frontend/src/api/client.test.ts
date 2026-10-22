@@ -98,6 +98,68 @@ describe("fetchWithTimeout", () => {
     }
   });
 
+  it("streams desktop event-stream chunks before the bridge command resolves", async () => {
+    let emit: (payload: Record<string, unknown>) => void = () => undefined;
+    const listen = vi.fn(async (_name: string, handler: (event: { payload: Record<string, unknown> }) => void) => {
+      emit = (payload) => handler({ payload });
+      return () => undefined;
+    });
+    const invoke = vi.fn(async (command: string, args?: { request: { requestId: string } }) => {
+      if (command !== "desktop_api_request") return undefined;
+      const requestId = args?.request.requestId ?? "";
+      emit({ requestId, kind: "headers", status: 200, contentType: "text/event-stream" });
+      emit({ requestId, kind: "chunk", chunkBase64: btoa("data: hi\n\n") });
+      emit({ requestId, kind: "end" });
+      return { status: 200, body: "data: hi\n\n", contentType: "text/event-stream" };
+    });
+    Object.assign(window, { __TAURI__: { core: { invoke }, event: { listen } } });
+    try {
+      const response = await fetchWithTimeout("http://127.0.0.1:8000/ag-ui", { method: "POST", body: "{}" });
+      expect(response.headers.get("Content-Type")).toContain("text/event-stream");
+      expect(await response.text()).toBe("data: hi\n\n");
+      expect(listen).toHaveBeenCalledWith("desktop-api-stream", expect.any(Function));
+    } finally {
+      delete (window as Window & { __TAURI__?: unknown }).__TAURI__;
+    }
+  });
+
+  it("keeps the buffered desktop body when stream events never arrive", async () => {
+    const listen = vi.fn(async () => () => undefined);
+    const invoke = vi.fn(async () => ({ status: 200, body: "{\"ok\":true}", contentType: "application/json" }));
+    Object.assign(window, { __TAURI__: { core: { invoke }, event: { listen } } });
+    try {
+      const response = await fetchWithTimeout("http://127.0.0.1:8000/library");
+      expect(await response.json()).toEqual({ ok: true });
+    } finally {
+      delete (window as Window & { __TAURI__?: unknown }).__TAURI__;
+    }
+  });
+
+  it("cancels a desktop event stream when the caller aborts", async () => {
+    let emit: (payload: Record<string, unknown>) => void = () => undefined;
+    const listen = vi.fn(async (_name: string, handler: (event: { payload: Record<string, unknown> }) => void) => {
+      emit = (payload) => handler({ payload });
+      return () => undefined;
+    });
+    const invoke = vi.fn((command: string, args?: { request: { requestId: string } }) => {
+      if (command === "desktop_cancel_api_request") return Promise.resolve();
+      const requestId = args?.request.requestId ?? "";
+      emit({ requestId, kind: "headers", status: 200, contentType: "text/event-stream" });
+      return new Promise(() => undefined);
+    });
+    Object.assign(window, { __TAURI__: { core: { invoke }, event: { listen } } });
+    try {
+      const controller = new AbortController();
+      const response = await fetchWithTimeout("http://127.0.0.1:8000/ag-ui", { method: "POST", body: "{}", signal: controller.signal });
+      const pending = response.body?.getReader().read();
+      controller.abort();
+      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+      expect(invoke.mock.calls.some(([command]) => command === "desktop_cancel_api_request")).toBe(true);
+    } finally {
+      delete (window as Window & { __TAURI__?: unknown }).__TAURI__;
+    }
+  });
+
   it("cancels an active desktop request without treating it as a timeout", async () => {
     const invoke = vi.fn((command: string) => command === "desktop_cancel_api_request" ? Promise.resolve() : new Promise(() => undefined));
     Object.assign(window, { __TAURI__: { core: { invoke } } });

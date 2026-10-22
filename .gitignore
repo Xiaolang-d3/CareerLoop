@@ -46,6 +46,9 @@ evals/promptfoo-errors.log
 # Isolated feature worktrees
 .worktrees/
 
+# Independent frontend checkout; not this repository's UI
+sites/
+
 # Local agent / editor tooling — do not commit
 .agents/
 .cursor/

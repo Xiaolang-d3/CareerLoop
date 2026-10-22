@@ -25,6 +25,7 @@ npm run build
 - Python 后端以 PyInstaller onedir runtime 放入应用资源目录，Tauri 通过同架构的原生 launcher 启动它。
 - 开发桌面壳可运行 `npm run dev`，但仍需要先生成当前平台的真实 sidecar，不能用占位脚本构建。
 - 为控制内部包体积，首版桌面包不包含可选的图片 OCR 推理栈；PDF、DOCX、纯文本和粘贴文本仍可正常导入，图片 OCR 在安装可选依赖的浏览器开发环境可用。
+- `text/event-stream` 由桌面桥按块转发到 WebView，仍走 loopback 且不经过系统代理；JSON 和文件响应仍整包返回。关应用仍会停掉 sidecar 里的任务。
 
 ## CI 制品
 

@@ -37,6 +37,7 @@ class ResumeKnowledgeWiringTest(unittest.TestCase):
             create_text_source(
                 title="候选人简历",
                 content="使用 Python 和 FastAPI 构建本地求职 Agent，负责检索与评估模块。",
+                enabled=True,
                 db_path=db_path,
             )
 
@@ -54,6 +55,7 @@ class ResumeKnowledgeWiringTest(unittest.TestCase):
             create_text_source(
                 title="候选人简历",
                 content="项目经历\n检索平台\n- 使用 FastAPI 做本地检索。",
+                enabled=True,
                 db_path=db_path,
             )
             results = search_knowledge("FastAPI", ["library_source"], 3, db_path)
@@ -71,6 +73,7 @@ class ResumeKnowledgeWiringTest(unittest.TestCase):
             create_text_source(
                 title="候选人简历",
                 content="联系邮箱 secret.person@example.com，负责 FastAPI 服务开发。",
+                enabled=True,
                 db_path=db_path,
             )
 

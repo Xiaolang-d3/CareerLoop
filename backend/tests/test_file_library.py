@@ -22,7 +22,7 @@ def library(tmp_path, monkeypatch):
 
 
 def test_organization_keeps_parser_metadata_and_trash_removes_context_and_index(library):
-    source = import_file_source(filename="notes.txt", content_bytes="海王星资料 reader@example.com".encode(), db_path=library)
+    source = import_file_source(filename="notes.txt", content_bytes="海王星资料 reader@example.com".encode(), enabled=True, db_path=library)
     folder = create_folder("阅读资料", library)
     updated = source["updated_at"]
     organize_source(source["id"], {"folder_id": folder["id"], "favorite": True, "opened": True}, library)
@@ -158,6 +158,9 @@ def test_api_organization_body_search_and_chat_validation(tmp_path, monkeypatch)
         saved = client.put("/library", json={"name": "", "privacy_mode": "redacted"})
         assert saved.status_code == 200 and saved.json()["profile"]["name"] == ""
         source = client.post("/library/sources", json={"title": "笔记", "content": "海王星资料"}).json()["source"]
+        assert source["enabled"] is False
+        imported = client.post("/library/sources/import", files={"files": ("notes.txt", "未授权正文".encode(), "text/plain")})
+        assert imported.status_code == 200 and imported.json()["results"][0]["source"]["enabled"] is False
         folder = client.post("/library/folders", json={"name": "阅读"}).json()
         response = client.patch(f"/library/sources/{source['id']}/organization", json={"folder_id": folder["id"], "favorite": True})
         assert response.status_code == 200 and response.json()["favorite"]

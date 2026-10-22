@@ -89,6 +89,17 @@ def test_v30_upgrade_preserves_existing_sources_and_indexes(library):
     assert (library.parent / ".upgrade-backups" / f"before-schema-v{DB_SCHEMA_VERSION}" / library.name).is_file()
 
 
+def test_omitted_permission_stays_archived_until_explicitly_enabled(library):
+    from app.library.service import model_context
+    pasted = create_text_source(title="笔记", content="未授权的正文", db_path=library)
+    uploaded = import_file_source(filename="notes.txt", content_bytes="未授权的文件".encode(), db_path=library)
+    assert pasted["enabled"] is False and uploaded["enabled"] is False
+    assert model_context(library)["document"] == ""
+    update_source(pasted["id"], enabled=True, db_path=library)
+    document = model_context(library)["document"]
+    assert "未授权的正文" in document and "未授权的文件" not in document
+
+
 def test_archive_imports_are_readable_but_not_indexed_until_enabled(library):
     from app.library.service import model_context
     source = import_file_source(filename="notes.txt", content_bytes="仅存档资料".encode(), enabled=False, db_path=library)

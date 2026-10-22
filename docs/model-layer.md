@@ -100,7 +100,7 @@ ChatRuntime ─► ConfiguredModelProvider (档案参数 / 推理强度)
 
 ## 当前数据库升级
 
-当前 schema 为 v30：统一合入阶段路由、聊天图片成果和 LiteLLM 模型层。两个开发分支曾分别使用 v29，新增字段不同；启动时从任一 v29 补齐另一侧的表与列，从 v27/v28 也可直接升级。原记录与迁移名称保留，升级前自动备份到 `.upgrade-backups/before-schema-v30/`，不重新索引既有 v27 及以后的资料。
+当前 schema 为 v31。v30 统一合入阶段路由、聊天图片成果和 LiteLLM 模型层：两个开发分支曾分别使用 v29，新增字段不同；启动时从任一 v29 补齐另一侧的表与列，从 v27/v28 也可直接升级。v31 增加文件库主题集合（`library_collections`、`library_collection_sources`），不重新索引既有 v27 及以后的资料。原记录与迁移名称保留。每次升级前自动备份到 `.upgrade-backups/before-schema-v<当前版本>/`，因此现在的备份目录是 `before-schema-v31/`。
 
 明确生图时先加载内置 `image-design` Markdown 指引并附到原始需求后，不增加文字模型调用；技能加载失败在生图操作创建和付费调用之前返回，实际提交提示词随图片结果保留（见 `docs/image-generation.md`）。生图请求走原生 Responses 的图片专用路径，保留图片与进度事件，绕过 Completion Router 和参数重试；文本调用继续使用 LiteLLM、推理参数和备用模型。阶段路由独立设置模型时，也沿用该档案的实际协议、推理强度与自定义计价。Packy `images` 协议同样绕过 Completion Router：`litellm_router.route_target_for_connection` 显式拒绝把图片模型注册为聊天备用模型，图片请求由原生 `OpenAIImagesProvider` 处理（见 `docs/image-generation.md`）。
 
@@ -110,14 +110,14 @@ ChatRuntime ─► ConfiguredModelProvider (档案参数 / 推理强度)
 
 网站持续部署复用成功 CI 的前端构建，Mac 端使用同一 `requirements-lock.txt` 和 `install_deps.sh` 安装运行时并扫描 `.pth`。冒烟检查使用隔离数据、内存凭证和空模型密钥；上线进程不继承开发 `.env` 或 GitHub 凭证，用户模型密钥沿用固定数据目录对应的 Mac 钥匙串引用。CD 发布不执行真实模型请求。工作流和一次性启用步骤见[持续部署](continuous-deployment.md)。
 
-设置环境变量 `DENGDENG_MODEL_BACKEND=native` 即回到原生适配器（OpenAI SDK / httpx 实现，代码保留未删除）。原生模式下备用模型设置会保存但不生效（设置页提示），能力报告不使用 LiteLLM 数据，其余功能（协商、探测、推理回传、监控）不变。未安装 litellm 时自动使用原生模式并打印一次警告；`DENGDENG_MODEL_BACKEND` 取 `litellm`、`native` 以外的值时打印一次警告并按默认 `litellm` 处理。数据库 v30 的新增列与表对原生模式无影响。
+设置环境变量 `DENGDENG_MODEL_BACKEND=native` 即回到原生适配器（OpenAI SDK / httpx 实现，代码保留未删除）。原生模式下备用模型设置会保存但不生效（设置页提示），能力报告不使用 LiteLLM 数据，其余功能（协商、探测、推理回传、监控）不变。未安装 litellm 时自动使用原生模式并打印一次警告；`DENGDENG_MODEL_BACKEND` 取 `litellm`、`native` 以外的值时打印一次警告并按默认 `litellm` 处理。数据库 v30 及 v31 的新增列与表对原生模式无影响。
 
 ### 降级到旧版本应用
 
-上面的环境变量只切换模型实现，不涉及数据库。**v30 没有自动降级路径**：旧版本应用（v29 及以前）打开 v30 数据库时会提示「数据库来自更新版本，请升级应用后打开」并拒绝打开，不会修改文件。确需回到旧版本时：
+上面的环境变量只切换模型实现，不涉及数据库。**当前 schema 没有自动降级路径**：旧版本应用打开更新的数据库时会提示「数据库来自更新版本，请升级应用后打开」并拒绝打开，不会修改文件。确需回到旧版本时：
 
 1. 完全退出灯灯（确保后端进程已结束）。
-2. 用数据目录下 `.upgrade-backups/before-schema-v30/careerloop.db` 覆盖数据目录中的 `careerloop.db`，并删除同目录的 `careerloop.db-wal`、`careerloop.db-shm`（如存在）。
+2. 用数据目录下对应的升级前备份覆盖 `careerloop.db`。回到 v31 之前用 `.upgrade-backups/before-schema-v31/careerloop.db`；更早的 v30 备份仍在 `.upgrade-backups/before-schema-v30/`（若那次升级发生过）。并删除同目录的 `careerloop.db-wal`、`careerloop.db-shm`（如存在）。
 3. 再启动旧版本应用。
 
-**升级到 v30 之后写入的对话、资料、模型设置与调用记录都会丢失**，恢复前可先另存一份当前的 `careerloop.db`。该备份只在第一次升级到 v30 时写入，之后不会覆盖（`upgrades.py` 的 `_backup` 发现目标已存在即跳过）；如果恢复后又重新升级，目录里仍是最早那份备份，需要新备份时先把旧目录移走。
+**该次升级之后写入的对话、资料、模型设置与调用记录都会丢失**，恢复前可先另存一份当前的 `careerloop.db`。备份只在第一次升到该版本时写入，之后不会覆盖（`upgrades.py` 的 `_backup` 发现目标已存在即跳过）；如果恢复后又重新升级，目录里仍是最早那份备份，需要新备份时先把旧目录移走。

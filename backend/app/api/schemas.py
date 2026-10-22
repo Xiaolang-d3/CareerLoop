@@ -70,7 +70,7 @@ class LibrarySourceIn(BaseModel):
     content: str = Field(min_length=1, max_length=200_000)
     source_uri: str = Field(default="", max_length=2_000)
     privacy_mode: Literal["redacted", "original"] = "redacted"
-    enabled: bool = True
+    enabled: bool = False
 
 class LibrarySourceUpdateIn(BaseModel):
     title: str | None = Field(default=None, max_length=255)

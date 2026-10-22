@@ -43,7 +43,7 @@ def test_only_general_tools_and_routes_are_exposed():
 
 def test_source_and_privacy_survive_library_read(library_db):
     content = "# 阅读笔记\n持续学习，需要每天记录一个问题。\n联系 reader@example.com"
-    source = create_text_source(title="阅读笔记", content=content, db_path=library_db)
+    source = create_text_source(title="阅读笔记", content=content, enabled=True, db_path=library_db)
     before = get_library(library_db)
     assert before["sources"][0]["title"] == "阅读笔记"
     context = model_context(library_db)
@@ -121,6 +121,7 @@ def test_library_api_round_trip_without_career_strategy(tmp_path, monkeypatch):
         })
         assert response.status_code == 200
         assert response.json()["proposals"] == []
+        assert response.json()["source"]["enabled"] is False
         bundle = client.get("/library").json()
         assert bundle["sources"][0]["title"] == "学习笔记"
         assert "active_strategy" not in bundle
