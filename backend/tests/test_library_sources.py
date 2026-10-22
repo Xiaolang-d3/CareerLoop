@@ -57,7 +57,7 @@ def test_disabled_source_leaves_search_and_reenable_restores_it(tmp_path):
 
     db_path = tmp_path / "careerloop.db"
     init_db(db_path)
-    source = create_text_source(title="天文笔记", content="海王星是一颗冰巨星", db_path=db_path)
+    source = create_text_source(title="天文笔记", content="海王星是一颗冰巨星", enabled=True, db_path=db_path)
     tool = SearchLibraryTool(db_path)
     context = ToolContext(platform_name="test")
     assert asyncio.run(tool.execute({"query": "海王星"}, context)).data["excerpts"]
@@ -71,7 +71,7 @@ def test_editing_extracted_text_updates_privacy_and_index_without_changing_origi
     db_path = tmp_path / "careerloop.db"
     init_db(db_path)
     original = "原文件内容：木星是一颗气态巨行星，这份资料只用于验证原文件不会被正文校正覆盖。".encode()
-    source = import_file_source(filename="notes.txt", content_bytes=original, db_path=db_path)
+    source = import_file_source(filename="notes.txt", content_bytes=original, enabled=True, db_path=db_path)
     file_path, _, _ = get_source_file(source["id"], db_path=db_path)
 
     edited = update_source(
@@ -125,7 +125,7 @@ def test_deleting_source_removes_file_index_and_only_unconfirmed_exclusive_memor
 def test_failed_original_file_deletion_keeps_source_knowledge_and_index(tmp_path, monkeypatch):
     db_path = tmp_path / "careerloop.db"
     init_db(db_path)
-    source = import_file_source(filename="notes.txt", content_bytes="可供重试删除的原始笔记。".encode(), db_path=db_path)
+    source = import_file_source(filename="notes.txt", content_bytes="可供重试删除的原始笔记。".encode(), enabled=True, db_path=db_path)
     file_path, _, _ = get_source_file(source["id"], db_path=db_path)
     pending = propose_knowledge(category="knowledge", statement="待确认结论", source_id=source["id"], db_path=db_path)
     original_unlink = Path.unlink

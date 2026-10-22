@@ -167,7 +167,7 @@ def create_text_source(
     content: str,
     privacy_mode: str = "redacted",
     source_uri: str = "",
-    enabled: bool = True,
+    enabled: bool = False,
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
     clean_content = content.strip()
@@ -208,7 +208,7 @@ def import_file_source(
     content_bytes: bytes,
     mode: str = "fast",
     privacy_mode: str = "redacted",
-    enabled: bool = True,
+    enabled: bool = False,
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
     if not content_bytes:
