@@ -36,3 +36,47 @@ export function readIdList(storageKey: string): number[] {
 export function writeIdList(storageKey: string, ids: number[]) {
   window.localStorage.setItem(storageKey, JSON.stringify(ids));
 }
+
+export type ConversationFolder = {
+  id: string;
+  name: string;
+};
+
+const FOLDER_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+export function readConversationFolders(storageKey: string): { folders: ConversationFolder[]; assignments: Record<number, string> } {
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    const parsed = raw ? JSON.parse(raw) as unknown : {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { folders: [], assignments: {} };
+    const record = parsed as { folders?: unknown; assignments?: unknown };
+    const folders = Array.isArray(record.folders)
+      ? record.folders.flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const folder = item as { id?: unknown; name?: unknown };
+        const name = typeof folder.name === "string" ? folder.name.trim().slice(0, 40) : "";
+        return typeof folder.id === "string" && FOLDER_ID.test(folder.id) && name ? [{ id: folder.id, name }] : [];
+      }).slice(0, 30)
+      : [];
+    const known = new Set(folders.map((folder) => folder.id));
+    const assignments: Record<number, string> = {};
+    if (record.assignments && typeof record.assignments === "object" && !Array.isArray(record.assignments)) {
+      for (const [key, value] of Object.entries(record.assignments)) {
+        const id = Number(key);
+        if (Number.isInteger(id) && id > 0 && typeof value === "string" && known.has(value)) assignments[id] = value;
+      }
+    }
+    return { folders, assignments };
+  } catch {
+    return { folders: [], assignments: {} };
+  }
+}
+
+export function writeConversationFolders(storageKey: string, folders: ConversationFolder[], assignments: Record<number, string>) {
+  const known = new Set(folders.map((folder) => folder.id));
+  const stored: Record<string, string> = {};
+  for (const [key, value] of Object.entries(assignments)) {
+    if (known.has(value)) stored[key] = value;
+  }
+  window.localStorage.setItem(storageKey, JSON.stringify({ folders, assignments: stored }));
+}

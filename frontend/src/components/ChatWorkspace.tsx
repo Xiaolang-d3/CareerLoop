@@ -13,6 +13,7 @@ import { textFromAppendMessage, WebSource, webSourcesFromAgent, ResearchPanelAct
 import type { AgentRunResult, ChatMessage, ChatAttachment, WebSearchOptions, ChatClarificationOption, ChatClarification, ChatWorkspaceProps } from "../features/chat/types";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from "react";
+import { useVoiceAnswer } from "../hooks/useVoiceAnswer";
 
 import { ConversationHistoryPanel } from "./ConversationHistoryPanel";
 
@@ -25,7 +26,7 @@ import { AssistantRuntimeProvider, ComposerPrimitive, ThreadPrimitive, type Thre
 import { flushTapSync } from "@assistant-ui/tap";
 import { useAui, useAuiState } from "@assistant-ui/store";
 
-import { ArrowUp, ArrowUpRight, Download, FileText, History, ImagePlus, LoaderCircle, Paperclip, Plus, RefreshCw, Square, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, ArrowUpRight, Download, FileText, History, ImagePlus, LoaderCircle, Mic, Paperclip, Plus, RefreshCw, Square, TriangleAlert, X } from "lucide-react";
 
 const MAX_ATTACHMENTS = 8;
 
@@ -79,26 +80,50 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   const searchIssue = webSearchConfigurationIssue(props.webSearchOptions, props.webSearchCapabilities);
   const localDrafts = useRef(new Map<number, string>());
   const drafts = props.composerDrafts ?? localDrafts.current;
+  const draftsRef = useRef(drafts);
+  draftsRef.current = drafts;
   const auiRef = useRef(aui);
   auiRef.current = aui;
+  const appendVoiceTranscript = useCallback((spoken: string) => {
+    const current = auiRef.current.composer().getState().text;
+    const next = `${current.replace(/\s+$/, "")}${current.trim() ? " " : ""}${spoken}`.slice(0, 200_000);
+    flushTapSync(() => { auiRef.current.composer().setText(next); });
+    const id = props.currentConversationId;
+    if (id) draftsRef.current.set(id, next);
+    props.onPersistComposerDrafts?.();
+  }, [props.currentConversationId, props.onPersistComposerDrafts]);
+  const voice = useVoiceAnswer(appendVoiceTranscript);
+  const stopVoiceRef = useRef(voice.stopListening);
+  stopVoiceRef.current = voice.stopListening;
+  useEffect(() => { stopVoiceRef.current(); }, [props.chatBusy, props.currentConversationId]);
   const persistDraftsRef = useRef(props.onPersistComposerDrafts);
   persistDraftsRef.current = props.onPersistComposerDrafts;
+  const loadedDraftConversation = useRef<number | null | undefined>(undefined);
+  useEffect(() => () => {
+    const id = loadedDraftConversation.current;
+    if (!id) return;
+    const text = auiRef.current.composer().getState().text;
+    if (text) draftsRef.current.set(id, text);
+    else draftsRef.current.delete(id);
+    persistDraftsRef.current?.();
+  }, []);
   useLayoutEffect(() => {
     const id = props.currentConversationId;
-    // `aui` is a new object after setText. Reloading on that identity change
-    // would replace a just-inserted quote with the previous draft.
-    const composer = auiRef.current.composer();
-    flushTapSync(() => {
-      composer.setText(id ? drafts.get(id) ?? "" : "");
-    });
-    return () => {
-      if (!id) return;
-      const text = auiRef.current.composer().getState().text;
-      if (text) drafts.set(id, text);
-      else drafts.delete(id);
+    if (loadedDraftConversation.current === id) return;
+    const previous = loadedDraftConversation.current;
+    if (previous) {
+      const previousText = auiRef.current.composer().getState().text;
+      if (previousText) draftsRef.current.set(previous, previousText);
+      else draftsRef.current.delete(previous);
       persistDraftsRef.current?.();
-    };
-  }, [drafts, props.currentConversationId]);
+    }
+    loadedDraftConversation.current = id;
+    // Only switching conversations reloads a draft. setText changes the `aui`
+    // object, and reloading on that change would erase a just-inserted quote.
+    flushTapSync(() => {
+      auiRef.current.composer().setText(id ? draftsRef.current.get(id) ?? "" : "");
+    });
+  }, [props.currentConversationId]);
 
   useEffect(() => {
     const flush = () => {
@@ -531,6 +556,10 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                     {props.attachmentBusy ? <LoaderCircle className="spinning" size={16} aria-hidden="true" /> : <Paperclip size={20} aria-hidden="true" />}
                     <span>添加资料</span>
                   </button>
+                  <button className={`composer-tool composer-voice-tool${voice.listening ? " active" : ""}`} type="button" aria-pressed={voice.listening} aria-label={voice.listening ? "停止语音输入" : "语音输入"} disabled={props.chatBusy} title={voice.error || (voice.listening ? "正在听，点击停止" : "说出内容后追加到输入框，不会自动发送")} onClick={() => { if (voice.listening) voice.stopListening(); else voice.startListening(); }}>
+                    <Mic size={20} aria-hidden="true" />
+                    <span>{voice.listening ? "正在听" : "语音"}</span>
+                  </button>
                   <ComposerWebSearch options={props.webSearchOptions} onChange={props.onWebSearchOptionsChange}
                     capabilities={props.webSearchCapabilities} available={props.webSearchAvailable} provider={props.webSearchProvider}
                     busy={props.chatBusy || props.taskCancelBusy} capabilitiesBusy={props.webSearchCapabilitiesBusy}
@@ -609,6 +638,12 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
         onSearch={props.onSearchConversations}
         pinnedIds={props.pinnedConversationIds}
         onTogglePin={props.onTogglePinConversation}
+        folders={props.conversationFolders}
+        folderAssignments={props.conversationFolderAssignments}
+        onCreateFolder={props.onCreateConversationFolder}
+        onRenameFolder={props.onRenameConversationFolder}
+        onRemoveFolder={props.onRemoveConversationFolder}
+        onAssignFolder={props.onAssignConversationFolder}
       />
       {conversationListOpen ? <button className="conversation-history-backdrop" type="button" aria-label="关闭对话记录" onClick={() => setConversationListOpen(false)} /> : null}
       {researchPanelOpen ? <button className="research-panel-backdrop" type="button" aria-label="关闭来源详情" onClick={() => closeResearchDetails()} /> : null}

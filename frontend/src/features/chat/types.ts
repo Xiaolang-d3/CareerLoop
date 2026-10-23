@@ -223,6 +223,12 @@ export type ChatWorkspaceProps = ResultServices & {
   onSearchConversations?: (query: string) => Promise<Conversation[]>;
   pinnedConversationIds?: number[];
   onTogglePinConversation?: (conversation: Conversation) => void;
+  conversationFolders?: Array<{ id: string; name: string }>;
+  conversationFolderAssignments?: Record<number, string>;
+  onCreateConversationFolder?: (name: string) => void;
+  onRenameConversationFolder?: (folderId: string, name: string) => void;
+  onRemoveConversationFolder?: (folderId: string) => void;
+  onAssignConversationFolder?: (conversation: Conversation, folderId: string | null) => void;
   onPersistComposerDrafts?: () => void;
   replacementUndo?: { conversationId: number } | null;
   onUndoReplacement?: () => Promise<void>;

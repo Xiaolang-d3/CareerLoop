@@ -111,6 +111,21 @@ describe("ConversationHistoryPanel", () => {
     expect(onTogglePin).toHaveBeenCalledWith(pinned);
   });
 
+  it("keeps a conversation in its folder above the time groups", () => {
+    const onAssign = vi.fn();
+    const onCreateFolder = vi.fn();
+    const props = renderPanel();
+    props.view.rerender(<ConversationHistoryPanel {...props} folders={[{ id: "project", name: "项目" }]} folderAssignments={{ 1: "project" }} onAssignFolder={onAssign} onCreateFolder={onCreateFolder} />);
+    expect(screen.getByRole("region", { name: "项目" })).toContainElement(screen.getByTitle("项目表达练习"));
+    fireEvent.click(screen.getByRole("button", { name: "新建文件夹" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "文件夹名称" }), { target: { value: "求职" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建" }));
+    expect(onCreateFolder).toHaveBeenCalledWith("求职");
+    fireEvent.click(screen.getByRole("button", { name: "项目表达练习 的更多操作" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "移出项目" }));
+    expect(onAssign).toHaveBeenCalledWith(conversation, null);
+  });
+
   it("shows conversations matched by message text from the server", async () => {
     const onSearch = vi.fn().mockResolvedValue([{ ...conversation, id: 9, title: "正文里的方案" }]);
     const props = renderPanel();

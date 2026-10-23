@@ -5,7 +5,7 @@ import { useTheme } from "../features/appearance/ThemeProvider";
 import { AppearanceSettingsPage } from "../features/settings/AppearanceSettingsPage";
 import { PageLoading } from "../components/PageLoading";
 import { downloadConversationMarkdown } from "../features/chat/conversationActions";
-import { readIdList, readStringMap, writeIdList, writeStringMap } from "../features/chat/localChatPreferences";
+import { readConversationFolders, readIdList, readStringMap, writeConversationFolders, writeIdList, writeStringMap, type ConversationFolder } from "../features/chat/localChatPreferences";
 import { useChatRun } from "../features/chat/useChatRun";
 import { useConversations } from "../features/chat/useConversations";
 import { useLibrary } from "../features/library/useLibrary";
@@ -177,6 +177,45 @@ export function App({
       writeIdList(preferenceKey("careerloop-pinned-conversations", userEmail), next);
       return next;
     });
+  }
+  const storedFolders = useMemo(() => readConversationFolders(preferenceKey("careerloop-conversation-folders", userEmail)), [userEmail]);
+  const [conversationFolders, setConversationFolders] = useState<ConversationFolder[]>(storedFolders.folders);
+  const [conversationFolderAssignments, setConversationFolderAssignments] = useState<Record<number, string>>(storedFolders.assignments);
+  useEffect(() => {
+    const next = readConversationFolders(preferenceKey("careerloop-conversation-folders", userEmail));
+    setConversationFolders(next.folders);
+    setConversationFolderAssignments(next.assignments);
+  }, [userEmail]);
+  function storeFolders(folders: ConversationFolder[], assignments: Record<number, string>) {
+    writeConversationFolders(preferenceKey("careerloop-conversation-folders", userEmail), folders, assignments);
+  }
+  function createConversationFolder(name: string) {
+    const trimmed = name.trim().slice(0, 40);
+    if (!trimmed) return;
+    const next = [...conversationFolders, { id: crypto.randomUUID().replace(/-/g, "").slice(0, 16), name: trimmed }].slice(0, 30);
+    setConversationFolders(next);
+    storeFolders(next, conversationFolderAssignments);
+  }
+  function renameConversationFolder(folderId: string, name: string) {
+    const trimmed = name.trim().slice(0, 40);
+    if (!trimmed) return;
+    const next = conversationFolders.map((folder) => folder.id === folderId ? { ...folder, name: trimmed } : folder);
+    setConversationFolders(next);
+    storeFolders(next, conversationFolderAssignments);
+  }
+  function removeConversationFolder(folderId: string) {
+    const next = conversationFolders.filter((folder) => folder.id !== folderId);
+    const assignments = Object.fromEntries(Object.entries(conversationFolderAssignments).filter(([, value]) => value !== folderId));
+    setConversationFolders(next);
+    setConversationFolderAssignments(assignments);
+    storeFolders(next, assignments);
+  }
+  function assignConversationFolder(conversation: Conversation, folderId: string | null) {
+    const assignments = { ...conversationFolderAssignments };
+    if (folderId) assignments[conversation.id] = folderId;
+    else delete assignments[conversation.id];
+    setConversationFolderAssignments(assignments);
+    storeFolders(conversationFolders, assignments);
   }
   const composerSearchDrafts = useMemo(() => new Map<number, WebSearchOptions>(), [userEmail]);
   const { migrateHomeTheme } = useTheme();
@@ -1258,6 +1297,12 @@ export function App({
             onSearchConversations={searchConversations}
             pinnedConversationIds={pinnedConversationIds}
             onTogglePinConversation={togglePinnedConversation}
+            conversationFolders={conversationFolders}
+            conversationFolderAssignments={conversationFolderAssignments}
+            onCreateConversationFolder={createConversationFolder}
+            onRenameConversationFolder={renameConversationFolder}
+            onRemoveConversationFolder={removeConversationFolder}
+            onAssignConversationFolder={assignConversationFolder}
             onPersistComposerDrafts={persistComposerDrafts}
             replacementUndo={replacementUndo}
             onUndoReplacement={undoReplacement}

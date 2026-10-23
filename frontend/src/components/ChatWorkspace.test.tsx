@@ -1,5 +1,5 @@
 import { createRef } from "react";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatWorkspace } from "./ChatWorkspace";
 import type { AgentRunResult, ChatMessage, ChatRetryDraft, ChatAttachment, ChatComposerDraft, ChatWorkspaceProps, WebSearchOptions } from "../features/chat/types";
@@ -288,6 +288,31 @@ describe("ChatWorkspace", () => {
     expect(input).toHaveValue("尚未发送的草稿");
     expect(p.onSend).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: /回到最新/ })).not.toBeInTheDocument();
+  });
+
+  it("appends spoken text to the composer without sending it", async () => {
+    const heard: FakeRecognition[] = [];
+    class FakeRecognition {
+      lang = "";
+      continuous = false;
+      interimResults = false;
+      onresult: ((event: { resultIndex: number; results: Array<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onend: (() => void) | null = null;
+      start() { heard.push(this); }
+      stop() { this.onend?.(); }
+      abort() {}
+    }
+    vi.stubGlobal("SpeechRecognition", FakeRecognition);
+    const p = renderChat();
+    fireEvent.click(screen.getByRole("button", { name: "语音输入" }));
+    expect(heard).toHaveLength(1);
+    await act(async () => {
+      heard[0].onresult?.({ resultIndex: 0, results: [{ isFinal: true, 0: { transcript: "这是一段长问题" } }] });
+    });
+    expect(screen.getByRole("textbox", { name: "输入消息" })).toHaveValue("这是一段长问题");
+    expect(p.onSend).not.toHaveBeenCalled();
+    vi.stubGlobal("SpeechRecognition", undefined);
   });
 
   it("adds every selected file until the eight-file limit", async () => {

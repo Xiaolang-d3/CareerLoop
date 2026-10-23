@@ -1597,6 +1597,12 @@
 .research-search-details { margin: 8px 0 16px; padding: 12px; border: 1px solid var(--color-border); border-radius: 8px; color: var(--color-text-secondary); font-size: 11px; line-height: 1.6; }
 .research-search-details summary { cursor: pointer; font-weight: 500; }
 .chat-workspace .research-source-copy strong { max-width: 100%; }
+.conversation-history-folder,
+.conversation-folder-create { display: flex; align-items: center; gap: 6px; width: calc(100% - 24px); margin: -4px 12px 12px; min-height: 32px; padding: 0 8px; border: 0; border-radius: 8px; color: var(--color-text-secondary); background: transparent; font-size: 13px; }
+.conversation-history-folder:hover { color: var(--color-brand-strong); background: var(--color-brand-soft); }
+.conversation-folder-create input { flex: 1; min-width: 0; border: 0; padding: 0; outline: none; color: var(--color-text); background: transparent; font-size: 13px; }
+.conversation-folder-heading { display: inline-flex; align-items: center; gap: 8px; }
+.conversation-folder-heading button { border: 0; padding: 0; color: var(--color-text-muted); background: transparent; font-size: 11px; }
 .conversation-history-search { display: flex; align-items: center; gap: 8px; margin: 0 12px 12px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 9px; color: var(--color-text-muted); background: var(--color-surface); }
 .conversation-history-search:focus-within { border-color: var(--color-brand); box-shadow: var(--focus-ring); }
 .conversation-history-search input { width: 100%; min-width: 0; border: 0; padding: 0; outline: none; color: var(--color-text); background: transparent; font-size: 13px; }
