@@ -24,13 +24,14 @@ export function HomeCurationCard({ curation, loading, now, onRegenerate, onOpenI
     : "本次筛选未选出推荐内容";
   return <section className="home-module home-curation" aria-labelledby="home-curation-title" data-status={curation.status}>
     <div className="home-module-head"><h2 className="home-module-title" id="home-curation-title"><span className="home-module-icon"><Newspaper size={15} /></span>今日值得看<span className="home-count">{windowLabel}</span>{curation.date && <span className="home-count">{curation.date}</span>}</h2></div>
+    <p className="home-digest-status">新模型发布 · 能力评测 · 价格与使用成本</p>
     {needsSettings && <div className="home-curation-message"><p>{curation.status === "disabled" ? "还没有启用每日资讯精选" : "请选择资讯精选使用的文本模型"}</p><button className="home-btn" type="button" onClick={onOpenInterest}>兴趣设置</button></div>}
     {curation.status === "empty" && <p className="home-digest-status">{emptyMessage}</p>}
     {curation.diagnostics && (curation.status === "ready" || curation.status === "empty") && <p className="home-digest-status">已核实 {curation.diagnostics.verified_candidates} 条候选 · 入选 {curation.diagnostics.selected_items} 条</p>}
     {curation.status === "error" && <p className="home-digest-warning" role="alert">{curation.error || "资讯筛选失败，请重试"}</p>}
     {generating && <p className="home-digest-status" role="status">{curation.items.length ? "正在筛选今日资讯，保留上次内容供阅读" : "正在搜索、去重并筛选今日资讯…"}</p>}
     {previous && <p className="home-digest-warning">上次精选：{curation.date || "日期未提供"}（非今日结果）</p>}
-    {curation.status === "stale" && <p className="home-digest-status">筛选范围或兴趣有更新，可重新筛选。</p>}
+    {curation.status === "stale" && <p className="home-digest-status">筛选方向、范围或兴趣有更新，可重新筛选模型相关资讯。</p>}
     {(!generating || curation.items.length > 0) && curation.warnings.map((warning, index) => <p className="home-digest-warning" key={`${index}:${warning}`}>{warning}</p>)}
     {!needsSettings && <div className="home-curation-message"><button className="home-btn" type="button" disabled={generating} onClick={onRegenerate}>重新筛选</button><span>重新筛选会产生新的搜索和模型请求。</span></div>}
     <div className="home-curation-items">{curation.items.map((item) => <article className="home-curation-item" key={item.id}>

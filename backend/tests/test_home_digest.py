@@ -14,8 +14,8 @@ from app.feeds import digest, service, sources
 
 
 NOW = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
-ARTICLE = {"id": "article:fixture", "title": "Agent SDK", "summary": "Tools update", "url": "https://openai.com/index/agent", "source": "OpenAI", "published_at": "2026-10-07T12:00:00Z", "category": "Agent", "tags": ["Agent"], "image_url": None}
-SECOND_ARTICLE = {**ARTICLE, "id": "article:second", "title": "MCP 更新", "summary": "New transports", "url": "https://openai.com/index/mcp", "published_at": "2026-10-08T06:00:00Z"}
+ARTICLE = {"id": "article:fixture", "title": "Introducing a new Claude model", "summary": "Model tools update", "url": "https://openai.com/index/agent", "source": "OpenAI", "published_at": "2026-10-07T12:00:00Z", "category": "Agent", "tags": ["Agent"], "image_url": None}
+SECOND_ARTICLE = {**ARTICLE, "id": "article:second", "title": "DeepSeek API price reduction", "summary": "New model pricing", "url": "https://openai.com/index/mcp", "published_at": "2026-10-08T06:00:00Z"}
 PROFILE_ID = "digest-profile"
 
 
@@ -29,6 +29,7 @@ def digest_json(*sections: dict) -> str:
 
 @pytest.fixture
 def home_workspace(tmp_path, monkeypatch):
+    monkeypatch.setattr(service, "_public_cache", service.PublicSourceCache())
     monkeypatch.setattr(service, "_now", lambda: NOW)
     monkeypatch.setattr(service, "_running", set())
     monkeypatch.setattr(service, "_last_started", {})
@@ -86,7 +87,7 @@ def test_auto_generation_is_cached_for_the_day(home_workspace, immediate_threads
     assert digest_block["status"] == "ready"
     assert digest_block["overview"] == "今日总览"
     assert digest_block["model_name"] == "digest-model"
-    assert digest_block["sections"][0]["label"] == "AI / Agent 动态"
+    assert digest_block["sections"][0]["label"] == "模型动态"
     assert digest_block["sections"][0]["points"][0] == {"text": "要点一", "url": ARTICLE["url"]}
     assert len(model_calls) == 1
     assert service.get_feed()["digest"]["status"] == "ready"

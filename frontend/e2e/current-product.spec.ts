@@ -311,7 +311,7 @@ test("home and library use current sources and stay usable on narrow screens", a
     await page.setViewportSize({ width, height: 900 });
     await page.goto("/#/dashboard");
     await expect(page.getByRole("heading", { name: /测试用户/ })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "AI / Agent 动态", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "模型动态", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "GitHub 热榜", exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     await page.goto("/#/library");

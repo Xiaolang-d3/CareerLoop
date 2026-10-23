@@ -19,6 +19,7 @@ import { AppIdentityMenu } from "../components/AppIdentityMenu";
 import { AppTopBar } from "../components/AppTopBar";
 import { ConversationDialog } from "../components/ConversationDialog";
 import type { AttachmentConfig, ChatAttachment, ChatComposerDraft, WebSearchOptions } from "../features/chat/types";
+import type { ModelParameterUpdate } from "../features/chat/ComposerModelParameters";
 import type { ArtifactManifest } from "../features/chat/result-types";
 import type { HomeReadableItem } from "../features/home/types";
 import { createHomeAnalysisConversation, homeAnalysisDraft } from "../features/home/analysis-draft";
@@ -828,6 +829,13 @@ export function App({
     void refreshCapabilities();
   }
 
+  async function saveComposerModelParameters(profileId: string, revision: number, update: ModelParameterUpdate) {
+    if (chatBusy || modelSelectionBusy || modelCatalog.busy) return false;
+    const saved = await modelCatalog.mutate(`/agent/model-profiles/${encodeURIComponent(profileId)}`, "PATCH", { ...update, expected_revision: revision });
+    if (saved) setNoticeMessage("思考设置已保存，使用此模型的所有对话从后续请求生效。");
+    return saved;
+  }
+
   async function resetCurrentContext() {
     if (!currentConversationId || !window.confirm("从当前位置开始新的上下文吗？\n\n历史消息仍然可见，但 Agent 后续不会再读取此前对话。资料库内容会保留。")) return;
     setAgentSettingsBusy(true);
@@ -1134,17 +1142,17 @@ export function App({
                 modelSettingsReady ? (
                   <ModelSettingsPage
                     error={errorMessage}
-                    routingManager={<ModelRoutingPanel key={userEmail} fetchJson={fetchJson} catalog={modelCatalog.catalog}
+                    routingManager={<><ModelFallbackSettings fetchJson={fetchJson} catalog={modelCatalog.catalog} busy={modelCatalog.busy || agentSettingsBusy} /><ModelRoutingPanel key={userEmail} fetchJson={fetchJson} catalog={modelCatalog.catalog}
                       disabled={agentSettingsBusy || modelCatalog.busy || Boolean(modelSaveUnknown)}
-                      onApplied={async () => { await modelCatalog.reload(); await refreshDefaultModelSelection(); }} />}
-                    connectionManager={<><ModelConnectionManager
+                      onApplied={async () => { await modelCatalog.reload(); await refreshDefaultModelSelection(); }} /></>}
+                    connectionManager={<ModelConnectionManager
                       fetchJson={fetchJson} catalog={modelCatalog.catalog} loading={modelCatalog.loading}
                       busy={modelCatalog.busy || agentSettingsBusy} error={modelCatalog.error}
                       secretWritable={savedAgentSettings.secret_storage_writable}
                       defaultLocked={defaultModelHasDraft || Boolean(modelSaveUnknown)}
                       onReload={modelCatalog.reload} onMutate={modelCatalog.mutate}
                       onDefaultChanged={refreshDefaultModelSelection}
-                    /><ModelFallbackSettings fetchJson={fetchJson} catalog={modelCatalog.catalog} busy={modelCatalog.busy || agentSettingsBusy} /></>}
+                    />}
                     settings={agentSettings}
                     savedSettings={savedAgentSettings}
                     editing={modelSettingsEditing}
@@ -1209,7 +1217,12 @@ export function App({
             serviceModels={composerConnection ? { connection_id: composerConnection.id, connection_name: composerConnection.name || "当前服务", revision: composerConnection.revision, models: composerDiscovery.models.filter(name => !disabledServiceModels.has(name)), busy: composerDiscovery.busy, error: composerDiscovery.error } : undefined}
             onDiscoverServiceModels={composerDiscovery.discover}
             onServiceModelChange={async modelName => { if (composerConnection) await selectConversationModel(null, { connectionId: composerConnection.id, modelName, revision: composerConnection.revision }); }}
-            selectedModelProfileId={currentConversation?.model_profile_id ?? null}
+            selectedModelProfileId={(selectedModelProfile || defaultModelProfile)?.id ?? null}
+            modelSettings={(selectedModelProfile || defaultModelProfile) ? {
+              profile: (selectedModelProfile || defaultModelProfile)!,
+              protocol: composerConnection?.detected_protocol || composerConnection?.model_protocol,
+              fetchJson, onSave: saveComposerModelParameters, error: modelCatalog.error
+            } : undefined}
             modelSelectionBusy={modelSelectionBusy || modelCatalog.busy}
             modelProfileUnavailable={modelProfileUnavailable}
             modelConfigured={capabilities ? capabilities.configured !== false : undefined}

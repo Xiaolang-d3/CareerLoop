@@ -17,11 +17,30 @@ const catalog: ModelCatalog = {
 type Client = ReturnType<typeof createApiClient>;
 type ManagerProps = Parameters<typeof ModelConnectionManager>[0];
 function props(overrides: Partial<Omit<ManagerProps, "fetchJson">> & { fetchJson?: unknown } = {}): ManagerProps {
-  return { catalog, loading: false, busy: false, error: "", fetchJson: vi.fn() as unknown as Client, onReload: vi.fn().mockResolvedValue(undefined), onMutate: vi.fn().mockResolvedValue(true), onDefaultChanged: vi.fn().mockResolvedValue(undefined), ...overrides } as ManagerProps;
+  return { catalog, loading: false, busy: false, error: "", fetchJson: vi.fn().mockResolvedValue(undefined) as unknown as Client, onReload: vi.fn().mockResolvedValue(undefined), onMutate: vi.fn().mockResolvedValue(true), onDefaultChanged: vi.fn().mockResolvedValue(undefined), ...overrides } as ManagerProps;
 }
 afterEach(cleanup);
+function openModelSettings(connection: string, model: string) {
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(connection) }));
+  fireEvent.click(screen.getByRole("button", { name: `${model} 设置` }));
+}
+function moreOptions() { fireEvent.click(screen.getByText("更多选项")); }
+
 
 describe("ModelConnectionManager", () => {
+  it("keeps model controls collapsed and expands only the selected connection", () => {
+    const page = props();
+    render(<ModelConnectionManager {...page} />);
+    expect(screen.queryByRole("button", { name: "first-model 设置" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /主连接/ }));
+    expect(screen.getByRole("button", { name: "first-model 设置" })).toBeVisible();
+    expect(screen.queryByLabelText("思考程度")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /备用连接/ }));
+    expect(screen.queryByRole("button", { name: "first-model 设置" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "second-model 设置" })).toBeVisible();
+    expect(page.onMutate).not.toHaveBeenCalled();
+  });
+
   it("saves a Packy Images connection and shows the sora token requirement", async () => {
     const page = props();
     render(<ModelConnectionManager {...page} />);
@@ -89,7 +108,9 @@ describe("ModelConnectionManager", () => {
     fireEvent.click(screen.getByRole("button", { name: "添加模型" }));
     await waitFor(() => expect(page.onMutate).toHaveBeenCalledWith("/agent/model-profiles", "POST", { connection_id: "c2", model_name: "additional-model" }));
     expect(page.onDefaultChanged).not.toHaveBeenCalled();
-    fireEvent.click(screen.getAllByRole("button", { name: "设为默认" })[1]);
+    fireEvent.click(screen.getByRole("button", { name: "second-model 设置" }));
+    moreOptions();
+    fireEvent.click(screen.getByRole("button", { name: "设为默认" }));
     await waitFor(() => expect(page.onMutate).toHaveBeenCalledWith("/agent/model-default", "POST", { profile_id: "p2" }));
     await waitFor(() => expect(page.onDefaultChanged).toHaveBeenCalledOnce());
   });
@@ -97,9 +118,15 @@ describe("ModelConnectionManager", () => {
   it("protects the default connection and confirms archival inside the module", async () => {
     const page = props();
     render(<ModelConnectionManager {...page} />);
-    expect(screen.getAllByRole("button", { name: "停用连接" })[0]).toBeDisabled();
-    expect(screen.getAllByRole("button", { name: "停用模型" })[0]).toBeDisabled();
-    fireEvent.click(screen.getAllByRole("button", { name: "停用连接" })[1]);
+    openModelSettings("主连接", "first-model");
+    moreOptions();
+    expect(screen.getByRole("button", { name: "停用模型" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "关闭模型设置" }));
+    fireEvent.click(screen.getByText("连接选项"));
+    expect(screen.getByRole("button", { name: "停用连接" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /备用连接/ }));
+    fireEvent.click(screen.getByText("连接选项"));
+    fireEvent.click(screen.getByRole("button", { name: "停用连接" }));
     expect(page.onMutate).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "确认停用" }));
     await waitFor(() => expect(page.onMutate).toHaveBeenCalledWith("/agent/model-connections/c2", "DELETE"));
@@ -108,13 +135,17 @@ describe("ModelConnectionManager", () => {
   it("uses an expected profile revision when disabling a nondefault model", async () => {
     const page = props();
     render(<ModelConnectionManager {...page} />);
-    fireEvent.click(screen.getAllByRole("button", { name: "停用模型" })[1]);
+    openModelSettings("备用连接", "second-model");
+    moreOptions();
+    fireEvent.click(screen.getByRole("button", { name: "停用模型" }));
     await waitFor(() => expect(page.onMutate).toHaveBeenCalledWith("/agent/model-profiles/p2", "PATCH", { enabled: false, expected_revision: 2 }));
   });
 
   it("locks default changes while the main default form has an unsaved draft", () => {
     render(<ModelConnectionManager {...props({ defaultLocked: true })} />);
-    expect(screen.getAllByRole("button", { name: "设为默认" }).every(button => button.hasAttribute("disabled"))).toBe(true);
+    openModelSettings("备用连接", "second-model");
+    moreOptions();
+    expect(screen.getByRole("button", { name: "设为默认" })).toBeDisabled();
     expect(screen.getByText(/默认配置有未保存的修改/)).toBeInTheDocument();
   });
 
@@ -130,23 +161,31 @@ describe("ModelConnectionManager", () => {
   it("shows the protocol auto mode actually uses for a connection", () => {
     const detected: ModelCatalog = { ...catalog, connections: [{ ...catalog.connections[0], detected_protocol: "responses" }, catalog.connections[1]] };
     render(<ModelConnectionManager {...props({ catalog: detected })} />);
+    fireEvent.click(screen.getByRole("button", { name: /主连接/ }));
+    fireEvent.click(screen.getByText("连接选项"));
     expect(screen.getByText("接口协议：自动 · 实际使用 OpenAI Responses API")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /备用连接/ }));
+    fireEvent.click(screen.getByText("连接选项"));
     expect(screen.getByText("接口协议：OpenAI 兼容 Chat Completions")).toBeInTheDocument();
   });
 
   it("saves a per-model reasoning effort with the profile revision", async () => {
     const page = props();
     render(<ModelConnectionManager {...page} />);
-    const select = screen.getByLabelText("second-model 推理强度");
+    openModelSettings("备用连接", "second-model");
+    const select = screen.getByLabelText("思考程度");
     expect(select).toHaveValue("");
-    expect(Array.from((select as HTMLSelectElement).options).map(option => option.textContent)).toEqual(["默认", "低", "中", "高"]);
+    expect(Array.from((select as HTMLSelectElement).options).map(option => option.textContent)).toEqual(["自动", "轻度", "标准", "深度"]);
     fireEvent.change(select, { target: { value: "high" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
     await waitFor(() => expect(page.onMutate).toHaveBeenCalledWith("/agent/model-profiles/p2", "PATCH", { reasoning_effort: "high", expected_revision: 2 }));
     const withEffort: ModelCatalog = { ...catalog, profiles: [catalog.profiles[0], { ...catalog.profiles[1], reasoning_effort: "high", revision: 3 }] };
     cleanup();
     const next = props({ catalog: withEffort });
     render(<ModelConnectionManager {...next} />);
-    fireEvent.change(screen.getByLabelText("second-model 推理强度"), { target: { value: "" } });
+    openModelSettings("备用连接", "second-model");
+    fireEvent.change(screen.getByLabelText("思考程度"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
     await waitFor(() => expect(next.onMutate).toHaveBeenCalledWith("/agent/model-profiles/p2", "PATCH", { reasoning_effort: null, expected_revision: 3 }));
   });
 

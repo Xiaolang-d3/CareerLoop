@@ -1,7 +1,7 @@
 /* Keep the editor and controls in separate rows in every conversation state. */
 .chat-workspace .chat-composer .composer-input.composer-input--enhanced {
   --composer-frame-shadow: 0 6px 24px color-mix(in srgb, var(--color-text) 3%, transparent), 0 0 28px 2px color-mix(in srgb, var(--color-brand) 7%, transparent);
-  --composer-frame-focus: 0 0 16px 3px color-mix(in srgb, var(--color-brand) 10%, transparent), 0 0 30px 4px color-mix(in srgb, var(--color-brand) 8%, transparent), 0 6px 24px color-mix(in srgb, var(--color-text) 3%, transparent);
+  --composer-frame-focus: 0 0 12px 2px color-mix(in srgb, var(--color-brand) 18%, transparent), 0 0 28px 4px color-mix(in srgb, var(--color-brand) 12%, transparent), 0 6px 24px color-mix(in srgb, var(--color-text) 3%, transparent);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -42,9 +42,8 @@
 .chat-workspace .composer-tool:focus-visible,
 .chat-workspace .composer-input.composer-input--enhanced .send-button:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
 .chat-workspace .composer-input.composer-input--enhanced .model-picker { max-width: 100%; flex: 0 1 auto; }
-.chat-workspace .composer-input.composer-input--enhanced .model-pill { max-width: min(220px, 100%); min-width: 100px; height: var(--composer-action-size); padding: 0 12px; border: 1px solid var(--color-border); border-radius: 14px; background: color-mix(in srgb, var(--color-text-muted) 4%, var(--color-surface)); }
+.chat-workspace .composer-input.composer-input--enhanced .model-pill { max-width: min(220px, 100%); min-width: 0; height: var(--composer-action-size); padding: 0 12px; border: 1px solid var(--color-border); border-radius: 14px; background: color-mix(in srgb, var(--color-text-muted) 4%, var(--color-surface)); }
 .chat-workspace .composer-input.composer-input--enhanced .model-pill-name { display: inline; font-weight: 500; }
-.chat-workspace .composer-input.composer-input--enhanced .model-pill .model-icon { display: inline-grid; }
 .chat-workspace .composer-input.composer-input--enhanced .model-pill:disabled { opacity: .8; cursor: default; }
 .chat-workspace .composer-input.composer-input--enhanced .composer-web-search { display: inline-flex; flex: none; align-items: center; min-height: 40px; border-radius: 8px; }
 .chat-workspace .composer-input.composer-input--enhanced .composer-web-search.is-active { background: var(--color-brand-soft); }
@@ -92,6 +91,36 @@
 }
 @media (prefers-reduced-motion: reduce) { .composer-input-hint { transition: none; } }
 
+@property --composer-glow-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+@keyframes composer-focus-glow {
+  to { --composer-glow-angle: 360deg; }
+}
+
+/* Keep the moving highlight on the frame, clear of the editor and popovers. */
+.assistant-page .chat-workspace .chat-composer .composer-input.composer-input--enhanced::before {
+  content: "";
+  position: absolute;
+  inset: -1.5px;
+  padding: 2px;
+  border-radius: inherit;
+  background: conic-gradient(from var(--composer-glow-angle), transparent 0% 12%, var(--color-brand) 24%, #55cfff 33%, var(--color-brand) 42%, transparent 54% 62%, var(--color-brand) 74%, #cb8bff 83%, var(--color-brand) 90%, transparent 100%);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .25s ease;
+}
+.assistant-page .chat-workspace .chat-composer .composer-input.composer-input--enhanced:focus-within::before {
+  opacity: 1;
+  animation: composer-focus-glow 3s linear infinite;
+}
+
 /* A quieter input frame keeps the conversation content prominent. */
 .assistant-page .chat-workspace .chat-composer .composer-input.composer-input--enhanced {
   border: 1px solid color-mix(in srgb, var(--color-brand) 24%, var(--color-surface)) !important;
@@ -111,6 +140,8 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .assistant-page .chat-workspace .chat-composer .composer-input.composer-input--enhanced { transition: none; }
+  .assistant-page .chat-workspace .chat-composer .composer-input.composer-input--enhanced::before { transition: none; }
+  .assistant-page .chat-workspace .chat-composer .composer-input.composer-input--enhanced:focus-within::before { animation: none; }
 }
 .assistant-page .chat-workspace .composer-input-hint {
   color: var(--color-text-muted);
@@ -124,23 +155,22 @@
 /* The writing area leads; supporting tools stay at the two bottom corners. */
 .chat-workspace .composer-primary-actions { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .assistant-page .chat-workspace.is-page.is-empty .composer-input.composer-input--enhanced {
-  --composer-action-size: 44px;
-  min-height: 160px !important;
-  padding: 18px !important;
-  gap: 12px;
-  border-radius: 20px !important;
+  --composer-action-size: 40px;
+  min-height: 124px !important;
+  padding: 14px !important;
+  gap: 8px;
+  border-radius: 16px !important;
 }
 .assistant-page .chat-workspace.is-page.is-empty .composer-input.composer-input--enhanced textarea {
   flex: 1 0 auto;
-  min-height: 64px !important;
+  min-height: 44px !important;
   padding: 0 6px !important;
-  font-size: 18px !important;
+  font-size: 16px !important;
 }
 .assistant-page .chat-workspace.is-page.is-empty .composer-primary-actions { gap: 10px; }
-.assistant-page .chat-workspace.is-page.is-empty .composer-primary-actions .model-pill { min-width: 140px; font-size: 14px; gap: 8px; border-color: transparent; border-radius: 12px; background: transparent; }
+.assistant-page .chat-workspace.is-page.is-empty .composer-primary-actions .model-pill { min-width: 0; padding-inline: 8px; font-size: 14px; gap: 6px; border-color: transparent; border-radius: 12px; background: transparent; }
 .assistant-page .chat-workspace.is-page.is-empty .composer-primary-actions .model-pill:hover:not(:disabled),
 .assistant-page .chat-workspace.is-page.is-empty .composer-primary-actions .model-pill.is-open { border-color: var(--color-border); background: var(--color-brand-soft); }
-.assistant-page .chat-workspace.is-page.is-empty .model-pill .model-icon { width: 22px; height: 22px; font-size: 12px; }
 .assistant-page .chat-workspace.is-page.is-empty .composer-tool { font-size: 13px; font-weight: 500; gap: 8px; }
 .assistant-page .chat-workspace.is-page.is-empty .composer-tool > span { font-size: inherit; font-weight: 500; }
 .assistant-page .chat-workspace.is-page.is-empty .composer-tool > svg { width: 20px; height: 20px; }
@@ -150,15 +180,15 @@
 .assistant-page .chat-workspace.is-page.is-empty .send-button > svg { width: 22px; height: 22px; }
 .assistant-page .chat-workspace.is-page.is-empty .composer-input-hint { padding-top: 10px; }
 @media (max-width: 600px) {
-  .assistant-page .chat-workspace.is-page.is-empty .composer-input.composer-input--enhanced { min-height: 176px !important; padding: 14px !important; }
-  .assistant-page .chat-workspace.is-page.is-empty .composer-input.composer-input--enhanced textarea { min-height: 64px !important; font-size: 16px !important; }
+  .assistant-page .chat-workspace.is-page.is-empty .composer-input.composer-input--enhanced { min-height: 148px !important; padding: 10px !important; }
+  .assistant-page .chat-workspace.is-page.is-empty .composer-input.composer-input--enhanced textarea { min-height: 44px !important; font-size: 16px !important; }
   .chat-workspace .composer-input.composer-input--enhanced .composer-bottom-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .chat-workspace .composer-primary-actions { justify-content: space-between; }
   .chat-workspace .composer-input.composer-input--enhanced .model-pill { max-width: min(220px, calc(100vw - 128px)); }
   .chat-workspace .composer-input.composer-input--enhanced .composer-shortcuts { gap: 4px; }
 }
 @media (min-width: 360px) and (max-width: 600px) {
-  .assistant-page .chat-workspace.is-page.is-empty .composer-input.composer-input--enhanced { min-height: 160px !important; }
+  .assistant-page .chat-workspace.is-page.is-empty .composer-input.composer-input--enhanced { min-height: 116px !important; }
   .assistant-page .chat-workspace.is-page.is-empty .composer-input .composer-bottom-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
   .assistant-page .chat-workspace.is-page.is-empty .composer-input .composer-shortcuts { gap: 2px; }
   .assistant-page .chat-workspace.is-page.is-empty .composer-attachment-tool { width: 40px; padding: 0; }

@@ -324,7 +324,7 @@ export function ModelSettingsPage({
       </ModelSettingsDialog>}
       {connectionManager}
       <details className="model-advanced-settings">
-        <summary><strong>高级设置</strong><span>阶段分工与连接诊断</span><ChevronDown size={16} /></summary>
+        <summary><strong>高级设置</strong><span>备用模型、自动分工与诊断</span><ChevronDown size={16} /></summary>
         {routingManager}
         <div className="model-settings-panels">
           <p className="model-diagnostics-note">以下诊断来自已保存的连接。{editing ? "保存修改后可重新检测。" : ""}</p>

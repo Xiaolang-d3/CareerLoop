@@ -1,0 +1,14 @@
+.model-parameters { min-height: 0; padding: 14px; overflow-y: auto; overscroll-behavior: contain; color: var(--color-text); }
+.model-parameters-scope { display: grid; gap: 5px; margin: 0 0 16px; font-size: 13px; }
+.model-parameters-scope strong { overflow-wrap: anywhere; }
+.model-parameters-scope span, .model-parameter-help { color: var(--color-text-muted); font-size: 11px; line-height: 1.6; }
+.model-parameters fieldset { min-width: 0; padding: 0; margin: 0; border: 0; }
+.model-parameters fieldset > label { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
+.model-parameters select { box-sizing: border-box; width: 128px; min-width: 0; height: 34px; padding: 5px 8px; border: 1px solid var(--color-border); border-radius: 8px; color: var(--color-text); background: var(--color-surface); font: inherit; }
+.model-parameters :is(select, button):focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+.model-parameter-help { margin: 6px 0 16px; }
+.model-parameters-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 4px; }
+.model-parameters-actions > span { font-size: 12px; color: var(--color-brand-strong); }
+.model-parameters .model-parameters-actions button { min-height: 34px; padding: 6px 12px; border: 1px solid var(--color-brand); border-radius: 8px; color: #fff; background: var(--color-brand); font-size: 12px; cursor: pointer; }
+.model-parameters :disabled { opacity: .55; cursor: default; }
+.model-parameters [role="alert"] { margin: 8px 0; color: var(--color-warning); font-size: 12px; line-height: 1.6; }

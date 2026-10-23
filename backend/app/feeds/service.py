@@ -8,6 +8,8 @@ import os
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import copy_context
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -15,7 +17,8 @@ from typing import Any
 import httpx
 
 from .. import workspace
-from . import sources
+from . import benchmarks, media_benchmarks, model_news, sources
+from .public_cache import PublicSourceCache
 
 
 _locks_guard = threading.Lock()
@@ -25,6 +28,7 @@ _last_started: dict[str, float] = {}
 _REFRESH_COOLDOWN_SECONDS = 30
 _RETRY_SECONDS = 300
 MAX_CACHE_BYTES = 64 * 1024 * 1024
+_public_cache = PublicSourceCache()
 
 
 class FeedCacheError(RuntimeError):
@@ -124,7 +128,8 @@ def _due(source: sources.Source, cached: dict[str, Any], now: datetime) -> bool:
     if not attempted:
         return True
     elapsed = (now - datetime.fromisoformat(attempted.replace("Z", "+00:00"))).total_seconds()
-    return elapsed >= (_RETRY_SECONDS if cached.get("error") else source.ttl_seconds)
+    retry_seconds = 3600 if source.adapter in {"market_search", "aa_api", "aa_media"} else _RETRY_SECONDS
+    return elapsed >= (retry_seconds if cached.get("error") else source.ttl_seconds)
 
 
 def _failure_message(error: Exception) -> str:
@@ -141,28 +146,45 @@ def _failure_message(error: Exception) -> str:
     return "来源暂时无法连接，已有内容继续保留"
 
 
-def _refresh(selected: list[sources.Source]) -> None:
+def _fetch_public_source(source: sources.Source, force: bool):
+    return _public_cache.get(
+        source, url=source.url, ttl=source.ttl_seconds, force=force and source.adapter not in {"market_search", "aa_api", "aa_media"},
+        now=lambda: _now().timestamp(), load=lambda: sources.fetch_source(source),
+    )
+
+
+def _refresh(selected: list[sources.Source], force: bool = False) -> None:
     root = _root()
     try:
-        for source in selected:
-            try:
-                items = sources.fetch_source(source)
-                error = None
-            except Exception as exc:
-                items = None
-                error = _failure_message(exc)
-            attempted = _timestamp(_now())
-            with _lock(root):
-                payload = _load(root)
-                active = {item.id for item in sources.configured_sources(payload["preferences"].get("repositories", []))}
-                if source.id not in active:
-                    continue
-                previous = payload["source_cache"].get(source.id, {})
-                cached = {**previous, "last_attempt_at": attempted, "error": error}
-                if items is not None:
-                    cached.update({"items": items, "last_success_at": attempted})
-                payload["source_cache"][source.id] = cached
-                _save(root, payload)
+        # A slow origin must not delay publishing updates from healthy sources.
+        # Each worker gets its own copy of the account's workspace context.
+        with ThreadPoolExecutor(max_workers=4, thread_name_prefix="home-source") as executor:
+            pending = {executor.submit(copy_context().run, _fetch_public_source, source, force): source for source in selected}
+            for future in as_completed(pending):
+                source = pending[future]
+                try:
+                    result = future.result()
+                    items = result.items
+                    error = None
+                except Exception as exc:
+                    items = None
+                    error = _failure_message(exc)
+                attempted = _timestamp(_now())
+                with _lock(root):
+                    payload = _load(root)
+                    active = {item.id for item in sources.configured_sources(payload["preferences"].get("repositories", []))}
+                    if source.id not in active:
+                        continue
+                    previous = payload["source_cache"].get(source.id, {})
+                    cached = {**previous, "last_attempt_at": attempted, "error": error}
+                    if items is not None:
+                        cached.update({
+                            "items": items,
+                            "last_success_at": _timestamp(datetime.fromtimestamp(result.checked_at, timezone.utc)),
+                            "fetched_at": _timestamp(datetime.fromtimestamp(result.fetched_at, timezone.utc)),
+                        })
+                    payload["source_cache"][source.id] = cached
+                    _save(root, payload)
     finally:
         with _lock(root):
             _running.discard(_key(root))
@@ -179,13 +201,13 @@ def start_refresh(*, force: bool = False) -> bool:
             return False
         payload = _load(root)
         all_sources = sources.configured_sources(payload["preferences"].get("repositories", []))
-        selected = [source for source in all_sources if force or _due(source, payload["source_cache"].get(source.id, {}), _now())]
+        selected = [source for source in all_sources if (force and source.adapter != "market_search") or _due(source, payload["source_cache"].get(source.id, {}), _now())]
         if not selected:
             return False
         _running.add(key)
         _last_started[key] = tick
         try:
-            workspace.spawn_thread(_refresh, args=(selected,), name="home-feed-refresh")
+            workspace.spawn_thread(_refresh, args=(selected, force), name="home-feed-refresh")
         except Exception:
             _running.discard(key)
             raise
@@ -195,14 +217,20 @@ def start_refresh(*, force: bool = False) -> bool:
 def _recent_news(items: list[dict[str, Any]], now: datetime) -> list[dict[str, Any]]:
     cutoff = now - timedelta(days=7)
     result = []
+    eligible = []
     for item in items:
         published = sources.published_date(item.get("published_at"))
+        if published and datetime.fromisoformat(published.replace("Z", "+00:00")) > now:
+            continue
+        eligible.append(item)
         # An undated item is preserved with a null date. The UI can explicitly
         # distinguish it rather than giving it today's collection timestamp.
         if published and datetime.fromisoformat(published.replace("Z", "+00:00")) < cutoff:
             continue
         result.append(item)
-    return result
+    # A publisher may announce models only every few months. Retain its latest
+    # notices with their real dates instead of making that publisher disappear.
+    return result or sorted(eligible, key=lambda item: item.get("published_at") or "", reverse=True)[:3]
 
 
 def get_feed(*, refresh_if_due: bool = True) -> dict[str, Any]:
@@ -213,7 +241,10 @@ def get_feed(*, refresh_if_due: bool = True) -> dict[str, Any]:
         payload = _load(root)
         refreshing = _key(root) in _running
         snapshot: dict[str, Any] = {
-            "news": [], "repositories": {"day": [], "week": []}, "updates": [], "practices": [],
+            "news": [], "model_news": [],
+            "model_benchmarks": {"models": [], "status": "unconfigured", "error": None, "collected_at": None,
+                                 "source_url": benchmarks.SOURCE_URL, "docs_url": benchmarks.DOCS_URL, "media": []},
+            "repositories": {"day": [], "week": []}, "updates": [], "practices": [],
             "sources": [], "preferences": copy.deepcopy(payload["preferences"]),
             "item_states": copy.deepcopy(payload["item_states"]),
             "bookmarks": copy.deepcopy(list(reversed(payload["bookmarked_items"].values()))),
@@ -230,9 +261,21 @@ def get_feed(*, refresh_if_due: bool = True) -> dict[str, Any]:
                 "id": source.id, "label": source.label, "kind": source.kind, "url": source.url,
                 "status": "error" if cached.get("error") else "ready" if items else "loading" if refreshing and not succeeded else "empty",
                 "last_success_at": succeeded, "error": cached.get("error"),
+                "publisher": source.publisher,
             })
             if source.kind == "news":
                 snapshot["news"].extend(_recent_news(items, _now()))
+                snapshot["model_news"].extend(_recent_news(model_news.select(items), _now()))
+            elif source.adapter == "aa_media":
+                board = next(board for board in media_benchmarks.BOARDS if board.source_id == source.id)
+                snapshot["model_benchmarks"]["media"].append({
+                    "id": board.id, "category": board.category, "label": board.label, "metric": board.metric,
+                    "source_url": board.source_url, "models": items, "status": snapshot["sources"][-1]["status"],
+                    "collected_at": cached.get("fetched_at") or succeeded, "error": cached.get("error"),
+                })
+            elif source.kind == "benchmark":
+                snapshot["model_benchmarks"].update({"models": items, "status": snapshot["sources"][-1]["status"],
+                                                     "collected_at": cached.get("fetched_at") or succeeded, "error": cached.get("error")})
             elif source.kind == "github":
                 snapshot["repositories"]["day" if source.id == "github-day" else "week"].extend(items)
             elif source.kind == "stack":
@@ -240,7 +283,9 @@ def get_feed(*, refresh_if_due: bool = True) -> dict[str, Any]:
             elif source.kind == "practice":
                 snapshot["practices"].extend(items)
         snapshot["last_synced_at"] = max(successes) if successes else None
-        for name in ("news", "updates"):
+        snapshot["news"] = list({item["id"]: item for item in snapshot["news"]}.values())
+        snapshot["model_news"] = list({item["id"]: item for item in snapshot["model_news"]}.values())
+        for name in ("news", "model_news", "updates"):
             snapshot[name].sort(key=lambda item: item.get("published_at") or "", reverse=True)
         from . import digest as digest_module
 
@@ -316,7 +361,7 @@ def set_item_state(item_id: str, patch: dict[str, Any]) -> dict[str, Any]:
         kinds = {source.id: source.kind for source in sources.configured_sources(payload["preferences"].get("repositories", []))}
         matching = next((
             {"kind": kinds[source_id], "item": item}
-            for source_id, cached in payload["source_cache"].items() if source_id in kinds
+            for source_id, cached in payload["source_cache"].items() if kinds.get(source_id) in {"news", "practice", "github", "stack"}
             for item in cached.get("items", []) if item["id"] == item_id
         ), None)
         snapshot = matching or payload["bookmarked_items"].get(item_id)

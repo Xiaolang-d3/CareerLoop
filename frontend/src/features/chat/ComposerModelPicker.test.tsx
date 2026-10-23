@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ComposerModelPicker } from "./ComposerModelPicker";
+import type { ComposerModelSettings } from "./ComposerModelParameters";
 
 const profiles = [
   { id: "p1", model_name: "gpt-5.5", connection_name: "主连接" },
@@ -8,7 +9,7 @@ const profiles = [
 ];
 function setup(overrides: Partial<Parameters<typeof ComposerModelPicker>[0]> = {}) {
   const props = {
-    configured: true, currentModelName: "gpt-5.5", defaultModelName: "gpt-5.5", profiles, selectedProfileId: null,
+    configured: true, currentModelName: "gpt-5.5", defaultModelName: "gpt-5.5", profiles, selectedProfileId: "p1",
     profileDisabled: false, serviceUnavailable: false, busy: false, canSelect: true,
     onChange: vi.fn(), onOpenSettings: vi.fn(), ...overrides
   };
@@ -19,6 +20,29 @@ const openMenu = () => fireEvent.click(screen.getByRole("button", { name: /切�
 afterEach(cleanup);
 
 describe("ComposerModelPicker", () => {
+  it("edits the active model parameters without switching models and keeps field keyboard input local", async () => {
+    const onSave = vi.fn().mockResolvedValue(true);
+    const props = setup({ modelSettings: {
+      profile: { id: "p1", connection_id: "c1", model_name: "gpt-5.5", enabled: true, revision: 3 },
+      fetchJson: vi.fn().mockResolvedValue({ protocol: "responses", capabilities: { reasoning: { status: "supported" } }, max_output_tokens: { tokens: null } }) as unknown as ComposerModelSettings["fetchJson"],
+      onSave
+    } });
+    openMenu();
+    fireEvent.click(screen.getByRole("button", { name: "思考设置" }));
+    await screen.findByText(/思考越深入/);
+    const effort = screen.getByLabelText("思考程度");
+    effort.focus();
+    fireEvent.keyDown(effort, { key: "ArrowDown" });
+    expect(effort).toHaveFocus();
+    fireEvent.change(effort, { target: { value: "high" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith("p1", 3, { reasoning_effort: "high" }));
+    expect(props.onChange).not.toHaveBeenCalled();
+    fireEvent.keyDown(effort, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "模型与参数" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /切换模型，当前/ })).toHaveFocus();
+  });
+
   it("loads service models on opening and searches/selects an unsaved model on the same service", async () => {
     const props = setup({
       profiles: profiles.map(profile => ({ ...profile, connection_id: profile.id === "p1" ? "service-a" : "service-b" })),
@@ -49,7 +73,8 @@ describe("ComposerModelPicker", () => {
     openMenu();
     expect(screen.getByRole("listbox", { name: "选择模型" })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "备用连接" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /跟随默认/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("option", { name: /跟随默认/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "gpt-5.5" })).toHaveAttribute("aria-selected", "true");
     fireEvent.click(screen.getByRole("option", { name: "claude-x" }));
     expect(props.onChange).toHaveBeenCalledWith("p2");
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
@@ -69,7 +94,7 @@ describe("ComposerModelPicker", () => {
     fireEvent.change(search, { target: { value: "missing" } });
     expect(screen.getByText("没有匹配的模型")).toBeInTheDocument();
     fireEvent.change(search, { target: { value: "" } });
-    expect(screen.getByRole("option", { name: "跟随默认 · gpt-5.5" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("option", { name: "gpt-5.5" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("group", { name: "备用连接" })).toBeInTheDocument();
   });
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 from contextlib import asynccontextmanager
+import os
 from pathlib import Path
 from typing import Any
 from fastapi import FastAPI, HTTPException, Request
@@ -50,7 +51,15 @@ _DOC_PATHS = {"/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"}
 
 _REQUIRE_LOGIN_WHITELIST = _OPEN_AUTH_PATHS | (_DOC_PATHS if _settings.api_docs_enabled else set())
 
-_PUBLIC_FRONTEND_FILES = {"/favicon.ico", "/vite.svg", "/careerloop-mark-v2.png"}
+_PUBLIC_FRONTEND_FILES = {
+    "/favicon.ico",
+    "/vite.svg",
+    "/careerloop-mark-v2.png",
+    "/dengdeng-icon-v1.png",
+    "/dengdeng-mark-v1.png",
+    "/dengdeng-favicon-v1.png",
+    "/intro-surface-v1.webp",
+}
 
 _STATIC_ASSET_CACHE_CONTROL = "public, max-age=31536000, immutable"
 
@@ -61,6 +70,13 @@ def static_asset_cache_control(path: str) -> str | None:
 @app.middleware("http")
 async def require_login(request: Request, call_next: Any) -> Any:
     path = request.url.path
+    maintenance_file = os.getenv("CAREERLOOP_MAINTENANCE_FILE", "")
+    if maintenance_file and Path(maintenance_file).is_file() and path != "/health":
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "灯灯正在更新，请稍后重试"},
+            headers={"Cache-Control": "no-store", "Retry-After": "30"},
+        )
     is_frontend_asset = path == "/" or path.startswith("/assets/") or path in _PUBLIC_FRONTEND_FILES
     if request.method == "OPTIONS" or is_frontend_asset or path in _REQUIRE_LOGIN_WHITELIST:
         response = await call_next(request)
