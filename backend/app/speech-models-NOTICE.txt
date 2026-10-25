@@ -1,0 +1,21 @@
+灯灯本机离线语音模型
+
+Streaming preview: Paraformer bilingual zh/en, converted by Fangjun Kuang.
+Upstream model: Alibaba / ModelScope FunASR
+https://huggingface.co/csukuangfj/sherpa-onnx-streaming-paraformer-bilingual-zh-en
+https://www.modelscope.cn/models/damo/speech_paraformer_asr_nat-zh-cn-16k-common-vocab8404-online
+The conversion model card specifies Apache-2.0. Retain the upstream model
+name, author and applicable model license when redistributing weights.
+
+Sentence correction: SenseVoiceSmall, Alibaba / FunAudioLLM, ONNX conversion
+by Fangjun Kuang.
+https://huggingface.co/FunAudioLLM/SenseVoiceSmall
+https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17
+Model license (separate from the toolkit license):
+https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE
+
+Inference toolkit: sherpa-onnx, Apache-2.0
+https://github.com/k2-fsa/sherpa-onnx
+
+Model weights are downloaded to the local application data directory only
+during preparation. They are not included in the source or installer.
