@@ -70,6 +70,9 @@ class DictationStream:
         self.audio = np.empty(0, dtype=np.float32)
         self.offset = 0
         self.received = 0
+        self.committed_until = 0
+        self.last_text = ""
+        self.context = ""
         self.start: int | None = None
         self.segment_id = 0
         self.revision = 0
@@ -109,17 +112,33 @@ class DictationStream:
         self.previous = text
         return [{"segmentId": self.segment_id, "revision": self.revision, "text": text, "final": final}]
 
+    def _trim_context(self, text: str) -> str:
+        if not self.context:
+            return text
+        previous = "".join(char.casefold() for char in self.context if char.isalnum())[-12:]
+        folded = [(char.casefold(), i) for i, char in enumerate(text) if char.isalnum()]
+        positions = [i for chars, i in folded for _ in chars]
+        current = "".join(chars for chars, _ in folded)
+        for size in range(min(len(previous), len(current)), 0, -1):
+            if previous.endswith(current[:size]):
+                return text[positions[size - 1] + 1:].lstrip(" ，。！？、；：,.!?;:")
+        return text
+
     def _finish(self, end: int) -> list[dict]:
         try:
             self._decode_to(end, final=True)
         except Exception:
             logger.warning("Streaming finalization failed; using sentence recognition")
         try:
-            text = self.engine.transcribe(self._slice(self.start, end), self.hotwords) or self.preview or self.previous
+            text = self.engine.transcribe(self._slice(self.start, end), self.hotwords) or self.preview
+            text = self._trim_context(text) if text else self.previous
         except Exception:
             logger.warning("Sentence recognition failed; retaining streaming result")
-            text = self.preview or self.previous
+            text = self._trim_context(self.preview) if self.preview else self.previous
         updates = self._update(text, final=True)
+        self.committed_until = max(self.committed_until, end)
+        self.last_text = text or self.last_text
+        self.context = ""
         self.start = None
         self.segment_id += 1
         self.revision = 0
@@ -138,7 +157,13 @@ class DictationStream:
         for batch in segments:
             for start_ms, end_ms in batch:
                 if start_ms >= 0 and self.start is None:
-                    self.start = max(self.offset, int(start_ms * SAMPLE_RATE / 1000))
+                    onset = int(start_ms * SAMPLE_RATE / 1000)
+                    # FSMN's duration limit can end and restart at the same
+                    # instant, inside a syllable. Reuse acoustic context and
+                    # reconcile its text rather than decoding two half-words.
+                    self.context = self.last_text if abs(onset - self.committed_until) <= 160 else ""
+                    onset = self.committed_until - PRE_ROLL if self.context else max(self.committed_until, onset)
+                    self.start = max(self.offset, onset)
                     self.online_cursor = self.start
                 if end_ms >= 0 and self.start is not None:
                     end = min(self.received, int(end_ms * SAMPLE_RATE / 1000))
@@ -149,10 +174,12 @@ class DictationStream:
                 boundary = self.start + MAX_SENTENCE
                 updates.extend(self._finish(boundary))
                 # VAD may remain inside the same long utterance.
-                self.start = boundary
-                self.online_cursor = boundary
+                self.context = self.last_text
+                self.start = max(self.offset, boundary - PRE_ROLL)
+                self.online_cursor = self.start
             self._decode_to(self.received)
-            updates.extend(self._update(self.preview, final=False))
+            if not self.context or self.online_cursor > self.committed_until:
+                updates.extend(self._update(self._trim_context(self.preview), final=False))
         retain = self.start if self.start is not None else max(0, self.received - PRE_ROLL)
         remove = max(0, retain - self.offset)
         self.audio = self.audio[remove:].copy()

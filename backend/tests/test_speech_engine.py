@@ -71,6 +71,7 @@ def test_sentence_failure_or_empty_output_keeps_the_preview(failure):
 
 def test_long_speech_is_bounded_and_continues_without_a_new_vad_start():
     model = engine([[[[0, -1]]]] + [[]] * 69 + [[[[ -1, 28000]]]])
+    model.transcribe.side_effect = ["第一句。", "第一句。第二句。"]
     stream = DictationStream(model)
     finals = []
     for _ in range(71):
@@ -78,7 +79,8 @@ def test_long_speech_is_bounded_and_continues_without_a_new_vad_start():
         assert len(stream.audio) <= 25 * SAMPLE_RATE
     assert [u["segmentId"] for u in finals] == [0, 1]
     assert len(model.transcribe.call_args_list[0].args[0]) == 25 * SAMPLE_RATE
-    assert len(model.transcribe.call_args_list[1].args[0]) == 3 * SAMPLE_RATE
+    assert len(model.transcribe.call_args_list[1].args[0]) == 4 * SAMPLE_RATE
+    assert finals[1]["text"] == "第二句。"
 
 
 def test_contextual_hotwords_reach_the_model_and_punctuation_failure_preserves_words():
@@ -112,3 +114,36 @@ def test_english_words_keep_spaces_between_streaming_chunks():
     for _ in range(3):
         updates.extend(stream.push(np.ones(6400, dtype=np.float32)))
     assert updates[-1]["text"] == "hello world"
+
+
+def test_forced_vad_cut_reuses_context_and_preserves_a_real_repeated_word():
+    model = engine([[[[0, -1]]], [[[-1, 800], [800, -1]]], [[[-1, 1200]]]])
+    model.transcribe.side_effect = ["请检查。", "请检查检查结果。"]
+    stream = DictationStream(model)
+    updates = []
+    for _ in range(3):
+        updates.extend(stream.push(np.ones(6400, dtype=np.float32)))
+    assert [u["text"] for u in updates if u["final"]] == ["请检查。", "检查结果。"]
+    assert len(model.transcribe.call_args_list[1].args[0]) == 19200
+
+
+def test_a_new_utterance_after_a_pause_keeps_its_repeated_start():
+    model = engine([[[[0, 400]]], [], [[[1000, -1]]], [[[-1, 1500]]]])
+    model.transcribe.side_effect = ["检查。", "检查完成。"]
+    stream = DictationStream(model)
+    updates = []
+    for _ in range(4):
+        updates.extend(stream.push(np.ones(6400, dtype=np.float32)))
+    assert [u["text"] for u in updates if u["final"]] == ["检查。", "检查完成。"]
+
+
+def test_continuation_hides_context_only_previews():
+    model = engine([[], [], []])
+    model.new_online.return_value.side_effect = [[{"preds": ("检", [])}], [{"preds": ("查完成", [])}]]
+    stream = DictationStream(model)
+    stream.start = 0
+    stream.context = "检查。"
+    stream.committed_until = 16000
+    assert stream.push(np.ones(6400, dtype=np.float32)) == []
+    assert stream.push(np.ones(6400, dtype=np.float32)) == []
+    assert stream.push(np.ones(6400, dtype=np.float32))[0]["text"] == "完成"
