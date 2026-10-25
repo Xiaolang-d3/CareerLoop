@@ -64,6 +64,25 @@ class ChatStreamingApiTest(unittest.TestCase):
                 })
                 self.assertEqual(response.status_code, 422)
 
+    def test_new_turns_resolve_automatic_search_without_transport_flags(self) -> None:
+        captured = []
+        class Runtime:
+            async def run_stream(self, *args, **kwargs):
+                captured.append(kwargs["web_search_options"])
+                yield AgentStreamEvent(type="completed", result=AgentRunResult(
+                    content="普通回答", provider="test", platform="manual", rounds=1,
+                ))
+        for enabled, forwarded, expected in [(True, {}, True), (False, {}, False), (True, {"webSearch": False}, False)]:
+            with self.subTest(enabled=enabled, forwarded=forwarded):
+                conversation = self.client.post("/conversations", json={"title": "自动搜索"}).json()
+                settings = SimpleNamespace(web_research_enabled=enabled, resolved_web_search_provider="tavily")
+                with patch.object(main_module, "get_settings", return_value=settings):
+                    self.with_runtime(Runtime(), lambda: self.run_ag_ui(conversation["id"], "你好", f"auto-{conversation['id']}", forwarded=forwarded))
+                self.assertEqual(captured[-1].enabled, expected)
+                self.assertEqual((captured[-1].topic, captured[-1].source_preference), ("auto", "none"))
+                messages = self.client.get(f"/chat/messages?conversation_id={conversation['id']}").json()
+                self.assertEqual(messages[-2]["payload"]["web_search_options"]["enabled"], expected)
+
     def test_confirmation_inherits_search_options_and_explicit_false_is_preserved(self) -> None:
         conversation = self.client.post("/conversations", json={"title": "搜索配置继承"}).json()
         original = WebSearchOptions(enabled=True, topic="finance", source_preference="technical", provider="tavily")

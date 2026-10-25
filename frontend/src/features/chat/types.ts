@@ -123,9 +123,9 @@ export type ChatRetryDraft = {
   modelProfileId?: string | null;
   attachmentIds: string[];
   visionAttachmentIds: string[];
-  webSearch: boolean;
-  webSearchTopic: WebSearchTopic;
-  webSearchSourcePreference: WebSearchSourcePreference;
+  webSearch?: boolean;
+  webSearchTopic?: WebSearchTopic;
+  webSearchSourcePreference?: WebSearchSourcePreference;
   webSearchProvider?: string;
   runId?: string;
   rewindMessageId?: number;
@@ -185,7 +185,6 @@ export type ChatWorkspaceProps = ResultServices & {
   onLibraryAttachmentsConsumed?: () => void;
   composerDraft?: ChatComposerDraft | null;
   composerDrafts?: Map<number, string>;
-  composerSearchDrafts?: Map<number, WebSearchOptions>;
   onComposerDraftConsumed?: () => void;
   conversations: Conversation[];
   conversationBusy: boolean;
@@ -203,12 +202,6 @@ export type ChatWorkspaceProps = ResultServices & {
   onRemoveConversation: (conversation: Conversation) => void;
   attachmentBusy: boolean;
   attachmentConfig: AttachmentConfig | null;
-  webSearchAvailable: boolean;
-  webSearchProvider?: string;
-  webSearchCapabilities?: AgentCapabilities["web_research"];
-  webSearchCapabilitiesBusy?: boolean;
-  webSearchCapabilitiesError?: string;
-  onRefreshWebSearchCapabilities?: () => Promise<unknown>;
   onUploadAttachment: (file: File) => Promise<ChatAttachment>;
   onLoadAttachment?: (attachment: ChatAttachment, signal?: AbortSignal) => Promise<{ file: Blob; parsedText?: string }>;
   onLoadAttachmentThumbnail?: (attachment: ChatAttachment, signal?: AbortSignal) => Promise<Blob>;

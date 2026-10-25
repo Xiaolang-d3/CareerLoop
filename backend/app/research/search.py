@@ -42,7 +42,7 @@ def public_search_capabilities(provider: str) -> dict[str, Any]:
 
 def validate_search_options(options: WebSearchOptions, provider: str) -> None:
     if not options.enabled:
-        raise WebResearchError("web_search_not_allowed", "本轮未开启联网搜索，请开启联网后重新提问")
+        raise WebResearchError("web_search_not_allowed", "本次任务未允许联网搜索，请检查搜索服务配置或发起新任务")
     if options.provider is not None and options.provider != provider:
         raise WebResearchError(
             "web_search_provider_changed", "搜索服务已变更，请按当前搜索服务重新发送，原运行不会切换服务",

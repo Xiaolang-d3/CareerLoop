@@ -1,16 +1,14 @@
 import { useConversationScroll } from "../features/chat/useConversationScroll";
 import { ComposerModelPicker } from "../features/chat/ComposerModelPicker";
-import { ComposerWebSearch } from "../features/chat/ComposerWebSearch";
 import { AttachmentPreviewDialog, AttachmentPreviewContext } from "../features/chat/AttachmentPreviewDialog";
 import { AssetOriginalContext } from "../features/chat/GeneratedImage";
 import { ResultDialog } from "../features/chat/ResultDialog";
 import { ResultActionsContext } from "../features/chat/result-types";
 import { AttachmentThumbnailContext } from "../features/chat/HistoryAttachment";
-import { defaultWebSearchOptions, pendingWebSearchOptions, webSearchConfigurationIssue } from "../features/chat/webSearchOptions";
 import { quoteForComposer } from "../features/chat/conversationActions";
 import { textFromAppendMessage, WebSource, webSourcesFromAgent, ResearchPanelActionsContext, QuoteSelectionContext, DeleteTurnContext, EditMessageComposer, RunProcess, ComposerClarification, ChatContextChips, ResearchPanel, ChatTurn } from "../features/chat/MessagePresentation";
 
-import type { AgentRunResult, ChatMessage, ChatAttachment, WebSearchOptions, ChatClarificationOption, ChatClarification, ChatWorkspaceProps } from "../features/chat/types";
+import type { AgentRunResult, ChatMessage, ChatAttachment, ChatClarificationOption, ChatClarification, ChatWorkspaceProps } from "../features/chat/types";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from "react";
 import { useVoiceAnswer } from "../hooks/useVoiceAnswer";
@@ -68,9 +66,6 @@ type ChatWorkspaceContentProps = ChatWorkspaceProps & {
   uploadingPreview: { filename: string; url: string } | null;
   onUpload: (file?: File) => Promise<void>;
   onRemovePendingAttachment: (attachmentId: string) => Promise<void>;
-  webSearchOptions: WebSearchOptions;
-  webSearchInherited: boolean;
-  onWebSearchOptionsChange: (options: WebSearchOptions) => void;
 };
 
 function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
@@ -79,7 +74,6 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   const composerText = useAuiState((state) => state.composer.text);
   const [composerFocused, setComposerFocused] = useState(false);
   const showComposerHint = (!props.chatBusy && (composerFocused || (props.messages.length === 0 && props.density !== "dock"))) || composerText.length >= 180_000;
-  const searchIssue = webSearchConfigurationIssue(props.webSearchOptions, props.webSearchCapabilities);
   const localDrafts = useRef(new Map<number, string>());
   const drafts = props.composerDrafts ?? localDrafts.current;
   const draftsRef = useRef(drafts);
@@ -439,7 +433,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             <ComposerClarification
               clarification={clarification}
               busy={props.taskCancelBusy}
-              onChoose={(text) => { if (!searchIssue) void props.onSend(text, [], [], props.webSearchOptions.enabled, props.webSearchOptions.topic, props.webSearchOptions.source_preference); }}
+              onChoose={(text) => { void props.onSend(text, [], []); }}
               onCancel={props.onCancelTask}
             />
           ) : props.waitingForUser ? (
@@ -550,7 +544,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
               className="composer-input composer-input--enhanced"
               onFocusCapture={() => setComposerFocused(true)}
               onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setComposerFocused(false); }}
-              onSubmit={(event) => { if (props.attachmentBusy || props.modelSelectionBusy || props.modelProfileUnavailable || searchIssue) event.preventDefault(); }}
+              onSubmit={(event) => { if (props.attachmentBusy || props.modelSelectionBusy || props.modelProfileUnavailable) event.preventDefault(); }}
             >
               <ComposerPrimitive.Input
                 ref={props.chatInputRef}
@@ -580,10 +574,6 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                     </span>
                     <span>语音</span>
                   </button>
-                  <ComposerWebSearch options={props.webSearchOptions} onChange={props.onWebSearchOptionsChange}
-                    capabilities={props.webSearchCapabilities} available={props.webSearchAvailable} provider={props.webSearchProvider}
-                    busy={props.chatBusy || props.taskCancelBusy} capabilitiesBusy={props.webSearchCapabilitiesBusy}
-                    capabilitiesError={props.webSearchCapabilitiesError} onRefresh={props.onRefreshWebSearchCapabilities} inherited={props.webSearchInherited} />
                   <ChatContextChips context={props.sessionContext} />
                 </div>
                 <div className="composer-primary-actions">
@@ -609,7 +599,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                       <Square size={12} fill="currentColor" aria-hidden="true" /><span>停止</span>
                     </ComposerPrimitive.Cancel>
                   ) : (
-                    <ComposerPrimitive.Send className="send-button" aria-label="发送" disabled={props.attachmentBusy || props.modelSelectionBusy || props.modelProfileUnavailable || Boolean(searchIssue)} title={searchIssue || (props.attachmentBusy ? "资料处理完成后即可发送" : props.modelSelectionBusy ? "模型选择保存后即可发送" : props.modelProfileUnavailable ? "当前模型已停用，请切换模型" : "发送消息")}>
+                    <ComposerPrimitive.Send className="send-button" aria-label="发送" disabled={props.attachmentBusy || props.modelSelectionBusy || props.modelProfileUnavailable} title={(props.attachmentBusy ? "资料处理完成后即可发送" : props.modelSelectionBusy ? "模型选择保存后即可发送" : props.modelProfileUnavailable ? "当前模型已停用，请切换模型" : "发送消息")}>
                       <ArrowUp size={18} aria-hidden="true" /><span>发送</span>
                     </ComposerPrimitive.Send>
                   )}
@@ -681,30 +671,6 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
   const currentConversationRef = useRef(props.currentConversationId);
   currentConversationRef.current = props.currentConversationId;
   const [visionAttachmentIds, setVisionAttachmentIds] = useState<string[]>([]);
-  const localSearchDrafts = useRef(new Map<number, WebSearchOptions>());
-  const searchDrafts = props.composerSearchDrafts ?? localSearchDrafts.current;
-  const [webSearchOptions, setWebSearchOptions] = useState<WebSearchOptions>(() => props.currentConversationId ? searchDrafts.get(props.currentConversationId) ?? defaultWebSearchOptions() : defaultWebSearchOptions());
-  const [webSearchInherited, setWebSearchInherited] = useState(false);
-  const inheritedMessageId = useRef<number | null>(null);
-  const updateWebSearchOptions = useCallback((options: WebSearchOptions) => {
-    setWebSearchOptions(options);
-    setWebSearchInherited(false);
-    if (props.currentConversationId) searchDrafts.set(props.currentConversationId, options);
-  }, [props.currentConversationId, searchDrafts]);
-  useLayoutEffect(() => {
-    setWebSearchOptions(props.currentConversationId ? searchDrafts.get(props.currentConversationId) ?? defaultWebSearchOptions() : defaultWebSearchOptions());
-    inheritedMessageId.current = null;
-    setWebSearchInherited(false);
-  }, [props.currentConversationId, searchDrafts]);
-  useEffect(() => {
-    const last = props.messages.at(-1);
-    const inherited = pendingWebSearchOptions(props.messages);
-    if (!inherited || !last || inheritedMessageId.current === last.id) return;
-    inheritedMessageId.current = last.id;
-    setWebSearchOptions(inherited);
-    setWebSearchInherited(true);
-    if (props.currentConversationId) searchDrafts.set(props.currentConversationId, inherited);
-  }, [props.messages, props.currentConversationId, searchDrafts]);
 
   useEffect(() => {
     Object.values(previewUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
@@ -783,14 +749,10 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     onNew: async (message) => {
       const content = textFromAppendMessage(message);
       if (content) {
-        if (webSearchConfigurationIssue(webSearchOptions, props.webSearchCapabilities)) return;
         const sent = await props.onSend(
           content,
           pendingAttachments.map((attachment) => attachment.id),
           visionAttachmentIds,
-          webSearchOptions.enabled,
-          webSearchOptions.topic,
-          webSearchOptions.source_preference,
         );
         if (sent === false) return;
         // Failed sends keep content and attachment IDs in retryDraft; do not
@@ -825,9 +787,6 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
         uploadingPreview={uploadingPreview}
         onUpload={uploadAttachment}
         onRemovePendingAttachment={removePendingAttachment}
-        webSearchOptions={webSearchOptions}
-        webSearchInherited={webSearchInherited}
-        onWebSearchOptionsChange={updateWebSearchOptions}
       />
     </AssistantRuntimeProvider>
   );

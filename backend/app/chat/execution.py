@@ -242,6 +242,9 @@ async def stream_chat_response(
     resume_snapshot = load_run_snapshot(conversation_id) if cached_execution is None and persisted_run is None else None
     fields = payload.model_fields_set
     inherited_options = resume_snapshot.web_search_options if resume_snapshot is not None else None
+    # New turns use the configured search service automatically. Persisted runs
+    # and waiting-task confirmations retain their original search binding.
+    automatic_options = WebSearchOptions(enabled=bool(getattr(get_settings(), "web_research_enabled", False)))
     if persisted_run is not None:
         # A run ID names an immutable turn, even if a reconnect submits changes.
         search_options = persisted_run.get("web_search_options") or WebSearchOptions()
@@ -251,7 +254,7 @@ async def stream_chat_response(
             topic=payload.web_search_topic if "web_search_topic" in fields else None,
             source_preference=payload.web_search_source_preference if "web_search_source_preference" in fields else None,
             legacy_mode=payload.web_search_mode if "web_search_mode" in fields else None,
-            base=inherited_options,
+            base=inherited_options or automatic_options,
             provider=payload.web_search_provider if inherited_options is None or inherited_options.provider is None else None,
         )
     # Consent no longer rewrites routing text; it only extends the trusted tool
@@ -270,6 +273,7 @@ async def stream_chat_response(
                 source_preference=payload.web_search_source_preference if "web_search_source_preference" in fields else None,
                 legacy_mode=payload.web_search_mode if "web_search_mode" in fields else None,
                 provider=payload.web_search_provider,
+                base=automatic_options,
             )
 
     if cached_execution is None and not recovering_terminal_result:

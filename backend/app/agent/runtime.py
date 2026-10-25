@@ -617,8 +617,8 @@ class AgentRuntime:
             messages.append(AgentMessage(
                 role="system",
                 content=(
-                    "用户要求联网，但本轮未开启联网搜索。不要调用搜索工具，也不要假装已经检索；"
-                    "请直接说明需要开启联网开关后重新发送。"
+                    "当前任务未允许使用搜索能力。不要调用搜索工具，也不要假装已经检索；"
+                    "请说明当前无法联网，并提示检查搜索服务配置或按当前配置发起新任务。"
                 ),
             ))
         recent_company = _recent_company_name(conversation_history)
@@ -1678,7 +1678,7 @@ class AgentRuntime:
                 return decision.result
         if (tool_call.name in WEB_RESEARCH_TOOLS and context.web_search_options is not None
                 and not context.web_search_options.enabled):
-            message = "本轮未获得联网许可，不能新增搜索；请开启联网后重新发送。"
+            message = "本次任务未允许联网搜索，请检查搜索服务配置或发起新任务。"
             blocked = ToolResult(ok=False, status="blocked", message=message,
                                  error=ToolError(code="web_search_not_allowed", message=message))
             if self._run_store is not None and run_id is not None and fingerprint is not None:
