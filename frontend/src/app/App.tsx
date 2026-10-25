@@ -19,7 +19,7 @@ import { AppSidebar, type ProductNavKey } from "../components/AppSidebar";
 import { AppIdentityMenu } from "../components/AppIdentityMenu";
 import { AppTopBar } from "../components/AppTopBar";
 import { ConversationDialog } from "../components/ConversationDialog";
-import type { AttachmentConfig, ChatAttachment, ChatComposerDraft, WebSearchOptions } from "../features/chat/types";
+import type { AttachmentConfig, ChatAttachment, ChatComposerDraft } from "../features/chat/types";
 import type { ModelParameterUpdate } from "../features/chat/ComposerModelParameters";
 import type { ArtifactManifest } from "../features/chat/result-types";
 import type { HomeReadableItem } from "../features/home/types";
@@ -220,7 +220,6 @@ export function App({
     setConversationFolderAssignments(assignments);
     storeFolders(conversationFolders, assignments);
   }
-  const composerSearchDrafts = useMemo(() => new Map<number, WebSearchOptions>(), [userEmail]);
   const { migrateHomeTheme } = useTheme();
   useEffect(() => { migrateHomeTheme(userEmail); }, [migrateHomeTheme, userEmail]);
   const homeAnalysisBusyRef = useRef(false);
@@ -233,8 +232,6 @@ export function App({
   }, [fetchJson, userEmail, setConversationBusy]);
   const { chatMessages, setChatMessages, chatBusy, setChatBusy, modelUnavailable, setModelUnavailable, sendError, retryChatDraft, setRetryChatDraft, replacementUndo, chatAgentRef, taskCancelBusy, setTaskCancelBusy, chatAttachmentBusy, setChatAttachmentBusy, refreshChat, uploadChatAttachment, loadChatAttachment, removeChatAttachment, sendChatMessage, stopChatGeneration, rewindChatToUserMessage, editChatMessage, regenerateChatMessage, undoReplacement, deleteChatTurn, cancelCurrentTask } = useChatRun({ apiBase, accessToken, fetchJson, currentConversationId, currentConversationIdRef, modelProfileId: conversations.find(item => item.id === currentConversationId)?.model_profile_id ?? null, setErrorMessage, setNoticeMessage, refreshConversations, onLibraryChanged: refreshLibrary });
   const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
-  const [webSearchCapabilitiesBusy, setWebSearchCapabilitiesBusy] = useState(false);
-  const [webSearchCapabilitiesError, setWebSearchCapabilitiesError] = useState("");
   const [attachmentConfig, setAttachmentConfig] = useState<AttachmentConfig | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
@@ -502,8 +499,6 @@ export function App({
 
   async function refreshCapabilities() {
     const request = beginModelRequest("serviceCapabilities");
-    setWebSearchCapabilitiesBusy(true);
-    setWebSearchCapabilitiesError("");
     try {
       const next = await fetchJson<AgentCapabilities>("/agent/capabilities", { signal: request.signal });
       if (request.current()) setCapabilities(next);
@@ -511,11 +506,10 @@ export function App({
     } catch (error) {
       if (request.current()) {
         setCapabilities(null);
-        setWebSearchCapabilitiesError(error instanceof Error ? error.message : "无法读取服务能力");
         setErrorMessage(error instanceof Error ? `无法读取服务能力：${error.message}` : "无法读取服务能力");
       }
       return null;
-    } finally { if (request.current()) setWebSearchCapabilitiesBusy(false); request.finish(); }
+    } finally { request.finish(); }
   }
 
   async function refreshAttachmentConfig() {
@@ -1240,7 +1234,6 @@ export function App({
             onLibraryAttachmentsConsumed={() => setLibraryAttachments(null)}
             composerDraft={homeComposerDraft}
             composerDrafts={composerDrafts}
-            composerSearchDrafts={composerSearchDrafts}
             onComposerDraftConsumed={() => setHomeComposerDraft(null)}
             conversations={conversations}
             conversationBusy={conversationBusy}
@@ -1265,12 +1258,6 @@ export function App({
             onRemoveConversation={(conversation) => setConversationDialog({ kind: "delete", conversation })}
             attachmentBusy={chatAttachmentBusy}
             attachmentConfig={attachmentConfig}
-            webSearchAvailable={Boolean(capabilities?.web_research?.enabled)}
-            webSearchProvider={capabilities?.web_research?.provider}
-            webSearchCapabilities={capabilities?.web_research}
-            webSearchCapabilitiesBusy={webSearchCapabilitiesBusy}
-            webSearchCapabilitiesError={webSearchCapabilitiesError}
-            onRefreshWebSearchCapabilities={refreshCapabilities}
             onUploadAttachment={uploadChatAttachment}
             voiceInput={voiceInput}
             onLoadAttachment={loadChatAttachment}

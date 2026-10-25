@@ -4,7 +4,7 @@ import { createApiClient, fetchWithTimeout } from "../../api/client";
 import { createClientId } from "../../api/clientId";
 import { interruptedRunRetryDraft, type DurableAgentRunSummary } from "../../durable-agent-run";
 import type { AgentRunResult, ChatAttachment, ChatMessage, ChatRetryDraft, WebSearchSourcePreference, WebSearchTopic } from "../../features/chat/types";
-import { pendingWebSearchOptions, webSearchOptionsFromMessage, webSearchConfigurationIssue } from "./webSearchOptions";
+import { webSearchOptionsFromMessage, webSearchConfigurationIssue } from "./webSearchOptions";
 import type { AgentCapabilities } from "../../types";
 import type { RefObject } from "react";
 
@@ -124,10 +124,11 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
     const targetConversationId = conversationIdOverride ?? currentConversationId;
     const selectedModelProfileId = modelProfileIdOverride === undefined ? modelProfileId ?? null : modelProfileIdOverride;
     if (!content || chatBusy || !targetConversationId) return;
-    const inheritedSearch = runIdOverride ? null : pendingWebSearchOptions(chatMessages);
-    const webSearch = webSearchOverride ?? inheritedSearch?.enabled ?? false;
-    const webSearchTopic = webSearchTopicOverride ?? inheritedSearch?.topic ?? "auto";
-    const webSearchSourcePreference = webSearchSourcePreferenceOverride ?? inheritedSearch?.source_preference ?? "none";
+    // Omitted fields let the server resolve automatic search and pending-task
+    // inheritance. Explicit fields are kept for retries and legacy callers.
+    let webSearch = webSearchOverride;
+    let webSearchTopic = webSearchTopicOverride;
+    let webSearchSourcePreference = webSearchSourcePreferenceOverride;
     setModelUnavailable(null);
     setSendError(null);
     let boundSearchProvider = expectedWebSearchProvider;
@@ -136,7 +137,7 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
         const capabilities = await fetchJson<AgentCapabilities>("/agent/capabilities");
         const search = capabilities.web_research;
         if (!search || search.provider !== expectedWebSearchProvider) throw new Error("搜索服务与原任务不同。历史消息已保留，请按当前服务重新发送新消息。");
-        const issue = webSearchConfigurationIssue({ version: 1, enabled: true, topic: webSearchTopic, source_preference: webSearchSourcePreference }, search);
+        const issue = webSearchConfigurationIssue({ version: 1, enabled: true, topic: webSearchTopic ?? "auto", source_preference: webSearchSourcePreference ?? "none" }, search);
         if (issue) throw new Error(issue);
       } catch (error) {
         setSendError(error instanceof Error ? error.message : "无法核对原任务的搜索服务");
@@ -294,6 +295,12 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
         if (!acceptsStreamEvents()) return;
         if (event.name === "careerloop.user_message") {
           const userMessage = event.value as ChatMessage;
+          if (userMessage.payload?.web_search_options) {
+            const resolved = webSearchOptionsFromMessage(userMessage);
+            webSearch = resolved.enabled;
+            webSearchTopic = resolved.topic;
+            webSearchSourcePreference = resolved.source_preference;
+          }
           if (userMessage.payload?.web_search_options?.provider) boundSearchProvider = userMessage.payload.web_search_options.provider;
           if (currentConversationIdRef.current === conversationId) {
             setChatMessages((current) => {
@@ -405,7 +412,10 @@ export function useChatRun({ apiBase, accessToken, fetchJson, currentConversatio
           runId: executionRunId,
           tools: [],
           context: [],
-          forwardedProps: { conversationId, modelProfileId: selectedModelProfileId, client: "careerloop-web", attachmentIds, visionAttachmentIds, webSearch, webSearchTopic, webSearchSourcePreference,
+          forwardedProps: { conversationId, modelProfileId: selectedModelProfileId, client: "careerloop-web", attachmentIds, visionAttachmentIds,
+            ...(webSearch === undefined ? {} : { webSearch }),
+            ...(webSearchTopic === undefined ? {} : { webSearchTopic }),
+            ...(webSearchSourcePreference === undefined ? {} : { webSearchSourcePreference }),
             ...(expectedWebSearchProvider ? { webSearchProvider: expectedWebSearchProvider } : {}) }
         },
         subscriber

@@ -88,14 +88,15 @@ describe("useChatRun stream reconciliation", () => {
     expect(fetchJson).not.toHaveBeenCalled(); // Same-run replay may return stored results without using the current service.
   });
 
-  it("inherits the waiting task search options when a clarification supplies no override", async () => {
+  it("omits search overrides so the server can inherit a waiting task or recognize a new topic", async () => {
     const { result } = setup();
     const pendingUser: ChatMessage = { ...userMessage, payload: { web_search_options: { version: 1, enabled: true, topic: "news", source_preference: "technical", provider: "tavily" } } };
     const pendingAssistant: ChatMessage = { ...assistantMessage, payload: { agent: { provider: "test", platform: "local", rounds: 1, status: "waiting_user", events: [] } } };
     act(() => result.current.setChatMessages([pendingUser, pendingAssistant]));
     client.runAgent.mockImplementationOnce(async () => emit("onStateSnapshotEvent", { event: { snapshot } }));
     await act(() => result.current.sendChatMessage("继续查最新发布"));
-    expect(client.runAgent.mock.calls[0][0].forwardedProps).toMatchObject({ webSearch: true, webSearchTopic: "news", webSearchSourcePreference: "technical" });
+    expect(client.runAgent.mock.calls[0][0].forwardedProps).not.toHaveProperty("webSearch");
+    expect(client.runAgent.mock.calls[0][0].forwardedProps).not.toHaveProperty("webSearchTopic");
   });
 
   it("honors an explicit search disable and auto choice in a new clarification run", async () => {
@@ -378,4 +379,16 @@ describe("useChatRun stream reconciliation", () => {
     expect(result.current.sendError).toBeNull();
     expect(setErrorMessage.mock.calls.filter(([message]) => message)).toEqual([]);
   });
+});
+
+it("uses server-resolved automatic search options when a new turn needs retry", async () => {
+  const { result } = setup();
+  client.runAgent.mockImplementationOnce(async () => {
+    const forwarded = client.runAgent.mock.calls[0][0].forwardedProps;
+    expect(forwarded).not.toHaveProperty("webSearch");
+    emit("onCustomEvent", { event: { name: "careerloop.user_message", value: { ...userMessage, payload: { web_search_options: { version: 1, enabled: true, topic: "auto", source_preference: "none", provider: "tavily" } } } } });
+    throw new Error("stream failed");
+  });
+  await act(() => result.current.sendChatMessage("查一下最新消息"));
+  expect(result.current.retryChatDraft).toMatchObject({ webSearch: true, webSearchTopic: "auto", webSearchSourcePreference: "none", webSearchProvider: "tavily" });
 });

@@ -4,8 +4,8 @@ import type { AgentCapabilities } from "../../types";
 export const webSearchTopicLabels: Record<WebSearchTopic, string> = { auto: "自动", general: "通用", news: "新闻", finance: "金融" };
 export function webSearchConfigurationIssue(options: WebSearchOptions, capabilities?: AgentCapabilities["web_research"]): string {
   if (!options.enabled) return "";
-  if (!capabilities?.supported_topics) return "尚未读取搜索服务能力，请重试或关闭联网";
-  if (!capabilities.enabled) return "联网搜索尚未启用，请配置搜索服务或关闭联网";
+  if (!capabilities?.supported_topics) return "尚未读取搜索服务能力，请重试";
+  if (!capabilities.enabled) return "联网搜索尚未启用，请配置搜索服务";
   if (!capabilities.supported_topics.includes(options.topic)) return `当前搜索服务不支持${webSearchTopicLabels[options.topic]}类别，请修改搜索类别`;
   if (options.source_preference === "technical" && capabilities.supports_technical_preference !== true) return "当前搜索服务不支持优先技术资料，请改为不限来源";
   return "";

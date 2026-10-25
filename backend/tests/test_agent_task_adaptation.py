@@ -196,7 +196,7 @@ def test_semantic_public_request_without_consent_has_actionable_notice():
         result = await runtime_for(model, search).run(TASK, web_search_options=WebSearchOptions(enabled=False))
         assert result.status == "done" and search.calls == 0
         assert not model.requests[-1].tools
-        assert any("本轮未开启联网搜索" in message.content for message in model.requests[-1].messages)
+        assert any("当前任务未允许使用搜索能力" in message.content for message in model.requests[-1].messages)
     asyncio.run(scenario())
 
 
@@ -262,3 +262,13 @@ def test_semantic_filter_keeps_paraphrase_and_removes_unrelated_neighbours(tmp_p
         assert {row["source_id"] for row in matches} == {"1"}
     finally:
         reset_embedder()
+
+
+def test_automatic_search_permission_does_not_force_search_for_a_greeting():
+    async def scenario():
+        search = CountingTool("search_public_web")
+        model = ScriptedModel([ModelResponse(content="你好，有什么需要帮忙的？")])
+        result = await runtime_for(model, search).run("你好", web_search_options=WebSearchOptions(enabled=True))
+        assert result.status == "done"
+        assert search.calls == 0
+    asyncio.run(scenario())

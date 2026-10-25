@@ -69,7 +69,7 @@ export function ProductIntroPage({ returnHash, signedIn = false }: { returnHash:
           <h2 id="intro-privacy-title">你的资料，始终由你掌握。</h2>
           <ul className="product-intro-features" aria-label="产品特点">
             <li><BookOpen size={25} aria-hidden="true" /><h3>有据可循</h3><p>结合你提供的资料完成分析与创作，通过引用回到原文。</p></li>
-            <li><SlidersHorizontal size={25} aria-hidden="true" /><h3>始终可控</h3><p>自主选择模型服务、使用的资料，以及是否开启联网研究。</p></li>
+            <li><SlidersHorizontal size={25} aria-hidden="true" /><h3>始终可控</h3><p>自主选择模型服务与使用的资料，需要时由 AI 调用联网搜索。</p></li>
             <li><Layers size={25} aria-hidden="true" /><h3>持续积累</h3><p>本地保存资料与成果，让确认过的知识在后续任务中继续发挥作用。</p></li>
           </ul>
           <p className="product-intro-privacy-note">资料库保存在本机。使用外部模型或联网研究时，相关内容会发送至你配置的服务。</p>

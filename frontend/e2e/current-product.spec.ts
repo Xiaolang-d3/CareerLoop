@@ -244,10 +244,12 @@ test("long conversations keep one scroll viewport without blank space above the 
 });
 
 test("AI workspace keeps one reading axis and switches history rail by breakpoint", async ({ page }) => {
-  const evidenceDir = resolve("..", "..", "output", "playwright");
+  const evidenceDir = process.env.CI ? resolve("..", "..", "output", "playwright") : resolve("..", "tmp", "playwright");
   await mkdir(evidenceDir, { recursive: true });
   await page.goto("/#/chat/1");
   await expect(page.getByRole("heading", { name: "今天，想完成什么？" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "联网搜索" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "搜索类别" })).toHaveCount(0);
   await page.getByRole("button", { name: "对话记录" }).click();
 
   for (const viewport of [
