@@ -1,0 +1,102 @@
+{
+  "online": {
+    "repo": "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online-onnx",
+    "files": {
+      "model_quant.onnx": {
+        "revision": "ec6a3c64e290b719409e8c06cc2ac504e747c8eb",
+        "sha256": "dd4121cf45102018c26f9256f0b862df416edfcd06b0863ef4ce378a63c7d5e2",
+        "size": 166350528
+      },
+      "decoder_quant.onnx": {
+        "revision": "ec6a3c64e290b719409e8c06cc2ac504e747c8eb",
+        "sha256": "873d21ee80c7345bfc27944b843699fe16bba021fd020747d38aef2dfc103681",
+        "size": 71867274
+      },
+      "tokens.json": {
+        "revision": "3f52bb64b3b3a09c2c06ab6da22795d438e7c777",
+        "sha256": "2b20c2b12572d682afff84ce1c8d560f67b8b32a4c1f21567411d141ed352127",
+        "size": 93676
+      },
+      "config.yaml": {
+        "revision": "3f52bb64b3b3a09c2c06ab6da22795d438e7c777",
+        "sha256": "35e6bf41f8c7eaf9a0f787af7fdc8fc5ed75fa8009ade7d3c2f3ef5bce20c648",
+        "size": 2940
+      },
+      "am.mvn": {
+        "revision": "8379db60b12deddfd8ddc95350c2bbd8e058667c",
+        "sha256": "29b3c740a2c0cfc6b308126d31d7f265fa2be74f3bb095cd2f143ea970896ae5",
+        "size": 11203
+      }
+    }
+  },
+  "offline": {
+    "repo": "iic/speech_paraformer-large-contextual_asr_nat-zh-cn-16k-common-vocab8404-onnx",
+    "files": {
+      "model_quant.onnx": {
+        "revision": "8f0881c891ceba7360e215b04e54cad564a68c41",
+        "sha256": "f404e6eb532b54fd95761e2b4be4ed1998e8cff3cb3b930a9bee1f2d556e5035",
+        "size": 871251660
+      },
+      "model_eb.onnx": {
+        "revision": "8f0881c891ceba7360e215b04e54cad564a68c41",
+        "sha256": "d31446a5af664291a2922cca253a4200a523f347d6fc3cb1bff356bf60a116b6",
+        "size": 25618359
+      },
+      "tokens.json": {
+        "revision": "0e8b6a277734182ed17edb1302051dc40295622e",
+        "sha256": "2b20c2b12572d682afff84ce1c8d560f67b8b32a4c1f21567411d141ed352127",
+        "size": 93676
+      },
+      "config.yaml": {
+        "revision": "0e8b6a277734182ed17edb1302051dc40295622e",
+        "sha256": "1d9057edeaba9e131cb98f26011606497cf3af187d8943525ddb5ee36c836b1b",
+        "size": 2532
+      },
+      "am.mvn": {
+        "revision": "1c4c4d2ee95dfc59aa7efa3bacce6b72af4622bc",
+        "sha256": "29b3c740a2c0cfc6b308126d31d7f265fa2be74f3bb095cd2f143ea970896ae5",
+        "size": 11203
+      }
+    }
+  },
+  "vad": {
+    "repo": "iic/speech_fsmn_vad_zh-cn-16k-common-onnx",
+    "files": {
+      "model_quant.onnx": {
+        "revision": "f436483dfd1bf3eb1b410133ff86ecc9e10abc4a",
+        "sha256": "5289eb2aa3c9af2d7a4284bcfa7c3ceb81d360814ed4203239b6c5d0569da8a1",
+        "size": 506744
+      },
+      "config.yaml": {
+        "revision": "a158155ef9e81f405c052f40b6d1ad43b87e6215",
+        "sha256": "2ef334f2d7776edd86ed696296774f87550206c256bfabc597872ad861831589",
+        "size": 1215
+      },
+      "am.mvn": {
+        "revision": "9e08ccbfe15c79d0f4b41247c5ed4266031ac362",
+        "sha256": "6820fef9687708c4fc3fab2530179c8fcea6262daa25514380056cd8f6eb1754",
+        "size": 8040
+      }
+    }
+  },
+  "punc": {
+    "repo": "iic/punc_ct-transformer_zh-cn-common-vocab272727-onnx",
+    "files": {
+      "model_quant.onnx": {
+        "revision": "8f239ff78c6267c4d859233e7eb3bbdb68c61824",
+        "sha256": "e6cd8399bf7d0e75f8d9af4a107310e1968ecab1d50135e765b8f0265b27a83d",
+        "size": 282752912
+      },
+      "config.yaml": {
+        "revision": "c9d8ba523014110650428e422a4975343193975c",
+        "sha256": "a56ec10925b06fa976ad51af373396be2b13e1eb8dc62a5426b5adebaba7071d",
+        "size": 810
+      },
+      "tokens.json": {
+        "revision": "c9d8ba523014110650428e422a4975343193975c",
+        "sha256": "c960ab87bccea4aa15cf49a59f71973c2c330b46668048cd8da253749ec71ee3",
+        "size": 4207480
+      }
+    }
+  }
+}

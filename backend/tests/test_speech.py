@@ -15,7 +15,6 @@ from fastapi.testclient import TestClient
 
 from app import speech, speech_sessions
 from app.api.speech import router
-from app.speech_engine import DictationStream, SpeechEngine
 from app.workspace import use_workspace
 
 
@@ -66,49 +65,49 @@ def test_preparation_is_single_flight_and_can_retry_after_failure(monkeypatch):
 
 def test_cached_models_load_without_network(monkeypatch, tmp_path):
     from app import speech_engine
-    files = {"tokens.txt": hashlib.sha256(b"cached").hexdigest()}
-    for folder in ["speech-paraformer", "speech-sensevoice"]:
-        directory = tmp_path / "models" / folder
+    spec = {"revision": "fixed", "sha256": hashlib.sha256(b"cached").hexdigest(), "size": 6}
+    manifest = {name: {"repo": "iic/model", "files": {"tokens.txt": spec}} for name in ["online", "offline", "vad", "punc"]}
+    for name in manifest:
+        directory = tmp_path / "models/funasr-2pass" / name
         directory.mkdir(parents=True)
         (directory / "tokens.txt").write_bytes(b"cached")
     monkeypatch.setattr(speech, "data_dir", lambda: tmp_path)
-    monkeypatch.setattr(speech, "MODEL_FILES", files)
-    monkeypatch.setattr(speech, "OFFLINE_FILES", files)
+    monkeypatch.setattr(speech, "MODEL_MANIFEST", manifest)
     download = Mock(side_effect=AssertionError("Network is forbidden"))
     constructor = Mock()
     monkeypatch.setattr(httpx.Client, "stream", download)
     monkeypatch.setattr(speech_engine, "SpeechEngine", constructor)
     speech._load_model()
     download.assert_not_called()
-    assert constructor.call_args.args == (tmp_path / "models/speech-paraformer", tmp_path / "models/speech-sensevoice")
+    assert constructor.call_args.args == (tmp_path / "models/funasr-2pass",)
 
 
 def test_downloads_are_pinned_and_checksum_failures_never_replace_a_model(monkeypatch, tmp_path):
-    monkeypatch.setattr(speech, "MODEL_FILES", {"model.bin": hashlib.sha256(b"model").hexdigest()})
+    files = {"model.bin": {"revision": "fixed", "sha256": hashlib.sha256(b"model").hexdigest(), "size": 5}}
     client = httpx.Client
     calls = []
     def respond(request):
         calls.append(str(request.url))
-        return httpx.Response(200, content=b"model" if len(calls) == 1 else b"corrupt")
+        return httpx.Response(200, content=b"model" if len(calls) == 1 else b"wrong")
     monkeypatch.setattr(speech.httpx, "Client", lambda **kw: client(transport=httpx.MockTransport(respond), **kw))
-    speech._ensure_model_files(tmp_path)
+    speech._ensure_model_files(tmp_path, repo="iic/model", files=files)
     assert (tmp_path / "model.bin").read_bytes() == b"model"
-    assert speech.MODEL_REVISION in calls[0]
+    assert "Revision=fixed" in calls[0]
     (tmp_path / "model.bin").write_bytes(b"damaged cache")
     with pytest.raises(RuntimeError, match="checksum"):
-        speech._ensure_model_files(tmp_path)
+        speech._ensure_model_files(tmp_path, repo="iic/model", files=files)
     assert not (tmp_path / "model.bin.part").exists()
 
 
 def test_interrupted_model_download_resumes_only_the_expected_range(monkeypatch, tmp_path):
-    monkeypatch.setattr(speech, "MODEL_FILES", {"model.bin": hashlib.sha256(b"model").hexdigest()})
+    files = {"model.bin": {"revision": "fixed", "sha256": hashlib.sha256(b"model").hexdigest(), "size": 5}}
     (tmp_path / "model.bin.part").write_bytes(b"mo")
     client = httpx.Client
     def respond(request):
         assert request.headers["range"] == "bytes=2-"
         return httpx.Response(206, headers={"Content-Range": "bytes 2-4/5"}, content=b"del")
     monkeypatch.setattr(speech.httpx, "Client", lambda **kw: client(transport=httpx.MockTransport(respond), **kw))
-    speech._ensure_model_files(tmp_path)
+    speech._ensure_model_files(tmp_path, repo="iic/model", files=files)
     assert (tmp_path / "model.bin").read_bytes() == b"model"
     assert not (tmp_path / "model.bin.part").exists()
 
@@ -129,48 +128,6 @@ def test_non_wave_payloads_never_reach_the_media_decoder(monkeypatch):
         with pytest.raises(ValueError, match="无法读取"):
             speech._decode_audio(payload, max_seconds=2)
     decoder.assert_not_called()
-
-
-def stream_model():
-    online = Mock()
-    online.is_ready.return_value = False
-    online.get_result.return_value = "边说边出自"
-    online.is_endpoint.return_value = False
-    model = SimpleNamespace(online=online, transcribe=Mock(return_value="边说边出字。"))
-    return model
-
-
-def test_stream_previews_are_revisions_and_sentence_corrections_are_final():
-    model = stream_model()
-    stream = DictationStream(model)
-    audio = np.zeros(6400, dtype=np.float32)
-    assert stream.push(audio) == [{"segmentId": 0, "revision": 1, "text": "边说边出自", "final": False}]
-    assert stream.push(audio) == []
-    model.online.is_endpoint.return_value = True
-    assert stream.push(audio) == [{"segmentId": 0, "revision": 2, "text": "边说边出字。", "final": True}]
-    assert model.transcribe.call_args.args[0].shape == (19200,)
-    assert stream.frames == []
-    model.online.is_endpoint.return_value = False
-    assert stream.push(audio)[0]["segmentId"] == 1
-
-
-def test_silence_never_calls_the_offline_model_and_failure_keeps_preview():
-    model = stream_model()
-    model.online.get_result.return_value = ""
-    model.online.is_endpoint.return_value = True
-    stream = DictationStream(model)
-    assert stream.push(np.zeros(6400, dtype=np.float32)) == []
-    model.transcribe.assert_not_called()
-    model.online.get_result.return_value = "保留原文"
-    model.transcribe.side_effect = RuntimeError("failed")
-    assert stream.push(np.zeros(6400, dtype=np.float32))[0]["text"] == "保留原文"
-
-
-def test_offline_decoder_strips_model_control_tags():
-    model = SpeechEngine.__new__(SpeechEngine)
-    model.offline = Mock()
-    model.offline.create_stream.return_value.result.text = "<|zh|><|NEUTRAL|><|Speech|>你好。"
-    assert model.transcribe(np.zeros(6400, dtype=np.float32)) == "你好。"
 
 
 def test_sessions_are_account_scoped_ordered_and_cancelled_on_restart(monkeypatch):
@@ -281,3 +238,38 @@ def test_authenticated_http_audio_reaches_the_same_account_context_in_threadpool
     assert client.post(path, headers=headers[1], files=files).status_code == 410
     assert client.post(path, headers=headers[0], files=files).json() == {"updates": []}
     get_settings.cache_clear()
+
+
+def test_hotwords_are_bounded_account_session_inputs(monkeypatch):
+    from app.speech_engine import DEFAULT_HOTWORDS
+    model = Mock()
+    monkeypatch.setattr(speech, "_model", model)
+    with use_workspace(1):
+        speech_sessions.open_session(["项目甲", "灯灯"])
+        assert model.create_stream.call_args.args == ((*DEFAULT_HOTWORDS, "项目甲"),)
+        for words in [[""], ["两个 词"], ["长" * 11], ["词"] * 65]:
+            with pytest.raises(ValueError, match="热词"):
+                speech_sessions.open_session(words)
+
+
+def test_oversized_model_response_is_rejected_before_writing(monkeypatch, tmp_path):
+    files = {"model.bin": {"revision": "fixed", "sha256": hashlib.sha256(b"model").hexdigest(), "size": 5}}
+    client = httpx.Client
+    monkeypatch.setattr(speech.httpx, "Client", lambda **kw: client(transport=httpx.MockTransport(lambda _: httpx.Response(200, content=b"too long")), **kw))
+    with pytest.raises(RuntimeError, match="size limit"):
+        speech._ensure_model_files(tmp_path, repo="iic/model", files=files)
+    assert not (tmp_path / "model.bin").exists()
+    assert (tmp_path / "model.bin.part").stat().st_size == 0
+
+
+def test_http_session_accepts_hotwords_and_rejects_invalid_words(monkeypatch):
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+    model = Mock()
+    monkeypatch.setattr(speech, "_model", model)
+    with use_workspace(1):
+        assert client.post("/speech/sessions", json={"hotwords": ["项目甲"]}).status_code == 200
+        assert "项目甲" in model.create_stream.call_args.args[0]
+        assert client.post("/speech/sessions", json={"hotwords": ["长" * 11]}).status_code == 422
+        assert client.post("/speech/sessions", json={"hotwords": ["词"] * 65}).status_code == 422

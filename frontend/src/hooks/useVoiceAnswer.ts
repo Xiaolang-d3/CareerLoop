@@ -5,6 +5,7 @@ import type { VoiceInputService, VoiceInputSession, VoiceTranscript } from "../f
 type VoiceStatus = "idle" | "preparing" | "starting" | "listening";
 const MAX_RECORDING_MS = 10 * 60_000;
 const MAX_QUEUED_AUDIO_MS = 8000;
+const MAX_PREPARING_AUDIO_MS = 60_000;
 
 export function useVoiceAnswer(onFinalTranscript: (update: VoiceTranscript) => void, service?: VoiceInputService, onAudioLevel?: (level: number) => void) {
   const [status, setStatus] = useState<VoiceStatus>("idle");
@@ -44,11 +45,13 @@ export function useVoiceAnswer(onFinalTranscript: (update: VoiceTranscript) => v
     let timer: ReturnType<typeof setTimeout> | undefined;
     const pending: Blob[] = [];
     let transcribing = false;
+    let preparationBacklog = 0;
     const releaseMic = () => { stream?.getTracks().forEach(track => { track.onended = null; track.stop(); }); };
     const cancel = () => {
       controller.abort();
       clearTimeout(timer);
       pending.length = 0;
+      preparationBacklog = 0;
       capture?.close();
       void inputSession?.close();
       releaseMic();
@@ -62,11 +65,13 @@ export function useVoiceAnswer(onFinalTranscript: (update: VoiceTranscript) => v
       setError(message);
     };
     const drain = async () => {
-      if (transcribing || controller.signal.aborted) return;
+      if (!inputSession || transcribing || controller.signal.aborted) return;
       transcribing = true;
       try {
         while (pending.length && !controller.signal.aborted) {
-          const updates = await inputSession!.accept(pending.shift()!, controller.signal);
+          const audio = pending.shift()!;
+          if (preparationBacklog > 0) preparationBacklog -= 1;
+          const updates = await inputSession!.accept(audio, controller.signal);
           if (controller.signal.aborted) return;
           for (const update of updates) {
             if (controller.signal.aborted) return;
@@ -84,8 +89,8 @@ export function useVoiceAnswer(onFinalTranscript: (update: VoiceTranscript) => v
     try {
       capture = createVoiceCapture(audio => {
         if (controller.signal.aborted) return;
-        if (pending.length * VOICE_CHUNK_MS >= MAX_QUEUED_AUDIO_MS) {
-          fail("当前设备处理语音较慢，已暂停以避免文字持续延迟。已显示的文字已保留，请稍后重试。");
+        if ((pending.length - preparationBacklog) * VOICE_CHUNK_MS >= (inputSession ? MAX_QUEUED_AUDIO_MS : MAX_PREPARING_AUDIO_MS)) {
+          fail(inputSession ? "当前设备处理语音较慢，已暂停以避免文字持续延迟。已显示的文字已保留，请稍后重试。" : "语音模型准备时间较长，已停止录音。模型准备完成后请重新打开语音。");
           return;
         }
         pending.push(audio);
@@ -93,20 +98,27 @@ export function useVoiceAnswer(onFinalTranscript: (update: VoiceTranscript) => v
       }, fail, level => {
         if (!controller.signal.aborted) onAudioLevelRef.current?.(level);
       });
-      await currentService.prepare(controller.signal);
-      if (controller.signal.aborted) return;
-      setStatus("starting");
+      // Capture immediately so model loading cannot discard the first words.
+      // Attach rejection handling now, including while permission is pending.
+      const preparation = currentService.prepare(controller.signal).catch(reason => {
+        fail(reason instanceof Error ? reason.message : "语音模型准备失败，请重试。");
+      });
       stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       if (controller.signal.aborted) { releaseMic(); return; }
       for (const track of stream.getTracks()) track.onended = () => fail("麦克风已断开，请重新打开语音输入。");
-      // Permission prompts may remain open for minutes. Create the short-idle
-      // server session only after permission is granted.
-      inputSession = await currentService.open(controller.signal);
-      if (controller.signal.aborted) { void inputSession.close(); return; }
       await capture.start(stream);
       if (controller.signal.aborted) return;
-      setStatus("listening");
       timer = setTimeout(() => fail("已完成 10 分钟连续语音输入，文字已保留。点击语音可以继续。"), MAX_RECORDING_MS);
+      await preparation;
+      if (controller.signal.aborted) return;
+      setStatus("starting");
+      // Create the short-idle server session after permission and preparation.
+      inputSession = await currentService.open(controller.signal);
+      if (controller.signal.aborted) { void inputSession.close(); return; }
+      preparationBacklog = pending.length;
+      void drain();
+      if (controller.signal.aborted) return;
+      setStatus("listening");
     } catch (reason) {
       if (reason instanceof DOMException && ["NotAllowedError", "SecurityError"].includes(reason.name)) {
         fail("无法使用麦克风。请在浏览器和系统设置中允许麦克风权限后重试。");

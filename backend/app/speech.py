@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import logging
 import threading
 from pathlib import Path
@@ -12,19 +13,7 @@ import httpx
 
 from .workspace import data_dir
 
-MODEL_REPO = "csukuangfj/sherpa-onnx-streaming-paraformer-bilingual-zh-en"
-MODEL_REVISION = "8e40c43232a1c5c66c82111efc5820d3accca11b"
-MODEL_FILES = {
-    "encoder.int8.onnx": "81a70226a8934e6ed92aa1d4fc486b428b5398e2f2619ed4897b7294cab90e9a",
-    "decoder.int8.onnx": "f3cca9f77bb9d93c8fcbfb63ae617b6b1ee96818df3aa3b151c40658fe38594f",
-    "tokens.txt": "59aba8873a2ed1e122c25fee421e25f283b63290efbde85c1f01a853d83cb6e6",
-}
-OFFLINE_REPO = "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
-OFFLINE_REVISION = "2365baeacb507f821a0c8120fcee3d484dba7a07"
-OFFLINE_FILES = {
-    "model.int8.onnx": "c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51",
-    "tokens.txt": "f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc",
-}
+MODEL_MANIFEST = json.loads(Path(__file__).with_name("speech-models.json").read_text(encoding="utf-8"))
 MAX_AUDIO_SECONDS = 120
 SAMPLE_RATE = 16_000
 logger = logging.getLogger(__name__)
@@ -36,7 +25,7 @@ _state = "idle"
 _error = ""
 _downloaded = 0
 _progress = 0
-_MODEL_TOTAL_BYTES = 476_752_236
+_MODEL_TOTAL_BYTES = sum(spec["size"] for model in MODEL_MANIFEST.values() for spec in model["files"].values())
 
 
 class SpeechBusyError(RuntimeError):
@@ -60,13 +49,13 @@ def _file_hash(path: Path) -> str:
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
-def _ensure_model_files(directory: Path, *, repo: str = MODEL_REPO,
-                        revision: str = MODEL_REVISION, files: dict[str, str] | None = None) -> None:
+def _ensure_model_files(directory: Path, *, repo: str, files: dict[str, dict]) -> None:
     # Standard HTTPS avoids the optional Hub/Xet transport, which can stall
     # behind proxies. Fixed revisions and hashes also make retries verifiable.
     directory.mkdir(parents=True, exist_ok=True)
     with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(30, connect=15)) as client:
-        for name, expected_hash in (files if files is not None else MODEL_FILES).items():
+        for name, spec in files.items():
+            expected_hash = spec["sha256"]
             destination = directory / name
             if destination.is_file() and _file_hash(destination) == expected_hash:
                 _download_progress(destination.stat().st_size)
@@ -77,7 +66,7 @@ def _ensure_model_files(directory: Path, *, repo: str = MODEL_REPO,
                 partial.replace(destination)
                 continue
             try:
-                url = f"https://huggingface.co/{repo}/resolve/{revision}/{name}"
+                url = f"https://modelscope.cn/api/v1/models/{repo}/repo?Revision={spec['revision']}&FilePath={name}"
                 offset = partial.stat().st_size if partial.is_file() else 0
                 headers = {"Range": f"bytes={offset}-"} if offset else {}
                 with client.stream("GET", url, headers=headers) as response:
@@ -88,11 +77,11 @@ def _ensure_model_files(directory: Path, *, repo: str = MODEL_REPO,
                     with partial.open("ab" if resumed else "wb") as target:
                         for chunk in response.iter_bytes(1024 * 1024):
                             downloaded += len(chunk)
-                            if downloaded > 600 * 1024 * 1024:
+                            if downloaded > spec["size"]:
                                 raise RuntimeError("Speech model download exceeds size limit")
                             target.write(chunk)
                             _download_progress(len(chunk))
-                if _file_hash(partial) != expected_hash:
+                if partial.stat().st_size != spec["size"] or _file_hash(partial) != expected_hash:
                     partial.unlink(missing_ok=True)
                     raise RuntimeError("Speech model checksum mismatch")
                 partial.replace(destination)
@@ -106,14 +95,13 @@ def _ensure_model_files(directory: Path, *, repo: str = MODEL_REPO,
 
 def _load_model() -> Any:
     from .speech_engine import SpeechEngine
-    online = data_dir() / "models" / "speech-paraformer"
-    offline = data_dir() / "models" / "speech-sensevoice"
-    _ensure_model_files(online)
-    _ensure_model_files(offline, repo=OFFLINE_REPO, revision=OFFLINE_REVISION, files=OFFLINE_FILES)
+    root = data_dir() / "models" / "funasr-2pass"
     notice = Path(__file__).with_name("speech-models-NOTICE.txt").read_text(encoding="utf-8")
-    for directory in (online, offline):
+    for name, model in MODEL_MANIFEST.items():
+        directory = root / name
+        _ensure_model_files(directory, repo=model["repo"], files=model["files"])
         (directory / "NOTICE.txt").write_text(notice, encoding="utf-8")
-    return SpeechEngine(online, offline)
+    return SpeechEngine(root)
 
 
 def _prepare() -> None:

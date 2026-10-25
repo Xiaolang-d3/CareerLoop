@@ -15,4 +15,6 @@ httpx==0.28.1
 feedparser==6.0.14
 av==18.1.0
 numpy==2.4.6
-sherpa-onnx==2.0.0
+onnxruntime==1.31.0
+kaldi-native-fbank==1.22.4
+PyYAML==6.0.3

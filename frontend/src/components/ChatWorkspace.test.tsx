@@ -371,7 +371,6 @@ describe("ChatWorkspace", () => {
       expect(button).not.toHaveClass("is-recording");
       expect(button).toHaveAttribute("aria-pressed", "false");
       await act(async () => ready());
-      expect(getUserMedia).not.toHaveBeenCalled();
       expect(voiceInput.open).not.toHaveBeenCalled();
     } finally { cleanup(); vi.stubGlobal("navigator", originalNavigator); voiceCaptureMocks.supported = false; }
   });
