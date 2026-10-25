@@ -1,4 +1,7 @@
 /* Keep the editor and controls in separate rows in every conversation state. */
+.composer-voice-feedback { display: flex; align-items: flex-start; gap: 6px; padding: 8px 10px; border-radius: 8px; background: var(--color-brand-soft); color: var(--color-text-secondary); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.composer-voice-feedback > svg { flex: none; margin-top: 3px; }
+.composer-voice-feedback.is-error { color: var(--color-text); background: color-mix(in srgb, var(--color-text-muted) 8%, var(--color-surface)); }
 .chat-workspace .chat-composer .composer-input.composer-input--enhanced {
   --composer-frame-shadow: 0 6px 24px color-mix(in srgb, var(--color-text) 3%, transparent), 0 0 28px 2px color-mix(in srgb, var(--color-brand) 7%, transparent);
   --composer-frame-focus: 0 0 12px 2px color-mix(in srgb, var(--color-brand) 18%, transparent), 0 0 28px 4px color-mix(in srgb, var(--color-brand) 12%, transparent), 0 6px 24px color-mix(in srgb, var(--color-text) 3%, transparent);

@@ -14,6 +14,8 @@ import type { AgentRunResult, ChatMessage, ChatAttachment, WebSearchOptions, Cha
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from "react";
 import { useVoiceAnswer } from "../hooks/useVoiceAnswer";
+import { VoiceDraftEditor } from "../features/chat/voiceDraft";
+import type { VoiceTranscript } from "../features/chat/voiceInput";
 
 import { ConversationHistoryPanel } from "./ConversationHistoryPanel";
 
@@ -84,18 +86,24 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   draftsRef.current = drafts;
   const auiRef = useRef(aui);
   auiRef.current = aui;
-  const appendVoiceTranscript = useCallback((spoken: string) => {
+  const voiceDraftRef = useRef(new VoiceDraftEditor());
+  useLayoutEffect(() => { voiceDraftRef.current.observe(composerText); }, [composerText]);
+  const appendVoiceTranscript = useCallback((update: VoiceTranscript) => {
     const current = auiRef.current.composer().getState().text;
-    const next = `${current.replace(/\s+$/, "")}${current.trim() ? " " : ""}${spoken}`.slice(0, 200_000);
-    flushTapSync(() => { auiRef.current.composer().setText(next); });
+    const input = props.chatInputRef.current;
+    const selection = { start: input?.selectionStart ?? current.length, end: input?.selectionEnd ?? current.length };
+    const change = voiceDraftRef.current.apply(current, update, selection);
+    if (!change) return;
+    flushTapSync(() => { auiRef.current.composer().setText(change.text); });
+    input?.setSelectionRange(change.selection.start, change.selection.end);
     const id = props.currentConversationId;
-    if (id) draftsRef.current.set(id, next);
+    if (id) draftsRef.current.set(id, change.text);
     props.onPersistComposerDrafts?.();
-  }, [props.currentConversationId, props.onPersistComposerDrafts]);
-  const voice = useVoiceAnswer(appendVoiceTranscript);
-  const stopVoiceRef = useRef(voice.stopListening);
-  stopVoiceRef.current = voice.stopListening;
-  useEffect(() => { stopVoiceRef.current(); }, [props.chatBusy, props.currentConversationId]);
+  }, [props.currentConversationId, props.onPersistComposerDrafts, props.chatInputRef]);
+  const voice = useVoiceAnswer(appendVoiceTranscript, props.voiceInput);
+  const stopVoiceRef = useRef(voice.cancelListening);
+  stopVoiceRef.current = voice.cancelListening;
+  useLayoutEffect(() => { stopVoiceRef.current(); }, [props.chatBusy, props.currentConversationId, props.voiceInput]);
   const persistDraftsRef = useRef(props.onPersistComposerDrafts);
   persistDraftsRef.current = props.onPersistComposerDrafts;
   const loadedDraftConversation = useRef<number | null | undefined>(undefined);
@@ -544,21 +552,26 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                 rows={1}
                 maxLength={200_000}
                 aria-label="输入消息"
-                aria-describedby="composer-input-hint"
+                aria-describedby={`composer-input-hint${voice.error ? " composer-voice-feedback" : ""}`}
                 placeholder={clarification ? "回答上面的问题，或直接说下一件…" : "直接说说你的想法…"}
                 submitMode="enter"
                 unstable_insertNewlineOnTouchEnter
                 onPaste={handleComposerPaste}
               />
+              {voice.error ? (
+                <div id="composer-voice-feedback" className="composer-voice-feedback is-error" role="alert">
+                  <TriangleAlert size={16} aria-hidden="true" /><span>{voice.error}</span>
+                </div>
+              ) : null}
               <div className="composer-bottom-row">
                 <div className="composer-shortcuts" role="group" aria-label="输入选项">
                   <button className="composer-tool composer-attachment-tool" type="button" aria-label={props.attachmentBusy ? "附件处理中" : "添加附件"} onClick={() => attachmentInputRef.current?.click()} disabled={props.attachmentBusy} title={props.attachmentBusy ? "正在处理附件" : "添加图片或文档，也可粘贴图片或拖入文件"}>
                     {props.attachmentBusy ? <LoaderCircle className="spinning" size={16} aria-hidden="true" /> : <Paperclip size={20} aria-hidden="true" />}
                     <span>添加资料</span>
                   </button>
-                  <button className={`composer-tool composer-voice-tool${voice.listening ? " active" : ""}`} type="button" aria-pressed={voice.listening} aria-label={voice.listening ? "停止语音输入" : "语音输入"} disabled={props.chatBusy} title={voice.error || (voice.listening ? "正在听，点击停止" : "说出内容后追加到输入框，不会自动发送")} onClick={() => { if (voice.listening) voice.stopListening(); else voice.startListening(); }}>
+                  <button className={`composer-tool composer-voice-tool${voice.listening ? " active" : ""}`} type="button" aria-pressed={voice.listening} aria-label={voice.listening ? "停止语音输入" : "语音输入"} disabled={props.chatBusy} title={voice.error || (voice.listening ? "正在自动转录，点击关闭" : "打开后边说边转成文字，停顿时自动修正，不会自动发送")} onClick={() => { if (voice.listening) voice.stopListening(); else { voiceDraftRef.current = new VoiceDraftEditor(); void voice.startListening(); } }}>
                     <Mic size={20} aria-hidden="true" />
-                    <span>{voice.listening ? "正在听" : "语音"}</span>
+                    <span>{voice.status === "preparing" ? `准备中${voice.modelProgress > 0 ? ` ${voice.modelProgress}%` : ""}` : voice.status === "starting" ? "启动中" : voice.listening ? "停止转录" : "语音"}</span>
                   </button>
                   <ComposerWebSearch options={props.webSearchOptions} onChange={props.onWebSearchOptionsChange}
                     capabilities={props.webSearchCapabilities} available={props.webSearchAvailable} provider={props.webSearchProvider}

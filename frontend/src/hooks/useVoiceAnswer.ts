@@ -1,121 +1,126 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createVoiceCapture, voiceCaptureSupported, VOICE_CHUNK_MS, type VoiceCapture } from "../features/chat/voiceCapture";
+import type { VoiceInputService, VoiceInputSession, VoiceTranscript } from "../features/chat/voiceInput";
 
-const SPEECH_LANG = "zh-CN";
+type VoiceStatus = "idle" | "preparing" | "starting" | "listening";
+const MAX_RECORDING_MS = 10 * 60_000;
+const MAX_QUEUED_AUDIO_MS = 8000;
 
-function getSpeechRecognitionCtor(): (new () => SpeechRecognitionLike) | null {
-  if (typeof window === "undefined") return null;
-  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
-}
-
-export type VoiceAnswer = {
-  /** The browser supports both speech recognition and speech synthesis. */
-  recognitionSupported: boolean;
-  synthesisSupported: boolean;
-  listening: boolean;
-  interimTranscript: string;
-  speaking: boolean;
-  error: string;
-  startListening: () => void;
-  stopListening: () => void;
-  speak: (text: string) => void;
-  stopSpeaking: () => void;
-};
-
-/**
- * Wraps the browser-native Web Speech API for a single practice question:
- * transcribe a spoken answer (mic) and read a question aloud (speaker).
- * Everything runs client-side; no audio ever leaves the browser.
- */
-export function useVoiceAnswer(onFinalTranscript: (text: string) => void): VoiceAnswer {
-  const [listening, setListening] = useState(false);
-  const [interimTranscript, setInterimTranscript] = useState("");
-  const [speaking, setSpeaking] = useState(false);
+export function useVoiceAnswer(onFinalTranscript: (update: VoiceTranscript) => void, service?: VoiceInputService) {
+  const [status, setStatus] = useState<VoiceStatus>("idle");
   const [error, setError] = useState("");
-  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const [modelProgress, setModelProgress] = useState(0);
+  const sessionRef = useRef<{ cancel: () => void } | null>(null);
   const onFinalTranscriptRef = useRef(onFinalTranscript);
   onFinalTranscriptRef.current = onFinalTranscript;
+  const serviceRef = useRef(service);
+  serviceRef.current = service;
 
-  const recognitionSupported = getSpeechRecognitionCtor() !== null;
-  const synthesisSupported = typeof window !== "undefined" && "speechSynthesis" in window;
+  useEffect(() => () => { sessionRef.current?.cancel(); }, []);
 
-  useEffect(() => () => {
-    recognitionRef.current?.abort();
-    if (synthesisSupported) window.speechSynthesis.cancel();
-  }, [synthesisSupported]);
-
-  const startListening = useCallback(() => {
-    const Ctor = getSpeechRecognitionCtor();
-    if (!Ctor) {
-      setError("当前浏览器不支持语音识别，请使用最新版 Chrome");
+  const startListening = useCallback(async () => {
+    if (sessionRef.current) return;
+    setError("");
+    setModelProgress(0);
+    if (window.isSecureContext === false) {
+      setError("麦克风需要安全连接，请通过 HTTPS 或本机 localhost 地址打开灯灯。");
       return;
     }
-    setError("");
-    setInterimTranscript("");
-    const recognition = new Ctor();
-    recognition.lang = SPEECH_LANG;
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.onresult = (event) => {
-      let finalChunk = "";
-      let interimChunk = "";
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
-        const result = event.results[index];
-        const transcript = result[0]?.transcript || "";
-        if (result.isFinal) finalChunk += transcript;
-        else interimChunk += transcript;
+    if (!navigator.mediaDevices?.getUserMedia || !voiceCaptureSupported()) {
+      setError("当前浏览器不支持录音。请使用支持麦克风录音的浏览器，或点击输入框使用系统听写。");
+      return;
+    }
+    const currentService = serviceRef.current;
+    if (!currentService) {
+      setError("离线语音服务尚未连接，请刷新页面后重试。");
+      return;
+    }
+
+    const controller = new AbortController();
+    let capture: VoiceCapture | undefined;
+    let inputSession: VoiceInputSession | undefined;
+    let stream: MediaStream | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const pending: Blob[] = [];
+    let transcribing = false;
+    const releaseMic = () => { stream?.getTracks().forEach(track => { track.onended = null; track.stop(); }); };
+    const cancel = () => {
+      controller.abort();
+      clearTimeout(timer);
+      pending.length = 0;
+      capture?.close();
+      void inputSession?.close();
+      releaseMic();
+      sessionRef.current = null;
+    };
+    const fail = (message: string) => {
+      if (controller.signal.aborted) return;
+      cancel();
+      setStatus("idle");
+      setError(message);
+    };
+    const drain = async () => {
+      if (transcribing || controller.signal.aborted) return;
+      transcribing = true;
+      try {
+        while (pending.length && !controller.signal.aborted) {
+          const updates = await inputSession!.accept(pending.shift()!, controller.signal);
+          if (controller.signal.aborted) return;
+          for (const update of updates) {
+            if (controller.signal.aborted) return;
+            onFinalTranscriptRef.current(update);
+          }
+        }
+      } catch (reason) {
+        fail(reason instanceof Error ? reason.message : "离线识别未能完成，请重试。");
+      } finally {
+        transcribing = false;
       }
-      if (finalChunk.trim()) onFinalTranscriptRef.current(finalChunk.trim());
-      setInterimTranscript(interimChunk);
     };
-    recognition.onerror = (event) => {
-      setError(event.error === "not-allowed" ? "麦克风权限被拒绝，请在浏览器设置中允许后重试" : "语音识别出现问题，请重试");
-      setListening(false);
-    };
-    recognition.onend = () => {
-      setListening(false);
-      setInterimTranscript("");
-    };
-    recognitionRef.current = recognition;
+    sessionRef.current = { cancel };
+    setStatus("preparing");
     try {
-      recognition.start();
-      setListening(true);
-    } catch {
-      setError("无法启动语音识别，请重试");
+      capture = createVoiceCapture(audio => {
+        if (controller.signal.aborted) return;
+        if (pending.length * VOICE_CHUNK_MS >= MAX_QUEUED_AUDIO_MS) {
+          fail("当前设备处理语音较慢，已暂停以避免文字持续延迟。已显示的文字已保留，请稍后重试。");
+          return;
+        }
+        pending.push(audio);
+        void drain();
+      }, fail);
+      await currentService.prepare(controller.signal, progress => {
+        if (!controller.signal.aborted) setModelProgress(progress);
+      });
+      if (controller.signal.aborted) return;
+      setStatus("starting");
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      if (controller.signal.aborted) { releaseMic(); return; }
+      for (const track of stream.getTracks()) track.onended = () => fail("麦克风已断开，请重新打开语音输入。");
+      // Permission prompts may remain open for minutes. Create the short-idle
+      // server session only after permission is granted.
+      inputSession = await currentService.open(controller.signal);
+      if (controller.signal.aborted) { void inputSession.close(); return; }
+      await capture.start(stream);
+      if (controller.signal.aborted) return;
+      setStatus("listening");
+      timer = setTimeout(() => fail("已完成 10 分钟连续语音输入，文字已保留。点击语音可以继续。"), MAX_RECORDING_MS);
+    } catch (reason) {
+      if (reason instanceof DOMException && ["NotAllowedError", "SecurityError"].includes(reason.name)) {
+        fail("无法使用麦克风。请在浏览器和系统设置中允许麦克风权限后重试。");
+      } else if (reason instanceof DOMException && ["NotFoundError", "NotReadableError"].includes(reason.name)) {
+        fail("无法获取麦克风声音，请检查麦克风是否已连接或被占用。");
+      } else {
+        fail(reason instanceof Error ? reason.message : "无法启动录音，请重试。");
+      }
     }
   }, []);
 
-  const stopListening = useCallback(() => {
-    recognitionRef.current?.stop();
-    setListening(false);
+  const cancelListening = useCallback(() => {
+    sessionRef.current?.cancel();
+    setStatus("idle");
+    setError("");
   }, []);
 
-  const speak = useCallback((text: string) => {
-    if (!synthesisSupported || !text.trim()) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = SPEECH_LANG;
-    utterance.onstart = () => setSpeaking(true);
-    utterance.onend = () => setSpeaking(false);
-    utterance.onerror = () => setSpeaking(false);
-    window.speechSynthesis.speak(utterance);
-  }, [synthesisSupported]);
-
-  const stopSpeaking = useCallback(() => {
-    if (!synthesisSupported) return;
-    window.speechSynthesis.cancel();
-    setSpeaking(false);
-  }, [synthesisSupported]);
-
-  return {
-    recognitionSupported,
-    synthesisSupported,
-    listening,
-    interimTranscript,
-    speaking,
-    error,
-    startListening,
-    stopListening,
-    speak,
-    stopSpeaking,
-  };
+  return { status, modelProgress, listening: status !== "idle", error, startListening, stopListening: cancelListening, cancelListening };
 }

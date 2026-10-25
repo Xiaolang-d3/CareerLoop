@@ -4,6 +4,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatWorkspace } from "./ChatWorkspace";
 import type { AgentRunResult, ChatMessage, ChatRetryDraft, ChatAttachment, ChatComposerDraft, ChatWorkspaceProps, WebSearchOptions } from "../features/chat/types";
 
+const voiceCaptureMocks = vi.hoisted(() => ({
+  supported: false,
+  emit: null as ((audio: Blob) => void) | null,
+  close: vi.fn()
+}));
+vi.mock("../features/chat/voiceCapture", () => ({
+  voiceCaptureSupported: () => voiceCaptureMocks.supported,
+  VOICE_CHUNK_MS: 400,
+  createVoiceCapture: (emit: (audio: Blob) => void) => {
+    voiceCaptureMocks.emit = emit;
+    return { start: async () => undefined, close: voiceCaptureMocks.close };
+  }
+}));
+
 const mermaidMocks = vi.hoisted(() => ({
   initialize: vi.fn(),
   render: vi.fn()
@@ -57,6 +71,7 @@ function fencedMermaid(source: string): string {
 }
 
 function renderChat(messages: ChatMessage[] = [message], extras: {
+  voiceInput?: ChatWorkspaceProps["voiceInput"];
   onLoadResults?: ChatWorkspaceProps["onLoadResults"];
   onSaveResult?: ChatWorkspaceProps["onSaveResult"];
   density?: "page" | "dock";
@@ -85,6 +100,7 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
   onUndoReplacement?: () => Promise<void>;
 } = {}) {
   const props = {
+    voiceInput: extras.voiceInput,
     onLoadResults: extras.onLoadResults,
     onSaveResult: extras.onSaveResult,
     libraryAttachments: extras.libraryAttachments,
@@ -290,29 +306,46 @@ describe("ChatWorkspace", () => {
     expect(screen.queryByRole("button", { name: /回到最新/ })).not.toBeInTheDocument();
   });
 
-  it("appends spoken text to the composer without sending it", async () => {
-    const heard: FakeRecognition[] = [];
-    class FakeRecognition {
-      lang = "";
-      continuous = false;
-      interimResults = false;
-      onresult: ((event: { resultIndex: number; results: Array<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null = null;
-      onerror: (() => void) | null = null;
-      onend: (() => void) | null = null;
-      start() { heard.push(this); }
-      stop() { this.onend?.(); }
-      abort() {}
-    }
-    vi.stubGlobal("SpeechRecognition", FakeRecognition);
-    const p = renderChat();
-    fireEvent.click(screen.getByRole("button", { name: "语音输入" }));
-    expect(heard).toHaveLength(1);
-    await act(async () => {
-      heard[0].onresult?.({ resultIndex: 0, results: [{ isFinal: true, 0: { transcript: "这是一段长问题" } }] });
-    });
-    expect(screen.getByRole("textbox", { name: "输入消息" })).toHaveValue("这是一段长问题");
-    expect(p.onSend).not.toHaveBeenCalled();
-    vi.stubGlobal("SpeechRecognition", undefined);
+  it("appends continuous transcripts while listening and stops without sending or a status banner", async () => {
+    const originalNavigator = window.navigator;
+    const stop = vi.fn();
+    voiceCaptureMocks.supported = true;
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop }] }) } });
+    try {
+      const session = { close: vi.fn().mockResolvedValue(undefined), accept: vi.fn().mockResolvedValueOnce([{ segmentId: 0, revision: 1, text: "第一自", final: false }]).mockResolvedValueOnce([{ segmentId: 0, revision: 2, text: "第一句。", final: true }]).mockResolvedValueOnce([{ segmentId: 1, revision: 1, text: "第二句。", final: true }]) };
+      const voiceInput = { prepare: vi.fn().mockResolvedValue(undefined), open: vi.fn().mockResolvedValue(session) };
+      const p = renderChat([], { voiceInput });
+      fireEvent.change(screen.getByRole("textbox", { name: "输入消息" }), { target: { value: "原有草稿" } });
+      fireEvent.click(screen.getByRole("button", { name: "语音输入" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "停止语音输入" })).toHaveTextContent("停止转录"));
+      await act(async () => voiceCaptureMocks.emit?.(new Blob(["first"], { type: "audio/wav" })));
+      expect(screen.getByRole("textbox", { name: "输入消息" })).toHaveValue("原有草稿第一自");
+      expect(stop).not.toHaveBeenCalled();
+      await act(async () => voiceCaptureMocks.emit?.(new Blob(["revision"], { type: "audio/wav" })));
+      expect(screen.getByRole("textbox", { name: "输入消息" })).toHaveValue("原有草稿第一句。");
+      await act(async () => voiceCaptureMocks.emit?.(new Blob(["second"], { type: "audio/wav" })));
+      expect(screen.getByRole("textbox", { name: "输入消息" })).toHaveValue("原有草稿第一句。第二句。");
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      expect(screen.getByRole("textbox", { name: "输入消息" })).toHaveAttribute("aria-describedby", "composer-input-hint");
+      fireEvent.click(screen.getByRole("button", { name: "停止语音输入" }));
+      expect(screen.getByRole("button", { name: "语音输入" })).toHaveAttribute("aria-pressed", "false");
+      expect(stop).toHaveBeenCalled();
+      await act(async () => voiceCaptureMocks.emit?.(new Blob(["late"])));
+      expect(session.accept).toHaveBeenCalledTimes(3);
+      expect(session.close).toHaveBeenCalled();
+      expect(screen.getByRole("textbox", { name: "输入消息" })).toHaveValue("原有草稿第一句。第二句。");
+      expect(p.onSend).not.toHaveBeenCalled();
+    } finally { cleanup(); vi.stubGlobal("navigator", originalNavigator); voiceCaptureMocks.supported = false; }
+  });
+
+  it("shows voice failures visibly rather than only in the button tooltip", async () => {
+    vi.stubGlobal("MediaRecorder", undefined);
+    try {
+      renderChat([]);
+      fireEvent.click(screen.getByRole("button", { name: "语音输入" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("当前浏览器不支持录音");
+      expect(screen.getByRole("textbox", { name: "输入消息" })).toHaveAttribute("aria-describedby", "composer-input-hint composer-voice-feedback");
+    } finally { cleanup(); vi.stubGlobal("MediaRecorder", undefined); }
   });
 
   it("adds every selected file until the eight-file limit", async () => {

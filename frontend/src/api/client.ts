@@ -345,10 +345,10 @@ function formatValidationErrors(items: ValidationErrorItem[]): string {
 }
 
 export function createApiClient(apiBase: string, accessToken?: string) {
-  return async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
+  return async function fetchJson<T>(path: string, options?: RequestInit, timeoutMs = DEFAULT_API_TIMEOUT_MS): Promise<T> {
     const headers = new Headers(options?.headers);
     if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
-    const response = await fetchWithTimeout(`${apiBase}${path}`, { ...options, headers });
+    const response = await fetchWithTimeout(`${apiBase}${path}`, { ...options, headers }, timeoutMs);
     if (!response.ok) {
       const body = await response.text().catch(() => "");
       let message = `${path} 请求失败（${response.status}） @ ${apiBase}`;

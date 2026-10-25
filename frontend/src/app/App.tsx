@@ -11,6 +11,7 @@ import { useConversations } from "../features/chat/useConversations";
 import { useLibrary } from "../features/library/useLibrary";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createApiClient, fetchWithTimeout } from "../api/client";
+import { createVoiceInputService } from "../features/chat/voiceInput";
 import type { AuthUser } from "../components/AuthGate";
 import { AssistantSurface } from "../components/AssistantSurface";
 import { AIWorkspaceModules } from "../features/chat/AIWorkspaceModules";
@@ -149,6 +150,7 @@ export function App({
 }) {
   const userEmail = user.email;
   const fetchJson = useMemo(() => createApiClient(apiBase, accessToken), [apiBase, accessToken]);
+  const voiceInput = useMemo(() => createVoiceInputService(fetchJson), [fetchJson]);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [avatarEpoch, setAvatarEpoch] = useState(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readPreference("careerloop-sidebar", userEmail) === "collapsed");
@@ -1270,6 +1272,7 @@ export function App({
             webSearchCapabilitiesError={webSearchCapabilitiesError}
             onRefreshWebSearchCapabilities={refreshCapabilities}
             onUploadAttachment={uploadChatAttachment}
+            voiceInput={voiceInput}
             onLoadAttachment={loadChatAttachment}
             onLoadAttachmentThumbnail={async (attachment, signal) => {
               const response = await fetchWithTimeout(`${apiBase}/${attachment.origin === "generated" ? "chat-assets" : "attachments"}/${encodeURIComponent(attachment.id)}/thumbnail`, { signal, headers: { Authorization: `Bearer ${accessToken}` } });

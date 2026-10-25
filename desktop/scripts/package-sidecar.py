@@ -136,6 +136,7 @@ def main() -> None:
             "--specpath", str(work),
             "--add-data", f"{BACKEND / 'app' / 'password_policy.json'}{os.pathsep}app",
             "--add-data", f"{BACKEND / 'app' / 'password_policy-LICENSE.txt'}{os.pathsep}app",
+            "--add-data", f"{BACKEND / 'app' / 'speech-models-NOTICE.txt'}{os.pathsep}app",
             "--add-data", f"{BACKEND / 'app' / 'agent' / 'skills' / 'image-design' / 'SKILL.md'}{os.pathsep}app/agent/skills/image-design",
             "--add-data", f"{BACKEND / 'app' / 'agent' / 'skills' / 'daily-news-curator' / 'SKILL.md'}{os.pathsep}app/agent/skills/daily-news-curator",
             # These are development or optional-model dependencies.  Runtime
@@ -154,14 +155,13 @@ def main() -> None:
             "--exclude-module", "pandas",
             "--exclude-module", "scipy",
             "--exclude-module", "spacy",
-            # Image OCR is optional and imported lazily.  Shipping its
-            # native inference stack adds roughly 70 MB. Keep it available in
-            # source/web development and move it to a separately installable
-            # desktop component later.
+            # Image OCR and document parsing remain optional. Offline speech
+            # includes NumPy and sherpa's ONNX runtime below.
             "--exclude-module", "rapidocr",
-            "--exclude-module", "onnxruntime",
             "--exclude-module", "cv2",
-            "--exclude-module", "numpy",
+            # Offline two-pass speech uses sherpa's native ONNX runtime.
+            "--collect-all", "sherpa_onnx",
+            "--collect-all", "av",
             "--exclude-module", "shapely",
             # LiteLLM model layer (docs/model-layer.md).  litellm is imported
             # lazily, so PyInstaller cannot see it: collect the SDK's Python

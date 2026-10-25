@@ -158,6 +158,7 @@ export type ChatComposerDraft = {
 };
 
 export type ChatWorkspaceProps = ResultServices & {
+  voiceInput?: import("./voiceInput").VoiceInputService;
   conversationTitle?: string;
   currentModelName?: string;
   modelProfiles?: Array<{ id: string; model_name: string; connection_name: string; connection_id?: string }>;
