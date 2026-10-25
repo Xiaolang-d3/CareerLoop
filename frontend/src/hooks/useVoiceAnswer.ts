@@ -6,13 +6,14 @@ type VoiceStatus = "idle" | "preparing" | "starting" | "listening";
 const MAX_RECORDING_MS = 10 * 60_000;
 const MAX_QUEUED_AUDIO_MS = 8000;
 
-export function useVoiceAnswer(onFinalTranscript: (update: VoiceTranscript) => void, service?: VoiceInputService) {
+export function useVoiceAnswer(onFinalTranscript: (update: VoiceTranscript) => void, service?: VoiceInputService, onAudioLevel?: (level: number) => void) {
   const [status, setStatus] = useState<VoiceStatus>("idle");
   const [error, setError] = useState("");
-  const [modelProgress, setModelProgress] = useState(0);
   const sessionRef = useRef<{ cancel: () => void } | null>(null);
   const onFinalTranscriptRef = useRef(onFinalTranscript);
   onFinalTranscriptRef.current = onFinalTranscript;
+  const onAudioLevelRef = useRef(onAudioLevel);
+  onAudioLevelRef.current = onAudioLevel;
   const serviceRef = useRef(service);
   serviceRef.current = service;
 
@@ -21,7 +22,7 @@ export function useVoiceAnswer(onFinalTranscript: (update: VoiceTranscript) => v
   const startListening = useCallback(async () => {
     if (sessionRef.current) return;
     setError("");
-    setModelProgress(0);
+    onAudioLevelRef.current?.(0);
     if (window.isSecureContext === false) {
       setError("麦克风需要安全连接，请通过 HTTPS 或本机 localhost 地址打开灯灯。");
       return;
@@ -51,6 +52,7 @@ export function useVoiceAnswer(onFinalTranscript: (update: VoiceTranscript) => v
       capture?.close();
       void inputSession?.close();
       releaseMic();
+      onAudioLevelRef.current?.(0);
       sessionRef.current = null;
     };
     const fail = (message: string) => {
@@ -88,10 +90,10 @@ export function useVoiceAnswer(onFinalTranscript: (update: VoiceTranscript) => v
         }
         pending.push(audio);
         void drain();
-      }, fail);
-      await currentService.prepare(controller.signal, progress => {
-        if (!controller.signal.aborted) setModelProgress(progress);
+      }, fail, level => {
+        if (!controller.signal.aborted) onAudioLevelRef.current?.(level);
       });
+      await currentService.prepare(controller.signal);
       if (controller.signal.aborted) return;
       setStatus("starting");
       stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
@@ -122,5 +124,5 @@ export function useVoiceAnswer(onFinalTranscript: (update: VoiceTranscript) => v
     setError("");
   }, []);
 
-  return { status, modelProgress, listening: status !== "idle", error, startListening, stopListening: cancelListening, cancelListening };
+  return { status, listening: status !== "idle", error, startListening, stopListening: cancelListening, cancelListening };
 }
