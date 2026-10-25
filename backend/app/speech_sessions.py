@@ -66,8 +66,12 @@ def _schedule_expiry(key: str, session: Session) -> None:
     session.timer.start()
 
 
-def open_session() -> str:
+def open_session(hotwords: list[str] | None = None) -> str:
     owner = _owner()
+    from .speech_engine import DEFAULT_HOTWORDS
+    if hotwords is not None and (len(hotwords) > 64 or any(len(word) > 10 or not word.strip() or any(char.isspace() for char in word) for word in hotwords)):
+        raise ValueError("热词最多 64 个，每个为不含空白的 1–10 字词语。")
+    words = tuple(dict.fromkeys((*DEFAULT_HOTWORDS, *(hotwords or []))))
     engine = speech.ready_model()
     with _registry_lock:
         _prune()
@@ -81,7 +85,7 @@ def open_session() -> str:
             raise speech.SpeechBusyError("当前语音服务繁忙，请稍后重试。")
         key = secrets.token_urlsafe(24)
         now = time.monotonic()
-        session = Session(owner, engine.create_stream(), created=now, touched=now)
+        session = Session(owner, engine.create_stream(words), created=now, touched=now)
         _sessions[key] = session
         _schedule_expiry(key, session)
         return key

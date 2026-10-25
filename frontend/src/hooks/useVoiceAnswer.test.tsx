@@ -86,17 +86,63 @@ describe("continuous offline voice input", () => {
     expect(result.current.listening).toBe(true);
   });
 
-  it("does not open the microphone when preparation is cancelled", async () => {
+  it("captures during preparation and releases the microphone when cancelled", async () => {
     const pending = deferred<void>();
     service.prepare.mockReturnValueOnce(pending.promise);
     const { result } = renderHook(() => useVoiceAnswer(vi.fn(), service));
     let start!: Promise<void>;
-    act(() => { start = result.current.startListening(); });
+    await act(async () => { start = result.current.startListening(); });
     expect(result.current.status).toBe("preparing");
+    expect(capture.start).toHaveBeenCalled();
     act(() => result.current.stopListening());
     await act(async () => { pending.resolve(); await start; });
-    expect(getUserMedia).not.toHaveBeenCalled();
+    expect(track.stop).toHaveBeenCalled();
     expect(capture.close).toHaveBeenCalled();
+  });
+
+  it("keeps the first audio during model preparation and transcribes it in order when ready", async () => {
+    const pending = deferred<void>();
+    service.prepare.mockReturnValueOnce(pending.promise);
+    const onText = vi.fn();
+    const { result } = renderHook(() => useVoiceAnswer(onText, service));
+    let start!: Promise<void>;
+    await act(async () => { start = result.current.startListening(); });
+    act(() => { emit(segment()); emit(segment()); });
+    expect(inputSession.accept).not.toHaveBeenCalled();
+    expect(capture.start).toHaveBeenCalledOnce();
+    await act(async () => { pending.resolve(); await start; });
+    expect(inputSession.accept).toHaveBeenCalledTimes(2);
+    expect(onText).toHaveBeenCalledTimes(2);
+  });
+
+  it("drains prepared audio without treating it as a live backlog, while still bounding newly queued audio", async () => {
+    const pending = deferred<void>();
+    service.prepare.mockReturnValueOnce(pending.promise);
+    inputSession.accept.mockReturnValue(new Promise(() => undefined));
+    const { result } = renderHook(() => useVoiceAnswer(vi.fn(), service));
+    let start!: Promise<void>;
+    await act(async () => { start = result.current.startListening(); });
+    act(() => { for (let i=0; i<30; i+=1) emit(segment()); });
+    await act(async () => { pending.resolve(); await start; });
+    act(() => emit(segment()));
+    expect(result.current.status).toBe("listening");
+    act(() => { for (let i=0; i<20; i+=1) emit(segment()); });
+    expect(result.current.status).toBe("idle");
+    expect(track.stop).toHaveBeenCalled();
+  });
+
+  it("bounds audio buffered during preparation and ignores a late ready response", async () => {
+    const pending = deferred<void>();
+    service.prepare.mockReturnValueOnce(pending.promise);
+    const { result } = renderHook(() => useVoiceAnswer(vi.fn(), service));
+    let start!: Promise<void>;
+    await act(async () => { start = result.current.startListening(); });
+    act(() => { for (let i=0; i<151; i+=1) emit(segment()); });
+    expect(result.current.status).toBe("idle");
+    expect(track.stop).toHaveBeenCalled();
+    await act(async () => { pending.resolve(); await start; });
+    expect(service.open).not.toHaveBeenCalled();
+    expect(inputSession.accept).not.toHaveBeenCalled();
   });
 
   it("stops a late microphone stream after cancellation", async () => {
@@ -164,7 +210,7 @@ describe("continuous offline voice input", () => {
     const { result } = renderHook(() => useVoiceAnswer(vi.fn(), service));
     await act(async () => { await result.current.startListening(); });
     expect(result.current.error).toBe("模型下载失败");
-    expect(getUserMedia).not.toHaveBeenCalled();
+    expect(track.stop).toHaveBeenCalled();
     capture.start.mockRejectedValueOnce(new Error("音频采集失败"));
     await act(async () => { await result.current.startListening(); });
     expect(result.current.error).toBe("音频采集失败");

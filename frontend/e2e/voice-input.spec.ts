@@ -62,6 +62,8 @@ for (const theme of ["light", "dark"] as const) {
     await expect(icon).not.toHaveCSS("color", idleColor);
     await expect(page.locator("#composer-voice-feedback")).toHaveCount(0);
     await expect(page.getByText(/准备中|启动中|停止转录/)).toHaveCount(0);
+    // The first words must be captured even while the model is preparing.
+    await expect.poll(() => icon.evaluate(el => Number((el as HTMLElement).style.getPropertyValue("--voice-level")))).toBeGreaterThan(0.1);
     releasePreparation();
     await expect.poll(() => icon.evaluate(el => Number((el as HTMLElement).style.getPropertyValue("--voice-level")))).toBeGreaterThan(0.1);
     await expect(input).toHaveValue("语音文字直接显示在输入框。");

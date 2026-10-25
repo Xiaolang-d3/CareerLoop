@@ -137,6 +137,8 @@ def main() -> None:
             "--add-data", f"{BACKEND / 'app' / 'password_policy.json'}{os.pathsep}app",
             "--add-data", f"{BACKEND / 'app' / 'password_policy-LICENSE.txt'}{os.pathsep}app",
             "--add-data", f"{BACKEND / 'app' / 'speech-models-NOTICE.txt'}{os.pathsep}app",
+            "--add-data", f"{BACKEND / 'app' / 'speech-models.json'}{os.pathsep}app",
+            "--add-data", f"{BACKEND / 'app' / '_vendor' / 'funasr_onnx' / 'LICENSE'}{os.pathsep}app/_vendor/funasr_onnx",
             "--add-data", f"{BACKEND / 'app' / 'agent' / 'skills' / 'image-design' / 'SKILL.md'}{os.pathsep}app/agent/skills/image-design",
             "--add-data", f"{BACKEND / 'app' / 'agent' / 'skills' / 'daily-news-curator' / 'SKILL.md'}{os.pathsep}app/agent/skills/daily-news-curator",
             # These are development or optional-model dependencies.  Runtime
@@ -156,11 +158,12 @@ def main() -> None:
             "--exclude-module", "scipy",
             "--exclude-module", "spacy",
             # Image OCR and document parsing remain optional. Offline speech
-            # includes NumPy and sherpa's ONNX runtime below.
+            # includes NumPy and the native FunASR ONNX components below.
             "--exclude-module", "rapidocr",
             "--exclude-module", "cv2",
-            # Offline two-pass speech uses sherpa's native ONNX runtime.
-            "--collect-all", "sherpa_onnx",
+            # FunASR ONNX inference and Kaldi feature extraction.
+            "--collect-all", "onnxruntime",
+            "--collect-all", "kaldi_native_fbank",
             "--collect-all", "av",
             "--exclude-module", "shapely",
             # LiteLLM model layer (docs/model-layer.md).  litellm is imported

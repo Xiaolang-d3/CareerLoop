@@ -1,21 +1,20 @@
-灯灯本机离线语音模型
+灯灯本机离线语音模型 — FunASR 2pass
 
-Streaming preview: Paraformer bilingual zh/en, converted by Fangjun Kuang.
-Upstream model: Alibaba / ModelScope FunASR
-https://huggingface.co/csukuangfj/sherpa-onnx-streaming-paraformer-bilingual-zh-en
-https://www.modelscope.cn/models/damo/speech_paraformer_asr_nat-zh-cn-16k-common-vocab8404-online
-The conversion model card specifies Apache-2.0. Retain the upstream model
-name, author and applicable model license when redistributing weights.
-
-Sentence correction: SenseVoiceSmall, Alibaba / FunAudioLLM, ONNX conversion
-by Fangjun Kuang.
-https://huggingface.co/FunAudioLLM/SenseVoiceSmall
-https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17
-Model license (separate from the toolkit license):
+Models: Alibaba / DAMO Academy / ModelScope FunASR.
+Fixed per-file revisions, sizes and SHA256: app/speech-models.json.
+Model origins:
+https://modelscope.cn/models/iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online-onnx
+https://modelscope.cn/models/iic/speech_paraformer-large-contextual_asr_nat-zh-cn-16k-common-vocab8404-onnx
+https://modelscope.cn/models/iic/speech_fsmn_vad_zh-cn-16k-common-onnx
+https://modelscope.cn/models/iic/punc_ct-transformer_zh-cn-common-vocab272727-onnx
+Model terms are separate from the inference toolkit license:
 https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE
 
-Inference toolkit: sherpa-onnx, Apache-2.0
-https://github.com/k2-fsa/sherpa-onnx
+Inference code: official funasr-onnx 0.4.3 source subset, MIT.
+See app/_vendor/funasr_onnx/{LICENSE,README.md} for provenance and local changes.
+Native inference: ONNX Runtime (MIT), Kaldi Native Fbank (Apache-2.0).
 
-Model weights are downloaded to the local application data directory only
-during preparation. They are not included in the source or installer.
+Weights are prepared in local application data (about 1.42 GB) and are not
+included in source control or the installer. Recognition uses local PCM,
+with ONNX Runtime telemetry disabled. Audio is not stored in the attachment
+library or business database. Existing older model caches are not removed.

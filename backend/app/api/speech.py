@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, Query, Response
+from pydantic import BaseModel, Field
+
 from starlette.concurrency import run_in_threadpool
 
 from .. import speech, speech_sessions
@@ -30,10 +32,14 @@ def _speech_error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=503, detail="离线语音暂时不可用，请重新打开语音输入。")
 
 
+class SpeechSessionOptions(BaseModel):
+    hotwords: list[str] = Field(default_factory=list, max_length=64)
+
+
 @router.post("/sessions")
-def open_speech_session() -> dict[str, str]:
+def open_speech_session(options: SpeechSessionOptions | None = None) -> dict[str, str]:
     try:
-        return {"id": speech_sessions.open_session()}
+        return {"id": speech_sessions.open_session(options.hotwords if options else None)}
     except (ValueError, RuntimeError, PermissionError) as exc:
         raise _speech_error(exc) from exc
 
