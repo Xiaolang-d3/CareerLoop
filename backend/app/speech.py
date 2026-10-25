@@ -149,13 +149,17 @@ def prepare() -> dict[str, str | int]:
 
 
 def _decode_audio(content: bytes, *, max_seconds: int = MAX_AUDIO_SECONDS) -> Any:
+    # The capture worklet sends RIFF/WAVE only. Reject playlists and other
+    # containers before invoking FFmpeg's general-purpose format detection.
+    if content[:4] != b"RIFF" or content[8:12] != b"WAVE":
+        raise ValueError("无法读取录音，请重新录音后重试。")
     import av
     import numpy as np
 
     chunks = []
     samples = 0
     try:
-        with av.open(io.BytesIO(content), mode="r") as container:
+        with av.open(io.BytesIO(content), mode="r", format="wav") as container:
             if not container.streams.audio:
                 raise ValueError("录音中没有音轨，请重新录音。")
             resampler = av.AudioResampler(format="s16", layout="mono", rate=SAMPLE_RATE)

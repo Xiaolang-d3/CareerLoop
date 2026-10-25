@@ -121,6 +121,16 @@ def test_real_audio_decode_is_bounded_and_in_memory():
         speech._decode_audio(b"not audio", max_seconds=2)
 
 
+def test_non_wave_payloads_never_reach_the_media_decoder(monkeypatch):
+    import av
+    decoder = Mock(side_effect=AssertionError("Unexpected format detection"))
+    monkeypatch.setattr(av, "open", decoder)
+    for payload in [b"#EXTM3U\nhttp://127.0.0.1/private\n", b"RIFFxxxxAVI ", b""]:
+        with pytest.raises(ValueError, match="无法读取"):
+            speech._decode_audio(payload, max_seconds=2)
+    decoder.assert_not_called()
+
+
 def stream_model():
     online = Mock()
     online.is_ready.return_value = False
