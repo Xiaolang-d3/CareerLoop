@@ -6,13 +6,15 @@ import type { AgentRunResult, ChatMessage, ChatRetryDraft, ChatAttachment, ChatC
 
 const voiceCaptureMocks = vi.hoisted(() => ({
   supported: false,
+  onLevel: null as ((level: number) => void) | null,
   emit: null as ((audio: Blob) => void) | null,
   close: vi.fn()
 }));
 vi.mock("../features/chat/voiceCapture", () => ({
   voiceCaptureSupported: () => voiceCaptureMocks.supported,
   VOICE_CHUNK_MS: 400,
-  createVoiceCapture: (emit: (audio: Blob) => void) => {
+  createVoiceCapture: (emit: (audio: Blob) => void, _onError: unknown, onLevel: (level: number) => void) => {
+    voiceCaptureMocks.onLevel = onLevel;
     voiceCaptureMocks.emit = emit;
     return { start: async () => undefined, close: voiceCaptureMocks.close };
   }
@@ -317,7 +319,14 @@ describe("ChatWorkspace", () => {
       const p = renderChat([], { voiceInput });
       fireEvent.change(screen.getByRole("textbox", { name: "输入消息" }), { target: { value: "原有草稿" } });
       fireEvent.click(screen.getByRole("button", { name: "语音输入" }));
-      await waitFor(() => expect(screen.getByRole("button", { name: "停止语音输入" })).toHaveTextContent("停止转录"));
+      await waitFor(() => expect(voiceInput.open).toHaveBeenCalledOnce());
+      const recording = screen.getByRole("button", { name: "停止语音输入" });
+      expect(recording).toHaveTextContent(/^语音$/);
+      expect(recording).toHaveClass("is-recording");
+      expect(recording).not.toHaveAttribute("title");
+      expect(recording.querySelector(".composer-voice-wave")).toBeInTheDocument();
+      act(() => voiceCaptureMocks.onLevel?.(0.75));
+      expect(recording.querySelector(".composer-voice-icon")).toHaveStyle("--voice-level: 0.75");
       await act(async () => voiceCaptureMocks.emit?.(new Blob(["first"], { type: "audio/wav" })));
       expect(screen.getByRole("textbox", { name: "输入消息" })).toHaveValue("原有草稿第一自");
       expect(stop).not.toHaveBeenCalled();
@@ -329,6 +338,10 @@ describe("ChatWorkspace", () => {
       expect(screen.getByRole("textbox", { name: "输入消息" })).toHaveAttribute("aria-describedby", "composer-input-hint");
       fireEvent.click(screen.getByRole("button", { name: "停止语音输入" }));
       expect(screen.getByRole("button", { name: "语音输入" })).toHaveAttribute("aria-pressed", "false");
+      expect(recording).not.toHaveClass("is-recording");
+      expect(recording).toHaveTextContent(/^语音$/);
+      expect(recording.querySelector(".composer-voice-wave")).not.toBeInTheDocument();
+      expect(recording.querySelector(".composer-voice-icon")).toHaveStyle("--voice-level: 0");
       expect(stop).toHaveBeenCalled();
       await act(async () => voiceCaptureMocks.emit?.(new Blob(["late"])));
       expect(session.accept).toHaveBeenCalledTimes(3);
@@ -338,14 +351,41 @@ describe("ChatWorkspace", () => {
     } finally { cleanup(); vi.stubGlobal("navigator", originalNavigator); voiceCaptureMocks.supported = false; }
   });
 
-  it("shows voice failures visibly rather than only in the button tooltip", async () => {
-    vi.stubGlobal("MediaRecorder", undefined);
+  it("keeps only the icon state while preparing and can cancel preparation immediately", async () => {
+    const originalNavigator = window.navigator;
+    voiceCaptureMocks.supported = true;
+    const getUserMedia = vi.fn();
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
+    let ready!: () => void;
+    const prepare = new Promise<void>(resolve => { ready = resolve; });
+    const voiceInput = { prepare: vi.fn().mockReturnValue(prepare), open: vi.fn() };
     try {
-      renderChat([]);
+      const p = renderChat([], { voiceInput });
       fireEvent.click(screen.getByRole("button", { name: "语音输入" }));
-      expect(await screen.findByRole("alert")).toHaveTextContent("当前浏览器不支持录音");
-      expect(screen.getByRole("textbox", { name: "输入消息" })).toHaveAttribute("aria-describedby", "composer-input-hint composer-voice-feedback");
-    } finally { cleanup(); vi.stubGlobal("MediaRecorder", undefined); }
+      const button = screen.getByRole("button", { name: "停止语音输入" });
+      expect(button).toHaveTextContent(/^语音$/);
+      expect(button).toHaveClass("is-recording");
+      expect(p.view.container.querySelector("#composer-voice-feedback")).not.toBeInTheDocument();
+      expect(screen.queryByText(/准备中|启动中|停止转录|下载.*%/)).not.toBeInTheDocument();
+      fireEvent.click(button);
+      expect(button).not.toHaveClass("is-recording");
+      expect(button).toHaveAttribute("aria-pressed", "false");
+      await act(async () => ready());
+      expect(getUserMedia).not.toHaveBeenCalled();
+      expect(voiceInput.open).not.toHaveBeenCalled();
+    } finally { cleanup(); vi.stubGlobal("navigator", originalNavigator); voiceCaptureMocks.supported = false; }
+  });
+
+  it("resets the icon on failure without adding visible prompts or tooltips", async () => {
+    renderChat([]);
+    fireEvent.click(screen.getByRole("button", { name: "语音输入" }));
+    const button = screen.getByRole("button", { name: "语音输入" });
+    expect(button).toHaveAttribute("aria-description", expect.stringContaining("不支持录音"));
+    expect(button).toHaveTextContent(/^语音$/);
+    expect(button).not.toHaveClass("is-recording");
+    expect(button).not.toHaveAttribute("title");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "输入消息" })).toHaveAttribute("aria-describedby", "composer-input-hint");
   });
 
   it("adds every selected file until the eight-file limit", async () => {

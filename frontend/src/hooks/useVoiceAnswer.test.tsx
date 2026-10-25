@@ -21,6 +21,7 @@ describe("continuous offline voice input", () => {
   const service = { prepare: vi.fn(), open: vi.fn() };
   const capture = { start: vi.fn(), close: vi.fn() };
   let emit: (blob: Blob) => void;
+  let emitLevel: (level: number) => void;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -31,7 +32,7 @@ describe("continuous offline voice input", () => {
     getUserMedia.mockResolvedValue(stream);
     capture.start.mockResolvedValue(undefined);
     audio.supported.mockReturnValue(true);
-    audio.create.mockImplementation(onSegment => { emit = onSegment; return capture; });
+    audio.create.mockImplementation((onSegment, _onError, onLevel) => { emit = onSegment; emitLevel = onLevel; return capture; });
     vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
   });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
@@ -51,6 +52,22 @@ describe("continuous offline voice input", () => {
     expect(capture.close).toHaveBeenCalled();
     await act(async () => emit(segment()));
     expect(inputSession.accept).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards live microphone levels without rendering again and ignores levels after stopping", async () => {
+    const onLevel = vi.fn();
+    let renders = 0;
+    const { result } = renderHook(() => { renders += 1; return useVoiceAnswer(vi.fn(), service, onLevel); });
+    await act(async () => { await result.current.startListening(); });
+    const before = renders;
+    act(() => { emitLevel(0.2); emitLevel(0.8); });
+    expect(onLevel.mock.lastCall).toEqual([0.8]);
+    expect(renders).toBe(before);
+    act(() => result.current.stopListening());
+    expect(onLevel.mock.lastCall).toEqual([0]);
+    const calls = onLevel.mock.calls.length;
+    act(() => emitLevel(1));
+    expect(onLevel).toHaveBeenCalledTimes(calls);
   });
 
   it("processes segments in order without parallel requests or losing queued speech", async () => {

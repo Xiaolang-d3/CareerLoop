@@ -100,7 +100,12 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
     if (id) draftsRef.current.set(id, change.text);
     props.onPersistComposerDrafts?.();
   }, [props.currentConversationId, props.onPersistComposerDrafts, props.chatInputRef]);
-  const voice = useVoiceAnswer(appendVoiceTranscript, props.voiceInput);
+  const voiceIconRef = useRef<HTMLSpanElement>(null);
+  const updateVoiceLevel = useCallback((level: number) => {
+    // Update only the icon, without re-rendering the conversation at audio rate.
+    voiceIconRef.current?.style.setProperty("--voice-level", String(level));
+  }, []);
+  const voice = useVoiceAnswer(appendVoiceTranscript, props.voiceInput, updateVoiceLevel);
   const stopVoiceRef = useRef(voice.cancelListening);
   stopVoiceRef.current = voice.cancelListening;
   useLayoutEffect(() => { stopVoiceRef.current(); }, [props.chatBusy, props.currentConversationId, props.voiceInput]);
@@ -552,26 +557,28 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                 rows={1}
                 maxLength={200_000}
                 aria-label="输入消息"
-                aria-describedby={`composer-input-hint${voice.error ? " composer-voice-feedback" : ""}`}
+                aria-describedby="composer-input-hint"
                 placeholder={clarification ? "回答上面的问题，或直接说下一件…" : "直接说说你的想法…"}
                 submitMode="enter"
                 unstable_insertNewlineOnTouchEnter
                 onPaste={handleComposerPaste}
               />
-              {voice.error ? (
-                <div id="composer-voice-feedback" className="composer-voice-feedback is-error" role="alert">
-                  <TriangleAlert size={16} aria-hidden="true" /><span>{voice.error}</span>
-                </div>
-              ) : null}
               <div className="composer-bottom-row">
                 <div className="composer-shortcuts" role="group" aria-label="输入选项">
                   <button className="composer-tool composer-attachment-tool" type="button" aria-label={props.attachmentBusy ? "附件处理中" : "添加附件"} onClick={() => attachmentInputRef.current?.click()} disabled={props.attachmentBusy} title={props.attachmentBusy ? "正在处理附件" : "添加图片或文档，也可粘贴图片或拖入文件"}>
                     {props.attachmentBusy ? <LoaderCircle className="spinning" size={16} aria-hidden="true" /> : <Paperclip size={20} aria-hidden="true" />}
                     <span>添加资料</span>
                   </button>
-                  <button className={`composer-tool composer-voice-tool${voice.listening ? " active" : ""}`} type="button" aria-pressed={voice.listening} aria-label={voice.listening ? "停止语音输入" : "语音输入"} disabled={props.chatBusy} title={voice.error || (voice.listening ? "正在自动转录，点击关闭" : "打开后边说边转成文字，停顿时自动修正，不会自动发送")} onClick={() => { if (voice.listening) voice.stopListening(); else { voiceDraftRef.current = new VoiceDraftEditor(); void voice.startListening(); } }}>
-                    <Mic size={20} aria-hidden="true" />
-                    <span>{voice.status === "preparing" ? `准备中${voice.modelProgress > 0 ? ` ${voice.modelProgress}%` : ""}` : voice.status === "starting" ? "启动中" : voice.listening ? "停止转录" : "语音"}</span>
+                  <button className={`composer-tool composer-voice-tool${voice.listening ? " is-recording" : ""}`} type="button" aria-pressed={voice.listening} aria-label={voice.listening ? "停止语音输入" : "语音输入"} aria-description={voice.error || undefined} disabled={props.chatBusy} onClick={() => { if (voice.listening) voice.stopListening(); else { voiceDraftRef.current = new VoiceDraftEditor(); void voice.startListening(); } }}>
+                    <span className="composer-voice-icon" ref={voiceIconRef} aria-hidden="true">
+                      <Mic size={20} />
+                      {voice.listening ? <svg className="composer-voice-wave" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round">
+                        <line x1="10.5" x2="10.5" y1="6" y2="10" />
+                        <line x1="12" x2="12" y1="4.5" y2="11.5" />
+                        <line x1="13.5" x2="13.5" y1="5.5" y2="10.5" />
+                      </svg> : null}
+                    </span>
+                    <span>语音</span>
                   </button>
                   <ComposerWebSearch options={props.webSearchOptions} onChange={props.onWebSearchOptionsChange}
                     capabilities={props.webSearchCapabilities} available={props.webSearchAvailable} provider={props.webSearchProvider}
