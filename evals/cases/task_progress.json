@@ -1,0 +1,194 @@
+[
+  {
+    "description": "多轮补充材料后当轮生成项目条目并拦截重复追问",
+    "vars": {
+      "task": "progress_dialogue",
+      "turns": [
+        "为我的个人项目LocalDesk写项目经历。",
+        "LocalDesk由我独立开发。",
+        "项目说明：本地优先的AI工作台，支持对话和资料管理。"
+      ],
+      "model_responses": [
+        {
+          "content": "{\"kind\": \"content_creation\", \"sources\": [], \"goal\": \"根据LocalDesk材料写项目经历\", \"expects_draft\": true}"
+        },
+        {
+          "tool_calls": [
+            {
+              "id": "ask-8",
+              "name": "ask_user",
+              "arguments": {
+                "question": "项目归属是什么？",
+                "blocking_reason": "尚未确认用户与项目的关系，不能归为个人经历",
+                "options": [
+                  {
+                    "label": "补充说明"
+                  },
+                  {
+                    "label": "粘贴材料"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "content": "{\"kind\": \"content_creation\", \"sources\": [], \"goal\": \"根据LocalDesk材料写项目经历\", \"expects_draft\": true}"
+        },
+        {
+          "tool_calls": [
+            {
+              "id": "ask-7",
+              "name": "ask_user",
+              "arguments": {
+                "question": "技术栈是什么？",
+                "blocking_reason": "",
+                "options": [
+                  {
+                    "label": "补充说明"
+                  },
+                  {
+                    "label": "粘贴材料"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "content": "{\"kind\": \"content_creation\", \"sources\": [], \"goal\": \"根据LocalDesk材料写项目经历\", \"expects_draft\": true}"
+        },
+        {
+          "tool_calls": [
+            {
+              "id": "ask-7",
+              "name": "ask_user",
+              "arguments": {
+                "question": "技术栈是什么？",
+                "blocking_reason": "",
+                "options": [
+                  {
+                    "label": "补充说明"
+                  },
+                  {
+                    "label": "粘贴材料"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "content": "LocalDesk｜独立开发：构建本地优先的AI工作台，支持对话和资料管理。技术栈待补充。"
+        },
+        {
+          "content": "{\"complete\":true,\"reason\":\"交付实际草稿并保留缺口\"}"
+        }
+      ],
+      "artifact_markers": [
+        "LocalDesk｜",
+        "独立开发",
+        "待补充"
+      ],
+      "required_facts": [
+        "LocalDesk",
+        "独立开发",
+        "本地优先",
+        "资料管理"
+      ],
+      "expected": {
+        "task_success": true,
+        "first_artifact_turn": 3,
+        "waiting_turns": 2,
+        "clarification_rejections": 1,
+        "facts_preserved": true
+      }
+    }
+  },
+  {
+    "description": "没有工具的写作任务也不能用建议替代草稿",
+    "vars": {
+      "task": "progress_dialogue",
+      "turns": [
+        "LocalDesk由我独立开发，是本地优先的AI工作台。请写项目经历。"
+      ],
+      "model_responses": [
+        {
+          "content": "{\"kind\": \"content_creation\", \"sources\": [], \"goal\": \"根据LocalDesk材料写项目经历\", \"expects_draft\": true}"
+        },
+        {
+          "content": "建议先写背景，再补充技术栈。"
+        },
+        {
+          "content": "{\"complete\":false,\"reason\":\"没有实际项目条目\"}"
+        },
+        {
+          "content": "LocalDesk｜独立开发：构建本地优先的AI工作台，支持对话和资料管理。技术栈待补充。"
+        },
+        {
+          "content": "{\"complete\":true,\"reason\":\"交付实际草稿并保留缺口\"}"
+        }
+      ],
+      "artifact_markers": [
+        "LocalDesk｜",
+        "待补充"
+      ],
+      "required_facts": [
+        "LocalDesk",
+        "独立开发"
+      ],
+      "expected": {
+        "task_success": true,
+        "first_artifact_turn": 1,
+        "waiting_turns": 0,
+        "clarification_rejections": 0,
+        "facts_preserved": true
+      }
+    }
+  },
+  {
+    "description": "确实无法确定对象时允许澄清且不得标记完成",
+    "vars": {
+      "task": "progress_dialogue",
+      "turns": [
+        "请帮我改写项目经历，材料里有两个人的版本。"
+      ],
+      "model_responses": [
+        {
+          "content": "{\"kind\": \"content_creation\", \"sources\": [], \"goal\": \"根据LocalDesk材料写项目经历\", \"expects_draft\": true}"
+        },
+        {
+          "tool_calls": [
+            {
+              "id": "ask-12",
+              "name": "ask_user",
+              "arguments": {
+                "question": "需要修改哪一个人的经历？",
+                "blocking_reason": "无法确定修改对象，继续会把不同人的经历混在一起",
+                "options": [
+                  {
+                    "label": "补充说明"
+                  },
+                  {
+                    "label": "粘贴材料"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "artifact_markers": [
+        "LocalDesk｜"
+      ],
+      "required_facts": [],
+      "expected": {
+        "task_success": false,
+        "first_artifact_turn": null,
+        "waiting_turns": 1,
+        "clarification_rejections": 0,
+        "facts_preserved": true
+      }
+    }
+  }
+]

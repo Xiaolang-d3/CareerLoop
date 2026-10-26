@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +60,8 @@ def run_eval_case(case: dict[str, Any]) -> dict[str, Any]:
             str(vars_.get("content") or ""),
             simulated_tool_names(vars_.get("tool_calls")),
         )
+    if task == "progress_dialogue":
+        return asyncio.run(_run_progress_dialogue(vars_))
     raise ValueError(f"未知评测任务: {task}")
 
 
@@ -91,9 +94,62 @@ def assert_eval_expected(result: dict[str, Any], expected: dict[str, Any]) -> No
     if "valid" not in expected and "claims" in expected:
         if list(result.get("claims") or []) != list(expected["claims"]):
             raise AssertionError(f"claims={result.get('claims')!r}，期望 {expected['claims']!r}")
-    for key in ("used_ask_user", "should_ask_user", "violation", "keyword_kind"):
+    for key in ("used_ask_user", "should_ask_user", "violation", "keyword_kind",
+                "task_success", "first_artifact_turn", "waiting_turns", "clarification_rejections", "facts_preserved"):
         if key in expected and result.get(key) != expected[key]:
             raise AssertionError(f"{key}={result.get(key)!r}，期望 {expected[key]!r}")
+
+
+async def _run_progress_dialogue(vars_: dict[str, Any]) -> dict[str, Any]:
+    """Replay synthetic multi-turn inputs through the real runtime, offline.
+
+    This tests orchestration contracts with scripted model decisions. It does
+    not measure a live model's independent decision quality or contact services.
+    """
+    from ..domain import AgentMessage, ModelResponse
+    from ..models import ModelProviderRegistry
+    from ..tools import AskUserTool, ToolRegistry
+    from .runtime import AgentRuntime
+
+    class DialogueModel:
+        name = "progress-eval"
+
+        def __init__(self):
+            self.responses = [ModelResponse.model_validate(item) for item in vars_["model_responses"]]
+
+        async def generate(self, request):
+            if not self.responses:
+                raise ValueError("对话评测的模型响应已用尽")
+            return self.responses.pop(0)
+
+    model = DialogueModel()
+    models = ModelProviderRegistry()
+    models.register(model.name, model)
+    tools = ToolRegistry()
+    tools.register_handler(AskUserTool())
+    runtime = AgentRuntime(models=models, tools=tools, model_provider=model.name,
+                           platform_name="offline-eval", max_tool_rounds=6)
+    history = []
+    snapshot = None
+    first_artifact_turn = None
+    waiting_turns = rejections = 0
+    result = None
+    for index, text in enumerate(vars_["turns"], start=1):
+        result = await runtime.run(text, history=history, resume=snapshot)
+        waiting_turns += result.status == "waiting_user"
+        rejections += sum(event.tool_name == "clarification_validator" for event in result.events)
+        if first_artifact_turn is None and result.status == "done" and all(
+            marker in result.content for marker in vars_.get("artifact_markers", [])
+        ):
+            first_artifact_turn = index
+        history.extend([AgentMessage(role="user", content=text), AgentMessage(role="assistant", content=result.content)])
+        snapshot = result.snapshot
+    return {
+        "task_success": result is not None and result.status == "done" and first_artifact_turn is not None,
+        "first_artifact_turn": first_artifact_turn, "waiting_turns": waiting_turns,
+        "clarification_rejections": rejections,
+        "facts_preserved": result is not None and all(fact in result.content for fact in vars_.get("required_facts", [])),
+    }
 
 
 def _run_route(vars_: dict[str, Any]) -> dict[str, Any]:
