@@ -21,18 +21,18 @@ def test_repeated_clarification_keeps_original_goal_full_material_and_draft():
     material = "项目说明：" + "甲" * 1500 + "技术栈 FastAPI / SQLite"
     snapshot = AgentRunSnapshot(
         route_kind="content_creation", needs_plan=False,
-        messages=[AgentMessage(role="user", content="为2025届、10个月经验的候选人写简历"),
+        messages=[AgentMessage(role="user", content="为2024届、两年经验的候选人写简历"),
                   AgentMessage(role="user", content=material),
-                  AgentMessage(role="assistant", content="CareerLoop 项目经历初稿"),
+                  AgentMessage(role="assistant", content="LocalDesk 项目经历初稿"),
                   AgentMessage(role="system", content="过期计划，不应复用"),
                   *[AgentMessage(role="user", content=f"补充信息 {i}") for i in range(6)]],
         clarification=AgentClarification(question="项目的技术栈是什么？"),
     )
     for _ in range(6):
         context, history, _ = clarification_context(snapshot)
-        assert "2025届、10个月经验" in context
+        assert "2024届、两年经验" in context
         assert material in context
-        assert any(message.content == "CareerLoop 项目经历初稿" for message in history)
+        assert any(message.content == "LocalDesk 项目经历初稿" for message in history)
         assert "过期计划" not in str(history)
         snapshot = snapshot.model_copy(update={"messages": [*history, AgentMessage(role="user", content="继续补充")]})
 
@@ -73,15 +73,15 @@ def test_redundant_question_after_readme_is_repaired_into_a_project_draft():
             ModelResponse(tool_calls=[ToolCall(id="repeat", name="ask_user", arguments={
                 "question": question, "options": [{"label": "粘贴README"}, {"label": "手动补充"}],
             })]),
-            ModelResponse(content="CareerLoop｜独立开发：构建本地优先的AI协作工作台，支持对话与资料管理。技术栈待补充。"),
+            ModelResponse(content="LocalDesk｜独立开发：构建本地优先的AI协作工作台，支持对话与资料管理。技术栈待补充。"),
         ])
         snapshot = AgentRunSnapshot(route_kind="content_creation", needs_plan=False,
-            messages=[AgentMessage(role="user", content="帮我写简历，CareerLoop是我独立开发的项目。")],
+            messages=[AgentMessage(role="user", content="帮我写简历，LocalDesk是我独立开发的项目。")],
             clarification=AgentClarification(question=question))
         result = await runtime_for(model, AskUserTool()).run(
             "README：灯灯是本地优先的AI协作工作台，支持对话与资料管理。", resume=snapshot)
         assert result.status == "done" and result.snapshot is None
-        assert "CareerLoop｜独立开发" in result.content
+        assert "LocalDesk｜独立开发" in result.content
         assert any(event.tool_name == "clarification_validator" for event in result.events)
     asyncio.run(scenario())
 
@@ -98,17 +98,17 @@ def test_writing_requires_an_actual_draft_even_without_tools():
     async def scenario():
         model = ScriptedModel([
             ModelResponse(content=json.dumps({"kind": "content_creation", "sources": [],
-                "goal": "根据CareerLoop说明生成简历项目条目", "expects_draft": True})),
+                "goal": "根据LocalDesk说明生成简历项目条目", "expects_draft": True})),
             ModelResponse(content="请补充技术栈，我可以帮你写。"),
             ModelResponse(content='{"complete":false,"reason":"只有索取信息，没有项目条目"}'),
-            ModelResponse(content="CareerLoop｜独立开发：构建本地优先的AI工作台，支持对话和文件管理。技术栈待补充。"),
+            ModelResponse(content="LocalDesk｜独立开发：构建本地优先的AI工作台，支持对话和文件管理。技术栈待补充。"),
             ModelResponse(content='{"complete":true,"reason":"已交付基于已知事实的项目初稿"}'),
         ])
-        result = await runtime_for(model).run("写简历项目条目：CareerLoop由我独立开发，是支持对话和文件管理的本地优先AI工作台。")
-        assert result.status == "done" and "CareerLoop｜独立开发" in result.content
+        result = await runtime_for(model).run("写简历项目条目：LocalDesk由我独立开发，是支持对话和文件管理的本地优先AI工作台。")
+        assert result.status == "done" and "LocalDesk｜独立开发" in result.content
         checks = [event for event in result.events if event.tool_name == "delivery_validator"]
         assert [event.status for event in checks] == ["running", "done"]
-        assert result.plan.expected_output == "根据CareerLoop说明生成简历项目条目"
+        assert result.plan.expected_output == "根据LocalDesk说明生成简历项目条目"
         assert not model.requests[2].tools and "evidence" in model.requests[2].messages[-1].content
     asyncio.run(scenario())
 
@@ -141,7 +141,7 @@ def test_delivery_obligation_survives_a_checkpoint():
             expects_draft=True, delivery_retry_used=True,
             plan=AgentPlan(
                 goal="写项目经历", route="content_creation", expected_output="项目条目"),
-            messages=[AgentMessage(role="user", content="CareerLoop独立开发")])
+            messages=[AgentMessage(role="user", content="LocalDesk独立开发")])
         result = await runtime_for(model).run("继续", resume=snapshot)
         assert result.status == "failed" and result.error.code == "delivery_requirements_unmet"
     asyncio.run(scenario())
@@ -165,11 +165,11 @@ def test_search_timeout_still_delivers_supplied_project_material_as_partial_resu
         model = ScriptedModel([
             ModelResponse(content='{"kind":"content_creation","sources":["public_web"],"expects_draft":true}'),
             ModelResponse(tool_calls=[ToolCall(id="web", name="search_public_web", arguments={"query": "公开项目核验"})]),
-            ModelResponse(content="CareerLoop｜独立开发：实现本地AI工作台。外部核验待完成。"),
+            ModelResponse(content="LocalDesk｜独立开发：实现本地AI工作台。外部核验待完成。"),
             ModelResponse(content='{"complete":true,"reason":"基于用户已提供材料形成初稿并说明缺口"}'),
         ])
-        result = await runtime_for(model, search).run("按我提供的CareerLoop说明写项目条目，并联网核验。", web_search_options=WebSearchOptions(enabled=True))
-        assert "CareerLoop｜独立开发" in result.content and "部分结果" in result.content
+        result = await runtime_for(model, search).run("按我提供的LocalDesk说明写项目条目，并联网核验。", web_search_options=WebSearchOptions(enabled=True))
+        assert "LocalDesk｜独立开发" in result.content and "部分结果" in result.content
         assert result.status == "failed" and result.stop_reason == "partial_result"
         assert search.calls == 1 and not model.requests[2].tools
         assert any(event.tool_name == "task_degradation" for event in result.events)
