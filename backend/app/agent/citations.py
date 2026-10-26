@@ -54,7 +54,7 @@ def evidence_cards(messages: list[AgentMessage], draft: str) -> list[dict]:
     """Deduplicate compact evidence, prioritizing references already in the draft."""
     cards: dict[str, dict] = {}
     for message in messages:
-        if message.role != "tool" or message.payload.get("tool_name") != "search_public_web":
+        if (message.role != "tool" and not message.payload.get("retained_evidence")) or message.payload.get("tool_name") != "search_public_web":
             continue
         for item in [*message.payload.get("evidence", []), *message.payload.get("sources", [])]:
             if not isinstance(item, dict) or not isinstance(item.get("url"), str):

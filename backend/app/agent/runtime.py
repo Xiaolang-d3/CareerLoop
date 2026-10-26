@@ -73,7 +73,7 @@ from .orchestration import (
 )
 from .plan_builder import fallback_plan, plan_mode
 from .plan_validator import freeze_route_requirements, validate_plan
-from .resume_policy import clarification_context, clarification_from_events, needs_reply_replanning, resolve_resume_snapshot
+from .resume_policy import clarification_context, clarification_from_events, needs_reply_replanning, relevant_clarification_history, resolve_resume_snapshot
 from .run_store import AgentRunStore, REPLAYABLE_RUN_STATUSES
 from .tool_executor import ToolExecutor
 
@@ -104,7 +104,7 @@ def _canonical_citation_url(value: str) -> str:
 def _web_source_urls(messages: list[AgentMessage]) -> set[str]:
     urls: set[str] = set()
     for message in messages:
-        if message.role != "tool" or message.payload.get("tool_name") not in WEB_RESEARCH_TOOLS:
+        if (message.role != "tool" and not message.payload.get("retained_evidence")) or message.payload.get("tool_name") not in WEB_RESEARCH_TOOLS:
             continue
         for source in message.payload.get("sources", []):
             if isinstance(source, dict) and isinstance(source.get("url"), str):
@@ -587,7 +587,7 @@ class AgentRuntime:
         if egress is not None:
             egress.mixed = private_context or is_mixed_run(route, tool_specs)
 
-        conversation_history = history or []
+        conversation_history = relevant_clarification_history(history or [], route.allowed_tools)
         messages = [*conversation_history]
         planned_tools = {step.tool_name for step in plan.steps} if plan is not None else set()
         interrupt_tools = INTERRUPT_TOOLS & set(self._tools.names())
