@@ -106,6 +106,11 @@ def route_task(
 
 def should_classify_kind(route: TaskRoute, content: str) -> bool:
     """Understand open tasks and creation requests with unspecified sources."""
+    if route.kind == "web_search" and any(phrase in content for phrase in (
+        "写简历", "写项目条目", "写项目经历", "起草", "改写", "写文章", "文案", "整理成", "提炼成",
+    )):
+        # Search is a source for the deliverable, not necessarily the objective.
+        return True
     if any(phrase in content for phrase in ("不要", "不需要", "不用", "无需", "不围绕")):
         return True
     if route.kind not in {"conversation", "content_creation"}:

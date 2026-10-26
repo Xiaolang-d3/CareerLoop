@@ -206,6 +206,7 @@ class RunContext:
     citation_allowed_urls: list[str] = field(default_factory=list)
     expects_draft: bool = False
     delivery_retry_used: bool = False
+    degraded_tools: dict[str, ToolError] = field(default_factory=dict)
 
 
 class AgentRuntime:
@@ -752,6 +753,7 @@ class AgentRuntime:
             citation_allowed_urls=resume.citation_allowed_urls,
             expects_draft=resume.expects_draft,
             delivery_retry_used=resume.delivery_retry_used,
+            degraded_tools=dict(resume.degraded_tools),
         )
         approval = self._approval_context.get()
         if resume.resume_mode == "waiting_user":
@@ -942,6 +944,7 @@ class AgentRuntime:
             citation_allowed_urls=ctx.citation_allowed_urls,
             expects_draft=ctx.expects_draft,
             delivery_retry_used=ctx.delivery_retry_used,
+            degraded_tools=ctx.degraded_tools,
             rounds_used=rounds_used,
             clarification=clarification,
             completed_tools=sorted(ctx.completed_tools),
@@ -1047,7 +1050,7 @@ class AgentRuntime:
         completed_tool_calls = ctx.completed_tool_calls
         repeated_tool_calls = ctx.repeated_tool_calls
         tool_specs = {spec.name: spec for spec in self._tools.specs()}
-        unresolved_error: ToolError | None = None
+        unresolved_error: ToolError | None = next(iter(ctx.degraded_tools.values()), None)
         invalid_argument_retries = 0
         rejected_completions: set[tuple[str, ...]] = set()
         self._checkpoint_run(ctx, rounds_used=max(0, start_round - 1))
@@ -1292,14 +1295,21 @@ class AgentRuntime:
                             event_callback,
                             AgentStreamEvent(type="agent_event", event=event),
                         )
+                final_content = response.content
+                if ctx.degraded_tools:
+                    limitations = "；".join(f"{tool_specs[name].title}未完成" for name in ctx.degraded_tools)
+                    final_content = f"部分结果：{limitations}。以下仅基于已取得的材料，相关核验仍待完成。\n\n{final_content}"
+                    await self._publish(event_callback, AgentStreamEvent(type="text_reset"))
+                    await self._publish(event_callback, AgentStreamEvent(type="text_delta", delta=final_content))
                 return AgentRunResult(
-                    content=response.content,
+                    content=final_content,
                     provider=self._model_provider,
                     model_selection=self._current_model_selection(),
                     platform=selected_platform,
                     rounds=round_number,
                     status="failed" if unresolved_error else "done",
                     error=unresolved_error,
+                    stop_reason="partial_result" if ctx.degraded_tools else "",
                     events=events,
                     plan=ctx.plan,
                 )
@@ -1624,6 +1634,30 @@ class AgentRuntime:
                             self._apply_tool_surface(ctx)
                             round_error = None
                             break
+                    spec = tool_specs[tool_call.name]
+                    if (route.kind == "content_creation" and result.status == "failed"
+                            and spec.risk in {"read_only", "derived_analysis", "external_read"}
+                            and result.error is not None and result.error.code in {
+                                "tool_timeout", "tool_execution_failed", "service_unavailable",
+                                "agent_search_http_error", "agent_search_timeout", "agent_search_unavailable",
+                                "tavily_http_error", "tavily_timeout", "web_sources_not_found", "web_evidence_not_found",
+                            }):
+                        ctx.degraded_tools[tool_call.name] = result.error
+                        ctx.route = _drop_tool_from_route(ctx.route, tool_call.name)
+                        route = ctx.route
+                        ctx.plan = _drop_tool_from_plan(ctx.plan, route)
+                        self._apply_tool_surface(ctx)
+                        messages.append(AgentMessage(role="system", content=(
+                            f"{spec.title}失败，已停止继续调用该工具。本次只能部分交付，不能声称失败步骤已完成。"
+                            "请使用用户已提供材料和已取得证据继续生成可用草稿，标明待核验部分，"
+                            "不依赖失败来源补写事实，不要求用户重新开始整个任务。"
+                        )))
+                        event = ToolEvent(round=round_number, tool_call_id=f"degraded-{tool_call.id}",
+                            tool_name="task_degradation", status="done", message=f"{spec.title}未完成，继续处理已有材料",
+                            data={"failed_tool": tool_call.name, "error_code": result.error.code})
+                        events.append(event)
+                        await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
+                        continue
                     return AgentRunResult(
                         content=f"{result.message}。本次执行已终止，请处理后重新提问。",
                         provider=self._model_provider,
@@ -1642,7 +1676,7 @@ class AgentRuntime:
                         round_number=round_number,
                         error=result.error,
                     )
-            unresolved_error = round_error
+            unresolved_error = round_error or next(iter(ctx.degraded_tools.values()), None)
             self._checkpoint_run(ctx, rounds_used=round_number)
         notice = (
             f"Agent 已达到最大工具调用轮数（{self._max_tool_rounds}），"

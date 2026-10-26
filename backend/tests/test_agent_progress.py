@@ -10,10 +10,11 @@ from app.agent.citations import evidence_cards
 from app.agent.resume_policy import clarification_context, relevant_clarification_history
 from app.agent.runtime import _web_source_urls
 from app.domain import AgentClarification, AgentMessage, AgentPlan, AgentRunSnapshot
-from app.domain import ModelResponse, ToolCall
+from app.domain import ModelResponse, ToolCall, ToolError, ToolResult
 from app.agent.progress import clarification_repair_reason
 from app.tools import AskUserTool
-from test_agent_runtime import ScriptedModel, runtime_for
+from app.search_options import WebSearchOptions
+from test_agent_runtime import CountingTool, ScriptedModel, runtime_for
 
 
 def test_repeated_clarification_keeps_original_goal_full_material_and_draft():
@@ -143,4 +144,47 @@ def test_delivery_obligation_survives_a_checkpoint():
             messages=[AgentMessage(role="user", content="CareerLoop独立开发")])
         result = await runtime_for(model).run("继续", resume=snapshot)
         assert result.status == "failed" and result.error.code == "delivery_requirements_unmet"
+    asyncio.run(scenario())
+
+
+class UnavailableSearch(CountingTool):
+    def __init__(self, *, blocked=False):
+        super().__init__("search_public_web")
+        self.blocked = blocked
+
+    async def execute(self, arguments, context):
+        self.calls += 1
+        return ToolResult(ok=False, status="blocked" if self.blocked else "failed",
+            message="无法读取公开来源", error=ToolError(
+                code="external_query_not_approved" if self.blocked else "tool_timeout", message="无法读取公开来源"))
+
+
+def test_search_timeout_still_delivers_supplied_project_material_as_partial_result():
+    async def scenario():
+        search = UnavailableSearch()
+        model = ScriptedModel([
+            ModelResponse(content='{"kind":"content_creation","sources":["public_web"],"expects_draft":true}'),
+            ModelResponse(tool_calls=[ToolCall(id="web", name="search_public_web", arguments={"query": "公开项目核验"})]),
+            ModelResponse(content="CareerLoop｜独立开发：实现本地AI工作台。外部核验待完成。"),
+            ModelResponse(content='{"complete":true,"reason":"基于用户已提供材料形成初稿并说明缺口"}'),
+        ])
+        result = await runtime_for(model, search).run("按我提供的CareerLoop说明写项目条目，并联网核验。", web_search_options=WebSearchOptions(enabled=True))
+        assert "CareerLoop｜独立开发" in result.content and "部分结果" in result.content
+        assert result.status == "failed" and result.stop_reason == "partial_result"
+        assert search.calls == 1 and not model.requests[2].tools
+        assert any(event.tool_name == "task_degradation" for event in result.events)
+    asyncio.run(scenario())
+
+
+def test_source_approval_failure_is_never_downgraded_or_bypassed():
+    async def scenario():
+        search = UnavailableSearch(blocked=True)
+        model = ScriptedModel([
+            ModelResponse(content='{"kind":"content_creation","sources":["public_web"]}'),
+            ModelResponse(tool_calls=[ToolCall(id="web", name="search_public_web", arguments={"query": "公开项目核验"})]),
+        ])
+        result = await runtime_for(model, search).run("根据说明写项目条目", web_search_options=WebSearchOptions(enabled=True))
+        assert result.status == "failed" and result.error.code == "external_query_not_approved"
+        assert not any(event.tool_name == "task_degradation" for event in result.events)
+        assert len(model.requests) == 2
     asyncio.run(scenario())
