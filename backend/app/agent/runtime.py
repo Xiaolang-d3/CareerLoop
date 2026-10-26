@@ -114,6 +114,7 @@ def _web_source_urls(messages: list[AgentMessage]) -> set[str]:
 
 
 def validate_web_citations(content: str, allowed_urls: set[str]) -> tuple[bool, str]:
+    """Validate link identities; evidence support is reviewed before publishing."""
     cited = cited_urls(content)
     allowed = {_canonical_citation_url(url) for url in allowed_urls}
     if not cited:
@@ -1020,7 +1021,7 @@ class AgentRuntime:
         )
         ctx.events.append(event)
         await self._publish(ctx.event_callback, AgentStreamEvent(type="agent_event", event=event))
-        content = ctx.citation_draft + "\n\n> 来源引用校验未完成，已保留原始草稿；请勿将其视为已核验结论。"
+        content = "部分结论未能通过来源核验，本轮未生成可核验的最终答复。请补充可靠来源后继续。"
         await self._publish(ctx.event_callback, AgentStreamEvent(type="text_reset"))
         await self._publish(ctx.event_callback, AgentStreamEvent(type="text_delta", delta=content))
         return AgentRunResult(
@@ -1252,14 +1253,14 @@ class AgentRuntime:
                         response.content,
                         allowed_source_urls,
                     )
-                    if not citations_valid and not ctx.citation_retry_used:
+                    if not ctx.citation_retry_used:
                         ctx.citation_retry_used = True
                         event = ToolEvent(
                             round=round_number,
                             tool_call_id=f"citation-validation-{round_number}",
                             tool_name="citation_validator",
                             status="running",
-                            message=f"{citation_error}，正在自动修正",
+                            message=f"{citation_error}，正在自动修正并核对证据" if citation_error else "正在核对正文结论与来源证据的支持关系",
                             data={"allowed_source_count": len(allowed_source_urls)},
                         )
                         events.append(event)

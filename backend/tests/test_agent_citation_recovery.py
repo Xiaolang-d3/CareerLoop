@@ -19,7 +19,7 @@ DRAFT = "本平台社招职位存在变化。[报告](https://invented.example/r
 CARDS = [{"url": URL, "title": "社招报告", "excerpt": QUOTE, "published_at": "2026-10-20"}]
 
 def patch_response(action="replace_url", target="https://invented.example/report", source_id="C1", quote=QUOTE):
-    return ModelResponse(content=json.dumps({"patches": [{"action": action, "target": target, "source_id": source_id, "quote": quote}]}, ensure_ascii=False))
+    return ModelResponse(content=json.dumps({"verified": True, "patches": [{"action": action, "target": target, "source_id": source_id, "quote": quote}]}, ensure_ascii=False))
 
 class EvidenceTool(CountingTool):
     def __init__(self):
@@ -44,6 +44,33 @@ def test_patch_changes_url_only_and_preserves_every_word():
     assert validate_web_citations(result, {URL})[0]
     plain = "本平台社招职位存在变化。"
     assert apply_citation_patches(plain, CARDS, patch_response("cite_after", plain)) == plain + f"[来源]({URL})"
+
+
+def test_known_link_does_not_skip_evidence_review_and_unsupported_number_is_removed():
+    async def scenario():
+        supported = f"本报告仅代表本平台样本。[报告]({URL})"
+        unsupported = f"2025年企业AI招聘应用率79%。[报告]({URL})"
+        model = ScriptedModel([web_call(), ModelResponse(content=supported + "\n\n" + unsupported),
+            ModelResponse(content=json.dumps({"verified": True, "patches": [
+                {"action": "remove_claim", "target": unsupported},
+            ]}))])
+        result = await runtime_for(model, EvidenceTool()).run("联网核实招聘统计")
+        assert result.status == "done" and supported in result.content
+        assert "79%" not in result.content
+        assert "逐项核对每个事实和数字" in model.requests[-1].messages[0].content
+        assert result.events[-1].tool_name == "citation_validator"
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("payload", [
+    {"verified": False, "patches": []},
+    {"patches": []},
+    {"verified": True, "patches": [{"action": "remove_claim", "target": "79%"}]},
+    {"verified": True, "patches": [{"action": "remove_claim", "target": f"应用率79%。[来源]({URL})"}]},
+])
+def test_unverified_verdict_and_partial_sentence_deletions_are_rejected(payload):
+    draft = f"企业AI招聘应用率79%。[来源]({URL})"
+    assert apply_citation_patches(draft, CARDS, ModelResponse(content=json.dumps(payload))) is None
 
 @pytest.mark.parametrize("response", [
     ModelResponse(content="不能将社招改成校园招聘。"),
@@ -92,7 +119,7 @@ def test_oversized_draft_does_not_start_another_model_request():
         draft = DRAFT + "超长草稿" * 7000
         model = ScriptedModel([web_call(), ModelResponse(content=draft)])
         result = await runtime_for(model, EvidenceTool()).run("联网整理社招讨论")
-        assert result.status == "failed" and result.content.startswith(draft)
+        assert result.status == "failed" and draft not in result.content
         assert "超出引用修正预算" in result.error.message
         assert len(model.requests) == 2
     asyncio.run(scenario())
@@ -104,13 +131,13 @@ def test_retryable_repair_timeout_is_not_retried():
             ModelProviderError("request_timeout", "模型超时", retryable=True), patch_response()])
         tool = EvidenceTool()
         result = await runtime_for(model, tool).run("联网整理社招讨论")
-        assert result.status == "failed" and result.content.startswith(DRAFT)
+        assert result.status == "failed" and DRAFT not in result.content
         assert len(model.requests) == 3 and tool.calls == 1
         assert not any(event.tool_call_id.startswith("model-retry") for event in result.events)
     asyncio.run(scenario())
 
 
-def test_repair_deadline_cancels_provider_and_preserves_draft(monkeypatch):
+def test_repair_deadline_cancels_provider_and_withholds_unverified_draft(monkeypatch):
     from app.agent import runtime as runtime_module
     monkeypatch.setattr(runtime_module, "CITATION_REPAIR_TIMEOUT_SECONDS", 0.01)
     class HangingRepair(ScriptedModel):
@@ -126,7 +153,7 @@ def test_repair_deadline_cancels_provider_and_preserves_draft(monkeypatch):
     async def scenario():
         model = HangingRepair([web_call(), ModelResponse(content=DRAFT)])
         result = await runtime_for(model, EvidenceTool()).run("联网整理社招讨论")
-        assert result.status == "failed" and result.content.startswith(DRAFT)
+        assert result.status == "failed" and DRAFT not in result.content
         assert "引用修正超时" in result.error.message
         assert model.cancelled and len(model.requests) == 3
     asyncio.run(scenario())
@@ -187,13 +214,14 @@ def test_web_model_context_is_bounded_deduplicated_and_does_not_mutate_audit():
     ModelProviderError("service_unavailable", "修正服务暂不可用", retryable=False),
     ModelResponse(tool_calls=[ToolCall(id="forbidden", name="search_public_web", arguments={"query": "校招"})]),
 ])
-def test_failed_repair_preserves_original_draft_and_never_runs_tools(repair):
+def test_failed_repair_withholds_unverified_draft_and_never_runs_tools(repair):
     async def scenario():
         model = ScriptedModel([web_call(), ModelResponse(content=DRAFT), repair]); tool = EvidenceTool()
         result = await runtime_for(model, tool).run("联网整理社招讨论")
         assert result.status == "failed" and result.error.code == "citation_validation_failed"
-        assert result.content.startswith(DRAFT) and "校园招聘" not in result.content
-        assert "原始草稿" in result.content and tool.calls == 1
+        assert DRAFT not in result.content and "校园招聘" not in result.content
+        assert "未能通过来源核验" in result.content and tool.calls == 1
+        assert result.events[-1].data["original_draft_preserved"]
         assert result.events[-1].status == "failed"
     asyncio.run(scenario())
 

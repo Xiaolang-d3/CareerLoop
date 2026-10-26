@@ -19,7 +19,7 @@ from app.search_options import WebSearchOptions
 from app.tooling import TOOL_SPECS
 from app.tools import AskUserTool, ToolContext
 from app.tools.library import SearchLibraryTool
-from test_agent_runtime import CountingTool, ScriptedModel, runtime_for
+from test_agent_runtime import CountingTool, ScriptedModel, evidence_review, runtime_for
 from test_knowledge import PhraseEmbedder
 
 
@@ -92,7 +92,7 @@ def test_research_plan_runs_public_search_without_reading_resume():
         private = CountingTool("get_library_context")
         search = CountingTool("search_public_web")
         model = ScriptedModel([PUBLIC_INTENT, PUBLIC_PLAN, web_call(),
-                               ModelResponse(content="公开材料摘要。[来源](https://example.com/source)")])
+                               ModelResponse(content="公开材料摘要。[来源](https://example.com/source)"), evidence_review()])
         result = await runtime_for(model, private, search, AskUserTool()).run(
             TASK, web_search_options=WebSearchOptions(enabled=True))
         assert result.status == "done"
@@ -114,7 +114,7 @@ def test_short_followup_understands_recent_user_goal_before_planning():
             "sources": ["public_web"], "needs_planning": True,
         }))
         model = ScriptedModel([understanding, PUBLIC_PLAN, web_call(),
-                               ModelResponse(content="公开材料摘要。[来源](https://example.com/source)")])
+                               ModelResponse(content="公开材料摘要。[来源](https://example.com/source)"), evidence_review()])
         search = CountingTool("search_public_web")
         result = await runtime_for(model, search).run(
             "继续", history=[AgentMessage(role="user", content=complete_goal),
@@ -137,7 +137,7 @@ def test_ambiguous_discussion_can_clarify_then_replan_for_public_evidence():
                 "options": [{"label": "公开平台讨论"}, {"label": "已有聊天记录"}],
             })]),
             PUBLIC_INTENT, PUBLIC_PLAN, web_call(),
-            ModelResponse(content="公开材料摘要。[来源](https://example.com/source)"),
+            ModelResponse(content="公开材料摘要。[来源](https://example.com/source)"), evidence_review(),
         ])
         private = CountingTool("get_library_context")
         search = CountingTool("search_public_web")
