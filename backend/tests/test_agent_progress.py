@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
+
+import pytest
 
 from app.agent.citations import evidence_cards
 from app.agent.resume_policy import clarification_context, relevant_clarification_history
 from app.agent.runtime import _web_source_urls
-from app.domain import AgentClarification, AgentMessage, AgentRunSnapshot
+from app.domain import AgentClarification, AgentMessage, AgentPlan, AgentRunSnapshot
 from app.domain import ModelResponse, ToolCall
 from app.agent.progress import clarification_repair_reason
 from app.tools import AskUserTool
@@ -88,3 +91,56 @@ def test_real_blocker_and_noncreative_tasks_can_still_ask():
         "question": "选择哪份？", "blocking_reason": "两份材料涉及不同人，用户未指定修改对象",
     }, history)
     assert not clarification_repair_reason("conversation", {"question": "选择哪份？"}, history)
+
+
+def test_writing_requires_an_actual_draft_even_without_tools():
+    async def scenario():
+        model = ScriptedModel([
+            ModelResponse(content=json.dumps({"kind": "content_creation", "sources": [],
+                "goal": "根据CareerLoop说明生成简历项目条目", "expects_draft": True})),
+            ModelResponse(content="请补充技术栈，我可以帮你写。"),
+            ModelResponse(content='{"complete":false,"reason":"只有索取信息，没有项目条目"}'),
+            ModelResponse(content="CareerLoop｜独立开发：构建本地优先的AI工作台，支持对话和文件管理。技术栈待补充。"),
+            ModelResponse(content='{"complete":true,"reason":"已交付基于已知事实的项目初稿"}'),
+        ])
+        result = await runtime_for(model).run("写简历项目条目：CareerLoop由我独立开发，是支持对话和文件管理的本地优先AI工作台。")
+        assert result.status == "done" and "CareerLoop｜独立开发" in result.content
+        checks = [event for event in result.events if event.tool_name == "delivery_validator"]
+        assert [event.status for event in checks] == ["running", "done"]
+        assert result.plan.expected_output == "根据CareerLoop说明生成简历项目条目"
+        assert not model.requests[2].tools and "evidence" in model.requests[2].messages[-1].content
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("review", [
+    ModelResponse(content="无法判断"),
+    ModelResponse(content='{"complete":false,"reason":"仍未提供草稿"}'),
+])
+def test_failed_delivery_cannot_be_marked_done_or_repair_forever(review):
+    async def scenario():
+        model = ScriptedModel([
+            ModelResponse(content='{"kind":"content_creation","sources":[],"expects_draft":true}'),
+            ModelResponse(content="你想怎么补充？"), review,
+            ModelResponse(content="请先补充资料。"), review,
+        ])
+        result = await runtime_for(model).run("帮我起草项目经历")
+        assert result.status == "failed" and result.error.code == "delivery_requirements_unmet"
+        assert "尚未交付" in result.content
+        assert len(model.requests) <= 5
+    asyncio.run(scenario())
+
+
+def test_delivery_obligation_survives_a_checkpoint():
+    async def scenario():
+        model = ScriptedModel([
+            ModelResponse(content="仅给通用建议"),
+            ModelResponse(content='{"complete":false,"reason":"缺少项目条目"}'),
+        ])
+        snapshot = AgentRunSnapshot(resume_mode="checkpoint", route_kind="content_creation", needs_plan=False,
+            expects_draft=True, delivery_retry_used=True,
+            plan=AgentPlan(
+                goal="写项目经历", route="content_creation", expected_output="项目条目"),
+            messages=[AgentMessage(role="user", content="CareerLoop独立开发")])
+        result = await runtime_for(model).run("继续", resume=snapshot)
+        assert result.status == "failed" and result.error.code == "delivery_requirements_unmet"
+    asyncio.run(scenario())

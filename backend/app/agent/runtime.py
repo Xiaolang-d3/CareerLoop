@@ -73,7 +73,7 @@ from .orchestration import (
 )
 from .plan_builder import fallback_plan, plan_mode
 from .plan_validator import freeze_route_requirements, validate_plan
-from .progress import TASK_PROGRESS_GUIDANCE, clarification_repair_reason
+from .progress import DeliveryValidation, TASK_PROGRESS_GUIDANCE, clarification_repair_reason, delivery_review_messages
 from .resume_policy import clarification_context, clarification_from_events, needs_reply_replanning, relevant_clarification_history, resolve_resume_snapshot
 from .run_store import AgentRunStore, REPLAYABLE_RUN_STATUSES
 from .tool_executor import ToolExecutor
@@ -204,6 +204,8 @@ class RunContext:
     citation_draft: str = ""
     citation_sources: list[dict[str, Any]] = field(default_factory=list)
     citation_allowed_urls: list[str] = field(default_factory=list)
+    expects_draft: bool = False
+    delivery_retry_used: bool = False
 
 
 class AgentRuntime:
@@ -433,6 +435,7 @@ class AgentRuntime:
             if recent_user_context else routing_text
         )
         task_goal = (f"最新要求：{user_content}\n原任务：{task_context}" if task_context is not None else user_content)
+        expects_draft = False
         needs_public_web = requests_public_web(routing_text)
         if task_context is not None or should_classify_kind(route, routing_text):
             try:
@@ -452,6 +455,7 @@ class AgentRuntime:
                 )
                 understanding = parse_task_understanding(classified)
                 if understanding is not None:
+                    expects_draft = understanding.expects_draft
                     if understanding.goal.strip():
                         task_goal = understanding.goal.strip()
                     if understanding.sources is not None:
@@ -582,6 +586,9 @@ class AgentRuntime:
             events.append(event)
             await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
 
+        if expects_draft and plan is None:
+            plan = AgentPlan(goal=task_goal, route=route.kind, steps=[], expected_output=task_goal,
+                             success_criteria=["交付基于已知材料的实际草稿，缺失信息明确标注，不虚构事实"])
         if plan is not None:
             route = freeze_route_requirements(route, plan, tool_specs)
         egress = self._egress_context.get()
@@ -671,6 +678,7 @@ class AgentRuntime:
             messages=messages,
             events=events,
             interrupt_tools=interrupt_tools,
+            expects_draft=expects_draft,
         )
         self._apply_tool_surface(ctx)
         return await self._run_tool_loop(ctx, start_round=1)
@@ -742,6 +750,8 @@ class AgentRuntime:
             citation_draft=resume.citation_draft,
             citation_sources=resume.citation_sources,
             citation_allowed_urls=resume.citation_allowed_urls,
+            expects_draft=resume.expects_draft,
+            delivery_retry_used=resume.delivery_retry_used,
         )
         approval = self._approval_context.get()
         if resume.resume_mode == "waiting_user":
@@ -930,6 +940,8 @@ class AgentRuntime:
             citation_draft=ctx.citation_draft,
             citation_sources=ctx.citation_sources,
             citation_allowed_urls=ctx.citation_allowed_urls,
+            expects_draft=ctx.expects_draft,
+            delivery_retry_used=ctx.delivery_retry_used,
             rounds_used=rounds_used,
             clarification=clarification,
             completed_tools=sorted(ctx.completed_tools),
@@ -1180,6 +1192,54 @@ class AgentRuntime:
                     continue
 
             if response.content and not response.tool_calls:
+                if ctx.expects_draft and not repairing_citations:
+                    review_error = ""
+                    try:
+                        review = await self._await_with_cancellation(asyncio.wait_for(
+                            self._generate_for_stage(provider=ctx.provider, stage="classify", request=ModelRequest(
+                                messages=delivery_review_messages(
+                                    ctx.plan.goal if ctx.plan else ctx.user_content,
+                                    ctx.plan.expected_output if ctx.plan else "交付实际草稿",
+                                    ctx.plan.success_criteria if ctx.plan else [],
+                                    messages, response.content,
+                                ), tools=[], tool_choice="none", reasoning_effort="low",
+                                parameters={"max_output_tokens": 800},
+                            )), timeout=15,
+                        ), run_id)
+                        raw_review = review.content.strip()
+                        if raw_review.startswith("```json") and raw_review.endswith("```"):
+                            raw_review = raw_review[7:-3].strip()
+                        if review.tool_calls:
+                            raise ValueError("验收不能调用工具")
+                        verdict = DeliveryValidation.model_validate_json(raw_review)
+                    except _RunCancellationRequested:
+                        return self._cancelled_run_result(selected_platform, round_number, events, ctx.plan)
+                    except (ModelProviderError, ValueError, asyncio.TimeoutError):
+                        review_error = "交付检查未能完成"
+                        verdict = DeliveryValidation(complete=False, reason=review_error)
+                    event = ToolEvent(
+                        round=round_number, tool_call_id=f"delivery-{round_number}", tool_name="delivery_validator",
+                        status="done" if verdict.complete else "failed" if review_error or ctx.delivery_retry_used else "running",
+                        message="草稿交付检查通过" if verdict.complete else verdict.reason or "尚未交付实际草稿",
+                    )
+                    events.append(event)
+                    await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
+                    if not verdict.complete:
+                        if ctx.delivery_retry_used or review_error:
+                            content = "本轮尚未交付符合要求的草稿：" + (verdict.reason or "没有实际成果")
+                            await self._publish(event_callback, AgentStreamEvent(type="text_reset"))
+                            await self._publish(event_callback, AgentStreamEvent(type="text_delta", delta=content))
+                            return AgentRunResult(content=content, provider=self._model_provider,
+                                platform=ctx.platform, rounds=round_number, status="failed",
+                                error=ToolError(code="delivery_requirements_unmet", message=event.message),
+                                events=events, plan=ctx.plan)
+                        ctx.delivery_retry_used = True
+                        messages.append(AgentMessage(role="assistant", content=response.content))
+                        messages.append(AgentMessage(role="system", content=(
+                            "候选正文未通过交付检查：" + verdict.reason + "。请现在直接修正并交付实际草稿，标明缺口，不再只给建议。"
+                        )))
+                        self._checkpoint_run(ctx, rounds_used=round_number)
+                        continue
                 allowed_source_urls = (
                     set(ctx.citation_allowed_urls) or {canonical_url(card["url"]) for card in ctx.citation_sources}
                     if repairing_citations else _web_source_urls(messages)
