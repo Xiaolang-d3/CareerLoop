@@ -20,6 +20,7 @@ from .capability_resolver import (
     resolve_capabilities,
 )
 from .plan_builder import fallback_plan
+from .progress import requests_writing_output
 
 
 # Compatibility name for callers while route policy migrates to capabilities.
@@ -106,9 +107,7 @@ def route_task(
 
 def should_classify_kind(route: TaskRoute, content: str) -> bool:
     """Understand open tasks and creation requests with unspecified sources."""
-    if route.kind == "web_search" and any(phrase in content for phrase in (
-        "写简历", "写项目条目", "写项目经历", "起草", "改写", "写文章", "文案", "整理成", "提炼成",
-    )):
+    if route.kind == "web_search" and requests_writing_output(content):
         # Search is a source for the deliverable, not necessarily the objective.
         return True
     if any(phrase in content for phrase in ("不要", "不需要", "不用", "无需", "不围绕")):
@@ -151,7 +150,7 @@ class TaskUnderstanding(BaseModel):
     # None supports kind-only output from older configured classifiers.
     sources: list[Literal["private_library", "public_web"]] | None = Field(default=None, max_length=2)
     needs_planning: bool = Field(default=False, strict=True)
-    expects_draft: bool = Field(default=False, strict=True)
+    expects_draft: bool | None = Field(default=None, strict=True)
 
 
 def parse_task_understanding(response: ModelResponse) -> TaskUnderstanding | None:

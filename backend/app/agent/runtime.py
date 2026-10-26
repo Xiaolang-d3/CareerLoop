@@ -73,7 +73,7 @@ from .orchestration import (
 )
 from .plan_builder import fallback_plan, plan_mode
 from .plan_validator import freeze_route_requirements, validate_plan
-from .progress import DeliveryValidation, TASK_PROGRESS_GUIDANCE, clarification_repair_reason, delivery_review_messages
+from .progress import DeliveryValidation, TASK_PROGRESS_GUIDANCE, clarification_repair_reason, delivery_review_messages, requests_writing_output
 from .resume_policy import clarification_context, clarification_from_events, needs_reply_replanning, relevant_clarification_history, resolve_resume_snapshot
 from .run_store import AgentRunStore, REPLAYABLE_RUN_STATUSES
 from .tool_executor import ToolExecutor
@@ -437,7 +437,7 @@ class AgentRuntime:
             if recent_user_context else routing_text
         )
         task_goal = (f"最新要求：{user_content}\n原任务：{task_context}" if task_context is not None else user_content)
-        expects_draft = False
+        expects_draft = requests_writing_output(routing_text)
         needs_public_web = requests_public_web(routing_text)
         if task_context is not None or should_classify_kind(route, routing_text):
             try:
@@ -457,7 +457,8 @@ class AgentRuntime:
                 )
                 understanding = parse_task_understanding(classified)
                 if understanding is not None:
-                    expects_draft = understanding.expects_draft
+                    if understanding.expects_draft is not None:
+                        expects_draft = understanding.expects_draft
                     if understanding.goal.strip():
                         task_goal = understanding.goal.strip()
                     if understanding.sources is not None:
@@ -591,6 +592,9 @@ class AgentRuntime:
         if expects_draft and plan is None:
             plan = AgentPlan(goal=task_goal, route=route.kind, steps=[], expected_output=task_goal,
                              success_criteria=["交付基于已知材料的实际草稿，缺失信息明确标注，不虚构事实"])
+        elif expects_draft and plan is not None and not plan.expected_output:
+            plan.expected_output = task_goal
+            plan.success_criteria = ["交付基于已知材料的实际草稿，缺失信息明确标注，不虚构事实"]
         if plan is not None:
             route = freeze_route_requirements(route, plan, tool_specs)
         egress = self._egress_context.get()
@@ -1218,7 +1222,7 @@ class AgentRuntime:
                         verdict = DeliveryValidation.model_validate_json(raw_review)
                     except _RunCancellationRequested:
                         return self._cancelled_run_result(selected_platform, round_number, events, ctx.plan)
-                    except (ModelProviderError, ValueError, asyncio.TimeoutError):
+                    except Exception:
                         review_error = "交付检查未能完成"
                         verdict = DeliveryValidation(complete=False, reason=review_error)
                     event = ToolEvent(

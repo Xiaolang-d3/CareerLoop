@@ -205,6 +205,7 @@ def test_declining_web_does_not_emit_a_false_enable_search_notice():
         model = ScriptedModel([
             ModelResponse(content='{"kind":"content_creation","sources":[]}'),
             ModelResponse(content="基于你给的内容整理。"),
+            ModelResponse(content='{"complete":true,"reason":"已完成改写"}'),
         ])
         result = await runtime_for(model, CountingTool("search_public_web")).run(
             "不用联网，改写我给的内容", web_search_options=WebSearchOptions(enabled=False))

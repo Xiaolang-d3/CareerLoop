@@ -188,3 +188,30 @@ def test_source_approval_failure_is_never_downgraded_or_bypassed():
         assert not any(event.tool_name == "task_degradation" for event in result.events)
         assert len(model.requests) == 2
     asyncio.run(scenario())
+
+
+def test_deterministic_library_writing_route_cannot_skip_delivery_review():
+    async def scenario():
+        model = ScriptedModel([
+            ModelResponse(tool_calls=[ToolCall(id="read", name="get_library_context", arguments={})]),
+            ModelResponse(content="LocalDesk：本地资料协作工具，支持文件管理。"),
+            ModelResponse(content='{"complete":true,"reason":"实际改写了用户材料"}'),
+        ])
+        result = await runtime_for(model, CountingTool("get_library_context")).run(
+            "根据我的笔记改写文章：LocalDesk是支持文件管理的本地资料协作工具。")
+        assert result.status == "done" and result.events[-1].tool_name == "delivery_validator"
+        assert result.plan.expected_output
+    asyncio.run(scenario())
+
+
+def test_retained_web_evidence_uses_existing_model_context_budget():
+    from app.agent.research_context import MAX_WEB_CONTEXT_CHARS, web_context_messages
+
+    payload = {"retained_evidence": True, "tool_name": "search_public_web", "status": "done", "sources": [
+        {"url": "https://example.com/source", "content": "长网页正文" * 20000},
+    ]}
+    message = AgentMessage(role="assistant", content=json.dumps(payload), payload=payload)
+    projected = web_context_messages([message])
+    assert "https://example.com/source" in projected[0].content
+    assert len(projected[0].content) < MAX_WEB_CONTEXT_CHARS
+    assert len(message.content) > MAX_WEB_CONTEXT_CHARS

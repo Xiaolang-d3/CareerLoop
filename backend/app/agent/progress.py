@@ -1,8 +1,8 @@
 """Policies for turning clarification replies into visible task progress."""
 from __future__ import annotations
 
-import re
 import json
+import re
 
 from pydantic import BaseModel, Field
 
@@ -16,6 +16,15 @@ TASK_PROGRESS_GUIDANCE = (
     "并在 blocking_reason 中说明阻塞原因。不要重复询问已回答的信息或已明确的材料提供方式。"
     "用户从调研转为写作时更新交付目标，不要再次输出通用调研报告。"
 )
+
+
+def requests_writing_output(content: str) -> bool:
+    """Fallback for deterministic routes and older classifier responses."""
+    if any(phrase in content for phrase in ("怎么写", "如何写", "写法", "不用写", "不要写", "不需要写")):
+        return False
+    return any(phrase in content for phrase in (
+        "写简历", "写项目条目", "写项目经历", "起草", "改写", "写文章", "文案", "整理成", "提炼成", "写一篇", "生成初稿",
+    ))
 
 
 class DeliveryValidation(BaseModel):
