@@ -45,7 +45,7 @@ from .approval_policy import (
 )
 from .capability_resolver import is_mixed_run, requests_public_web
 from .completion import validate_completion
-from .citations import MAX_REPAIR_CONTEXT_CHARS, apply_citation_patches, canonical_url, cited_urls, evidence_cards, repair_messages
+from .citations import MAX_REPAIR_CONTEXT_CHARS, PATCH_FAILURE_MESSAGES, canonical_url, cited_urls, evaluate_citation_patches, evidence_cards, repair_messages
 from .research_context import web_context_messages
 from .egress_policy import (
     APPROVAL_REQUIRED,
@@ -73,7 +73,7 @@ from .orchestration import (
 )
 from .plan_builder import fallback_plan, plan_mode
 from .plan_validator import freeze_route_requirements, validate_plan
-from .resume_policy import clarification_context, clarification_from_events, needs_reply_replanning, resolve_resume_snapshot
+from .resume_policy import clarification_context, clarification_from_events, needs_reply_replanning, resolve_resume_snapshot, user_intent_preview
 from .run_store import AgentRunStore, REPLAYABLE_RUN_STATUSES
 from .tool_executor import ToolExecutor
 
@@ -83,6 +83,7 @@ WEB_RESEARCH_TOOLS = {"search_public_web"}
 MAX_INVALID_ARGUMENT_RETRIES = 2
 CITATION_REPAIR_TIMEOUT_SECONDS = 30
 CITATION_REPAIR_MAX_OUTPUT_TOKENS = 3000
+CLASSIFICATION_MAX_OUTPUT_TOKENS = 1024
 COMPANY_REFERENCE_PHRASES = ("这家公司", "该公司", "这个公司", "这家企业", "该企业")
 COMPANY_SUFFIX = r"(?:有限责任公司|股份有限公司|有限公司)"
 COMPANY_CONTEXT_PATTERNS = (
@@ -121,6 +122,12 @@ def validate_web_citations(content: str, allowed_urls: set[str]) -> tuple[bool, 
     if unknown:
         return False, "回答引用了本轮搜索结果之外的网址"
     return True, ""
+
+
+def _citation_call_id(events: list[ToolEvent], round_number: int) -> str:
+    # Validation and its single repair attempt are one execution node.
+    return next((event.tool_call_id for event in reversed(events) if event.tool_name == "citation_validator"),
+                f"citation-validation-{round_number}")
 
 
 def _recent_company_name(history: list[AgentMessage]) -> str | None:
@@ -423,7 +430,7 @@ class AgentRuntime:
             tool_specs=tool_specs,
         )
         recent_user_context = "\n".join(
-            message.content[:1000] for message in (history or []) if message.role == "user"
+            user_intent_preview(message) for message in (history or []) if message.role == "user"
         )[-4000:]
         classification_content = (
             f"先前用户任务与澄清：\n{task_context}\n本轮最新答复（优先）：\n{user_content}"
@@ -439,7 +446,10 @@ class AgentRuntime:
                     provider, "classify",
                     ModelRequest(
                         messages=[AgentMessage(role="user", content=classifier_prompt(classification_content))],
-                    )
+                        tool_choice="none", reasoning_effort="low",
+                        parameters={"max_output_tokens": CLASSIFICATION_MAX_OUTPUT_TOKENS},
+                    ),
+                    event_callback=event_callback,
                 )
                 route = refine_route_from_classifier(
                     route,
@@ -500,7 +510,8 @@ class AgentRuntime:
                                 content=planner_prompt(task_goal, route, tool_specs),
                             )
                         ]
-                    )
+                    ),
+                    event_callback=event_callback,
                 )
                 plan = parse_plan(planning_response, task_goal, route, tool_specs)
             except ModelProviderError as exc:
@@ -995,11 +1006,11 @@ class AgentRuntime:
         ]
         self._append_visible_tools(ctx.messages, ctx.executable_tools)
 
-    async def _citation_failure(self, ctx: RunContext, round_number: int, message: str) -> AgentRunResult:
+    async def _citation_failure(self, ctx: RunContext, round_number: int, message: str, *, reason_code: str = "") -> AgentRunResult:
         event = ToolEvent(
-            round=round_number, tool_call_id=f"citation-validation-{round_number}",
+            round=round_number, tool_call_id=_citation_call_id(ctx.events, round_number),
             tool_name="citation_validator", status="failed", message=message,
-            data={"original_draft_preserved": bool(ctx.citation_draft)},
+            data={"original_draft_preserved": bool(ctx.citation_draft), "repair_error_code": reason_code},
         )
         ctx.events.append(event)
         await self._publish(ctx.event_callback, AgentStreamEvent(type="agent_event", event=event))
@@ -1075,7 +1086,7 @@ class AgentRuntime:
                 )
             except ModelProviderError as exc:
                 if repairing_citations:
-                    return await self._citation_failure(ctx, round_number, str(exc))
+                    return await self._citation_failure(ctx, round_number, str(exc), reason_code=exc.code)
                 event = ToolEvent(
                     round=round_number,
                     tool_call_id=f"model-round-{round_number}",
@@ -1122,9 +1133,10 @@ class AgentRuntime:
                     plan=ctx.plan,
                 )
             if repairing_citations:
-                patched = apply_citation_patches(ctx.citation_draft, ctx.citation_sources, response)
+                patched, reason_code = evaluate_citation_patches(ctx.citation_draft, ctx.citation_sources, response)
                 if patched is None:
-                    return await self._citation_failure(ctx, round_number, "来源引用修正未返回有效补丁，已保留原始草稿")
+                    return await self._citation_failure(ctx, round_number,
+                        f"{PATCH_FAILURE_MESSAGES[reason_code]}，已保留原始草稿", reason_code=reason_code)
                 response = response.model_copy(update={"content": patched})
                 await self._publish(event_callback, AgentStreamEvent(type="text_reset"))
                 await self._publish(event_callback, AgentStreamEvent(type="text_delta", delta=patched))
@@ -1191,11 +1203,11 @@ class AgentRuntime:
                         ctx.citation_retry_used = True
                         event = ToolEvent(
                             round=round_number,
-                            tool_call_id=f"citation-validation-{round_number}",
+                            tool_call_id=_citation_call_id(events, round_number),
                             tool_name="citation_validator",
                             status="running",
                             message=f"{citation_error}，正在自动修正",
-                            data={"allowed_source_count": len(allowed_source_urls)},
+                            data={"allowed_source_count": len(allowed_source_urls), "validation_reason": citation_error},
                         )
                         events.append(event)
                         await self._publish(
@@ -1219,7 +1231,7 @@ class AgentRuntime:
                     if ctx.citation_retry_used:
                         event = ToolEvent(
                             round=round_number,
-                            tool_call_id=f"citation-validation-{round_number}",
+                            tool_call_id=_citation_call_id(events, round_number),
                             tool_name="citation_validator",
                             status="done",
                             message="来源引用校验通过",
@@ -2023,10 +2035,30 @@ class AgentRuntime:
                 task.cancel()
             await asyncio.gather(task, return_exceptions=True)
 
-    async def _generate_for_stage(self, provider, stage: str, request: ModelRequest) -> ModelResponse:
+    async def _generate_for_stage(self, provider, stage: str, request: ModelRequest, *, event_callback: StreamCallback | None = None) -> ModelResponse:
         provider, selection = self._select_stage_model(provider, stage, request)
-        with model_call_scope(selection, self._run_context.get(), stage=stage):
-            return await provider.generate(request)
+        labels = {"classify": ("正在理解你的请求", "已理解请求"), "plan": ("正在规划步骤", "已完成规划")}
+        progress = ToolEvent(round=0, tool_call_id=f"model-stage-{stage}", tool_name="agent_run_state",
+                             status="running", message=labels[stage][0], data={"stage": stage}) if stage in labels else None
+        started_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+        started_clock = perf_counter()
+        if progress is not None:
+            progress.started_at = started_at
+            await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=progress))
+        succeeded = False
+        try:
+            with model_call_scope(selection, self._run_context.get(), stage=stage):
+                response = await provider.generate(request)
+            succeeded = True
+            return response
+        finally:
+            if progress is not None:
+                await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=progress.model_copy(update={
+                    "status": "done" if succeeded else "failed",
+                    "message": labels[stage][1] if succeeded else "本阶段已结束",
+                    "completed_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                    "duration_ms": max(0, round((perf_counter() - started_clock) * 1000)),
+                })))
 
     def _select_stage_model(self, provider, stage: str, request: ModelRequest, *, streaming: bool = False):
         if self._model_router is None:

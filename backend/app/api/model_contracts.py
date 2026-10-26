@@ -17,7 +17,7 @@ class ConnectionCreateIn(BaseModel):
     model_base_url: str = Field(default="", max_length=500)
     model_protocol: Protocol = "auto"
     api_key: str = Field(default="", max_length=500)
-    model_name: str = Field(min_length=1, max_length=120)
+    model_name: str | None = Field(default=None, min_length=1, max_length=120)
     data_boundary: str | None = Field(default=None, max_length=120)
 
 

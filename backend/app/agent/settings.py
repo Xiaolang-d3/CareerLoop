@@ -274,8 +274,10 @@ def save_agent_settings(values: dict[str, Any], db_path: str | Path | None = Non
 
 
 def get_model_connection(db_path: str | Path | None = None, *, resolve_credentials: bool = True) -> dict[str, Any]:
-    from .model_catalog import get_profile_connection
-
+    from .model_catalog import get_model_catalog, get_profile_connection
+    if not get_model_catalog(db_path)["default_profile_id"]:
+        from ..model_connection import resolve_model_connection
+        return {**resolve_model_connection({"model_name": "", "model_base_url": "", "model_protocol": "auto", "api_key": ""}), "api_key_configured": False, "credential_status": "missing", "connection_id": "", "profile_id": None}
     return get_profile_connection(db_path=db_path, resolve_credentials=resolve_credentials)
 
 

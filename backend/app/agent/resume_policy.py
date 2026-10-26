@@ -133,11 +133,27 @@ def needs_reply_replanning(snapshot: AgentRunSnapshot) -> bool:
     )
 
 
+def user_intent_preview(message: AgentMessage) -> str:
+    # Attachment excerpts are source data, not a preview of the user's intent.
+    # A partial excerpt can otherwise be mistaken for a truncated source file.
+    prefix = "\n\n以下为用户主动上传附件的本地解析文本，请基于此内容回答：\n"
+    request, marker, _ = message.content.partition(prefix)
+    return request[:1000] + ("\n（附件全文保留在执行上下文中，此处仅展示用户请求。）" if marker else "")
+
+
 def clarification_context(snapshot: AgentRunSnapshot) -> tuple[str, list[AgentMessage], bool]:
     """Preserve user intent without carrying the obsolete plan into a new run."""
-    user_messages = [message for message in snapshot.messages if message.role == "user"][-4:]
-    context = "\n".join(message.content[:1000] for message in user_messages)
-    history = [AgentMessage(role="user", content=message.content[:1000]) for message in user_messages]
+    user_messages = [message for message in snapshot.messages if message.role == "user"]
+    recent_start = max(0, len(user_messages) - 4)
+    # Routing gets a bounded intent preview; execution must retain the source
+    # text, including attachments needed across several clarification turns.
+    context = "\n".join(user_intent_preview(message) for message in user_messages[-4:])
+    history = [AgentMessage(role="user", content=message.content,
+                            payload={"document_attachment_ids": message.payload["document_attachment_ids"]}
+                            if message.payload.get("document_attachment_ids") else {})
+               for index, message in enumerate(user_messages)
+               if index >= recent_start or message.payload.get("document_attachment_ids")
+               or "\n[脱敏资料：" in message.content]
     if snapshot.clarification is not None:
         question = snapshot.clarification.question[:200]
         options = "；".join(

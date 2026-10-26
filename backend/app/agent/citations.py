@@ -122,47 +122,67 @@ class CitationPatches(BaseModel):
     patches: list[CitationPatch] = Field(max_length=20)
 
 
-def apply_citation_patches(draft: str, cards: list[dict], response: ModelResponse) -> str | None:
+PATCH_FAILURE_MESSAGES = {
+    "unexpected_tools": "引用修正返回了工具调用，未执行该调用",
+    "invalid_format": "引用修正未返回符合约定的 JSON 补丁",
+    "empty_patches": "引用修正未找到可确认的引用补丁",
+    "unknown_source": "引用补丁使用了本轮证据之外的来源",
+    "quote_not_found": "引用补丁的支持引文未出现在对应来源片段中",
+    "target_not_found": "引用补丁未匹配到草稿中的原文或链接",
+    "invalid_anchor": "引用补丁的原文位置不唯一或会破坏已有链接",
+    "overlapping_patches": "引用补丁的位置发生重叠",
+}
+
+
+def evaluate_citation_patches(draft: str, cards: list[dict], response: ModelResponse) -> tuple[str | None, str]:
+    """Validate immutable edits and return a bounded diagnostic without raw model output."""
     if response.tool_calls:
-        return None
+        return None, "unexpected_tools"
     raw = response.content.strip()
-    if raw.startswith("```json") and raw.endswith("```"):
-        raw = raw[7:-3].strip()
+    fenced = re.fullmatch(r"```(?:json)?[ \t]*\n?([\s\S]*?)\n?```", raw, re.IGNORECASE)
+    if fenced:
+        raw = fenced.group(1).strip()
     try:
         payload = CitationPatches.model_validate_json(raw)
     except (ValidationError, ValueError):
-        return None
+        return None, "invalid_format"
     if not payload.patches:
-        return None
+        return None, "empty_patches"
     known = {card.get("id") or f"C{index}": card for index, card in enumerate(cards, start=1)}
     # Calculate all edits against the immutable draft. No operation can target
     # text or links inserted by another operation.
     edits: list[tuple[int, int, str]] = []
     for patch in payload.patches:
         source = known.get(patch.source_id)
-        if source is None or patch.quote not in source["excerpt"]:
-            return None
+        if source is None:
+            return None, "unknown_source"
+        if patch.quote not in source["excerpt"]:
+            return None, "quote_not_found"
         if patch.action == "replace_url":
             links = [match for match in _LINK.finditer(draft)
                      if match.group("url").strip("<>") == patch.target]
             if not links:
-                return None
+                return None, "target_not_found"
             for match in links:
                 edits.append((*match.span("url"), source["url"]))
         else:
             if len(patch.target) < 4 or draft.count(patch.target) != 1:
-                return None
+                return None, "invalid_anchor"
             # An insertion inside an existing Markdown link can corrupt its
             # identity, so only allow anchors entirely outside link syntax.
             start = draft.index(patch.target)
             end = start + len(patch.target)
             if any(start < match.end() and end > match.start() for match in _LINK.finditer(draft)):
-                return None
+                return None, "invalid_anchor"
             edits.append((end, end, f"[来源]({source['url']})"))
     edits.sort()
     for previous, current in zip(edits, edits[1:]):
         if current[0] < previous[1] or current[:2] == previous[:2]:
-            return None
+            return None, "overlapping_patches"
     for start, end, replacement in reversed(edits):
         draft = draft[:start] + replacement + draft[end:]
-    return draft
+    return draft, ""
+
+
+def apply_citation_patches(draft: str, cards: list[dict], response: ModelResponse) -> str | None:
+    return evaluate_citation_patches(draft, cards, response)[0]

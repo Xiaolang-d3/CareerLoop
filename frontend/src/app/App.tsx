@@ -1146,7 +1146,7 @@ export function App({
                       busy={modelCatalog.busy || agentSettingsBusy} error={modelCatalog.error}
                       secretWritable={savedAgentSettings.secret_storage_writable}
                       defaultLocked={defaultModelHasDraft || Boolean(modelSaveUnknown)}
-                      onReload={modelCatalog.reload} onMutate={modelCatalog.mutate}
+                      onReload={modelCatalog.reload} onMutate={modelCatalog.mutate} onEnsureProfile={modelCatalog.ensureProfile}
                       onDefaultChanged={refreshDefaultModelSelection}
                     />}
                     settings={agentSettings}

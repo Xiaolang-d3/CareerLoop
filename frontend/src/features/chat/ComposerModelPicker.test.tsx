@@ -4,17 +4,18 @@ import { ComposerModelPicker } from "./ComposerModelPicker";
 import type { ComposerModelSettings } from "./ComposerModelParameters";
 
 const profiles = [
-  { id: "p1", model_name: "gpt-5.5", connection_name: "主连接" },
-  { id: "p2", model_name: "claude-x", connection_name: "备用连接" }
+  { id: "p1", model_name: "gpt-5.5", connection_id: "service-a", connection_name: "主连接" },
+  { id: "p2", model_name: "claude-x", connection_id: "service-a", connection_name: "主连接" }
 ];
 function setup(overrides: Partial<Parameters<typeof ComposerModelPicker>[0]> = {}) {
   const props = {
     configured: true, currentModelName: "gpt-5.5", defaultModelName: "gpt-5.5", profiles, selectedProfileId: "p1",
     profileDisabled: false, serviceUnavailable: false, busy: false, canSelect: true,
+    serviceModels: { connection_id: "service-a", connection_name: "主连接", revision: 1, models: ["gpt-5.5", "claude-x"], busy: false, error: "" },
     onChange: vi.fn(), onOpenSettings: vi.fn(), ...overrides
   };
-  render(<ComposerModelPicker {...props} />);
-  return props;
+  const view = render(<ComposerModelPicker {...props} />);
+  return { ...props, view };
 }
 const openMenu = () => fireEvent.click(screen.getByRole("button", { name: /切换模型/ }));
 afterEach(cleanup);
@@ -29,13 +30,12 @@ describe("ComposerModelPicker", () => {
     } });
     openMenu();
     fireEvent.click(screen.getByRole("button", { name: "思考设置" }));
-    await screen.findByText(/思考越深入/);
+    await screen.findByTitle(/思考越深入/);
     const effort = screen.getByLabelText("思考程度");
     effort.focus();
     fireEvent.keyDown(effort, { key: "ArrowDown" });
     expect(effort).toHaveFocus();
     fireEvent.change(effort, { target: { value: "high" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
     await waitFor(() => expect(onSave).toHaveBeenCalledWith("p1", 3, { reasoning_effort: "high" }));
     expect(props.onChange).not.toHaveBeenCalled();
     fireEvent.keyDown(effort, { key: "Escape" });
@@ -43,7 +43,7 @@ describe("ComposerModelPicker", () => {
     expect(screen.getByRole("button", { name: /切换模型，当前/ })).toHaveFocus();
   });
 
-  it("loads service models on opening and searches/selects an unsaved model on the same service", async () => {
+  it("loads service models on opening and selects an unsaved model on the same service", async () => {
     const props = setup({
       profiles: profiles.map(profile => ({ ...profile, connection_id: profile.id === "p1" ? "service-a" : "service-b" })),
       serviceModels: { connection_id: "service-a", connection_name: "主连接", revision: 1, models: ["gpt-5.5", "grok-model", "claude-model"], busy: false, error: "" },
@@ -52,27 +52,70 @@ describe("ComposerModelPicker", () => {
     openMenu();
     await waitFor(() => expect(props.onDiscover).toHaveBeenCalledOnce());
     expect(screen.getAllByRole("option", { name: "gpt-5.5" })).toHaveLength(1);
-    fireEvent.change(screen.getByRole("textbox", { name: "搜索模型" }), { target: { value: "grok" } });
-    expect(screen.queryByRole("option", { name: "claude-model" })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "claude-model" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("option", { name: "grok-model" }));
     expect(props.onServiceChange).toHaveBeenCalledWith("grok-model");
     expect(props.onChange).not.toHaveBeenCalled();
   });
 
-  it("keeps saved models usable after catalog failure and exposes a retry", () => {
+  it("queries again when reopened without waiting for a manual refresh", () => {
+    const props = setup({ onDiscover: vi.fn().mockResolvedValue(undefined) });
+    openMenu();
+    fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" });
+    openMenu();
+    expect(props.onDiscover).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows only returned models without source badges or saved-only profiles", () => {
+    const props = setup({
+      profiles: [{ id: "legacy", model_name: "saved-only", connection_id: "service-a", connection_name: "主连接" }, { id: "p1", model_name: "gpt-5.5", connection_id: "service-a", connection_name: "主连接" }, { id: "p2", model_name: "gpt-5.5", connection_id: "service-b", connection_name: "备用连接" }],
+      serviceModels: { connection_id: "service-a", connection_name: "主连接", revision: 1, models: ["gpt-5.5", "fresh-model", "gpt-5.5"], busy: false, error: "" }
+    });
+    openMenu();
+    expect(screen.getAllByRole("option").map(item => item.getAttribute("aria-label"))).toEqual(["gpt-5.5", "fresh-model"]);
+    expect(screen.queryByText(/服务返回|已保存|上次返回/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "saved-only" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("option", { name: "gpt-5.5" }));
+    expect(props.onChange).not.toHaveBeenCalled();
+  });
+
+  it("retains only service results during loading and failure without clearing selection", () => {
+    const { view, ...props } = setup({
+      profiles: [{ id: "p1", model_name: "gpt-5.5", connection_id: "service-a", connection_name: "主连接" }],
+      serviceModels: { connection_id: "service-a", connection_name: "主连接", revision: 1, models: ["gpt-5.5", "fresh-model"], busy: false, error: "" },
+      onDiscover: vi.fn().mockResolvedValue(undefined)
+    });
+    openMenu();
+    view.rerender(<ComposerModelPicker {...props} serviceModels={{ ...props.serviceModels!, busy: true }} />);
+    expect(screen.getByRole("status")).toHaveTextContent("正在读取服务模型");
+    expect(screen.getByRole("option", { name: "gpt-5.5" })).toHaveAttribute("aria-selected", "true");
+    expect(props.onDiscover).toHaveBeenCalledOnce();
+    view.rerender(<ComposerModelPicker {...props} serviceModels={{ ...props.serviceModels!, error: "服务暂时不可用" }} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("服务暂时不可用");
+    expect(screen.getByRole("option", { name: "gpt-5.5" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(props.onDiscover).toHaveBeenLastCalledWith(true);
+  });
+
+  it("marks the current unsaved service model as selected", () => {
+    setup({ selectedProfileId: null, currentModelName: "fresh-model", serviceModels: { connection_id: "service-a", connection_name: "主连接", revision: 1, models: ["fresh-model"], busy: false, error: "" } });
+    openMenu();
+    expect(screen.getByRole("option", { name: "fresh-model" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("does not fall back to saved models after the first query fails and exposes a retry", () => {
     const props = setup({ serviceModels: { connection_id: "service-a", connection_name: "主连接", revision: 1, models: [], busy: false, error: "服务暂时不可用" }, onDiscover: vi.fn().mockResolvedValue(undefined) });
     openMenu();
     expect(screen.getByRole("alert")).toHaveTextContent("服务暂时不可用");
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
     expect(props.onDiscover).toHaveBeenCalledWith(true);
-    fireEvent.click(screen.getByRole("option", { name: "claude-x" }));
-    expect(props.onChange).toHaveBeenCalledWith("p2");
+    expect(screen.queryAllByRole("option")).toHaveLength(0);
+    expect(props.onChange).not.toHaveBeenCalled();
   });
-  it("opens a grouped menu and switches models", () => {
+  it("reuses the saved profile when a returned model is selected", () => {
     const props = setup();
     openMenu();
     expect(screen.getByRole("listbox", { name: "选择模型" })).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "备用连接" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /跟随默认/ })).not.toBeInTheDocument();
     expect(screen.getByRole("option", { name: "gpt-5.5" })).toHaveAttribute("aria-selected", "true");
     fireEvent.click(screen.getByRole("option", { name: "claude-x" }));
@@ -80,22 +123,35 @@ describe("ComposerModelPicker", () => {
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
 
-  it("searches saved models by model or connection without a service catalog", () => {
+  it("omits search and refresh controls while preserving keyboard model navigation", () => {
     setup();
     openMenu();
-    const search = screen.getByRole("textbox", { name: "搜索模型" });
-    fireEvent.change(search, { target: { value: "备用" } });
-    expect(screen.getByRole("option", { name: "claude-x" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "搜索模型" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "刷新模型列表" })).not.toBeInTheDocument();
+    const current = screen.getByRole("option", { name: "gpt-5.5" });
+    const next = screen.getByRole("option", { name: "claude-x" });
+    expect(current).toHaveFocus();
+    fireEvent.keyDown(current, { key: "ArrowDown" });
+    expect(next).toHaveFocus();
+    fireEvent.keyDown(next, { key: "ArrowDown" });
+    expect(current).toHaveFocus();
+    fireEvent.keyDown(current, { key: "ArrowUp" });
+    expect(next).toHaveFocus();
+  });
+
+  it("removes a model no longer returned even when its profile remains saved", () => {
+    const { view, ...props } = setup();
+    openMenu();
+    view.rerender(<ComposerModelPicker {...props} serviceModels={{ ...props.serviceModels, models: ["claude-x"] }} />);
     expect(screen.queryByRole("option", { name: "gpt-5.5" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: /跟随默认/ })).not.toBeInTheDocument();
-    fireEvent.change(search, { target: { value: "GPT" } });
-    expect(screen.getByRole("option", { name: "gpt-5.5" })).toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "备用连接" })).not.toBeInTheDocument();
-    fireEvent.change(search, { target: { value: "missing" } });
-    expect(screen.getByText("没有匹配的模型")).toBeInTheDocument();
-    fireEvent.change(search, { target: { value: "" } });
-    expect(screen.getByRole("option", { name: "gpt-5.5" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("group", { name: "备用连接" })).toBeInTheDocument();
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+  });
+
+  it("does not display saved profiles when there is no service catalog", () => {
+    setup({ serviceModels: undefined });
+    openMenu();
+    expect(screen.queryAllByRole("option")).toHaveLength(0);
+    expect(screen.getByText(/服务尚未返回可选模型/)).toBeInTheDocument();
   });
 
   it("closes on Escape and opens model settings from the footer", () => {
@@ -122,10 +178,11 @@ describe("ComposerModelPicker", () => {
     expect(screen.getByText("当前模型服务不可用，可以换一个模型或检查设置")).toBeInTheDocument();
   });
 
-  it("marks a disabled conversation model", () => {
+  it("warns about a disabled conversation model without adding it to the returned list", () => {
     setup({ profileDisabled: true, selectedProfileId: "gone", currentModelName: "old-model" });
     expect(screen.getByRole("status")).toHaveTextContent("已停用");
     openMenu();
-    expect(screen.getByRole("option", { name: /old-model/ })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByRole("option", { name: /old-model/ })).not.toBeInTheDocument();
+    expect(screen.getByText("当前模型已停用，请换一个模型")).toBeInTheDocument();
   });
 });

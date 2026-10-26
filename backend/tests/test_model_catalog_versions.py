@@ -89,3 +89,17 @@ def test_version_restores_parameters_after_profile_edit(workspace):
     update_model_profile(first["profile_id"], {"parameters": {"temperature": 0.8, "max_output_tokens": 500}}, path)
     restored = get_profile_connection(db_path=path, selection=internal_model_selection(second))
     assert restored["parameters"] == {"temperature": 0.2, "max_output_tokens": 100}
+
+
+def test_shared_image_adapter_keeps_the_protocol_bound_to_a_restored_run(workspace):
+    from app.agent.model_catalog import ensure_service_model_profile
+    path, config = workspace
+    config.openai_api_key = "synthetic-shared-images-key"
+    connection = get_profile_connection(db_path=path)
+    image = ensure_service_model_profile(connection["connection_id"], {"model_name": "gpt-image-2", "expected_revision": connection["connection_revision"]}, path)
+    current = get_profile_connection(image["id"], path)
+    assert current["model_protocol"] == "images"
+    bound = internal_model_selection(current)
+    assert get_profile_connection(db_path=path, selection=bound)["model_protocol"] == "images"
+    legacy = {**bound, "model_protocol": "responses", "resolved_model_protocol": "responses"}
+    assert get_profile_connection(db_path=path, selection=legacy)["model_protocol"] == "responses"

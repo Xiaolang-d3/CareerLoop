@@ -11,7 +11,7 @@ export const defaultAgentSettings: AgentSettings = {
   knowledge_memory_enabled: true,
   summary_enabled: true,
   context_message_limit: 12,
-  model_name: "gpt-5.5",
+  model_name: "",
   model_base_url: "",
   model_protocol: "auto",
   api_key: "",

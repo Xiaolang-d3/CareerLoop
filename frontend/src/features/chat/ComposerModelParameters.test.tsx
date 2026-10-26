@@ -19,21 +19,19 @@ afterEach(cleanup);
 describe("ComposerModelParameters", () => {
   it("shows only thinking controls and saves only reasoning with the profile revision", async () => {
     const { settings } = setup();
-    await screen.findByText(/思考越深入/);
+    await screen.findByTitle(/思考越深入/);
     expect(screen.queryByLabelText("温度")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("最大输出 token")).not.toBeInTheDocument();
     expect(screen.getAllByRole("combobox")).toHaveLength(1);
     fireEvent.change(screen.getByLabelText("思考程度"), { target: { value: "high" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
     await waitFor(() => expect(settings.onSave).toHaveBeenCalledWith("p1", 4, { reasoning_effort: "high" }));
     expect(settings.profile.parameters).toEqual({ temperature: 0.5 });
-    expect(screen.getByText(/此模型的所有对话/)).toBeInTheDocument();
+    expect(screen.getByText(/此模型全部对话/)).toBeInTheDocument();
   });
 
   it("clears only reasoning when choosing automatic, preserving other saved parameters", async () => {
     const { settings } = setup({ profile: { id: "p2", connection_id: "c1", model_name: "test", enabled: true, revision: 2, reasoning_effort: "high", parameters: { temperature: 0.6, max_output_tokens: 2048 } } });
     fireEvent.change(screen.getByLabelText("思考程度"), { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
     await waitFor(() => expect(settings.onSave).toHaveBeenCalledWith("p2", 2, { reasoning_effort: null }));
     expect(settings.profile.parameters).toEqual({ temperature: 0.6, max_output_tokens: 2048 });
   });
@@ -42,16 +40,15 @@ describe("ComposerModelParameters", () => {
     const onSave = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     setup({ onSave });
     fireEvent.change(screen.getByLabelText("思考程度"), { target: { value: "high" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
     await screen.findByRole("alert");
     expect(screen.getByLabelText("思考程度")).toHaveValue("high");
-    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2));
   });
 
   it("disables unsupported reasoning levels but allows clearing an old value", async () => {
     setup({ fetchJson: vi.fn().mockResolvedValue({ ...report, capabilities: { reasoning: { status: "unsupported" } } }) as unknown as ReturnType<typeof createApiClient> });
-    await screen.findByText(/此模型不支持/);
+    await screen.findByText(/此模型仅支持自动/);
     expect(screen.getByRole("option", { name: "深度" })).toBeDisabled();
     expect(screen.getByRole("option", { name: "自动" })).not.toBeDisabled();
   });
@@ -59,7 +56,7 @@ describe("ComposerModelParameters", () => {
   it("does not expose text parameter editing for image-only models", async () => {
     setup({ protocol: "images", fetchJson: vi.fn().mockResolvedValue({ ...report, protocol: "images" }) as unknown as ReturnType<typeof createApiClient> });
     expect(screen.getByLabelText("思考程度")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "保存设置" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "保存设置" })).not.toBeInTheDocument();
     await screen.findByText(/图片模型/);
   });
 });
