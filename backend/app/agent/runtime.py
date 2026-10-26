@@ -73,6 +73,7 @@ from .orchestration import (
 )
 from .plan_builder import fallback_plan, plan_mode
 from .plan_validator import freeze_route_requirements, validate_plan
+from .progress import TASK_PROGRESS_GUIDANCE, clarification_repair_reason
 from .resume_policy import clarification_context, clarification_from_events, needs_reply_replanning, relevant_clarification_history, resolve_resume_snapshot
 from .run_store import AgentRunStore, REPLAYABLE_RUN_STATUSES
 from .tool_executor import ToolExecutor
@@ -652,6 +653,7 @@ class AgentRuntime:
                         "缺少继续执行所需的关键信息，或同一指代有多种合理解读时，"
                         "调用 ask_user 列出 2–4 个选项并等待用户选择，不要猜测后继续，"
                         "也不要只在正文里提问。"
+                        + TASK_PROGRESS_GUIDANCE
                     ),
                 )
             )
@@ -1281,6 +1283,16 @@ class AgentRuntime:
                     return self._cancelled_run_result(
                         selected_platform, round_number, events, ctx.plan
                     )
+                if tool_call.name == "ask_user" and (reason := clarification_repair_reason(route.kind, tool_call.arguments, messages)):
+                    event = ToolEvent(
+                        round=round_number, tool_call_id=tool_call.id, tool_name="clarification_validator",
+                        status="running", message=reason, data={"question": tool_call.arguments.get("question", "")},
+                    )
+                    events.append(event)
+                    await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
+                    messages.append(AgentMessage(role="tool", tool_call_id=tool_call.id,
+                                                 content=reason, payload={"tool_name": "ask_user", "status": "blocked", "message": reason}))
+                    continue
                 if tool_call.name not in ctx.executable_tools:
                     message = f"风险门已阻止计划外工具：{tool_call.name}"
                     event = ToolEvent(

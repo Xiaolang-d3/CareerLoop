@@ -7,6 +7,10 @@ from app.agent.citations import evidence_cards
 from app.agent.resume_policy import clarification_context, relevant_clarification_history
 from app.agent.runtime import _web_source_urls
 from app.domain import AgentClarification, AgentMessage, AgentRunSnapshot
+from app.domain import ModelResponse, ToolCall
+from app.agent.progress import clarification_repair_reason
+from app.tools import AskUserTool
+from test_agent_runtime import ScriptedModel, runtime_for
 
 
 def test_repeated_clarification_keeps_original_goal_full_material_and_draft():
@@ -55,3 +59,32 @@ def test_public_source_switch_drops_private_evidence_without_losing_user_facts()
     public = relevant_clarification_history(history, ("search_public_web",))
     assert "私人原文" not in str(public)
     assert public[0].content == "我明确提供的事实"
+
+
+def test_redundant_question_after_readme_is_repaired_into_a_project_draft():
+    async def scenario():
+        question = "项目技术栈是什么？"
+        model = ScriptedModel([
+            ModelResponse(content='{"kind":"content_creation","sources":[]}'),
+            ModelResponse(tool_calls=[ToolCall(id="repeat", name="ask_user", arguments={
+                "question": question, "options": [{"label": "粘贴README"}, {"label": "手动补充"}],
+            })]),
+            ModelResponse(content="CareerLoop｜独立开发：构建本地优先的AI协作工作台，支持对话与资料管理。技术栈待补充。"),
+        ])
+        snapshot = AgentRunSnapshot(route_kind="content_creation", needs_plan=False,
+            messages=[AgentMessage(role="user", content="帮我写简历，CareerLoop是我独立开发的项目。")],
+            clarification=AgentClarification(question=question))
+        result = await runtime_for(model, AskUserTool()).run(
+            "README：灯灯是本地优先的AI协作工作台，支持对话与资料管理。", resume=snapshot)
+        assert result.status == "done" and result.snapshot is None
+        assert "CareerLoop｜独立开发" in result.content
+        assert any(event.tool_name == "clarification_validator" for event in result.events)
+    asyncio.run(scenario())
+
+
+def test_real_blocker_and_noncreative_tasks_can_still_ask():
+    history = [AgentMessage(role="assistant", content="选择哪份？", payload={"clarification_question": True})]
+    assert not clarification_repair_reason("content_creation", {
+        "question": "选择哪份？", "blocking_reason": "两份材料涉及不同人，用户未指定修改对象",
+    }, history)
+    assert not clarification_repair_reason("conversation", {"question": "选择哪份？"}, history)
