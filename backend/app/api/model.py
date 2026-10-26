@@ -199,12 +199,17 @@ def model_profiles_default(payload: DefaultProfileIn) -> dict[str, Any]:
 
 
 def _profile_for_connection(connection_id: str) -> dict[str, Any]:
-    from ..agent.model_catalog import get_model_catalog, get_profile_connection
+    from ..agent.model_catalog import get_model_catalog, get_profile_connection, get_service_connection
 
     catalog = get_model_catalog()
     profiles = [profile for profile in catalog["profiles"] if profile["connection_id"] == connection_id and profile["enabled"]]
     if not profiles:
-        raise HTTPException(status_code=400, detail="连接没有启用的模型档案")
+        try:
+            return get_service_connection(connection_id)
+        except SecretStoreUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     profile = next((item for item in profiles if item["id"] == catalog["default_profile_id"]), profiles[0])
     try:
         return get_profile_connection(profile["id"])
@@ -223,6 +228,9 @@ async def model_connection_discover(connection_id: str) -> dict[str, Any]:
 @router.post("/agent/model-connections/{connection_id}/check")
 async def model_connection_check(connection_id: str) -> dict[str, Any]:
     connection = _profile_for_connection(connection_id)
+    if not connection["model_name"]:
+        result = await _discover_connection(connection)
+        return {"available": True, "check_error_message": "", "check_scope": "catalog", "models": result["models"]}
     return await _check_connection(connection)
 
 

@@ -104,7 +104,7 @@ function protocolBaseUrl(protocol: Exclude<AgentSettings["model_protocol"], "aut
   return {
     openai: "https://api.openai.com/v1",
     responses: "https://api.openai.com/v1",
-    images: "https://cf.api.fan/v1",
+    images: "https://api.openai.com/v1",
     anthropic: "https://api.anthropic.com",
     gemini: "https://generativelanguage.googleapis.com/v1beta",
     ollama: "http://127.0.0.1:11434"
@@ -115,7 +115,7 @@ function protocolBaseUrlHelp(protocol: Exclude<AgentSettings["model_protocol"], 
   if (protocol === "anthropic") return "填写 Anthropic 服务根地址，系统按 Messages 协议请求 /v1/messages。";
   if (protocol === "gemini") return "填写 Gemini API 版本根地址，系统按 generateContent 协议组装模型路径。";
   if (protocol === "ollama") return "填写 Ollama 服务根地址，系统会请求 /api/chat 和 /api/tags。";
-  if (protocol === "images") return "Packy 文生图：填写 https://cf.api.fan/v1、gpt-image-2 和 sora 分组令牌；每次生成一张图片。";
+  if (protocol === "images") return "填写服务商的 Images API 根地址与具有生图权限的密钥；模型可从服务目录读取，检测不会生成图片。";
   if (protocol === "responses") return "填写 Responses API 根地址；系统会在该根地址下请求 /responses。";
   return "填写 Chat Completions 的完整 API 根地址；系统不会自动添加 /v1。";
 }
@@ -273,7 +273,8 @@ export function ModelSettingsPage({
             {catalog.length > 0 && !manualModel ? (
               <select id="model-name-input" value={settings.model_name} disabled={fieldsBusy} onChange={(event) => changeSettings({ ...settings, model_name: event.target.value })}>
                 {!settings.model_name && <option value="">选择模型</option>}
-                {Array.from(new Set([settings.model_name, ...filteredModels].filter(Boolean))).map((model) => <option key={model} value={model}>{model}</option>)}
+                {settings.model_name && !filteredModels.includes(settings.model_name) ? <option value={settings.model_name} disabled>{settings.model_name}（当前配置，服务未返回）</option> : null}
+                {filteredModels.map((model) => <option key={model} value={model}>{model}</option>)}
               </select>
             ) : (
               <input id="model-name-input" value={settings.model_name} disabled={fieldsBusy} placeholder="输入模型名称" onChange={(event) => changeSettings({ ...settings, model_name: event.target.value })} />

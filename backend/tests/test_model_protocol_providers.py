@@ -443,3 +443,13 @@ class OllamaChatProviderTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_images_reuse_compatibility_service_credentials_with_images_endpoint():
+    from app.model_protocol import model_protocol_for_profile
+    for configured in ('auto', 'openai', 'responses', 'images'):
+        selected = model_protocol_for_profile('gpt-image-2', configured)
+        assert resolve_model_protocol('gpt-image-2', selected, 'https://service.example.test/v1') == 'images'
+        assert model_protocol_candidates('gpt-image-2', selected, 'https://service.example.test/v1') == ('images',)
+    assert resolve_model_protocol('gpt-image-2', 'responses') == 'responses'
+    assert resolve_model_protocol('chat-model', 'openai') == 'openai'

@@ -53,6 +53,14 @@ def resolve_model_protocol(
     return "openai"
 
 
+def model_protocol_for_profile(model_name: str, connection_protocol: str = "auto") -> str:
+    """Select a model adapter within a shared compatibility service."""
+    protocol = normalize_model_protocol(connection_protocol)
+    if model_name.strip().lower().startswith("gpt-image-") and protocol in {"auto", "openai", "responses", "images"}:
+        return "images"
+    return protocol
+
+
 def model_protocol_candidates(
     model_name: str,
     configured: str | None = "auto",

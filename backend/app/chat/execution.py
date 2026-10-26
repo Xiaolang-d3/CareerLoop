@@ -29,6 +29,8 @@ from .service import (
     default_conversation_id as _default_conversation_id,
     save_chat_message as _save_chat_message,
     save_stream_result as _save_stream_result,
+    restore_snapshot_attachment_text,
+    with_attachment_context,
 )
 from .ag_ui import event_stream
 from .image_followup import resolve_image_followup
@@ -275,6 +277,8 @@ async def stream_chat_response(
                 provider=payload.web_search_provider,
                 base=automatic_options,
             )
+    elif resume_snapshot is not None:
+        resume_snapshot = restore_snapshot_attachment_text(conversation_id, resume_snapshot)
 
     if cached_execution is None and not recovering_terminal_result:
         search_provider = get_settings().resolved_web_search_provider
@@ -349,11 +353,7 @@ async def stream_chat_response(
             user_payload["attachments"] = attachment_summaries
         user_payload["web_search_options"] = search_options.model_dump()
         agent_input = effective_content
-        if attachment_context:
-            agent_input += (
-                "\n\n以下为用户主动上传附件的本地解析文本，请基于此内容回答：\n"
-                f"{attachment_context}"
-            )
+        agent_input = with_attachment_context(agent_input, attachment_context)
         try:
             run_store.start_run(
                 ag_ui_input.run_id,

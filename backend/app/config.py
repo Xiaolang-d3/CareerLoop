@@ -36,8 +36,8 @@ class Settings(BaseModel):
     login_lockout_seconds: int = Field(default=300, ge=30, le=86_400)
     auth_token_ttl_seconds: int = Field(default=28_800, ge=300, le=86_400)
     model_provider: str = "openai"
-    model_protocol: Literal["auto", "openai", "responses", "anthropic", "gemini", "ollama"] = "auto"
-    model_name: str = "gpt-5.5"
+    model_protocol: Literal["auto", "openai", "responses", "images", "anthropic", "gemini", "ollama"] = "auto"
+    model_name: str = ""
     model_base_url: str | None = None
     openai_api_key: str | None = None
     model_timeout_seconds: float = Field(default=60, gt=0, le=300)
@@ -108,7 +108,7 @@ def get_settings() -> Settings:
         auth_token_ttl_seconds=os.getenv("AUTH_TOKEN_TTL_SECONDS", "28800"),
         model_provider=os.getenv("MODEL_PROVIDER", "openai"),
         model_protocol=os.getenv("MODEL_PROTOCOL", "auto"),
-        model_name=os.getenv("MODEL_NAME", "gpt-5.5"),
+        model_name=os.getenv("MODEL_NAME", ""),
         model_base_url=os.getenv("MODEL_BASE_URL") or None,
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         model_timeout_seconds=os.getenv("MODEL_TIMEOUT_SECONDS", "60"),

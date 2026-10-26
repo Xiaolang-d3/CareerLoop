@@ -14,11 +14,11 @@ import app.chat.execution as main_module
 from app.agent.snapshots import load_run_snapshot, save_run_snapshot
 from app.agent.run_store import AgentRunStore
 from app.chat.conversations import create_conversation, ensure_active_task
-from app.domain import AgentClarification, AgentRunResult, AgentRunSnapshot, AgentStreamEvent, ClarificationOption, ToolError
+from app.domain import AgentClarification, AgentMessage, AgentRunResult, AgentRunSnapshot, AgentStreamEvent, ClarificationOption, ToolError
 from app.main import app
 from app.search_options import WebSearchOptions
 from app.chat.execution import _active_chat_runs, _chat_run_key, cancel_current_agent_task
-from app.chat.service import save_chat_message
+from app.chat.service import save_chat_message, with_attachment_context
 from api_client import create_authenticated_client
 
 
@@ -51,6 +51,28 @@ class ChatStreamingApiTest(unittest.TestCase):
             return action()
         finally:
             main_module.get_agent_runtime = original
+
+    def test_clarification_restores_a_legacy_attachment_preview_before_runtime(self) -> None:
+        cid = self.client.post("/conversations", json={"title": "附件续接"}).json()["id"]
+        text = "前页内容。" * 300 + "\n第二页项目：负责工具编排与中断恢复。"
+        uploaded = self.client.post("/attachments", data={"conversation_id": str(cid), "kind": "document"},
+                                    files={"file": ("source.txt", text.encode(), "text/plain")})
+        self.assertEqual(uploaded.status_code, 200)
+        attachment = self.client.post(f"/attachments/{uploaded.json()['id']}/parse").json()
+        save_chat_message("user", "分析附件", {"attachments": [{"id": attachment["id"]}]}, cid)
+        full = with_attachment_context("分析附件", f"[脱敏资料：source.txt]\n{attachment['redacted_text']}")
+        save_run_snapshot(cid, AgentRunSnapshot(route_kind="conversation", needs_plan=False,
+            messages=[AgentMessage(role="user", content=full[:1000])],
+            clarification=AgentClarification(question="项目属于哪类？")))
+        captured = []
+        class Runtime:
+            async def run_stream(self, *args, **kwargs):
+                captured.append(kwargs["resume"])
+                yield AgentStreamEvent(type="completed", result=AgentRunResult(
+                    content="已收到第二页", provider="test", platform="manual", rounds=1))
+        self.with_runtime(Runtime(), lambda: self.run_ag_ui(cid, "个人项目", "attachment-restored", forwarded={"webSearch": False}))
+        self.assertEqual(captured[0].messages[0].content, full)
+        self.assertIn("第二页项目", captured[0].messages[0].content)
 
     def test_ag_ui_rejects_invalid_search_contract_values_with_422(self) -> None:
         conversation = self.client.post("/conversations", json={"title": "参数校验"}).json()

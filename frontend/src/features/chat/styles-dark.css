@@ -79,6 +79,18 @@
   background: var(--color-brand-strong);
   border-color: var(--color-brand-strong);
 }
+:root[data-theme="dark"] .chat-workspace .chat-composer .composer-input.composer-input--enhanced .send-button:disabled:not(.stop-button) {
+  color: var(--color-text-muted);
+  background: var(--color-surface-subtle);
+  border-color: var(--color-border);
+  opacity: 1;
+  box-shadow: none;
+}
+:root[data-theme="dark"] .chat-workspace .composer-drop-hint {
+  color: var(--color-brand-strong);
+  background: color-mix(in srgb, var(--color-surface) 96%, transparent);
+  border-color: var(--color-brand);
+}
 :root[data-theme="dark"] .chat-workspace :is(.composer-input-hint, .composer-attachments small, .composer-attachment-remove) {
   color: var(--color-text-muted);
 }

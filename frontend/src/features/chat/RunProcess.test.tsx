@@ -20,6 +20,19 @@ afterEach(() => {
 });
 
 describe("RunProcess", () => {
+  it("shows live internal phases immediately without adding empty execution nodes", () => {
+    const classify = event("model-stage-classify", "正在理解你的请求", { tool_name: "agent_run_state", status: "running", data: { stage: "classify" } });
+    const view = render(<RunProcess streaming agent={run({ events: [classify] })} />);
+    expect(screen.getByRole("status")).toHaveTextContent("正在理解你的请求");
+    expect(screen.queryByRole("region", { name: "执行记录，可滚动查看" })).not.toBeInTheDocument();
+    const plan = event("model-stage-plan", "正在规划步骤", { tool_name: "agent_run_state", status: "running", data: { stage: "plan" } });
+    view.rerender(<RunProcess streaming agent={run({ events: [classify, { ...classify, status: "done" }, plan] })} />);
+    expect(screen.getByRole("status")).toHaveTextContent("正在规划步骤");
+    expect(screen.queryByText("正在理解你的请求")).not.toBeInTheDocument();
+    view.rerender(<RunProcess streaming agent={run({ events: [classify, { ...classify, status: "done" }, plan, { ...plan, status: "done" }] })} />);
+    expect(screen.getByRole("status")).toHaveTextContent("正在等待模型响应");
+  });
+
   it("shows one truthful status without an empty disclosure while waiting for the model", () => {
     render(<RunProcess streaming />);
     const process = screen.getByRole("region", { name: "思考与执行过程" });
@@ -108,22 +121,24 @@ describe("RunProcess", () => {
     expect(view.container.querySelector(".image-generation-dots")).toBeNull();
   });
 
-  it("preserves chronological process paragraphs and tool summaries without clipping them", () => {
-    const longThought = `先核对资料的来源。${"补充说明。".repeat(40)}\n再比较各来源的结论。`;
-    const agent = run({ events: [
+  it("shows action nodes without exposing raw provider reasoning or routing text", () => {
+    const raw = `Internal reasoning. ${"Private deliberation. ".repeat(40)}`;
+    const view = render(<RunProcess streaming agent={run({ events: [
       event("route", "已识别为资料研究，需要先规划并限制可用工具"),
-      event("thought-1", longThought),
+      event("thought-1", raw, { data: { source: "model_reasoning" } }),
       event("read", "已读取项目资料", { tool_name: "get_library_context" }),
-      event("thought-2", "已确认来源，继续整理答案。")
-    ] });
-    const view = render(<RunProcess streaming agent={agent} />);
-    const paragraphs = view.container.querySelectorAll(".run-process-thought");
-    const tool = screen.getByText("已读取项目资料");
-    expect(paragraphs).toHaveLength(2);
-    expect(paragraphs[0].textContent).toBe(longThought);
-    expect(paragraphs[0].compareDocumentPosition(tool) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(tool.compareDocumentPosition(paragraphs[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.queryByText(/已识别为/)).not.toBeInTheDocument();
+      event("thought-2", "Now decide what to answer.")
+    ] })} />);
+    expect(screen.getByText("已读取项目资料")).toBeVisible();
+    expect(view.container.querySelector(".run-process-thought")).toBeNull();
+    expect(view.container.textContent).not.toMatch(/Internal reasoning|Private deliberation|Now decide|已识别为/);
+  });
+
+  it("uses only a thinking status when no action has started", () => {
+    render(<RunProcess streaming agent={run({ events: [event("thought", "Unfiltered deliberation", { status: "running" })] })} />);
+    expect(screen.getByRole("status")).toHaveTextContent("正在思考");
+    expect(screen.queryByText("Unfiltered deliberation")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /思考与执行过程/ })).not.toBeInTheDocument();
   });
 
   it("updates a repeated call in its original position and preserves distinct calls with the same text", () => {
@@ -137,33 +152,34 @@ describe("RunProcess", () => {
     render(<RunProcess agent={agent} streaming={false} />);
     fireEvent.click(screen.getByRole("button", { name: "展开思考与执行过程" }));
     const completed = screen.getByText("已读取公开资料");
-    const thought = screen.getByText("现在核对来源的可信度。");
+    const firstRead = screen.getAllByText("已读取项目资料")[0];
     expect(screen.queryByText("正在搜索资料")).not.toBeInTheDocument();
-    expect(completed.compareDocumentPosition(thought) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(completed.compareDocumentPosition(firstRead) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByText("现在核对来源的可信度。")).not.toBeInTheDocument();
     expect(screen.getAllByText("已读取项目资料")).toHaveLength(2);
   });
 
   it("keeps the user's collapsed choice while live events update", () => {
-    const agent = run({ events: [event("thought", "先核对资料。", { status: "running" })] });
+    const agent = run({ events: [event("read", "已读取资料", { tool_name: "get_library_context" })] });
     const view = render(<RunProcess agent={agent} streaming />);
     fireEvent.click(screen.getByRole("button", { name: "收起思考与执行过程" }));
-    view.rerender(<RunProcess agent={{ ...agent, events: [event("thought", "先核对资料，再整理结论。", { status: "running" })] }} streaming />);
+    view.rerender(<RunProcess agent={{ ...agent, events: [event("read", "已读取两份资料", { tool_name: "get_library_context" })] }} streaming />);
     expect(screen.getByRole("button", { name: "展开思考与执行过程" })).toHaveAttribute("aria-expanded", "false");
-    expect(screen.getByText("先核对资料，再整理结论。")).not.toBeVisible();
+    expect(screen.getByText("已读取两份资料")).not.toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "展开思考与执行过程" }));
-    expect(screen.getByText("先核对资料，再整理结论。")).toBeVisible();
+    expect(screen.getByText("已读取两份资料")).toBeVisible();
   });
 
   it("collapses when the run ends, freezes its duration and keeps its process available", () => {
-    const agent = run({ events: [event("thought", "先核对资料。", { status: "running" })] });
+    const agent = run({ events: [event("read", "已读取资料", { tool_name: "get_library_context" })] });
     const view = render(<RunProcess agent={agent} streaming />);
     view.rerender(<RunProcess agent={{ ...agent, duration_ms: 389_000 }} streaming={false} />);
     const process = screen.getByRole("region", { name: "思考与执行过程" });
     expect(screen.getByRole("button", { name: "展开思考与执行过程" })).toHaveTextContent("用时 389s");
-    expect(screen.getByText("先核对资料。")).not.toBeVisible();
+    expect(screen.getByText("已读取资料")).not.toBeVisible();
     expect(process.querySelector(".spinning")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "展开思考与执行过程" }));
-    expect(screen.getByText("先核对资料。")).toBeVisible();
+    expect(screen.getByText("已读取资料")).toBeVisible();
   });
 
   it.each([
@@ -191,7 +207,7 @@ describe("RunProcess", () => {
   });
 
   it("does not invent elapsed time for historical messages without run timing", () => {
-    const agent = run({ events: [event("thought", "已核对资料来源。")] });
+    const agent = run({ events: [event("read", "已读取资料", { tool_name: "get_library_context" })] });
     render(<RunProcess agent={agent} streaming={false} />);
     expect(screen.getByRole("button", { name: "展开思考与执行过程" })).toHaveTextContent("思考与执行过程");
     expect(screen.queryByText(/用时/)).not.toBeInTheDocument();
@@ -233,6 +249,43 @@ describe("RunProcess", () => {
 
 
 describe("execution record interaction", () => {
+  it("collapses the previous node when another one is selected", () => {
+    render(<RunProcess streaming agent={run({ events: [
+      event("a", "已检索甲", { tool_name: "search_public_web", data: { query: "甲", sources: [] } }),
+      event("b", "已检索乙", { tool_name: "search_public_web", data: { query: "乙", sources: [] } })
+    ] })} />);
+    fireEvent.click(screen.getByRole("button", { name: "展开已检索甲的执行说明" }));
+    expect(screen.getByText("检索：甲")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "展开已检索乙的执行说明" }));
+    expect(screen.queryByText("检索：甲")).not.toBeInTheDocument();
+    expect(screen.getByText("检索：乙")).toBeVisible();
+  });
+
+  it("merges historical citation repair rounds into one node and identifies the failing stage", () => {
+    const reason = "来源引用修正未返回有效补丁，已保留原始草稿";
+    render(<RunProcess streaming={false} content="保留的草稿" agent={run({ status: "failed", duration_ms: 182200,
+      error: { code: "citation_validation_failed", message: reason, retryable: false }, events: [
+        event("citation-2", "回答没有使用 Markdown 链接引用本轮搜索来源，正在自动修正", { tool_name: "citation_validator", status: "running" }),
+        event("citation-3", reason, { tool_name: "citation_validator", status: "failed", data: { original_draft_preserved: true } })
+      ] })} />);
+    expect(screen.queryByText("生成失败")).not.toBeInTheDocument();
+    expect(screen.getByText("引用校验未通过")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "展开思考与执行过程" }));
+    expect(screen.getAllByText("核对引用未通过")).toHaveLength(1);
+    expect(screen.queryByText(/检查：/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "展开核对引用未通过的执行说明" }));
+    expect(screen.getByText("检查：回答未附本轮来源链接")).toBeVisible();
+    expect(screen.getByText(`原因：${reason}`)).toBeVisible();
+    expect(screen.getByText("处理：原始草稿已保留，来源引用尚未核验。")).toBeVisible();
+  });
+
+  it("does not repeat the draft warning already present in the answer", () => {
+    render(<RunProcess streaming={false} content="草稿\n\n> 来源引用校验未完成，已保留原始草稿。" agent={run({ status: "failed",
+      error: { code: "citation_validation_failed", message: "引用修正失败", retryable: false } })} />);
+    expect(screen.getByText("引用校验未通过")).toBeVisible();
+    expect(screen.queryByText(/展开执行节点可查看原因/)).not.toBeInTheDocument();
+  });
+
   it("never renders a paused-follow hint or jump button in the execution record", () => {
     const view = render(<RunProcess streaming agent={run({ events: [event("read", "已读取资料", { tool_name: "get_library_context", data: { sources: [] } })] })} />);
     expect(screen.getByRole("region", { name: "执行记录，可滚动查看" })).toBeVisible();

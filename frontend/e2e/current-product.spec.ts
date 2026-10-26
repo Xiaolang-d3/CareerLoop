@@ -223,6 +223,16 @@ test("long conversations keep one scroll viewport without blank space above the 
     expect(viewportBox!.height).toBeCloseTo(surfaceBox!.height, 0);
   };
   await assertSingleViewport();
+  const composer = page.locator(".chat-composer");
+  expect((await composer.boundingBox())!.height).toBeLessThanOrEqual(140);
+  const [questionBox, answerBox] = await Promise.all([
+    page.locator(".message.user .message-dialog").last().boundingBox(),
+    page.locator(".message.assistant").last().boundingBox()
+  ]);
+  expect(answerBox!.y - questionBox!.y - questionBox!.height).toBeLessThanOrEqual(24);
+  const idleHeight = (await viewport.boundingBox())!.height;
+  await page.getByRole("textbox", { name: "输入消息" }).focus();
+  expect((await viewport.boundingBox())!.height).toBeCloseTo(idleHeight, 0);
   await page.getByRole("button", { name: "查看全部 1 个来源", exact: true }).last().click();
   const panel = page.getByRole("complementary", { name: "来源详情" });
   await expect(panel).toBeVisible();

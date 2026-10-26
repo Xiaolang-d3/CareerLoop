@@ -1268,7 +1268,7 @@ describe("ChatWorkspace", () => {
     expect(onSuggestedAction).not.toHaveBeenCalled();
   });
 
-  it("opens recorded process summaries inline without offering an empty source panel", () => {
+  it("does not expose raw historical reasoning or offer an empty process panel", () => {
     renderChat([{
       id: 12,
       role: "assistant",
@@ -1294,9 +1294,8 @@ describe("ChatWorkspace", () => {
     expect(screen.queryByRole("button", { name: "查看过程，打开研究详情" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "来源详情" })).not.toBeInTheDocument();
     expect(screen.queryByRole("complementary", { name: "来源详情" })).not.toBeInTheDocument();
-    expect(screen.getByText("先确认项目范围，再追问取舍。")).not.toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "展开思考与执行过程" }));
-    expect(screen.getByText("先确认项目范围，再追问取舍。")).toBeVisible();
+    expect(screen.queryByText("先确认项目范围，再追问取舍。")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "展开思考与执行过程" })).not.toBeInTheDocument();
   });
 
   it("expands thinking with live tool work and hides the local route summary", () => {
@@ -1326,7 +1325,8 @@ describe("ChatWorkspace", () => {
                 tool_call_id: "plan-1",
                 tool_name: "agent_planner",
                 status: "done",
-                message: "已规划 1 个步骤：核验腾讯科技公开信息"
+                message: "已规划 1 个步骤：核验腾讯科技公开信息",
+                data: { plan: { steps: [{ title: "核验腾讯科技公开信息", tool_name: "search_public_web" }] } }
               },
               {
                 round: 1,
@@ -1347,7 +1347,10 @@ describe("ChatWorkspace", () => {
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     const body = screen.getByRole("region", { name: "思考与执行过程" });
     expect(body).not.toHaveTextContent("已识别为公司公开信息研究，需要先规划并限制可用工具");
-    expect(body).toHaveTextContent("已规划 1 个步骤：核验腾讯科技公开信息");
+    expect(body).toHaveTextContent("已规划 1 个步骤");
+    expect(body).not.toHaveTextContent("已规划 1 个步骤：核验腾讯科技公开信息");
+    fireEvent.click(screen.getByRole("button", { name: "展开已规划 1 个步骤的执行说明" }));
+    expect(body).toHaveTextContent("核验腾讯科技公开信息");
     expect(body).toHaveTextContent("腾讯科技");
     expect(body.closest(".chat-composer")).toBeNull();
     expect(screen.queryByRole("complementary", { name: "来源详情" })).not.toBeInTheDocument();
@@ -1591,7 +1594,7 @@ describe("ChatWorkspace", () => {
     expect(screen.getAllByText(/正在进行：搜索公司资料/)).toHaveLength(2);
     expect(toggle).toHaveTextContent("搜索公司资料");
     expect(toggle).not.toHaveTextContent(thoughtBody);
-    expect(screen.getByText(thoughtBody)).toBeVisible();
+    expect(screen.queryByText(thoughtBody)).not.toBeInTheDocument();
     expect(toggle.closest(".chat-composer")).toBeNull();
   });
 
@@ -1625,7 +1628,7 @@ describe("ChatWorkspace", () => {
     expect(screen.getByRole("button", { name: "收起思考与执行过程" })).toHaveTextContent("正在从简历中定位项目证据");
   });
 
-  it("shows the returned process summary in the dialogue without an empty source panel", () => {
+  it("shows a thinking status without exposing raw reasoning or an empty source panel", () => {
     const thoughtBody = "我先读取简历，再对比岗位要求，然后整理成面试可讲的要点。";
     renderChat([
       message,
@@ -1654,8 +1657,8 @@ describe("ChatWorkspace", () => {
 
     expect(screen.queryByRole("button", { name: "查看过程，打开研究详情" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "来源详情" })).not.toBeInTheDocument();
-    expect(screen.getByText(thoughtBody)).toBeVisible();
-    expect(screen.getByText(thoughtBody).closest(".run-process")).not.toBeNull();
+    expect(screen.queryByText(thoughtBody)).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("正在思考");
   });
 
   it("renders in-text source links as numbered citation previews", async () => {

@@ -73,15 +73,15 @@ describe("ModelConnectionManager capability panel", () => {
   };
 
   it("loads capabilities on demand and disables reasoning effort for non-reasoning models", async () => {
-    const fetchJson = vi.fn().mockResolvedValue(report({ reasoning: capability("推理", "unsupported", "litellm") }));
+    const fetchJson = vi.fn().mockImplementation(async (path: string) => path.endsWith("/discover") ? { models: ["deepseek-chat"] } : report({ reasoning: capability("推理", "unsupported", "litellm") }));
     render(<ModelConnectionManager catalog={catalog} loading={false} busy={false} error="" fetchJson={fetchJson as unknown as Client}
       onReload={vi.fn()} onMutate={vi.fn().mockResolvedValue(true)} onDefaultChanged={vi.fn()} />);
     expect(fetchJson).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /主连接/ }));
-    fireEvent.click(screen.getByRole("button", { name: "deepseek-chat 设置" }));
+    fireEvent.click(await screen.findByRole("button", { name: "deepseek-chat 设置" }));
     fireEvent.click(screen.getByText("更多选项"));
     await screen.findByText("200K");
     await waitFor(() => expect(screen.getByRole("option", { name: "深度" })).toBeDisabled());
-    expect(screen.getByText(/此模型不支持调整思考程度/)).toBeInTheDocument();
+    expect(screen.getByText(/此模型仅支持自动/)).toBeInTheDocument();
   });
 });

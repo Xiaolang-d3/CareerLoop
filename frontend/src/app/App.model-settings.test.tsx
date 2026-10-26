@@ -531,6 +531,7 @@ describe("App model settings", () => {
     };
     let changed = false;
     replaceApi((path, options) => {
+      if (path === "/agent/model-connections/c2/discover") return Promise.resolve({ models: ["second-model"] });
       if (path === "/agent/model-connections") return Promise.resolve({ ...catalog, default_profile_id: changed ? "p2" : "p1" });
       if (path === "/agent/model-default") { changed = true; return Promise.resolve({ ...catalog, default_profile_id: "p2" }); }
       if (path === "/agent/settings" && options?.method !== "PUT" && changed) return Promise.resolve({ ...savedSettings, model_name: "second-model", model_base_url: "https://second.example.test/v1", config_revision: 2 });
@@ -540,7 +541,7 @@ describe("App model settings", () => {
     await screen.findByRole("heading", { name: "连接与模型" });
     expect(screen.getByText(savedSettings.model_name, { selector: ".model-current-summary strong" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /备用连接/ }));
-    fireEvent.click(screen.getByRole("button", { name: "second-model 设置" }));
+    fireEvent.click(await screen.findByRole("button", { name: "second-model 设置" }));
     fireEvent.click(screen.getByText("更多选项"));
     fireEvent.click(screen.getByRole("button", { name: "设为默认" }));
     await waitFor(() => expect(screen.getByText("second-model", { selector: ".model-current-summary strong" })).toBeInTheDocument());

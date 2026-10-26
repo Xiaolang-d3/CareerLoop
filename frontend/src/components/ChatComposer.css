@@ -44,6 +44,8 @@
 .chat-workspace .composer-voice-wave line { transform-box: fill-box; transform-origin: center; transform: scaleY(calc(.06 + var(--voice-level, 0) * .94)); transition: transform 80ms linear; }
 @media (prefers-reduced-motion: reduce) { .chat-workspace .composer-voice-wave line { transition: none; } }
 .chat-workspace .chat-composer .composer-input.composer-input--enhanced .composer-attachment-tool { width: auto; padding: 0 8px; }
+.chat-workspace .chat-composer .composer-input.composer-input--enhanced .composer-attachment-tool:disabled { opacity: .5; cursor: not-allowed; }
+.chat-workspace .chat-composer .composer-input.composer-input--enhanced .composer-attachment-tool:disabled:hover { color: var(--color-text-secondary); background: transparent; }
 .chat-workspace .composer-tool:focus-visible,
 .chat-workspace .composer-input.composer-input--enhanced .send-button:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
 .chat-workspace .composer-input.composer-input--enhanced .model-picker { max-width: 100%; flex: 0 1 auto; }

@@ -109,7 +109,7 @@ def _replace_executor(connection: dict[str, Any], chosen: dict[str, Any], reason
 
 def bind_image_model(connection: dict[str, Any], *, catalog: dict[str, Any], resolve: Callable) -> dict[str, Any]:
     """Choose an enabled image executor once, before any call or run binding."""
-    from ..model_protocol import is_image_generation_model, resolve_model_protocol
+    from ..model_protocol import is_image_generation_model, model_protocol_for_profile, resolve_model_protocol
 
     def eligible(value: dict[str, Any]) -> bool:
         capability = value.get("capabilities", {}).get("image_generation", "unknown")
@@ -128,7 +128,7 @@ def bind_image_model(connection: dict[str, Any], *, catalog: dict[str, Any], res
         source = connections.get(profile["connection_id"])
         if not profile["enabled"] or not source or not source["enabled"] or not source.get("api_key_configured"):
             continue
-        candidate = {**profile, "model_protocol": source["protocol"], "model_base_url": source.get("effective_base_url", "")}
+        candidate = {**profile, "model_protocol": model_protocol_for_profile(profile["model_name"], source["protocol"]), "model_base_url": source.get("effective_base_url", "")}
         if eligible(candidate):
             candidates.append(candidate)
     # Prefer dedicated Images adapters; stable catalog order breaks ties.
@@ -147,7 +147,7 @@ def bind_image_model(connection: dict[str, Any], *, catalog: dict[str, Any], res
 
 def bind_text_model(connection: dict[str, Any], *, catalog: dict[str, Any], resolve: Callable) -> dict[str, Any]:
     """A pure Images selection must not receive questions or classification."""
-    from ..model_protocol import resolve_model_protocol
+    from ..model_protocol import model_protocol_for_profile, resolve_model_protocol
 
     sources = {item["id"]: item for item in catalog["connections"]}
     candidates = []
@@ -155,7 +155,7 @@ def bind_text_model(connection: dict[str, Any], *, catalog: dict[str, Any], reso
         source = sources.get(profile["connection_id"])
         if not profile["enabled"] or not source or not source["enabled"]:
             continue
-        if resolve_model_protocol(profile["model_name"], source["protocol"], source.get("effective_base_url", "")) == "images":
+        if resolve_model_protocol(profile["model_name"], model_protocol_for_profile(profile["model_name"], source["protocol"]), source.get("effective_base_url", "")) == "images":
             continue
         if not source.get("api_key_configured") and source["protocol"] != "ollama":
             continue

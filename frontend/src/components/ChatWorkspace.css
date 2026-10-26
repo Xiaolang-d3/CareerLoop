@@ -193,7 +193,9 @@
 .chat-workspace .run-process-outcome.is-failed { color: var(--color-danger); }
 .chat-workspace .run-process-body { padding: 14px 0 6px; border-top: 1px solid var(--color-border); }
 .chat-workspace .run-process-body[hidden] { display: none; }
-.chat-workspace .run-process-thought { margin: 0 0 16px; color: var(--color-text-secondary); font-size: 14px; line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-workspace .run-process-thought { margin: 0 0 8px; color: var(--color-text-secondary); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.chat-workspace .run-process-thought p { margin: 0; white-space: pre-wrap; }
+.chat-workspace .run-process-thought p + p { margin-top: 6px; }
 .chat-workspace .run-process-tool { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 14px; color: var(--color-text-muted); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
 .chat-workspace .run-process-tool > svg { flex: none; margin-top: 3px; }
 .chat-workspace .run-process-tool.is-failed > svg { color: var(--color-danger); }
@@ -1496,7 +1498,7 @@
   .chat-workspace .chat-thread .message .message-actions { opacity: 1; pointer-events: auto; }
   .assistant-page .chat-workspace .message-actions button { min-height: 36px; }
 }
-.chat-workspace .chat-thread-content { display: grid; gap: 24px; min-width: 0; }
+.chat-workspace .chat-thread-content { display: grid; gap: 16px; min-width: 0; }
 .chat-workspace .chat-thread-surface {
   position: relative;
   display: flex;
@@ -1622,3 +1624,31 @@
 }
 
 .chat-workspace .message.message-editing .message-meta span { display: inline; }
+
+/* Reading density: recover space from chrome and gaps while keeping body text legible. */
+.assistant-page .chat-workspace.has-history .chat-main > .chat-thread-surface > .chat-thread { padding-top: 16px; }
+.assistant-page .chat-workspace.has-history .message-markdown { line-height: 1.65; }
+.assistant-page .chat-workspace.has-history .message-markdown p { margin-block: .5em; }
+.assistant-page .chat-workspace.has-history .message-markdown :is(ul, ol) { margin-block: .5em; }
+.assistant-page .chat-workspace.has-history .message-markdown li { margin-block: .2em; line-height: 1.65; }
+.assistant-page .chat-workspace.has-history .message-markdown :is(h1, h2, h3) { margin-block: 1.05em .45em; }
+.assistant-page .chat-workspace.has-history .message-markdown > :first-child { margin-top: 0; }
+.assistant-page .chat-workspace.has-history .message-markdown > :last-child { margin-bottom: 0; }
+.assistant-page .chat-workspace.has-history .run-process { margin-bottom: 6px; }
+@media (min-width: 601px) {
+  .assistant-page .chat-workspace.has-history .chat-main > .chat-composer { padding-block: 8px max(24px, env(safe-area-inset-bottom)); }
+  .assistant-page .chat-workspace.has-history .chat-composer .composer-input.composer-input--enhanced { min-height: 100px !important; padding: 10px !important; gap: 8px; }
+  .assistant-page .chat-workspace.has-history .chat-composer .composer-input.composer-input--enhanced textarea { min-height: 32px !important; }
+  .assistant-page .chat-workspace.has-history .composer-dropzone { position: relative; }
+  .assistant-page .chat-workspace.has-history .composer-input-hint { position: absolute; top: 100%; right: 0; left: 0; min-height: 16px; padding-top: 3px; font-size: 11px; line-height: 16px; }
+}
+@media (min-width: 821px) and (hover: hover) and (pointer: fine) {
+  .assistant-page .chat-workspace.has-history .run-process-toggle { min-height: 28px; }
+  .assistant-page .chat-workspace.has-history .chat-thread .message.user:not(.message-editing) { max-width: min(calc(100% - 120px), 36rem); }
+  .assistant-page .chat-workspace.has-history .message.user:not(.message-editing) .message-content { position: relative; }
+  .assistant-page .chat-workspace.has-history .message.user .user-message-actions { position: absolute; top: 50%; right: calc(100% + 6px); max-width: none; flex-wrap: nowrap; margin: 0; transform: translateY(-50%); }
+}
+@media (max-width: 600px) {
+  .assistant-page .chat-workspace.has-history .message-markdown,
+  .assistant-page .chat-workspace.has-history .message-markdown li { line-height: 1.7; }
+}

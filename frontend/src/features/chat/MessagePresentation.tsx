@@ -44,6 +44,10 @@ function RunErrorNote({ run, content }: { run?: AgentRunResult; content: string 
   const errorMessage = run.error?.message?.trim();
   const errorAlreadyShown = errorMessage && content.replace(/\s+/g, " ").includes(errorMessage.replace(/\s+/g, " "));
   if (!errorMessage || errorAlreadyShown) return null;
+  if (run.error?.code === "citation_validation_failed") {
+    if (content.includes("来源引用校验未完成")) return null;
+    return <p className="run-process-error">回答草稿已保留，引用尚未核验。展开执行节点可查看原因。</p>;
+  }
   return <p className="run-process-error">{errorMessage}</p>;
 }
 
@@ -90,8 +94,6 @@ export function EditMessageComposer() {
 const WAITING_MODEL_TITLE = "正在等待模型响应";
 
 const GENERIC_TASK_MESSAGE = /^(?:正在执行(?:\s+\S+)?|running|in progress)$/i;
-
-const ROUTE_SUMMARY_MESSAGE = /^已识别为/;
 
 const TOOL_ACTIVITY_LABELS: Record<string, string> = {
   search_public_web: "正在检索公开资料",
@@ -187,8 +189,13 @@ function workLineFromEvent(
 function latestEvents(agent?: AgentRunResult) {
   const merged = new Map<string, AgentRunResult["events"][number]>();
   for (const event of agent?.events ?? []) {
-    const previous = merged.get(event.tool_call_id);
-    merged.set(event.tool_call_id, { ...previous, ...event, data: { ...previous?.data, ...event.data } });
+    // Older saved runs used a new call ID for each citation repair round.
+    const key = event.tool_name === "citation_validator" ? "citation-validator" : event.tool_call_id;
+    const previous = merged.get(key);
+    const validationReason = event.tool_name === "citation_validator" && previous?.status === "running"
+      ? previous.data?.validation_reason ?? previous.message.replace(/，正在自动修正$/, "") : undefined;
+    merged.set(key, { ...previous, ...event, tool_call_id: previous?.tool_call_id ?? event.tool_call_id,
+      data: { ...previous?.data, ...(validationReason ? { validation_reason: validationReason } : {}), ...event.data } });
   }
   return [...merged.values()];
 }
@@ -227,12 +234,8 @@ const COMPLETED_ACTIVITY_LABELS: Record<string, string> = {
 function processEntries(agent: AgentRunResult | undefined, streaming: boolean) {
   const steps = planStepsFromAgent(agent);
   return latestEvents(agent).flatMap((event) => {
-    if (event.tool_name === "agent_thinking") {
-      const text = event.message.trim();
-      return text && !ROUTE_SUMMARY_MESSAGE.test(text)
-        ? [{ id: event.tool_call_id, text, thought: true, status: event.status, tool: event.tool_name, event }]
-        : [];
-    }
+    // Surface verifiable actions and results, not the provider's raw reasoning.
+    if (event.tool_name === "agent_thinking" || event.tool_name === "agent_run_state") return [];
     const isRunning = streaming && event.status === "running";
     const neutral = (TOOL_ACTIVITY_LABELS[event.tool_name] || "执行任务").replace(/^正在/, "");
     let text = isGenericTaskMessage(event.message, event.tool_name)
@@ -240,7 +243,13 @@ function processEntries(agent: AgentRunResult | undefined, streaming: boolean) {
         : event.status === "done" ? COMPLETED_ACTIVITY_LABELS[event.tool_name] || neutral : neutral
       : event.message.trim();
     if (!streaming && event.status === "running") text = text.replace(/^正在/, "");
-    return text ? [{ id: event.tool_call_id, text, thought: false, status: event.status, tool: event.tool_name, event }] : [];
+    if (event.tool_name === "agent_planner" && event.status === "done") {
+      text = steps.length ? `已规划 ${steps.length} 个步骤` : "已规划步骤";
+    }
+    if (event.tool_name === "citation_validator") {
+      text = event.status === "failed" ? "核对引用未通过" : event.status === "done" ? "已核对引用" : isRunning ? "正在核对引用" : "核对引用未完成";
+    }
+    return text ? [{ id: event.tool_call_id, text, status: event.status, tool: event.tool_name, event }] : [];
   });
 }
 
@@ -257,6 +266,7 @@ export function RunProcess({ agent, streaming, stopping = false, content = "" }:
 }) {
   const bodyId = useId();
   const [expanded, setExpanded] = useState(streaming);
+  const [openNode, setOpenNode] = useState<string | null>(null);
   const previousStreaming = useRef(streaming);
   const [now, setNow] = useState(Date.now);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -279,13 +289,13 @@ export function RunProcess({ agent, streaming, stopping = false, content = "" }:
   const generating = content.trim() && !latestEvents(agent).some((event) => event.status === "running" && event.tool_name !== "agent_thinking");
   const terminalError = !streaming && agent?.status === "failed" ? agent.error?.message?.trim() : undefined;
   const entries = processEntries(agent, streaming).flatMap((entry) => {
-    if (!terminalError || entry.thought || entry.text !== terminalError) return [entry];
+    if (!terminalError || entry.text !== terminalError) return [entry];
     // Keep a failed tool inspectable without repeating the error already shown in the answer.
     if (entry.tool === "model_provider") return [];
     const activity = (TOOL_ACTIVITY_LABELS[entry.tool] || "执行任务").replace(/^正在/, "");
     return [{ ...entry, text: `${activity}失败` }];
   });
-  const liveEntry = [...entries].reverse().find(entry => !entry.thought && entry.status === "running");
+  const liveEntry = [...entries].reverse().find(entry => entry.status === "running");
   const title = streaming ? stopping ? "正在停止生成" : generating ? "正在生成回复" : liveEntry?.text || current.currentTask || current.title
     : elapsed !== null ? `用时 ${formatExecutionTime(elapsed)}` : "思考与执行过程";
   // The header already describes the active image operation. Keep other
@@ -293,7 +303,7 @@ export function RunProcess({ agent, streaming, stopping = false, content = "" }:
   const visibleEntries = entries.filter(entry => !(streaming && entry.id === liveEntry?.id && entry.tool === "image_generation"));
   const compactProgress = streaming && !visibleEntries.length;
   const imageFailure = agent?.events.some(event => event.tool_name === "image_generation") && !agent?.assets?.length;
-  const outcome = !streaming ? agent?.status === "failed" ? imageFailure ? "未生成图片" : "生成失败"
+  const outcome = !streaming ? agent?.status === "failed" ? imageFailure ? "未生成图片" : agent.error?.code === "citation_validation_failed" ? "引用校验未通过" : "生成失败"
     : agent?.status === "cancelled" ? "已停止" : agent?.status === "waiting_user" ? "等待确认" : "" : "";
   const signature = JSON.stringify(entries);
   function jumpToLatest() {
@@ -333,9 +343,8 @@ export function RunProcess({ agent, streaming, stopping = false, content = "" }:
             if (!node) return;
             following.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 24;
           }}>
-          {visibleEntries.map((entry) => entry.thought
-            ? <p key={entry.id} className="run-process-thought">{entry.text}</p>
-            : <ToolCallDetails key={entry.id} event={entry.event} title={entry.text} streaming={streaming} stopping={stopping} now={now} onInspect={inspect} />)}
+          {visibleEntries.map(entry => <ToolCallDetails key={entry.id} event={entry.event} title={entry.text} streaming={streaming} stopping={stopping} now={now}
+            open={openNode === entry.id} onToggle={() => { inspect(); setOpenNode(value => value === entry.id ? null : entry.id); }} />)}
           {!visibleEntries.length ? <p className="run-process-empty">{streaming ? "等待模型响应…" : "未记录更多过程信息。"}</p> : null}
         </div>
       </div> : null}

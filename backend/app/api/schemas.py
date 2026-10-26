@@ -40,7 +40,7 @@ class AgentSettingsIn(BaseModel):
     knowledge_memory_enabled: bool = True
     summary_enabled: bool = True
     context_message_limit: int = Field(default=12, ge=4, le=30)
-    model_name: str = Field(default="gpt-5.5", min_length=1, max_length=120)
+    model_name: str = Field(default="", max_length=120)
     model_base_url: str = Field(default="", max_length=500)
     model_protocol: Literal["auto", "openai", "responses", "images", "anthropic", "gemini", "ollama"] = "auto"
     api_key: str = Field(default="", max_length=500)
