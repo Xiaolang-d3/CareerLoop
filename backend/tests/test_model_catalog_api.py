@@ -194,6 +194,9 @@ def test_fresh_workspace_has_no_seeded_connections_or_models(client, monkeypatch
     assert empty.status_code == 200
     assert empty.json()['model_name'] == ''
     assert client.get('/agent/capabilities').json()['configured'] is False
+    from app.agent.model_router import get_routing_policy, save_routing_policy
+    assert get_routing_policy() == {'version': 1, 'roles': {}, 'strict_capabilities': False}
+    assert save_routing_policy({'expected_version': 1, 'roles': {}})['version'] == 2
     saved = client.post('/agent/model-connections', json={'name': 'service', 'model_base_url': 'https://service.example.test/v1', 'api_key': 'synthetic-only-key'})
     assert saved.status_code == 200, saved.text
     assert len(saved.json()['connections']) == 1

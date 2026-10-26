@@ -19,6 +19,8 @@ class AgentCapabilitiesApiTest(unittest.TestCase):
         db.DB_PATH = Path(self.temp_dir.name) / "capabilities.db"
         init_db()
         self.client = create_authenticated_client(app)
+        from app.agent.settings import save_agent_settings
+        save_agent_settings({"model_name": "capability-test-model"})
 
     def tearDown(self) -> None:
         self.client.close()

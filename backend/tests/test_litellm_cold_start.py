@@ -94,9 +94,11 @@ def test_cold_start_capabilities_first_keeps_server_responsive(tmp_path):
                     assert server.poll() is None and time.monotonic() < deadline, log_path.read_text()[-3000:]
                     time.sleep(0.1)
             token = call("/auth/register", {"email": "cold@local.test", "password": "synthetic-cold-password"})[1]["access_token"]
-            call("/agent/model-connections", {"name": "cold", "model_base_url": "http://127.0.0.1:9/v1",
+            catalog = call("/agent/model-connections", {"name": "cold", "model_base_url": "http://127.0.0.1:9/v1",
                                               "model_protocol": "openai", "api_key": "synthetic-cold-key",
-                                              "model_name": "gpt-4o"}, token)
+                                              "model_name": "gpt-4o"}, token)[1]
+            profile = next(item for item in catalog["profiles"] if item["model_name"] == "gpt-4o")
+            call("/agent/model-default", {"profile_id": profile["id"]}, token)
             assert call("/agent/model-layer", token=token)[1]["litellm_loaded"] is False  # still a cold import
 
             stop, health_errors = threading.Event(), []

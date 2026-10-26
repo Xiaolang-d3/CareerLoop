@@ -136,6 +136,9 @@ def _ensure_catalog(db_path) -> None:
     with settings._settings_lock(db_path):
         row = settings._initialize_connection(db_path)
         with connect(db_path) as conn:
+            # Routing preferences exist independently of a selected model.
+            conn.execute("INSERT OR IGNORE INTO model_routing_policy (id, version, payload_json) VALUES (1, 1, '{}')")
+        with connect(db_path) as conn:
             if row.get("default_model_profile_id") and conn.execute("SELECT 1 FROM model_profiles WHERE id = ?", (row["default_model_profile_id"],)).fetchone():
                 if row.get("model_api_key") and not row.get("model_secret_ref"):
                     settings._credential(row, db_path)
@@ -573,6 +576,10 @@ def save_default_agent_settings(values: dict[str, Any], db_path: str | Path | No
 def public_default_agent_settings(db_path: str | Path | None = None) -> dict[str, Any]:
     _ensure_catalog(db_path)
     row = settings._row(db_path)
+    if row.get("display_name") in {"CareerLoop", "BossCopilot"}:
+        row["display_name"] = settings.DEFAULT_AGENT_SETTINGS["display_name"]
+        with connect(db_path) as conn:
+            conn.execute("UPDATE agent_settings SET display_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1", (row["display_name"],))
     if not row["default_model_profile_id"]:
         result = settings._settings_fallback(settings.get_settings())
         result.update({key: row[key] for key in settings._SAVE_FIELDS})
@@ -595,13 +602,6 @@ def public_default_agent_settings(db_path: str | Path | None = None) -> dict[str
     actual = get_negotiated_model_protocol(effective["model_name"], effective["model_protocol"], effective["model_base_url"], effective["api_key"]) or detected
 
     result = {name: value for name, value in row.items() if name not in {"model_api_key", "model_secret_ref", "model_config_initialized"}}
-    if result.get("display_name") in {"CareerLoop", "BossCopilot"}:
-        result["display_name"] = settings.DEFAULT_AGENT_SETTINGS["display_name"]
-        with connect(db_path) as conn:
-            conn.execute(
-                "UPDATE agent_settings SET display_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1",
-                (result["display_name"],),
-            )
     for field in settings._MEMORY_FIELDS:
         result[field] = bool(result[field])
     result.update(model_name=profile["model_name"], model_base_url=connection["base_url"], configured_model_base_url=connection["base_url"], model_protocol=connection["protocol"],

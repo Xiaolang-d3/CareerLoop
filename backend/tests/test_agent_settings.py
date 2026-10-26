@@ -26,6 +26,7 @@ class AgentSettingsTest(unittest.TestCase):
 
     def test_model_api_key_uses_secret_store_instead_of_sqlite(self) -> None:
         settings = get_agent_settings(self.db_path)
+        settings["model_name"] = "secret-storage-test-model"
         settings["api_key"] = "test-secret-not-for-network"
 
         saved = save_agent_settings(settings, self.db_path)

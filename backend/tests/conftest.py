@@ -5,6 +5,9 @@ import os
 os.environ["CAREERLOOP_SECRET_BACKEND"] = "memory"
 os.environ["OPENAI_API_KEY"] = ""
 os.environ["MODEL_BASE_URL"] = ""
+# A developer's .env must not seed a model that a clean CI workspace lacks.
+os.environ["MODEL_NAME"] = ""
+os.environ["MODEL_PROTOCOL"] = "auto"
 # The pre-LiteLLM suites patch the native adapters (OpenAI SDK / httpx); they
 # pin the rollback backend explicitly. LiteLLM suites opt in per test with
 # monkeypatch.setenv("DENGDENG_MODEL_BACKEND", "litellm") and a loopback server.
