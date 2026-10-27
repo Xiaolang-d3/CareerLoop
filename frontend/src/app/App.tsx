@@ -1209,7 +1209,7 @@ export function App({
             conversationTitle={currentConversation?.title}
             currentModelName={currentModelName}
             defaultModelName={defaultModelProfile?.model_name || capabilities?.active_model_name}
-            modelProfiles={activeModelProfiles.map(profile => ({ id: profile.id, model_name: profile.model_name, connection_id: profile.connection_id, connection_name: modelCatalog.catalog.connections.find(connection => connection.id === profile.connection_id)?.name || "模型连接" }))}
+            modelProfiles={activeModelProfiles.map(profile => ({ id: profile.id, model_name: profile.model_name, connection_id: profile.connection_id, capabilities: profile.capabilities, connection_name: modelCatalog.catalog.connections.find(connection => connection.id === profile.connection_id)?.name || "模型连接" }))}
             serviceModels={composerServiceCatalogs.find(service => service.connection_id === composerConnection?.id)}
             additionalServiceModels={composerServiceCatalogs.filter(service => service.connection_id !== composerConnection?.id)}
             onDiscoverServiceModels={composerDiscovery.discover}

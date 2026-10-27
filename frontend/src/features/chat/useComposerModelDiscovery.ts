@@ -52,7 +52,7 @@ export function useComposerModelDiscovery({ fetchJson, scope, connection, connec
   const state = snapshot?.owner === owner ? snapshot : null;
   const primary = state?.catalogs[connection?.id ?? owner.connections[0]?.id];
   const catalogs: ServiceModelCatalog[] = owner.connections.map(item => ({
-    connection_id: item.id, connection_name: item.name || "模型连接", revision: item.revision,
+    connection_id: item.id, connection_name: item.name || "模型连接", revision: item.revision, model_protocol: item.model_protocol,
     models: state?.catalogs[item.id]?.models ?? [], busy: state?.catalogs[item.id]?.busy ?? false, error: state?.catalogs[item.id]?.error ?? ""
   }));
   return { models: primary?.models ?? [], busy: primary?.busy ?? false, error: primary?.error ?? "", suggestedProtocol: primary?.suggestedProtocol, catalogs, discover };
