@@ -394,7 +394,7 @@ class ChatStreamingApiTest(unittest.TestCase):
                     content="已收到图片", provider="test", platform="manual", rounds=1,
                 ))
 
-        with patch.object(attachments_module, "get_settings", return_value=SimpleNamespace(attachment_vision_enabled=True)):
+        with patch.object(attachments_module, "get_settings", return_value=SimpleNamespace(attachment_vision_enabled=True, attachment_storage="local")):
             events = self.with_runtime(Runtime(), lambda: self.run_ag_ui(cid, "看看这张图", "local-vision", forwarded={
                 "attachmentIds": [attachment_id], "visionAttachmentIds": [attachment_id], "webSearch": False,
             }))
