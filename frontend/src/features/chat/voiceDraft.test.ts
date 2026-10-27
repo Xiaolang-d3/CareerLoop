@@ -22,9 +22,9 @@ it("preserves manual edits before and after the speech range", () => {
 it("freezes a manually corrected or deleted preview instead of overwriting it", () => {
   const editor = new VoiceDraftEditor();
   editor.apply("", update("登登"), at(0));
-  expect(editor.apply("灯灯", update("登登。", 2, 0, true), at(2))).toBeNull();
-  expect(editor.apply("灯灯", update("你好", 1, 1), at(2))?.text).toBe("灯灯你好");
-  expect(editor.apply("灯灯", update("你好。", 2, 1, true), at(2))).toBeNull();
+  expect(editor.apply("团团", update("登登。", 2, 0, true), at(2))).toBeNull();
+  expect(editor.apply("团团", update("你好", 1, 1), at(2))?.text).toBe("团团你好");
+  expect(editor.apply("团团", update("你好。", 2, 1, true), at(2))).toBeNull();
 });
 
 it("keeps user insertions on both edges and separates adjacent English words", () => {

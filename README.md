@@ -1,9 +1,9 @@
 <div align="center">
-  <img src="frontend/public/dengdeng-mark-v1.png" alt="灯灯 Logo" width="88" height="88" />
+  <img src="frontend/public/tuantuan-logo.png" alt="团团 Logo" width="88" height="88" />
 
-# 灯灯 · 个人 AI 协作工作台
+# 团团 · 智能工作伙伴
 
-**一起想清楚，一步步做好。**
+**理解你的想法，帮你把事情做好。**
 
 [![CI](https://github.com/Xiaolang-d3/CareerLoop/actions/workflows/ci.yml/badge.svg)](https://github.com/Xiaolang-d3/CareerLoop/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/github/license/Xiaolang-d3/CareerLoop?color=blue)](LICENSE)
@@ -11,7 +11,7 @@
 
 </div>
 
-灯灯是一个开源、本地优先的个人 AI 协作工作台。把问题、文件和想法带进对话，结合已有资料与公开来源完成研究、分析、起草和修改，再把有用的内容保存下来，留给下一次任务继续使用。
+团团是一个开源、本地优先的智能工作伙伴。把问题、文件和想法带进对话，结合已有资料与公开来源完成研究、分析、起草和修改，再把有用的内容保存下来，留给下一次任务继续使用。
 
 你可以选择自己的模型服务，决定哪些资料只存档、哪些允许长期参考，以及每轮对话是否联网。资料、会话和任务记录保存在本机；使用外部模型或搜索服务时，相关上下文或查询会发送至你配置的服务，**本地存储不等于全程离线**。
 
@@ -20,6 +20,8 @@
 [贡献指南](CONTRIBUTING.md) · [问题反馈](https://github.com/Xiaolang-d3/CareerLoop/issues/new/choose)
 
 </div>
+
+简历项目名称：**团团｜智能工作助手（个人项目）**
 
 ## 核心能力
 
@@ -32,7 +34,7 @@
 | **多模型连接** | 管理多个模型服务和模型档案，在对话中切换；支持 OpenAI 兼容接口、Responses、Anthropic、Gemini、Ollama，以及备用模型策略。 |
 | **开发者资讯首页** | 浏览 AI / Agent 动态、GitHub 日榜与周榜、关注仓库的 Releases 和工程实践；收藏线索，或带入对话继续分析。 |
 
-界面提供 **首页、AI 工作区、文件库、设置** 四个入口，支持浅色、深色和跟随系统外观。项目沿用 `CareerLoop` 仓库名，当前产品定位与功能以灯灯为准。
+界面提供 **首页、AI 工作区、文件库、设置** 四个入口，支持浅色、深色和跟随系统外观。项目沿用 `CareerLoop` 仓库名，当前产品定位与功能以团团为准。
 
 ## 技术栈
 

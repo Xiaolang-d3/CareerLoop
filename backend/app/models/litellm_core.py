@@ -66,7 +66,7 @@ def _configure(module: Any) -> None:
     # system proxy settings) and avoid shipping a second HTTP stack path.
     if hasattr(module, "disable_aiohttp_transport"):
         module.disable_aiohttp_transport = True
-    # 灯灯 retries in the agent runtime; the router has its own policy.
+    # 团团 retries in the agent runtime; the router has its own policy.
     module.num_retries = 0
 
 
@@ -178,7 +178,7 @@ _PREFIXES = {
 
 
 def model_string(protocol: str, model: str, *, responses_bridge: bool = False) -> str:
-    """LiteLLM model id for a 灯灯 protocol.
+    """LiteLLM model id for a 团团 protocol.
 
     ``responses_bridge`` routes a chat-format call to the Responses API
     (LiteLLM's ``openai/responses/<model>``); the router uses it so one
@@ -191,12 +191,12 @@ def model_string(protocol: str, model: str, *, responses_bridge: bool = False) -
 
 
 def api_base_for(protocol: str, base_url: str | None) -> str | None:
-    """Translate 灯灯's "complete API root" convention into LiteLLM's api_base."""
+    """Translate 团团's "complete API root" convention into LiteLLM's api_base."""
     value = (base_url or "").strip().rstrip("/")
     if not value:
         return None
     if protocol == "anthropic" and value.endswith("/v1"):
-        # 灯灯 accepts ".../v1" for Anthropic; LiteLLM appends /v1/messages itself.
+        # 团团 accepts ".../v1" for Anthropic; LiteLLM appends /v1/messages itself.
         return value[: -len("/v1")]
     if protocol == "ollama" and value.endswith("/api"):
         return value[: -len("/api")]

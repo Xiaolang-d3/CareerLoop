@@ -32,7 +32,7 @@ MAX_ARCHIVE_BYTES = 300 * 1024**2
 MAX_EXTRACTED_BYTES = 1024**3
 REVISION = re.compile(r"[0-9a-f]{40}")
 LOCAL_HTTP = build_opener(ProxyHandler({}))
-PUBLIC_FILES = ("dengdeng-icon-v1.png", "dengdeng-mark-v1.png", "dengdeng-favicon-v1.png")
+PUBLIC_FILES = ("tuantuan-logo.png", "tuantuan-favicon.png")
 DATABASE_READY_CODE = """
 from app.workspace import auth_db_path, existing_workspace_roots
 from app.database_lifecycle import database_status

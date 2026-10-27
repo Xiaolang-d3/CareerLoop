@@ -1,7 +1,7 @@
-"""LiteLLM-backed model provider behind 灯灯's provider interface.
+"""LiteLLM-backed model provider behind 团团's provider interface.
 
 One instance serves one (protocol, model, API root, key).  The protocol is the
-one 灯灯 resolved or negotiated; it decides the LiteLLM route:
+one 团团 resolved or negotiated; it decides the LiteLLM route:
 
 * ``openai``    → ``litellm.acompletion("openai/<model>")``
 * ``responses`` → ``litellm.aresponses("openai/<model>")``
@@ -10,7 +10,7 @@ one 灯灯 resolved or negotiated; it decides the LiteLLM route:
 * ``ollama``    → ``litellm.acompletion("ollama_chat/<model>")``
 
 Model discovery (``list_models``) stays on the native adapter: it is a plain
-catalog GET with 灯灯-specific error messages and LiteLLM has no generic
+catalog GET with 团团-specific error messages and LiteLLM has no generic
 equivalent for arbitrary gateways.
 """
 from __future__ import annotations
@@ -472,7 +472,7 @@ class LiteLLMProvider:
             yield event
 
     async def consume_chat_stream(self, stream: Any, *, protocol: str | None = None) -> AsyncIterator[ModelStreamEvent]:
-        """Turn a LiteLLM chat stream into 灯灯 stream events plus one completed event."""
+        """Turn a LiteLLM chat stream into 团团 stream events plus one completed event."""
         protocol = protocol or self._protocol
         content: list[str] = []
         reasoning: list[str] = []

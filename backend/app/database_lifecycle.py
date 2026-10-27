@@ -9,7 +9,7 @@ from typing import Any
 from . import db as db_module
 
 
-REBUILD_CONFIRMATION = "确认重建灯灯数据库"
+REBUILD_CONFIRMATION = "确认重建团团数据库"
 
 
 def _resolved_db_path(db_path: str | Path | None = None) -> Path:
@@ -57,7 +57,7 @@ def database_status(db_path: str | Path | None = None) -> dict[str, Any]:
         "schema_version": current or None,
         "required_schema_version": db_module.DB_SCHEMA_VERSION,
         "database_path": str(path),
-        "reason": "" if current >= db_module.DB_SCHEMA_VERSION else "检测到灯灯当前版本之前的本地数据库",
+        "reason": "" if current >= db_module.DB_SCHEMA_VERSION else "检测到团团当前版本之前的本地数据库",
     }
 
 
@@ -96,7 +96,7 @@ def rebuild_database_v2(
     confirmation: str,
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    if confirmation != REBUILD_CONFIRMATION:
+    if confirmation not in {REBUILD_CONFIRMATION, "确认重建灯灯数据库"}:
         raise ValueError("需要明确确认后才能备份并重建数据库")
     path = _resolved_db_path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)

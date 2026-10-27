@@ -25,7 +25,7 @@ export function useVoiceAnswer(onFinalTranscript: (update: VoiceTranscript) => v
     setError("");
     onAudioLevelRef.current?.(0);
     if (window.isSecureContext === false) {
-      setError("麦克风需要安全连接，请通过 HTTPS 或本机 localhost 地址打开灯灯。");
+      setError("麦克风需要安全连接，请通过 HTTPS 或本机 localhost 地址打开团团。");
       return;
     }
     if (!navigator.mediaDevices?.getUserMedia || !voiceCaptureSupported()) {

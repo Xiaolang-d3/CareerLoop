@@ -1,4 +1,4 @@
-"""Translate LiteLLM exceptions into 灯灯's ModelProviderError codes."""
+"""Translate LiteLLM exceptions into 团团's ModelProviderError codes."""
 from __future__ import annotations
 
 import ast

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for 灯灯 main window",
+  "description": "Capability for 团团 main window",
   "windows": [
     "main"
   ],

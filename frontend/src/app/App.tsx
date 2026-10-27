@@ -870,12 +870,12 @@ export function App({
           "当前数据库格式无法自动升级。\n\n继续前会自动生成带时间戳的完整备份；备份可用于恢复原数据库。是否现在备份并重建？"
         );
         if (!confirmed) {
-          throw new Error("已取消数据库重建。当前旧数据库保持不变，确认后才能进入灯灯。");
+          throw new Error("已取消数据库重建。当前旧数据库保持不变，确认后才能进入团团。");
         }
         await fetchJson("/system/database-rebuild", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ confirmation: "确认重建灯灯数据库" })
+          body: JSON.stringify({ confirmation: "确认重建团团数据库" })
         });
       }
       setDatabaseReady(true);
@@ -954,7 +954,7 @@ export function App({
   const topbarSection = topbarTitle ? topbarSectionForPage(appRoute.section, topbarTitle) : undefined;
 
   useEffect(() => {
-    document.title = `${documentPageTitle}｜灯灯`;
+    document.title = `${documentPageTitle}｜团团`;
   }, [documentPageTitle]);
 
   const identityMenu = (

@@ -75,10 +75,10 @@ describe("AuthGate", () => {
     expect(screen.queryByLabelText("验证码")).not.toBeInTheDocument();
     expect(screen.getByText("账户、资料和对话只保存在这台设备上，不是云端账号。")).toBeInTheDocument();
     expect(screen.getByRole("main")).toHaveClass("auth-gate");
-    expect(screen.getByRole("heading", { name: "灯灯" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "团团" })).toBeInTheDocument();
     expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
     expect(screen.queryByText(/沉淀到你的本地知识库/)).not.toBeInTheDocument();
-    const aboutLink = screen.getByRole("link", { name: "关于 灯灯" });
+    const aboutLink = screen.getByRole("link", { name: "关于 团团" });
     expect(aboutLink).toHaveAttribute("href", "#/about");
     expect(aboutLink.closest("form")).toBeNull();
     expect(screen.getByRole("navigation", { name: "公共导航" })).toContainElement(aboutLink);

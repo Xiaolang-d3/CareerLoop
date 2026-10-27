@@ -171,7 +171,7 @@ def main() -> None:
             # modules and only the data files it reads at runtime (offline cost
             # map, Anthropic beta headers, provider tables, tokenizers).  The
             # proxy server, its admin UI, enterprise hooks and the optional Rust
-            # extension are never used by 灯灯 and stay out of the bundle.
+            # extension are never used by 团团 and stay out of the bundle.
             *litellm_arguments(build_python(pyinstaller)),
             str(BACKEND / "app" / "desktop_server.py"),
         ],

@@ -2,9 +2,9 @@
 
 ## 项目
 
-灯灯是从对话开始的个人 AI 协作工作台。仓库根目录就是产品本身：后端在 `backend/app/`，桌面端在 `desktop/`（Tauri），前端在 `frontend/src/`，测试分别位于 `backend/tests/`、前端相邻目录和 `frontend/e2e/`。`docs/` 仅在本地维护，不纳入 Git。已有本地 `docs/agent.md` 时，改路由、工具、runtime、记忆、阶段或导入循环仍须同步更新；新克隆的仓库不要求创建该文档。
+团团是从对话开始的智能工作伙伴。仓库根目录就是产品本身：后端在 `backend/app/`，桌面端在 `desktop/`（Tauri），前端在 `frontend/src/`，测试分别位于 `backend/tests/`、前端相邻目录和 `frontend/e2e/`。`docs/` 仅在本地维护，不纳入 Git。已有本地 `docs/agent.md` 时，改路由、工具、runtime、记忆、阶段或导入循环仍须同步更新；新克隆的仓库不要求创建该文档。
 
-`sites/dengdeng/` 是灯灯 Sites 版本，独立 Git 仓库，不纳入本仓库。它源自前端快照，资料与登录仍由本机 FastAPI 后端处理，本地转发方式见其 `README.md`。
+`sites/dengdeng/` 是团团 Sites 版本，独立 Git 仓库，不纳入本仓库。它源自前端快照，资料与登录仍由本机 FastAPI 后端处理，本地转发方式见其 `README.md`。
 
 `output/`、`tmp/` 为生成文件，被 `.gitignore` 排除。后端日志在 `backend/logs/`，前端日志在 `frontend/logs/`。Playwright CLI 会话记录在 `logs/playwright-cli/`（由 `.playwright/cli.config.json` 指定）。
 
