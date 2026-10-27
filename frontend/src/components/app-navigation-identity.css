@@ -130,3 +130,38 @@
     max-height: calc(100dvh - 80px);
   }
 }
+
+/* Keep the theme shortcut within reach in both expanded and compact navigation. */
+.app-shell.has-chat-dock .sidebar.context-navigation .sidebar-identity-slot {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.sidebar-theme-toggle {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  margin-left: auto;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.sidebar-theme-toggle svg { flex: 0 0 auto; }
+.sidebar-theme-toggle:hover { color: var(--color-brand-strong); background: var(--color-brand-soft); }
+.sidebar-theme-toggle:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 3px; }
+@media (min-width: 821px) {
+  .app-shell.has-chat-dock .sidebar.context-navigation.collapsed .sidebar-identity-slot { flex-direction: column; justify-content: center; gap: 4px; }
+  .sidebar.collapsed .sidebar-theme-toggle { margin-inline: auto; }
+}
+@media (max-width: 820px) {
+  .app-shell.has-chat-dock .sidebar.context-navigation .sidebar-identity-slot { flex-direction: row; align-items: center; gap: 4px; }
+  .sidebar .sidebar-theme-toggle, .sidebar.collapsed .sidebar-theme-toggle { width: 36px; height: 40px; margin: 0; }
+}
