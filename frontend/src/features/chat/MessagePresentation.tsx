@@ -615,7 +615,13 @@ export function ChatTurn({ state, chatBusy, stopping = false }: { state: Message
   }
 
   return (
-    <MessagePrimitive.Root className={`message ${source.role}`}>
+    <MessagePrimitive.Root
+      className={`message ${source.role}${state.isLast ? " is-latest" : ""}`}
+      tabIndex={-1}
+      onPointerDown={(event) => {
+        if (event.pointerType === "touch") event.currentTarget.focus({ preventScroll: true });
+      }}
+    >
       <div className="message-content" onMouseUp={captureSelection}>
         {source.role === "assistant" ? (
           <>
@@ -640,7 +646,7 @@ export function ChatTurn({ state, chatBusy, stopping = false }: { state: Message
           </>
         ) : (
           <>
-            <UserMessageContent content={source.content} />
+            {source.content.trim() ? <UserMessageContent content={source.content} /> : null}
             {source.payload?.attachments?.length ? (
               <div className="message-attachments" aria-label="本轮已附加资料">
                 {source.payload.attachments.map((attachment) => (

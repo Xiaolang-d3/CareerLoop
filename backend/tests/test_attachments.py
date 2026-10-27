@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import base64
 from io import BytesIO
 from types import SimpleNamespace
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 import app.attachments.service as attachments_module
 from app.attachments.service import (
@@ -25,15 +27,6 @@ def png_1x1() -> bytes:
     buffer = BytesIO()
     Image.new("RGB", (1, 1), color="white").save(buffer, format="PNG")
     return buffer.getvalue()
-
-
-class FakeVisionStore:
-    def __init__(self) -> None:
-        self.requested_keys: list[str] = []
-
-    def presigned_get_url(self, object_key: str) -> str:
-        self.requested_keys.append(object_key)
-        return f"https://cdn.example.test/{object_key}?signature=test"
 
 
 class AttachmentServiceTest(unittest.TestCase):
@@ -136,29 +129,54 @@ class AttachmentServiceTest(unittest.TestCase):
         attachments_module.get_settings = lambda: SimpleNamespace(attachment_vision_enabled=False)
         try:
             with self.assertRaises(RuntimeError):
-                prepare_attachment_vision_url(attachment["id"], db_path=self.db_path, store=FakeVisionStore())
+                prepare_attachment_vision_url(attachment["id"], db_path=self.db_path, store=self.store)
         finally:
             attachments_module.get_settings = original_get_settings
 
-    def test_prepare_vision_url_returns_signed_url_when_enabled(self) -> None:
+    def test_prepare_vision_url_embeds_local_images_without_minio(self) -> None:
+        from PIL import Image
+
+        for suffix, image_format, content_type in [
+            ("png", "PNG", "image/png"),
+            ("jpg", "JPEG", "image/jpeg"),
+            ("webp", "WEBP", "image/webp"),
+        ]:
+            with self.subTest(image_format=image_format):
+                buffer = BytesIO()
+                Image.new("RGB", (1, 1), color="white").save(buffer, format=image_format)
+                content = buffer.getvalue()
+                attachment = create_attachment(
+                    1, "image", f"job.{suffix}", content,
+                    db_path=self.db_path, store=self.store,
+                )
+                with patch.object(attachments_module, "get_settings", return_value=SimpleNamespace(attachment_vision_enabled=True)):
+                    image_url = prepare_attachment_vision_url(attachment["id"], db_path=self.db_path, store=self.store)
+
+                header, encoded = image_url.split(",", 1)
+                self.assertEqual(header, f"data:{content_type};base64")
+                self.assertEqual(base64.b64decode(encoded), content)
+                saved = attachments_module.get_attachment(attachment["id"], db_path=self.db_path)
+                self.assertEqual(saved["vision_status"], "consented")
+                self.assertIsNotNone(saved["vision_consent_at"])
+
+    def test_prepare_vision_reads_private_storage_without_a_public_url(self) -> None:
+        content = png_1x1()
         attachment = create_attachment(
             1,
             "image",
             "job.png",
-            png_1x1(),
+            content,
             db_path=self.db_path,
             store=self.store,
         )
-        fake_store = FakeVisionStore()
-        original_get_settings = attachments_module.get_settings
-        attachments_module.get_settings = lambda: SimpleNamespace(attachment_vision_enabled=True)
-        try:
-            signed_url = prepare_attachment_vision_url(attachment["id"], db_path=self.db_path, store=fake_store)
-        finally:
-            attachments_module.get_settings = original_get_settings
+        fake_store = Mock(spec=AttachmentStore)
+        fake_store.get.return_value = content
+        with patch.object(attachments_module, "get_settings", return_value=SimpleNamespace(attachment_vision_enabled=True)):
+            image_url = prepare_attachment_vision_url(attachment["id"], db_path=self.db_path, store=fake_store)
 
-        self.assertTrue(signed_url.startswith("https://cdn.example.test/"))
-        self.assertEqual(len(fake_store.requested_keys), 1)
+        self.assertEqual(base64.b64decode(image_url.split(",", 1)[1]), content)
+        fake_store.get.assert_called_once()
+        fake_store.presigned_get_url.assert_not_called()
 
 
 if __name__ == "__main__":

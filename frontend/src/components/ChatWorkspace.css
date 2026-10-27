@@ -214,10 +214,16 @@
   min-height: 32px;
   margin: 10px 0 0;
   gap: 4px;
-  opacity: 1;
+  opacity: 0;
   visibility: visible;
-  pointer-events: auto;
+  pointer-events: none;
   transform: none;
+  transition: opacity .14s ease;
+}
+
+.chat-workspace .chat-thread .message:is(.is-latest, :hover, :focus-within) .message-actions {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .chat-workspace .message-footer {
@@ -384,7 +390,12 @@
 }
 
 .chat-workspace .chat-thread .message.user .user-message-actions {
-  margin: 2px 0 0 auto;
+  position: static;
+  justify-self: start;
+  justify-content: flex-start;
+  margin: 4px 0 0;
+  visibility: visible;
+  transform: none;
 }
 
 .chat-workspace.is-running .thinking-indicator {
@@ -1489,13 +1500,7 @@
     font-size: 12px;
   }
 }
-@media (hover: hover) and (pointer: fine) {
-  .chat-workspace .chat-thread .message .message-actions { opacity: 0; pointer-events: none; }
-  .chat-workspace .chat-thread .message:hover .message-actions,
-  .chat-workspace .chat-thread .message:focus-within .message-actions { opacity: 1; pointer-events: auto; }
-}
 @media (max-width: 600px), (pointer: coarse) {
-  .chat-workspace .chat-thread .message .message-actions { opacity: 1; pointer-events: auto; }
   .assistant-page .chat-workspace .message-actions button { min-height: 36px; }
 }
 .chat-workspace .chat-thread-content { display: grid; gap: 16px; min-width: 0; }
@@ -1644,9 +1649,7 @@
 }
 @media (min-width: 821px) and (hover: hover) and (pointer: fine) {
   .assistant-page .chat-workspace.has-history .run-process-toggle { min-height: 28px; }
-  .assistant-page .chat-workspace.has-history .chat-thread .message.user:not(.message-editing) { max-width: min(calc(100% - 120px), 36rem); }
-  .assistant-page .chat-workspace.has-history .message.user:not(.message-editing) .message-content { position: relative; }
-  .assistant-page .chat-workspace.has-history .message.user .user-message-actions { position: absolute; top: 50%; right: calc(100% + 6px); max-width: none; flex-wrap: nowrap; margin: 0; transform: translateY(-50%); }
+  .assistant-page .chat-workspace.has-history .chat-thread .message.user:not(.message-editing) { max-width: min(100%, 36rem); }
 }
 @media (max-width: 600px) {
   .assistant-page .chat-workspace.has-history .message-markdown,

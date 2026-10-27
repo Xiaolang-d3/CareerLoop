@@ -294,8 +294,8 @@ export function App({
   const currentModelName = selectedModelProfile?.model_name || defaultModelProfile?.model_name || capabilities?.active_model_name || (modelSettingsReady ? savedAgentSettings.model_name : "尚未配置");
   const modelProfileUnavailable = Boolean(currentConversation?.model_profile_id && selectedModelProfile && !activeModelProfiles.some(profile => profile.id === currentConversation.model_profile_id));
   const composerConnection = modelCatalog.catalog.connections.find(connection => connection.id === (selectedModelProfile || defaultModelProfile)?.connection_id && connection.enabled);
-  const composerDiscovery = useComposerModelDiscovery({ fetchJson, scope: modelSettingsScope, connection: composerConnection });
-  const disabledServiceModels = new Set(modelCatalog.catalog.profiles.filter(profile => profile.connection_id === composerConnection?.id && !profile.enabled && !activeModelProfiles.some(active => active.connection_id === profile.connection_id && active.model_name === profile.model_name)).map(profile => profile.model_name));
+  const composerDiscovery = useComposerModelDiscovery({ fetchJson, scope: modelSettingsScope, connection: composerConnection, connections: modelCatalog.catalog.connections });
+  const composerServiceCatalogs = composerDiscovery.catalogs.map(service => ({ ...service, models: service.models.filter(name => !modelCatalog.catalog.profiles.some(profile => profile.connection_id === service.connection_id && profile.model_name === name && !profile.enabled) || activeModelProfiles.some(profile => profile.connection_id === service.connection_id && profile.model_name === name)) }));
   const defaultModelHasDraft = Boolean(agentSettings.api_key.trim()) || agentSettings.model_name !== savedAgentSettings.model_name
     || agentSettings.model_base_url !== savedAgentSettings.model_base_url || agentSettings.model_protocol !== savedAgentSettings.model_protocol;
 
@@ -1209,10 +1209,11 @@ export function App({
             conversationTitle={currentConversation?.title}
             currentModelName={currentModelName}
             defaultModelName={defaultModelProfile?.model_name || capabilities?.active_model_name}
-            modelProfiles={activeModelProfiles.map(profile => ({ id: profile.id, model_name: profile.model_name, connection_id: profile.connection_id, connection_name: modelCatalog.catalog.connections.find(connection => connection.id === profile.connection_id)?.name || "模型连接" }))}
-            serviceModels={composerConnection ? { connection_id: composerConnection.id, connection_name: composerConnection.name || "当前服务", revision: composerConnection.revision, models: composerDiscovery.models.filter(name => !disabledServiceModels.has(name)), busy: composerDiscovery.busy, error: composerDiscovery.error } : undefined}
+            modelProfiles={activeModelProfiles.map(profile => ({ id: profile.id, model_name: profile.model_name, connection_id: profile.connection_id, capabilities: profile.capabilities, connection_name: modelCatalog.catalog.connections.find(connection => connection.id === profile.connection_id)?.name || "模型连接" }))}
+            serviceModels={composerServiceCatalogs.find(service => service.connection_id === composerConnection?.id)}
+            additionalServiceModels={composerServiceCatalogs.filter(service => service.connection_id !== composerConnection?.id)}
             onDiscoverServiceModels={composerDiscovery.discover}
-            onServiceModelChange={async modelName => { if (composerConnection) await selectConversationModel(null, { connectionId: composerConnection.id, modelName, revision: composerConnection.revision }); }}
+            onServiceModelChange={async (modelName, connectionId) => { const connection = modelCatalog.catalog.connections.find(item => item.id === (connectionId ?? composerConnection?.id) && item.enabled); if (connection) await selectConversationModel(null, { connectionId: connection.id, modelName, revision: connection.revision }); }}
             selectedModelProfileId={(selectedModelProfile || defaultModelProfile)?.id ?? null}
             modelSettings={(selectedModelProfile || defaultModelProfile) ? {
               profile: (selectedModelProfile || defaultModelProfile)!,

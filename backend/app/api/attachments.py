@@ -103,9 +103,7 @@ def attachments_config() -> dict[str, Any]:
     )
     vision_ready = (
         settings.attachment_vision_enabled
-        and settings.attachment_storage == "minio"
-        and bool(settings.minio_public_endpoint)
-        and minio_configured
+        and (settings.attachment_storage == "local" or minio_configured)
     )
     checks = [
         {
@@ -132,7 +130,7 @@ def attachments_config() -> dict[str, Any]:
         },
         {
             "key": "vision_public_url",
-            "label": "图片直传公网地址",
+            "label": "模型看图",
             "status": (
                 "ok"
                 if vision_ready
@@ -141,11 +139,11 @@ def attachments_config() -> dict[str, Any]:
                 else "disabled"
             ),
             "message": (
-                "岗位截图可按次生成短期签名 URL"
+                "图片随模型请求发送，无需公网存储地址"
                 if vision_ready
                 else "图片直传未启用"
                 if not settings.attachment_vision_enabled
-                else "需要 MinIO 私有存储和 MINIO_PUBLIC_ENDPOINT"
+                else "请先完成附件存储配置"
             ),
         },
     ]
@@ -154,9 +152,7 @@ def attachments_config() -> dict[str, Any]:
         "vision_enabled": settings.attachment_vision_enabled,
         "vision_ready": vision_ready,
         "vision_url_ttl_seconds": settings.attachment_vision_url_ttl_seconds,
-        "requires_public_endpoint": (
-            settings.attachment_vision_enabled and not settings.minio_public_endpoint
-        ),
+        "requires_public_endpoint": False,
         "checks": checks,
     }
 

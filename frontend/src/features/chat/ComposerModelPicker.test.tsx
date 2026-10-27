@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ComposerModelPicker } from "./ComposerModelPicker";
 import type { ComposerModelSettings } from "./ComposerModelParameters";
@@ -54,7 +54,7 @@ describe("ComposerModelPicker", () => {
     expect(screen.getAllByRole("option", { name: "gpt-5.5" })).toHaveLength(1);
     expect(screen.getByRole("option", { name: "claude-model" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("option", { name: "grok-model" }));
-    expect(props.onServiceChange).toHaveBeenCalledWith("grok-model");
+    expect(props.onServiceChange).toHaveBeenCalledWith("grok-model", "service-a");
     expect(props.onChange).not.toHaveBeenCalled();
   });
 
@@ -64,6 +64,75 @@ describe("ComposerModelPicker", () => {
     fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" });
     openMenu();
     expect(props.onDiscover).toHaveBeenCalledTimes(2);
+  });
+
+  it("switches to a saved image model on another connection and back to a chat model", () => {
+    const image = { id: "image-profile", model_name: "gpt-image-1", connection_id: "image-service", connection_name: "生图服务" };
+    const additionalServiceModels = [{ connection_id: "image-service", connection_name: "生图服务", revision: 2, models: ["gpt-image-1"], busy: false, error: "" }];
+    const { view, ...props } = setup({ profiles: [...profiles, image], additionalServiceModels });
+    openMenu();
+    fireEvent.click(screen.getByRole("tab", { name: "图片" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "生图服务" })).getByRole("option", { name: "gpt-image-1" }));
+    expect(props.onChange).toHaveBeenLastCalledWith("image-profile");
+    view.rerender(<ComposerModelPicker {...props} currentModelName="gpt-image-1" selectedProfileId="image-profile"
+      serviceModels={additionalServiceModels[0]} additionalServiceModels={[props.serviceModels!]} />);
+    openMenu();
+    expect(screen.getByRole("option", { name: "gpt-image-1" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "图片" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("tab", { name: "对话" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "主连接" })).getByRole("option", { name: "gpt-5.5" }));
+    expect(props.onChange).toHaveBeenLastCalledWith("p1");
+  });
+
+  it("keeps model names scoped to their connection when choosing an unsaved image model", () => {
+    const props = setup({ additionalServiceModels: [{ connection_id: "image-service", connection_name: "生图服务", revision: 2, models: ["gpt-5.5", "gpt-image-1"], busy: false, error: "" }], onServiceChange: vi.fn().mockResolvedValue(undefined) });
+    openMenu();
+    const group = within(screen.getByRole("group", { name: "生图服务" }));
+    expect(group.getByRole("option", { name: "gpt-5.5" })).toHaveAttribute("aria-selected", "false");
+    fireEvent.click(screen.getByRole("tab", { name: "图片" }));
+    fireEvent.click(screen.getByRole("option", { name: "gpt-image-1" }));
+    expect(props.onServiceChange).toHaveBeenCalledWith("gpt-image-1", "image-service");
+    expect(props.onChange).not.toHaveBeenCalled();
+  });
+
+  it("allows switching to an image service when the chat service catalog fails", () => {
+    const props = setup({ serviceModels: { connection_id: "service-a", connection_name: "主连接", revision: 1, models: [], busy: false, error: "聊天服务暂不可用" }, additionalServiceModels: [{ connection_id: "image-service", connection_name: "生图服务", revision: 2, models: ["gpt-image-1"], busy: false, error: "" }], onServiceChange: vi.fn().mockResolvedValue(undefined) });
+    openMenu();
+    expect(screen.getByRole("alert")).toHaveTextContent("聊天服务暂不可用");
+    fireEvent.click(screen.getByRole("tab", { name: "图片" }));
+    fireEvent.click(screen.getByRole("option", { name: "gpt-image-1" }));
+    expect(props.onServiceChange).toHaveBeenCalledWith("gpt-image-1", "image-service");
+  });
+
+  it("separates output categories within one service without changing the selected model on tab clicks", () => {
+    const props = setup({ serviceModels: { connection_id: "service-a", connection_name: "统一服务", revision: 1, models: ["gpt-5.5", "qwen3-vl", "gpt-image-1", "sora-2"], busy: false, error: "" }, onServiceChange: vi.fn() });
+    openMenu();
+    expect(screen.getByRole("tab", { name: "对话" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("option", { name: "qwen3-vl" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "gpt-image-1" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "图片" }));
+    expect(screen.getByRole("option", { name: "gpt-image-1" })).toBeEnabled();
+    expect(screen.queryByRole("option", { name: "gpt-5.5" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "视频" }));
+    expect(screen.getByRole("option", { name: "sora-2" })).toBeDisabled();
+    expect(screen.getByText("视频生成接口暂未接入，视频模型暂不可选。")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("option", { name: "sora-2" }));
+    expect(props.onServiceChange).not.toHaveBeenCalled();
+    expect(props.onChange).not.toHaveBeenCalled();
+  });
+
+  it("navigates category tabs with the keyboard and shows a category-specific empty state", () => {
+    setup(); openMenu();
+    const chat = screen.getByRole("tab", { name: "对话" });
+    chat.focus();
+    fireEvent.keyDown(chat, { key: "ArrowRight" });
+    expect(screen.getByRole("tab", { name: "图片" })).toHaveFocus();
+    expect(screen.getByText("暂无图片模型，可前往管理模型添加生图服务")).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("tab", { name: "图片" }), { key: "End" });
+    expect(screen.getByRole("tab", { name: "视频" })).toHaveFocus();
+    expect(screen.getByText("暂无视频模型")).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("tab", { name: "视频" }), { key: "Home" });
+    expect(screen.getByRole("tab", { name: "对话" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("shows only returned models without source badges or saved-only profiles", () => {

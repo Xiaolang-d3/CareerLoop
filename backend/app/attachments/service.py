@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import mimetypes
 import shutil
@@ -88,36 +89,57 @@ class AttachmentStore:
                 client.make_bucket(self.settings.minio_bucket)
             client.put_object(self.settings.minio_bucket, object_key, BytesIO(content), len(content), content_type=content_type)
         else:
-            path = self.local_root / object_key
-            path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            try:
-                self.local_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-                self.local_root.chmod(0o700)
-                path.parent.chmod(0o700)
-            except OSError:
-                pass
-            path.write_bytes(content)
-            try:
-                path.chmod(0o600)
-            except OSError:
-                pass
+            self._write_local(object_key, content)
         return StoredAttachment(object_key, content_type, len(content), hashlib.sha256(content).hexdigest())
 
+    def _local_path(self, object_key: str) -> Path:
+        root = self.local_root.resolve()
+        path = (root / object_key).resolve()
+        if root not in path.parents:
+            raise ValueError("附件文件路径无效")
+        return path
+
+    def _write_local(self, object_key: str, content: bytes) -> Path:
+        path = self._local_path(object_key)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            self.local_root.chmod(0o700)
+            path.parent.chmod(0o700)
+        except OSError:
+            pass
+        path.write_bytes(content)
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
+        return path
+
     def get(self, object_key: str) -> bytes:
+        path = self._local_path(object_key)
+        # Existing local attachments and immutable preview caches stay readable
+        # when the installation switches to MinIO.
+        if path.is_file():
+            return path.read_bytes()
         if self.storage == "minio":
-            response = self._minio_client().get_object(self.settings.minio_bucket, object_key)
+            from minio.error import S3Error
+
+            try:
+                response = self._minio_client().get_object(self.settings.minio_bucket, object_key)
+            except S3Error as exc:
+                if exc.code in {"NoSuchKey", "NoSuchBucket"}:
+                    raise ValueError("附件原文件不存在，可能已被移除") from exc
+                raise
             try:
                 return response.read()
             finally:
                 response.close()
                 response.release_conn()
-        return (self.local_root / object_key).read_bytes()
+        return path.read_bytes()
 
     def delete(self, object_key: str) -> None:
+        path = self._local_path(object_key)
         if self.storage == "minio":
             self._minio_client().remove_object(self.settings.minio_bucket, object_key)
-            return
-        path = self.local_root / object_key
         path.unlink(missing_ok=True)
         if path.parent != self.local_root and path.parent.exists() and not any(path.parent.iterdir()):
             shutil.rmtree(path.parent)
@@ -153,7 +175,7 @@ class AttachmentStore:
 
 
 def get_attachment_store() -> AttachmentStore:
-    return AttachmentStore(local_root=attachments_dir())
+    return AttachmentStore(storage=get_settings().attachment_storage)
 
 
 def attachment_thumbnail(attachment_id: str, *, db_path: str | Path | None = None) -> bytes:
@@ -253,7 +275,9 @@ def get_attachment_file(
     if root not in path.parents:
         raise ValueError("附件文件路径无效")
     if not path.is_file():
-        raise ValueError("附件原文件不存在，可能已被移除")
+        if attachment_store.storage != "minio":
+            raise ValueError("附件原文件不存在，可能已被移除")
+        attachment_store._write_local(attachment["object_key"], attachment_store.get(attachment["object_key"]))
     return path, attachment["original_filename"], attachment["content_type"]
 
 
@@ -350,7 +374,13 @@ def prepare_attachment_vision_url(
     settings = get_settings()
     if not settings.attachment_vision_enabled:
         raise RuntimeError("图片直传未启用，请先配置 ATTACHMENT_VISION_ENABLED=true")
-    signed_url = (store or get_attachment_store()).presigned_get_url(attachment["object_key"])
+    content = (store or get_attachment_store()).get(attachment["object_key"])
+    from PIL import Image
+
+    with Image.open(BytesIO(content)) as image:
+        content_type = Image.MIME[image.format]
+    encoded = base64.b64encode(content).decode("ascii")
+    image_url = f"data:{content_type};base64,{encoded}"
     with connect(db_path) as conn:
         conn.execute(
             """
@@ -361,7 +391,7 @@ def prepare_attachment_vision_url(
             """,
             (attachment_id,),
         )
-    return signed_url
+    return image_url
 
 
 def delete_attachment(

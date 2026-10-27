@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultAgentSettings } from "../constants";
 import { ThemeProvider } from "../features/appearance/ThemeProvider";
 import type { AgentSettings, ModelCapabilityReport, ModelServiceMonitor, ModelCatalog } from "../types";
@@ -125,6 +125,15 @@ function openAdvancedSettings() {
   const details = summary.closest("details");
   if (details) details.open = true;
 }
+
+// Keep lazy module loading outside the timing window for settings interactions.
+beforeAll(async () => {
+  await Promise.all([
+    import("../features/settings/SettingsWorkspace"),
+    import("../features/settings/ModelSettingsPage"),
+    import("../features/settings/ModelConnectionManager")
+  ]);
+});
 
 beforeEach(() => {
   api.fetchJson.mockReset();
@@ -519,6 +528,7 @@ describe("App model settings", () => {
 
   it("refreshes the default three-field form only after explicitly applying another profile", async () => {
     mockApi();
+    const secondDiscovery = deferred<{ models: string[] }>();
     const catalog: ModelCatalog = {
       connections: [
         { id: "c1", name: "主连接", model_base_url: savedSettings.model_base_url, model_protocol: "responses", api_key_configured: true, enabled: true, revision: 1 },
@@ -531,7 +541,7 @@ describe("App model settings", () => {
     };
     let changed = false;
     replaceApi((path, options) => {
-      if (path === "/agent/model-connections/c2/discover") return Promise.resolve({ models: ["second-model"] });
+      if (path === "/agent/model-connections/c2/discover") return secondDiscovery.promise;
       if (path === "/agent/model-connections") return Promise.resolve({ ...catalog, default_profile_id: changed ? "p2" : "p1" });
       if (path === "/agent/model-default") { changed = true; return Promise.resolve({ ...catalog, default_profile_id: "p2" }); }
       if (path === "/agent/settings" && options?.method !== "PUT" && changed) return Promise.resolve({ ...savedSettings, model_name: "second-model", model_base_url: "https://second.example.test/v1", config_revision: 2 });
@@ -540,8 +550,10 @@ describe("App model settings", () => {
     renderApp();
     await screen.findByRole("heading", { name: "连接与模型" });
     expect(screen.getByText(savedSettings.model_name, { selector: ".model-current-summary strong" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /备用连接/ }));
-    fireEvent.click(await screen.findByRole("button", { name: "second-model 设置" }));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /备用连接/ })); });
+    expect(api.fetchJson).toHaveBeenCalledWith("/agent/model-connections/c2/discover", expect.objectContaining({ method: "POST" }));
+    await act(async () => { secondDiscovery.resolve({ models: ["second-model"] }); });
+    fireEvent.click(screen.getByRole("button", { name: "second-model 设置" }));
     fireEvent.click(screen.getByText("更多选项"));
     fireEvent.click(screen.getByRole("button", { name: "设为默认" }));
     await waitFor(() => expect(screen.getByText("second-model", { selector: ".model-current-summary strong" })).toBeInTheDocument());

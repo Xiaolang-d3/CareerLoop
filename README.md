@@ -79,6 +79,14 @@ CareerLoop/
 
 功能是否可用取决于所选模型、服务权限与本地可选依赖。
 
+## 本地 MinIO（可选）
+
+附件默认保存在本地目录。使用 MinIO 时，在 `backend/.env` 中设置 `ATTACHMENT_STORAGE=minio`，并填写 `MINIO_ENDPOINT`、`MINIO_ACCESS_KEY`、`MINIO_SECRET_KEY`、`MINIO_BUCKET` 与 `MINIO_SECURE`。上传的新附件写入私有桶；预览和下载按需缓存到本地，历史本地附件仍可读取。切换存储不会自动迁移历史文件。
+
+Windows 上可用 `powershell -File scripts/start-minio.ps1 -BinaryPath <MinIO程序路径>` 启动本地服务。若程序已放到 `backend/data/minio-server/minio.exe`，可省略 `-BinaryPath`。脚本从 `.env` 读取凭据，存储接口和管理页面分别只监听 `127.0.0.1:9000`、`127.0.0.1:9001`；数据保存在 `backend/data/minio-server/objects/`。程序可按 [MinIO 官方源码安装说明](https://github.com/minio/minio#source-only-distribution)构建。
+
+模型看图仍将图片内容随模型请求发送，无需配置公网存储地址；是否能识别图片取决于所选模型及网关的实际能力。
+
 ## 协作与变更记录
 
 - 贡献、分支、提交与验证规则：[`CONTRIBUTING.md`](CONTRIBUTING.md)

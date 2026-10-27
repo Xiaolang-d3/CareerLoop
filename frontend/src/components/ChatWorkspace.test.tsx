@@ -156,6 +156,18 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
 }
 
 describe("ChatWorkspace", () => {
+  it("shows image-only messages without an empty text bubble and keeps the caption outside preview", () => {
+    const attachment: ChatAttachment = { id: "photo", kind: "image", original_filename: "示意图.png", parse_status: "parsed", vision_status: "consented" };
+    const { view } = renderChat([{ ...message, content: "", payload: { attachments: [attachment] } }]);
+    const userMessage = view.container.querySelector(".message.user")!;
+    expect(userMessage.querySelector(".message-dialog")).toBeNull();
+    const preview = screen.getByRole("button", { name: "预览 示意图.png" });
+    expect(preview).not.toHaveTextContent("示意图.png");
+    expect(screen.getByText("示意图.png")).toHaveAttribute("title", "示意图.png");
+    expect(screen.getByText("模型看图")).toBeInTheDocument();
+    expect(within(userMessage as HTMLElement).getByRole("button", { name: "编辑消息" })).toBeEnabled();
+  });
+
   it("sends a natural image request directly without a design form or rewriting the prompt", async () => {
     const p = renderChat();
     const input = screen.getByRole("textbox", { name: "输入消息" });

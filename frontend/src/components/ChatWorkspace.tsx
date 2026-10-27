@@ -584,6 +584,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                     defaultModelName={props.defaultModelName}
                     profiles={props.modelProfiles ?? []}
                     serviceModels={props.serviceModels}
+                    additionalServiceModels={props.additionalServiceModels}
                     onDiscover={props.onDiscoverServiceModels}
                     onServiceChange={props.onServiceModelChange}
                     selectedProfileId={props.selectedModelProfileId ?? null}
