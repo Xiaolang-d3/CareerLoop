@@ -640,7 +640,7 @@ export function ChatTurn({ state, chatBusy, stopping = false }: { state: Message
           </>
         ) : (
           <>
-            <UserMessageContent content={source.content} />
+            {source.content.trim() ? <UserMessageContent content={source.content} /> : null}
             {source.payload?.attachments?.length ? (
               <div className="message-attachments" aria-label="本轮已附加资料">
                 {source.payload.attachments.map((attachment) => (

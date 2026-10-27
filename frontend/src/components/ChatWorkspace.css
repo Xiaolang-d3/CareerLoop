@@ -384,7 +384,14 @@
 }
 
 .chat-workspace .chat-thread .message.user .user-message-actions {
-  margin: 2px 0 0 auto;
+  position: static;
+  justify-self: start;
+  justify-content: flex-start;
+  margin: 4px 0 0;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
 }
 
 .chat-workspace.is-running .thinking-indicator {
@@ -1644,9 +1651,7 @@
 }
 @media (min-width: 821px) and (hover: hover) and (pointer: fine) {
   .assistant-page .chat-workspace.has-history .run-process-toggle { min-height: 28px; }
-  .assistant-page .chat-workspace.has-history .chat-thread .message.user:not(.message-editing) { max-width: min(calc(100% - 120px), 36rem); }
-  .assistant-page .chat-workspace.has-history .message.user:not(.message-editing) .message-content { position: relative; }
-  .assistant-page .chat-workspace.has-history .message.user .user-message-actions { position: absolute; top: 50%; right: calc(100% + 6px); max-width: none; flex-wrap: nowrap; margin: 0; transform: translateY(-50%); }
+  .assistant-page .chat-workspace.has-history .chat-thread .message.user:not(.message-editing) { max-width: min(100%, 36rem); }
 }
 @media (max-width: 600px) {
   .assistant-page .chat-workspace.has-history .message-markdown,
