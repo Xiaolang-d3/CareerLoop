@@ -1,4 +1,4 @@
-"""Entrypoint packaged as the 灯灯 desktop sidecar.
+"""Entrypoint packaged as the 团团 desktop sidecar.
 
 It intentionally imports the FastAPI application only after setting data-path
 environment variables: several modules derive SQLite paths during import.
@@ -17,7 +17,7 @@ def _startup_log(message: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the 灯灯 desktop API")
+    parser = argparse.ArgumentParser(description="Run the 团团 desktop API")
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--instance-id", required=True)

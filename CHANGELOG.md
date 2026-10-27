@@ -1,8 +1,12 @@
 # 更新日志
 
-本文件记录灯灯的用户可见变更。版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)，条目结构参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
+本文件记录团团的用户可见变更。版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)，条目结构参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
 ## [Unreleased]
+
+### 品牌
+
+- 产品更名为「团团」，定位为智能工作伙伴，品牌文案为「理解你的想法，帮你把事情做好。」；更新标识、界面、桌面应用和项目文档。原有默认助手名称自动更新，自定义名称与历史数据保留。
 
 ### 新增
 

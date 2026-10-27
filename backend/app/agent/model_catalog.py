@@ -576,7 +576,7 @@ def save_default_agent_settings(values: dict[str, Any], db_path: str | Path | No
 def public_default_agent_settings(db_path: str | Path | None = None) -> dict[str, Any]:
     _ensure_catalog(db_path)
     row = settings._row(db_path)
-    if row.get("display_name") in {"CareerLoop", "BossCopilot"}:
+    if row.get("display_name") in {"CareerLoop", "BossCopilot", "灯灯"}:
         row["display_name"] = settings.DEFAULT_AGENT_SETTINGS["display_name"]
         with connect(db_path) as conn:
             conn.execute("UPDATE agent_settings SET display_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1", (row["display_name"],))

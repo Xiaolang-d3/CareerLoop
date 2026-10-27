@@ -1,9 +1,9 @@
 ---
 name: dengdeng-deploy
-description: 配置、检查和维护灯灯 CareerLoop 的 GitHub CI/CD 与 Mac + Cloudflare 自动部署；适用于推送后更新 xiaocheng.online、发布失败排查、部署状态和恢复，不用于普通功能开发或桌面应用打包。
+description: 配置、检查和维护团团 CareerLoop 的 GitHub CI/CD 与 Mac + Cloudflare 自动部署；适用于推送后更新 xiaocheng.online、发布失败排查、部署状态和恢复，不用于普通功能开发或桌面应用打包。
 ---
 
-# 灯灯持续部署
+# 团团持续部署
 
 目标：GitHub main 推送通过 CI 后，由 GitHub 托管 runner 打包，Mac 每分钟拉取对应提交的发布包并切换服务。技能负责配置和运维；后台更新由部署服务执行，不依赖聊天持续运行。
 

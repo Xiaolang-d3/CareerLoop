@@ -82,7 +82,7 @@ export function ProductDemo({ returnHash }: { returnHash: string }) {
   return (
     <div className="intro-demo">
       <aside className="intro-demo-sidebar">
-        <div className="intro-demo-brand"><img src="/dengdeng-mark-v1.png" alt="" width="30" height="30" draggable={false} /><span>灯灯</span></div>
+        <div className="intro-demo-brand"><img src="/tuantuan-logo.png" alt="" width="30" height="30" draggable={false} /><span>团团</span></div>
         <nav className="intro-demo-nav" aria-label="演示视图">
           <button type="button" aria-pressed={view === "chat"} onClick={() => setView("chat")}><MessageSquare size={18} aria-hidden="true" /><span>对话</span></button>
           <button type="button" aria-pressed={view === "library"} onClick={() => setView("library")}><BookOpen size={18} aria-hidden="true" /><span>资料库</span></button>
@@ -99,7 +99,7 @@ export function ProductDemo({ returnHash }: { returnHash: string }) {
         {view === "chat" ? <>
           <div className="intro-demo-question" ref={questionRef} tabIndex={-1} aria-label="示例问题"><UserRound className="intro-demo-avatar" size={28} aria-hidden="true" /><p>{scenario.prompt}</p></div>
           <div className="intro-demo-response">
-            <img className="intro-demo-assistant" src="/dengdeng-mark-v1.png" alt="灯灯" width="28" height="28" draggable={false} />
+            <img className="intro-demo-assistant" src="/tuantuan-logo.png" alt="团团" width="28" height="28" draggable={false} />
             <div className="intro-demo-answer">
               <p>{scenario.introduction}</p>
               <ol>{scenario.points.map((point) => <li key={point.title}><strong>{point.title}</strong><p>{point.text}</p></li>)}</ol>
@@ -114,7 +114,7 @@ export function ProductDemo({ returnHash }: { returnHash: string }) {
         </div> : <div className="intro-demo-detail-view">
           <p className="intro-demo-view-eyebrow">设置</p><h3>按你的方式，使用 AI。</h3><p>在应用中配置模型服务、资料使用与联网研究。</p>
           <ul className="intro-demo-settings"><li><Settings size={19} aria-hidden="true" /><div><strong>选择模型服务</strong><p>连接你配置的模型，按任务选择合适的服务。</p></div></li><li><Search size={19} aria-hidden="true" /><div><strong>决定是否联网研究</strong><p>根据任务需要，选择是否搜索公开网络。</p></div></li><li><Check size={19} aria-hidden="true" /><div><strong>管理自己的资料</strong><p>确认需要保留的信息，并在资料库中管理。</p></div></li></ul>
-          <a className="intro-demo-text-button" href={returnHash}>进入 灯灯<ArrowRight size={15} aria-hidden="true" /></a>
+          <a className="intro-demo-text-button" href={returnHash}>进入 团团<ArrowRight size={15} aria-hidden="true" /></a>
         </div>}
       </div>
 

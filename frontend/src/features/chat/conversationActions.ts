@@ -12,7 +12,7 @@ export function conversationMarkdown(title: string, messages: ChatMessage[]): st
   const lines = [`# ${title.trim() || "对话"}`, ""];
   for (const message of messages) {
     if (message.id < 0) continue;
-    lines.push(message.role === "user" ? "## 你" : "## 灯灯", "", message.content.trim(), "");
+    lines.push(message.role === "user" ? "## 你" : "## 团团", "", message.content.trim(), "");
   }
   return `${lines.join("\n").trim()}\n`;
 }

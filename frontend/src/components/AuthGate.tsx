@@ -118,7 +118,7 @@ export function AuthGate({ apiBase, children, publicPage }: { apiBase: string; c
         if (cancelled) return;
         const raw = reason instanceof Error ? reason.message : "无法连接登录服务";
         setError(/failed to fetch|networkerror|load failed/i.test(raw)
-          ? "无法连接本地服务，请点重新连接。若反复失败，请完全退出后重开 灯灯。"
+          ? "无法连接本地服务，请点重新连接。若反复失败，请完全退出后重开 团团。"
           : raw);
       });
     return () => { cancelled = true; controller.abort(); };
@@ -260,8 +260,8 @@ export function AuthGate({ apiBase, children, publicPage }: { apiBase: string; c
       <div className="auth-shell">
         <form className="auth-card" onSubmit={submit} noValidate aria-busy={busy}>
           <div className="auth-brand">
-            <img className="auth-logo" src="/dengdeng-icon-v1.png" alt="" draggable={false} />
-            <h1 className="auth-eyebrow">灯灯</h1>
+            <img className="auth-logo" src="/tuantuan-logo.png" alt="" draggable={false} />
+            <h1 className="auth-eyebrow">团团</h1>
           </div>
           <div className="auth-heading">
             <h2 className="auth-form-title">{creating ? "创建本地账户" : "登录本地账户"}</h2>
@@ -430,7 +430,7 @@ function AuthGateShell({ status = false, children }: { status?: boolean; childre
     <main ref={rootRef} className={status ? "auth-gate auth-gate-status" : "auth-gate"} onDoubleClick={suppressBackgroundDoubleClick}>
       <AuthAtmosphere />
       <nav className="auth-public-nav" aria-label="公共导航">
-        <a href={productIntroHash}>关于 灯灯</a>
+        <a href={productIntroHash}>关于 团团</a>
       </nav>
       {children}
     </main>

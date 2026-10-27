@@ -25,6 +25,8 @@ describe("product introduction", () => {
     vi.stubGlobal("fetch", fetchMock);
     window.history.replaceState(null, "", "#/about");
     render(<ProductIntroPage returnHash="#/home" />);
+    expect(screen.getByRole("heading", { name: /理解你的想法，.*帮你把事情做好。/ })).toBeInTheDocument();
+    expect(screen.getByText("团团 · 智能工作伙伴")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "工作方式" }));
     expect(screen.getByRole("region", { name: "从一个想法，到可用的成果。" })).toHaveFocus();
@@ -65,9 +67,9 @@ describe("product introduction", () => {
     expect(screen.getByRole("heading", { name: "让有用的资料，随时可用。" })).toBeInTheDocument();
     fireEvent.click(nav.getByRole("button", { name: "设置" }));
     expect(screen.getByRole("heading", { name: "按你的方式，使用 AI。" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "进入 灯灯" })).toHaveAttribute("href", "#/settings");
+    expect(screen.getByRole("link", { name: "进入 团团" })).toHaveAttribute("href", "#/settings");
     expect(screen.getByRole("link", { name: "返回应用" })).toHaveAttribute("href", "#/settings");
-    expect(screen.getAllByRole("link", { name: "继续使用 灯灯" })).toHaveLength(2);
+    expect(screen.getAllByRole("link", { name: "继续使用 团团" })).toHaveLength(2);
     expect(screen.getByText(/交互演示 · 使用示例资料/)).toBeInTheDocument();
   });
 });

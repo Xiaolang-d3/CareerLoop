@@ -107,7 +107,7 @@ export function SettingsOverview({
         </button>
       </div>
       <a className="settings-product-link" href={productIntroHash}>
-        <Info size={17} aria-hidden="true" /><span>了解 灯灯</span><ChevronRight size={16} aria-hidden="true" />
+        <Info size={17} aria-hidden="true" /><span>了解 团团</span><ChevronRight size={16} aria-hidden="true" />
       </a>
     </div>
   );

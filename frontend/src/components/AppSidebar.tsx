@@ -82,11 +82,11 @@ export function AppSidebar({
       <div className="brand">
         <button className="brand-home" type="button" onClick={onGoHome} aria-label="返回首页" title="返回首页">
           <span className="brand-mark" aria-hidden="true">
-            <img className="brand-mark-image" src="/dengdeng-icon-v1.png" alt="" />
+            <img className="brand-mark-image" src="/tuantuan-logo.png" alt="" />
           </span>
           <span className="brand-copy">
-            <strong>灯灯</strong>
-            <small>一起想清楚，一步步做好</small>
+            <strong>团团</strong>
+            <small>理解你的想法，帮你把事情做好。</small>
           </span>
         </button>
         <button
@@ -100,7 +100,7 @@ export function AppSidebar({
         >
           {collapsed ? (
             <span className="sidebar-toggle-logo" aria-hidden="true">
-              <img src="/dengdeng-icon-v1.png" alt="" />
+              <img src="/tuantuan-logo.png" alt="" />
             </span>
           ) : null}
           <PanelLeft className="sidebar-toggle-icon" size={20} strokeWidth={1.8} aria-hidden="true" />

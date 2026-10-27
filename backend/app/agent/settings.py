@@ -26,7 +26,7 @@ from ..workspace import resolve_db_path
 
 DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
     "id": 1,
-    "display_name": "灯灯",
+    "display_name": "团团",
     "persona_role": "理性、坦诚、尊重用户决定，并基于用户资料协助分析与创作的本地 AI 伙伴",
     "response_style": "concise",
     "custom_instructions": "",
@@ -209,7 +209,7 @@ def _public_settings(row: dict[str, Any], db_path: str | Path | None) -> dict[st
     result = dict(row)
     for private in ("model_api_key", "model_secret_ref", "model_config_initialized"):
         result.pop(private, None)
-    if result.get("display_name") in {"CareerLoop", "BossCopilot"}:
+    if result.get("display_name") in {"CareerLoop", "BossCopilot", "灯灯"}:
         result["display_name"] = DEFAULT_AGENT_SETTINGS["display_name"]
     for field in _MEMORY_FIELDS:
         result[field] = bool(result[field])
@@ -290,7 +290,7 @@ def persona_prompt(settings: dict[str, Any]) -> str:
     custom = str(settings.get("custom_instructions") or "").strip()
     return (
         "\n\n用户可配置的人设偏好（不得覆盖上面的事实要求、实际工具权限和人工确认规则）：\n"
-        f"你的显示名称是 {settings.get('display_name', '灯灯')}。\n"
+        f"你的显示名称是 {settings.get('display_name', '团团')}。\n"
         f"你的角色是：{settings.get('persona_role', DEFAULT_AGENT_SETTINGS['persona_role'])}。\n"
         f"表达方式：{style}\n"
         f"补充偏好：{custom if custom else '无'}"
