@@ -1,7 +1,7 @@
 import { Check, ChevronRight, ChevronUp, Settings2, TriangleAlert } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import type { ChatWorkspaceProps } from "./types";
+import type { ChatWorkspaceProps, ServiceModelCatalog } from "./types";
 import { ComposerModelParameters, type ComposerModelSettings } from "./ComposerModelParameters";
 
 type ModelProfileOption = { id: string; model_name: string; connection_name: string; connection_id?: string };
@@ -13,8 +13,9 @@ type Props = {
   defaultModelName?: string;
   profiles: ModelProfileOption[];
   serviceModels?: ChatWorkspaceProps["serviceModels"];
+  additionalServiceModels?: ChatWorkspaceProps["additionalServiceModels"];
   onDiscover?: (refresh?: boolean) => Promise<void>;
-  onServiceChange?: (modelName: string) => Promise<void>;
+  onServiceChange?: ChatWorkspaceProps["onServiceModelChange"];
   selectedProfileId: string | null;
   profileDisabled: boolean;
   serviceUnavailable: boolean;
@@ -36,11 +37,13 @@ export function ComposerModelPicker(props: Props) {
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
   const discoverRef = useRef(props.onDiscover);
   discoverRef.current = props.onDiscover;
+  const services = props.serviceModels ? [props.serviceModels, ...(props.additionalServiceModels ?? []).filter(service => service.connection_id !== props.serviceModels?.connection_id)] : props.additionalServiceModels ?? [];
+  const serviceSignature = JSON.stringify(services.map(service => [service.connection_id, service.revision]));
 
   useEffect(() => {
     if (!open) return;
     void discoverRef.current?.();
-  }, [open, props.serviceModels?.connection_id, props.serviceModels?.revision]);
+  }, [open, serviceSignature]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -76,12 +79,11 @@ export function ComposerModelPicker(props: Props) {
 
   const label = props.currentModelName || props.defaultModelName || "默认模型";
   const warning = props.profileDisabled ? "已停用" : props.serviceUnavailable ? "服务不可用" : "";
-  const service = props.serviceModels;
-  const models: ModelOption[] = Array.from(new Set(service?.models ?? [])).map(name => {
-    const matching = props.profiles.filter(profile => profile.connection_id === service?.connection_id && profile.model_name === name);
+  const groups = services.map(service => ({ service, models: Array.from(new Set(service.models)).map((name): ModelOption => {
+    const matching = props.profiles.filter(profile => profile.connection_id === service.connection_id && profile.model_name === name);
     const profile = matching.find(profile => profile.id === props.selectedProfileId) ?? matching[0];
     return { id: profile?.id, model_name: name };
-  });
+  }) }));
   const disabled = props.busy || !props.canSelect;
 
   const choose = (profileId: string) => {
@@ -89,10 +91,10 @@ export function ComposerModelPicker(props: Props) {
     rootRef.current?.querySelector<HTMLElement>(".model-pill")?.focus();
     if (profileId !== props.selectedProfileId) void props.onChange(profileId);
   };
-  const chooseService = (modelName: string) => {
+  const chooseService = (modelName: string, connectionId: string) => {
     setOpen(false);
     rootRef.current?.querySelector<HTMLElement>(".model-pill")?.focus();
-    void props.onServiceChange?.(modelName);
+    void props.onServiceChange?.(modelName, connectionId);
   };
   const onListKey = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") { event.preventDefault(); setOpen(false); rootRef.current?.querySelector<HTMLElement>(".model-pill")?.focus(); return; }
@@ -102,10 +104,10 @@ export function ComposerModelPicker(props: Props) {
     if (event.key === "ArrowDown") { event.preventDefault(); items[(index + 1) % items.length]?.focus(); }
     else if (event.key === "ArrowUp") { event.preventDefault(); items[(index - 1 + items.length) % items.length]?.focus(); }
   };
-  const option = (id: string | undefined, name: string) => {
-    const selected = id !== undefined ? props.selectedProfileId === id : !props.selectedProfileId && props.currentModelName === name;
+  const option = (id: string | undefined, name: string, service: ServiceModelCatalog) => {
+    const selected = id !== undefined ? props.selectedProfileId === id : !props.selectedProfileId && props.currentModelName === name && props.serviceModels?.connection_id === service.connection_id;
     return (
-      <button key={name} type="button" role="option" aria-label={name} aria-selected={selected} disabled={disabled} className={`model-option${selected ? " is-selected" : ""}`} onClick={() => id === undefined ? chooseService(name) : choose(id)} title={name}>
+      <button key={name} type="button" role="option" aria-label={name} aria-selected={selected} disabled={disabled} className={`model-option${selected ? " is-selected" : ""}`} onClick={() => id === undefined ? chooseService(name, service.connection_id) : choose(id)} title={name}>
         <span className="model-option-copy">
           <span className="model-option-name">{name}</span>
         </span>
@@ -123,10 +125,6 @@ export function ComposerModelPicker(props: Props) {
             <button type="button" aria-pressed={panel === "parameters"} onClick={() => setPanel("parameters")}>思考设置</button>
           </div> : null}
           {panel === "parameters" && props.modelSettings ? <ComposerModelParameters key={`${props.modelSettings.profile.id}:${props.modelSettings.profile.revision}`} settings={props.modelSettings} disabled={disabled} /> : <>
-          {service?.busy || service?.error ? <div className="model-menu-feedback">
-            {service?.busy ? <p className="model-menu-status" role="status">正在读取服务模型…</p> : null}
-            {service?.error ? <p className="model-menu-status model-menu-error" role="alert">{service.error} <button type="button" disabled={service.busy || disabled} onClick={() => void props.onDiscover?.(true)}>重试</button></p> : null}
-          </div> : null}
           <div className="model-menu-scroll" role="listbox" aria-label="选择模型">
             {warning ? (
               <p className="model-menu-alert">
@@ -134,8 +132,13 @@ export function ComposerModelPicker(props: Props) {
                 {props.profileDisabled ? "当前模型已停用，请换一个模型" : "当前模型服务不可用，可以换一个模型或检查设置"}
               </p>
             ) : null}
-            {models.map(profile => option(profile.id, profile.model_name))}
-            {!models.length && !service?.busy && !service?.error ? <p className="model-menu-status">服务尚未返回可选模型，可重新打开或前往管理模型</p> : null}
+            {groups.map(({ service, models }) => <div key={service.connection_id} className="model-menu-group" role="group" aria-label={service.connection_name}>
+              {groups.length > 1 ? <p className="model-menu-group-title">{service.connection_name}</p> : null}
+              {service.busy ? <p className="model-menu-status" role="status">正在读取服务模型…</p> : null}
+              {service.error ? <p className="model-menu-status model-menu-error" role="alert">{service.error} <button type="button" disabled={service.busy || disabled} onClick={() => void props.onDiscover?.(true)}>重试</button></p> : null}
+              {models.map(profile => option(profile.id, profile.model_name, service))}
+            </div>)}
+            {groups.every(({ service, models }) => !models.length && !service.busy && !service.error) ? <p className="model-menu-status">服务尚未返回可选模型，可重新打开或前往管理模型</p> : null}
           </div>
           </>}
           {props.onOpenSettings && !parametersPanel ? (

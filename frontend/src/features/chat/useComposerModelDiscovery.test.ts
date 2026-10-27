@@ -9,6 +9,37 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("useComposerModelDiscovery", () => {
+  it("queries every enabled connection independently and preserves an image catalog when chat discovery fails", async () => {
+    const pending = deferred<{ models: string[] }>();
+    const client = vi.fn((path: string) => path.includes("image-service") ? Promise.resolve({ models: ["gpt-image-1"] }) : pending.promise);
+    const connections = [connection, { ...connection, id: "image-service", name: "生图服务", model_protocol: "images" as const }, { ...connection, id: "disabled-service", enabled: false }];
+    const { result } = renderHook(() => useComposerModelDiscovery({ fetchJson: client as ReturnType<typeof createApiClient>, scope: "user-a", connection, connections }));
+    let request!: Promise<void>;
+    await act(async () => { request = result.current.discover(); });
+    expect(client).toHaveBeenCalledTimes(2);
+    expect(result.current.catalogs.find(service => service.connection_id === "image-service")?.models).toEqual(["gpt-image-1"]);
+    expect(result.current.busy).toBe(true);
+    await act(async () => { pending.resolve({ models: ["deepseek-flash"] }); await request; });
+    expect(result.current.models).toEqual(["deepseek-flash"]);
+    client.mockImplementation(path => path.includes("image-service") ? Promise.resolve({ models: ["gpt-image-2"] }) : Promise.reject(new Error("chat offline")));
+    await act(() => result.current.discover());
+    expect(result.current.error).toBe("chat offline");
+    expect(result.current.catalogs.find(service => service.connection_id === "image-service")?.models).toEqual(["gpt-image-2"]);
+    expect(result.current.catalogs.some(service => service.connection_id === "disabled-service")).toBe(false);
+  });
+
+  it("drops an image service catalog when its connection is disabled during a request", async () => {
+    const old = deferred<{ models: string[] }>();
+    const client = vi.fn().mockReturnValueOnce(old.promise).mockResolvedValue({ models: ["chat"] });
+    const { result, rerender } = renderHook(({ enabled }) => useComposerModelDiscovery({ fetchJson: client as ReturnType<typeof createApiClient>, scope: "user-a", connections: [{ ...connection, enabled }] }), { initialProps: { enabled: true } });
+    let request!: Promise<void>;
+    act(() => { request = result.current.discover(); });
+    rerender({ enabled: false });
+    await act(async () => { old.resolve({ models: ["removed-image-model"] }); await request; });
+    expect(result.current.catalogs).toEqual([]);
+    expect(client.mock.calls[0][1].signal.aborted).toBe(true);
+  });
+
   it("revalidates each opening, normalizes names, and replaces removed service models", async () => {
     const client = vi.fn().mockResolvedValueOnce({ models: [" grok-model ", "claude-model", "grok-model", " "] }).mockResolvedValue({ models: ["new-model"] });
     const { result } = renderHook(() => useComposerModelDiscovery({ fetchJson: client as ReturnType<typeof createApiClient>, scope: "user-a", connection }));
