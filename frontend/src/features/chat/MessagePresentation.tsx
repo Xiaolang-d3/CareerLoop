@@ -615,7 +615,13 @@ export function ChatTurn({ state, chatBusy, stopping = false }: { state: Message
   }
 
   return (
-    <MessagePrimitive.Root className={`message ${source.role}`}>
+    <MessagePrimitive.Root
+      className={`message ${source.role}${state.isLast ? " is-latest" : ""}`}
+      tabIndex={-1}
+      onPointerDown={(event) => {
+        if (event.pointerType === "touch") event.currentTarget.focus({ preventScroll: true });
+      }}
+    >
       <div className="message-content" onMouseUp={captureSelection}>
         {source.role === "assistant" ? (
           <>

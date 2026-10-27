@@ -56,8 +56,13 @@ for (const theme of ["light", "dark"] as const) {
       await page.setViewportSize({ width, height: 1100 });
       for (const message of await messages.all()) {
         await message.scrollIntoViewIfNeeded();
+        await page.getByRole("textbox", { name: "输入消息", exact: true }).focus();
+        await page.mouse.move(4, 70);
         const content = message.locator(".message-content");
         const actions = message.locator(".user-message-actions");
+        const latest = await message.evaluate(el => el.classList.contains("is-latest"));
+        await expect(actions).toHaveCSS("opacity", latest ? "1" : "0");
+        await expect(actions).toHaveCSS("pointer-events", latest ? "auto" : "none");
         await expect(actions).toHaveCSS("position", "static");
         const contentBox = (await content.boundingBox())!;
         const actionBox = (await actions.boundingBox())!;
@@ -79,6 +84,7 @@ for (const theme of ["light", "dark"] as const) {
         })).toBe(true);
       }
       await mixed.scrollIntoViewIfNeeded();
+      await mixed.hover();
       await mixed.getByRole("button", { name: "编辑消息", exact: true }).click();
       await expect(page.getByRole("textbox", { name: "编辑消息", exact: true })).toHaveValue("这是什么图片？");
       await page.getByRole("button", { name: "取消", exact: true }).click();
@@ -86,11 +92,24 @@ for (const theme of ["light", "dark"] as const) {
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
       await expect.poll(() => page.getByRole("log").evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
       await page.getByRole("log").evaluate(el => el.scrollTo({ top: 0 }));
+      await page.getByRole("textbox", { name: "输入消息", exact: true }).focus();
+      await page.mouse.move(4, 70);
       await page.screenshot({ path: resolve(output, `${theme}-${width}.png`), fullPage: true });
     }
+    await mixed.getByRole("button", { name: "编辑消息", exact: true }).focus();
+    await expect(mixed.locator(".user-message-actions")).toHaveCSS("opacity", "1");
+    await page.getByRole("textbox", { name: "输入消息", exact: true }).focus();
+    await mixed.dispatchEvent("pointerdown", { pointerType: "touch" });
+    await expect(mixed).toBeFocused();
+    await expect(mixed.locator(".user-message-actions")).toHaveCSS("opacity", "1");
     await mixed.getByRole("button", { name: `预览 ${attachment.original_filename}`, exact: true }).click();
     await expect(page.getByRole("dialog", { name: `${attachment.original_filename} 预览`, exact: true })).toBeVisible();
     await page.getByRole("button", { name: "关闭附件预览", exact: true }).click();
+    (responses["/chat/messages"] as unknown[]).push({ id: 5, role: "assistant", content: "这是最新一条回答。", created_at: "2026-10-27T00:00:04Z" });
+    await page.reload();
+    await page.mouse.move(4, 70);
+    await expect(page.locator(".message.assistant").last().locator(".message-actions")).toHaveCSS("opacity", "1");
+    await expect(page.locator(".message.user").last().locator(".message-actions")).toHaveCSS("opacity", "0");
     expect(writes).toEqual([]);
   });
 }
