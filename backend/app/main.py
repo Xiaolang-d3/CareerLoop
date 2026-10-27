@@ -56,8 +56,10 @@ _PUBLIC_FRONTEND_FILES = {
     "/vite.svg",
     "/careerloop-mark-v2.png",
     "/tuantuan-logo.png",
-    "/tuantuan-logo.png",
     "/tuantuan-favicon.png",
+    "/dengdeng-icon-v1.png",
+    "/dengdeng-mark-v1.png",
+    "/dengdeng-favicon-v1.png",
     "/intro-surface-v1.webp",
 }
 

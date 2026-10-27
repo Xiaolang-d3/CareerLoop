@@ -13,7 +13,7 @@ test("a centered sign-in card links to a public product page on desktop and mobi
     await expect(page.getByRole("heading", { name: "登录本地账户" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "团团", exact: true })).toBeVisible();
     await expect(page.locator(".auth-logo")).toHaveJSProperty("complete", true);
-    await expect(page.locator(".auth-logo")).toHaveJSProperty("naturalWidth", 256);
+    await expect(page.locator(".auth-logo")).toHaveJSProperty("naturalWidth", 940);
     await expect(page.getByRole("heading", { name: /理解你的想法/ })).toHaveCount(0);
     const card = await page.locator(".auth-card").boundingBox();
     expect(card).not.toBeNull();
@@ -28,7 +28,7 @@ test("a centered sign-in card links to a public product page on desktop and mobi
     await aboutLink.click();
     await expect(page).toHaveURL(/#\/about$/);
     await expect(page.getByRole("heading", { name: /理解你的想法/ })).toBeVisible();
-    await expect(page.locator(".product-intro-brand img")).toHaveJSProperty("naturalWidth", 256);
+    await expect(page.locator(".product-intro-brand img")).toHaveJSProperty("naturalWidth", 940);
     await expect(page.getByLabel("邮箱", { exact: true })).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
     expect(await page.locator(".product-intro-page").evaluate((el) => el.scrollWidth)).toBeLessThanOrEqual(viewport.width);

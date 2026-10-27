@@ -245,7 +245,7 @@ def test_hotwords_are_bounded_account_session_inputs(monkeypatch):
     model = Mock()
     monkeypatch.setattr(speech, "_model", model)
     with use_workspace(1):
-        speech_sessions.open_session(["项目甲", "灯灯"])
+        speech_sessions.open_session(["项目甲", "团团"])
         assert model.create_stream.call_args.args == ((*DEFAULT_HOTWORDS, "项目甲"),)
         for words in [[""], ["两个 词"], ["长" * 11], ["词"] * 65]:
             with pytest.raises(ValueError, match="热词"):

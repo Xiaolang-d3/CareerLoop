@@ -140,6 +140,8 @@ def test_public_brand_asset_path_bypasses_login() -> None:
 
 
 @pytest.mark.parametrize("filename", [
+    "tuantuan-logo.png",
+    "tuantuan-favicon.png",
     "dengdeng-icon-v1.png",
     "dengdeng-mark-v1.png",
     "dengdeng-favicon-v1.png",
