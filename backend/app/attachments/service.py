@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import mimetypes
 import shutil
@@ -350,7 +351,13 @@ def prepare_attachment_vision_url(
     settings = get_settings()
     if not settings.attachment_vision_enabled:
         raise RuntimeError("图片直传未启用，请先配置 ATTACHMENT_VISION_ENABLED=true")
-    signed_url = (store or get_attachment_store()).presigned_get_url(attachment["object_key"])
+    content = (store or get_attachment_store()).get(attachment["object_key"])
+    from PIL import Image
+
+    with Image.open(BytesIO(content)) as image:
+        content_type = Image.MIME[image.format]
+    encoded = base64.b64encode(content).decode("ascii")
+    image_url = f"data:{content_type};base64,{encoded}"
     with connect(db_path) as conn:
         conn.execute(
             """
@@ -361,7 +368,7 @@ def prepare_attachment_vision_url(
             """,
             (attachment_id,),
         )
-    return signed_url
+    return image_url
 
 
 def delete_attachment(

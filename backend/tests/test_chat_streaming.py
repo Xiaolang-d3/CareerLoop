@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import tempfile
 import unittest
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from app import db
+import app.attachments.service as attachments_module
 import app.api.attachments as resources_module
 import app.chat.execution as main_module
 from app.agent.snapshots import load_run_snapshot, save_run_snapshot
@@ -347,6 +350,56 @@ class ChatStreamingApiTest(unittest.TestCase):
         self.assertTrue(payload["vision_ready"])
         self.assertNotIn("minio_secret_key", payload)
         self.assertNotIn("minio_access_key", payload)
+
+    def test_attachment_config_supports_vision_without_public_storage(self) -> None:
+        from app.config import Settings
+
+        for enabled, storage, configured, ready in [
+            (True, "local", False, True),
+            (False, "local", False, False),
+            (True, "minio", True, True),
+            (True, "minio", False, False),
+        ]:
+            with self.subTest(enabled=enabled, storage=storage, configured=configured):
+                settings = Settings(
+                    attachment_vision_enabled=enabled, attachment_storage=storage,
+                    minio_endpoint="127.0.0.1:9000" if configured else None,
+                    minio_access_key="access" if configured else None,
+                    minio_secret_key="secret" if configured else None,
+                )
+                with patch.object(resources_module, "get_settings", return_value=settings):
+                    response = self.client.get("/attachments/config")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["vision_ready"], ready)
+                self.assertFalse(response.json()["requires_public_endpoint"])
+
+    def test_authorized_local_image_reaches_chat_runtime_as_data_url(self) -> None:
+        from PIL import Image
+
+        cid = self.client.post("/conversations", json={"title": "本地看图"}).json()["id"]
+        buffer = BytesIO()
+        Image.new("RGB", (1, 1), color="white").save(buffer, format="PNG")
+        content = buffer.getvalue()
+        uploaded = self.client.post("/attachments", data={"conversation_id": str(cid), "kind": "image"},
+                                    files={"file": ("job.png", content, "image/png")})
+        self.assertEqual(uploaded.status_code, 200)
+        attachment_id = uploaded.json()["id"]
+        self.assertEqual(self.client.post(f"/attachments/{attachment_id}/parse").status_code, 200)
+        captured = []
+
+        class Runtime:
+            async def run_stream(self, *args, **kwargs):
+                captured.extend(kwargs["image_urls"])
+                yield AgentStreamEvent(type="completed", result=AgentRunResult(
+                    content="已收到图片", provider="test", platform="manual", rounds=1,
+                ))
+
+        with patch.object(attachments_module, "get_settings", return_value=SimpleNamespace(attachment_vision_enabled=True)):
+            events = self.with_runtime(Runtime(), lambda: self.run_ag_ui(cid, "看看这张图", "local-vision", forwarded={
+                "attachmentIds": [attachment_id], "visionAttachmentIds": [attachment_id], "webSearch": False,
+            }))
+        self.assertIn("RUN_FINISHED", [event["type"] for event in events])
+        self.assertEqual(captured, [f"data:image/png;base64,{base64.b64encode(content).decode('ascii')}"])
 
     def test_rewind_deletes_selected_user_turn_and_following_answer(self) -> None:
         conversation = self.client.post("/conversations", json={"title": "回退"}).json()
