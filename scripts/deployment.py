@@ -161,6 +161,7 @@ def runtime_environment(root: Path, config: dict, revision: str, *, smoke_data: 
     env["CAREERLOOP_SECRET_BACKEND"] = "memory" if smoke_data else "keyring"
     if not smoke_data:
         env["CAREERLOOP_MAINTENANCE_FILE"] = str(root / "maintenance")
+        env["CAREERLOOP_BENCHMARK_ENV_FILE"] = str(root / "service.env")
     return env
 
 
