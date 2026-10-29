@@ -4,6 +4,7 @@ import { HistoryAttachment } from "./HistoryAttachment";
 import { AttachmentPreviewContext } from "./AttachmentPreviewDialog";
 import { ResultActionsContext } from "./result-types";
 import { downloadBlob } from "./result-files";
+import { PngExportButton } from "./PngExportButton";
 import type { ChatAttachment, ChatWorkspaceProps } from "./types";
 
 export const AssetOriginalContext = createContext<ChatWorkspaceProps["onLoadAttachment"]>(undefined);
@@ -40,6 +41,7 @@ export function GeneratedImage({ asset, messageId, prompt }: { asset: ChatAttach
       {asset.width && asset.height ? <span className="generated-image-dimensions">{asset.width} × {asset.height}</span> : null}
       <div className="generated-image-actions" role="group" aria-label="图片操作">
         {save && messageId > 0 ? <button type="button" aria-label={`保存 ${asset.original_filename} 到文件库`} onClick={() => save(messageId, `asset:${asset.id}`, true)}><FolderPlus size={14} aria-hidden="true" />保存到文件库</button> : null}
+        {load ? <PngExportButton key={asset.id} filename={asset.original_filename} load={async signal => (await load(asset, signal)).file} /> : null}
         {load ? <button type="button" disabled={busy} onClick={() => void download()}><Download size={14} aria-hidden="true" />{busy ? "正在下载…" : "下载原图"}</button> : null}
       </div>
     </figcaption>

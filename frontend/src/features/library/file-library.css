@@ -566,6 +566,9 @@
   gap: 17px;
   color: var(--fl-muted, #787589);
 }
+.fl-browser > .fl-empty {
+  flex: 1;
+}
 .fl-empty h3 {
   font-size: 18px;
   color: var(--fl-secondary, #50516a);

@@ -1,3 +1,4 @@
+import type { ReactElement } from "react";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LibrarySource, LibrarySourceDetail } from "../../types";
@@ -49,14 +50,74 @@ function props() {
     onUseForChat: vi.fn().mockResolvedValue(undefined)
   };
 }
+function renderWithTools(ui: ReactElement) {
+  const view = render(ui);
+  const more = screen.queryByRole("button", { name: "文件库更多选项" });
+  if (more) {
+    fireEvent.click(more);
+    fireEvent.click(screen.getByRole("button", { name: "搜索与筛选" }));
+  }
+  return view;
+}
 async function preview() {
   fireEvent.click(screen.getByRole("button", { name: "预览 读书笔记" }));
   return screen.findByRole("complementary", { name: "文件快速预览" });
 }
 describe("file library", () => {
   afterEach(cleanup);
-  it("reveals secondary controls only when requested and keeps active filters visible", () => {
+  it("accepts dropped files in the empty page without an upload button", async () => {
+    const p = props();
+    const view = render(<LibraryPage {...p} sources={[]} />);
+    expect(screen.queryByRole("button", { name: "上传文件" })).not.toBeInTheDocument();
+    expect(screen.getByText("将文件拖入此处，开始整理资料。")).toBeInTheDocument();
+    const browser = view.container.querySelector(".fl-browser")!;
+    const file = new File(["example"], "笔记.txt", { type: "text/plain" });
+    fireEvent.dragOver(browser, { dataTransfer: { files: [file] } });
+    expect(screen.getByText("松开即可添加文件")).toBeInTheDocument();
+    fireEvent.drop(browser, { dataTransfer: { files: [file] } });
+    await waitFor(() => expect(p.onImportFiles).toHaveBeenCalledWith([file], null, null));
+    expect(screen.queryByText("松开即可添加文件")).not.toBeInTheDocument();
+  });
+  it("uses just four header tabs and hides the search/filter toolbar by default", () => {
     render(<LibraryPage {...props()} />);
+    const tabs = screen.getByRole("navigation", { name: "文件类型" });
+    expect(within(tabs).getAllByRole("button").map((button) => button.textContent)).toEqual(["全部", "图片", "文档", "视频"]);
+    expect(tabs.closest("header")).toHaveClass("fl-header");
+    expect(screen.queryByRole("button", { name: "文件" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "知识" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "搜索文件名或内容" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "筛选" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("筛选目录")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("选择主题集合")).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "文件视图" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "添加" })).toBeInTheDocument();
+  });
+  it("shows only pictures in the gallery and keeps document controls in the list", async () => {
+    const image = { ...source, id: 8, title: "海边照片", mime_type: "image/png" };
+    const p = props();
+    renderWithTools(<LibraryPage {...p} sources={[source, image]} />);
+    const gallery = screen.getByRole("group", { name: "图片列表" });
+    expect(gallery).toHaveClass("fl-image-gallery");
+    expect(within(gallery).getByRole("button", { name: "预览 海边照片" })).toBeInTheDocument();
+    expect(within(screen.getByRole("table", { name: "文件列表" })).getByRole("button", { name: "预览 读书笔记" })).toBeInTheDocument();
+    expect(within(gallery).queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(within(gallery).queryByRole("button", { name: "操作 海边照片" })).not.toBeInTheDocument();
+    expect(within(gallery).queryByText("海边照片")).not.toBeInTheDocument();
+    expect(gallery.querySelectorAll("button")).toHaveLength(1);
+    fireEvent.click(screen.getByLabelText("选择当前全部文件"));
+    expect(screen.getByText("已选 1 个文件")).toBeInTheDocument();
+    expect(screen.getByLabelText("选择 读书笔记")).toBeChecked();
+    expect(screen.queryByLabelText("选择 海边照片")).not.toBeInTheDocument();
+    expect(p.onLoadSource).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "网格视图" }));
+    fireEvent.click(screen.getByRole("button", { name: "列表视图" }));
+    expect(gallery).toHaveClass("fl-image-gallery");
+    expect(screen.getByRole("table", { name: "文件列表" })).not.toHaveClass("fl-grid");
+    fireEvent.click(within(gallery).getByRole("button", { name: "预览 海边照片" }));
+    await waitFor(() => expect(p.onLoadSource).toHaveBeenCalledWith(8));
+  });
+  it("reveals secondary controls only when requested and keeps active filters visible", () => {
+    renderWithTools(<LibraryPage {...props()} />);
     expect(screen.queryByRole("button", { name: "上传文件" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "文件库设置" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("筛选来源")).not.toBeInTheDocument();
@@ -83,7 +144,7 @@ describe("file library", () => {
     expect(screen.getByRole("button", { name: "网格视图" })).toHaveAttribute("aria-pressed", "true");
   });
   it("keeps directory and collection selection visible until filters are cleared", () => {
-    render(<LibraryPage {...props()}
+    renderWithTools(<LibraryPage {...props()}
       collections={[{ id: 10, name: "阅读", source_ids: [7], file_count: 1 }]} />);
     const directory = screen.getByLabelText("筛选目录");
     const collection = screen.getByLabelText("选择主题集合");
@@ -105,7 +166,7 @@ describe("file library", () => {
     expect(collection.closest("label")).not.toHaveClass("is-active");
   });
   it("shows the selected time order and sorts files accordingly", () => {
-    render(<LibraryPage {...props()} sources={[source,
+    renderWithTools(<LibraryPage {...props()} sources={[source,
       { ...source, id: 8, title: "最新笔记", updated_at: "2026-10-19T00:00:00Z" }]} />);
     const titles = () => within(screen.getByRole("table", { name: "文件列表" }))
       .getAllByRole("button", { name: /^预览 / }).map((button) => button.getAttribute("aria-label"));
@@ -123,7 +184,7 @@ describe("file library", () => {
   });
   it("previews filenames without selecting and opens the reader without loading the file twice", async () => {
     const p = props();
-    render(<LibraryPage {...p} />);
+    renderWithTools(<LibraryPage {...p} />);
     const row = screen.getByRole("button", { name: "预览 读书笔记" }).closest("tr")!;
     const pane = await preview();
     expect(within(pane).getByRole("heading", { name: "读书笔记" })).toBeInTheDocument();
@@ -136,7 +197,7 @@ describe("file library", () => {
   });
   it("keeps checkbox and file actions separate from reading and exposes batch actions directly", () => {
     const p = props();
-    render(<LibraryPage {...p} />);
+    renderWithTools(<LibraryPage {...p} />);
     const checkbox = screen.getByRole("checkbox", { name: "选择 读书笔记" });
     fireEvent.click(checkbox);
     fireEvent.doubleClick(checkbox);
@@ -149,7 +210,7 @@ describe("file library", () => {
   });
   it("supports keyboard preview and full reading without changing file selections", async () => {
     const p = props();
-    render(<LibraryPage {...p} />);
+    renderWithTools(<LibraryPage {...p} />);
     const row = screen.getByRole("button", { name: "预览 读书笔记" }).closest("tr")!;
     fireEvent.keyDown(row, { key: " ", code: "Space" });
     await screen.findByRole("complementary", { name: "文件快速预览" });
@@ -159,7 +220,7 @@ describe("file library", () => {
     expect(p.onLoadSource).toHaveBeenCalledOnce();
   });
   it("closes the filter popover with Escape without closing the reading panel", async () => {
-    render(<LibraryPage {...props()} />);
+    renderWithTools(<LibraryPage {...props()} />);
     await preview();
     const trigger = screen.getByRole("button", { name: "筛选" });
     fireEvent.click(trigger);
@@ -174,7 +235,7 @@ describe("file library", () => {
   });
   it("opens a saved result directly and consumes the initial source once", async () => {
     const p = props(), consumed = vi.fn();
-    const view = render(<LibraryPage {...p} initialSourceId={7} onInitialSourceConsumed={consumed} />);
+    const view = renderWithTools(<LibraryPage {...p} initialSourceId={7} onInitialSourceConsumed={consumed} />);
     await screen.findByText("问题 reader@example.com");
     expect(screen.getByRole("button", { name: "返回文件库" })).toBeInTheDocument();
     expect(p.onLoadSource).toHaveBeenCalledWith(7);
@@ -184,8 +245,8 @@ describe("file library", () => {
   });
   it("keeps categories in the module and protects AI text", async () => {
     const p = props();
-    render(<LibraryPage {...p} />);
-    expect(screen.getByRole("navigation", { name: "文件类型" })).toHaveTextContent(/全部文件.*图片库.*文档库.*视频库/);
+    renderWithTools(<LibraryPage {...p} />);
+    expect(screen.getByRole("navigation", { name: "文件类型" })).toHaveTextContent(/全部.*图片.*文档.*视频/);
     const pane = await preview();
     await waitFor(() => expect(p.onOrganizeSource).toHaveBeenCalledWith(7, { opened: true }));
     fireEvent.click(within(pane).getByRole("button", { name: "AI 读取内容" }));
@@ -198,47 +259,47 @@ describe("file library", () => {
   });
   it("filters files by type", () => {
     const p = props();
-    render(<LibraryPage {...p} sources={[source, { ...source, id: 8, title: "照片", mime_type: "image/png" }, { ...source, id: 9, title: "影片", mime_type: "video/mp4" }]} />);
-    fireEvent.click(screen.getByRole("button", { name: "图片库" }));
-    expect(screen.getByText("照片")).toBeInTheDocument();
+    renderWithTools(<LibraryPage {...p} sources={[source, { ...source, id: 8, title: "照片", mime_type: "image/png" }, { ...source, id: 9, title: "影片", mime_type: "video/mp4" }]} />);
+    fireEvent.click(screen.getByRole("button", { name: "图片" }));
+    expect(screen.getByRole("button", { name: "预览 照片" })).toBeInTheDocument();
     expect(screen.queryByText("影片")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "视频库" }));
+    fireEvent.click(screen.getByRole("button", { name: "视频" }));
     expect(screen.getByText("影片")).toBeInTheDocument();
-    expect(screen.queryByText("照片")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "文档库" }));
+    expect(screen.queryByRole("button", { name: "预览 照片" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "文档" }));
     expect(screen.getByText("读书笔记")).toBeInTheDocument();
     expect(screen.queryByText("影片")).not.toBeInTheDocument();
   });
   it("hides text-use controls in media libraries without applying a hidden filter", () => {
     const image = { ...source, id: 8, title: "照片", mime_type: "image/png", enabled: false };
-    render(<LibraryPage {...props()} sources={[source, image]} />);
+    renderWithTools(<LibraryPage {...props()} sources={[source, image]} />);
     fireEvent.click(screen.getByRole("button", { name: "筛选" }));
     fireEvent.change(screen.getByLabelText("筛选 AI 使用"), { target: { value: "ready" } });
-    fireEvent.click(screen.getByRole("button", { name: "图片库" }));
+    fireEvent.click(screen.getByRole("button", { name: "图片" }));
     expect(screen.queryByRole("columnheader", { name: "AI 使用" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("筛选 AI 使用")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "预览 照片" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "文档库" }));
+    fireEvent.click(screen.getByRole("button", { name: "文档" }));
     expect(screen.getByRole("columnheader", { name: "AI 使用" })).toBeInTheDocument();
     expect(screen.getByLabelText("筛选 AI 使用")).toHaveValue("ready");
   });
   it("preserves search and directory when changing file type and clears empty results", () => {
-    render(<LibraryPage {...props()} />);
+    renderWithTools(<LibraryPage {...props()} />);
     fireEvent.change(screen.getByLabelText("筛选目录"), { target: { value: "3" } });
     fireEvent.change(screen.getByLabelText("搜索文件名或内容"), { target: { value: "笔记" } });
-    fireEvent.click(screen.getByRole("button", { name: "图片库" }));
+    fireEvent.click(screen.getByRole("button", { name: "图片" }));
     expect(screen.getByLabelText("筛选目录")).toHaveValue("3");
     expect(screen.getByLabelText("搜索文件名或内容")).toHaveValue("笔记");
     fireEvent.click(screen.getByRole("button", { name: "清除搜索和筛选" }));
     expect(screen.getByLabelText("筛选目录")).toHaveValue("all");
     expect(screen.getByLabelText("搜索文件名或内容")).toHaveValue("");
-    expect(screen.getByRole("button", { name: "图片库" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "图片" })).toHaveAttribute("aria-current", "page");
   });
   it("explains that image use is based on text rather than visual analysis", async () => {
     const image = { ...source, mime_type: "image/png", parse_status: "failed" as const, character_count: 0 };
     const p = props();
     p.onLoadSource.mockResolvedValue({ ...detail, ...image, content: "", redacted_content: "" });
-    render(<LibraryPage {...p} sources={[image]} />);
+    renderWithTools(<LibraryPage {...p} sources={[image]} />);
     fireEvent.click(screen.getByRole("button", { name: "预览 读书笔记" }));
     const pane = await screen.findByRole("complementary", { name: "文件快速预览" });
     expect(within(pane).getByText(/暂不直接分析画面/)).toBeInTheDocument();
@@ -248,7 +309,7 @@ describe("file library", () => {
   });
   it("creates redacted notes in the current folder", async () => {
     const p = props();
-    render(<LibraryPage {...p} />);
+    renderWithTools(<LibraryPage {...p} />);
     fireEvent.change(screen.getByLabelText("筛选目录"), { target: { value: "3" } });
     fireEvent.click(screen.getByRole("button", { name: "添加" }));
     fireEvent.click(screen.getByRole("button", { name: "新建笔记" }));
@@ -259,7 +320,7 @@ describe("file library", () => {
   });
   it("trashes reversibly and confirms permanent deletion", async () => {
     const p = props();
-    const view = render(<LibraryPage {...p} />);
+    const view = renderWithTools(<LibraryPage {...p} />);
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 读书笔记" }));
     fireEvent.click(screen.getByRole("button", { name: "更多文件操作" }));
     fireEvent.click(screen.getByRole("button", { name: "删除" }));
@@ -281,7 +342,7 @@ describe("file library", () => {
   });
   it("moves selected files and uses selected IDs for chat", async () => {
     const p = props();
-    render(<LibraryPage {...p} sources={[source, { ...source, id: 8, title: "会议笔记" }]} />);
+    renderWithTools(<LibraryPage {...p} sources={[source, { ...source, id: 8, title: "会议笔记" }]} />);
     fireEvent.click(screen.getByRole("checkbox", { name: "选择当前全部文件" }));
     fireEvent.click(screen.getByRole("button", { name: "用于对话" }));
     expect(p.onUseForChat).not.toHaveBeenCalled();
@@ -308,7 +369,7 @@ describe("file library", () => {
           })
       )
       .mockResolvedValue([]);
-    render(<LibraryPage {...props()} onSearchSources={search} />);
+    renderWithTools(<LibraryPage {...props()} onSearchSources={search} />);
     fireEvent.change(screen.getByLabelText("搜索文件名或内容"), { target: { value: "正文" } });
     await waitFor(() => expect(search).toHaveBeenCalledWith("正文"));
     fireEvent.change(screen.getByLabelText("搜索文件名或内容"), { target: { value: "不存在" } });
@@ -317,13 +378,14 @@ describe("file library", () => {
     await waitFor(() => expect(screen.queryByRole("table")).not.toBeInTheDocument());
   });
   it("retains pending knowledge and failure feedback", async () => {
-    render(
+    renderWithTools(
       <LibraryPage
         {...props()}
         pendingFacts={[{ id: 21, statement: "主导过检索评测", category: "project" }]}
         onReviewFact={vi.fn().mockRejectedValue(new Error("offline"))}
       />
     );
+    fireEvent.click(screen.getByRole("button", { name: "文件库更多选项" }));
     fireEvent.click(screen.getByRole("button", { name: "知识" }));
     fireEvent.click(screen.getByRole("button", { name: "确认" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("offline");
@@ -335,7 +397,7 @@ describe("file library", () => {
   });
   it("does not reopen cancelled previews", async () => {
     let complete!: (value: LibrarySourceDetail) => void;
-    render(
+    renderWithTools(
       <LibraryPage
         {...props()}
         onLoadSource={() =>
@@ -359,7 +421,7 @@ describe("file library", () => {
       { ...source, id: 9, title: "其他目录", folder_id: null, source_kind: "upload", source_uri: "chat:1:3", enabled: false }
     ];
     const search = vi.fn().mockResolvedValue(files);
-    render(<LibraryPage {...p} sources={files} onSearchSources={search} />);
+    renderWithTools(<LibraryPage {...p} sources={files} onSearchSources={search} />);
     fireEvent.change(screen.getByLabelText("筛选目录"), { target: { value: "3" } });
     fireEvent.click(screen.getByRole("button", { name: "筛选" }));
     fireEvent.change(screen.getByLabelText("筛选来源"), { target: { value: "chat" } });
@@ -374,7 +436,7 @@ describe("file library", () => {
     expect(screen.getByLabelText("搜索文件名或内容")).toHaveValue("正文关键词");
   });
   it("clears selections when a filter hides their files", () => {
-    render(<LibraryPage {...props()} />);
+    renderWithTools(<LibraryPage {...props()} />);
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 读书笔记" }));
     fireEvent.click(screen.getByRole("button", { name: "筛选" }));
     fireEvent.change(screen.getByLabelText("筛选来源"), { target: { value: "chat" } });
@@ -382,7 +444,7 @@ describe("file library", () => {
     expect(screen.getByText("没有找到匹配的文件")).toBeInTheDocument();
   });
   it("keeps files without text archived and blocks text-dependent batch actions", () => {
-    render(<LibraryPage {...props()} sources={[{ ...source, character_count: 0, text_parse_status: "not_required", enabled: false }]} />);
+    renderWithTools(<LibraryPage {...props()} sources={[{ ...source, character_count: 0, text_parse_status: "not_required", enabled: false }]} />);
     expect(within(screen.getByRole("table", { name: "文件列表" })).getByText("无可检索正文")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 读书笔记" }));
     expect(screen.getByRole("button", { name: "用于对话" })).toBeDisabled();
@@ -393,7 +455,7 @@ describe("file library", () => {
   });
   it("enables selected readable archives as knowledge sources explicitly", async () => {
     const p = props();
-    render(<LibraryPage {...p} sources={[{ ...source, enabled: false }]} />);
+    renderWithTools(<LibraryPage {...p} sources={[{ ...source, enabled: false }]} />);
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 读书笔记" }));
     fireEvent.click(screen.getByRole("button", { name: "更多文件操作" }));
     fireEvent.click(screen.getByRole("button", { name: "开启长期使用" }));
@@ -402,7 +464,8 @@ describe("file library", () => {
   it("separates confirmed knowledge from pending proposals and links to usable files", async () => {
     const p = props();
     const confirmed = [{ id: 30, category: "knowledge", statement: "已确认的阅读偏好", status: "confirmed" as const }];
-    render(<LibraryPage {...p} confirmedFacts={confirmed} pendingFacts={[{ id: 21, statement: "待确认偏好" }]} />);
+    renderWithTools(<LibraryPage {...p} confirmedFacts={confirmed} pendingFacts={[{ id: 21, statement: "待确认偏好" }]} />);
+    fireEvent.click(screen.getByRole("button", { name: "文件库更多选项" }));
     fireEvent.click(screen.getByRole("button", { name: "知识" }));
     expect(screen.getByLabelText("已确认知识")).toHaveTextContent("已确认的阅读偏好");
     expect(screen.getByLabelText("待确认内容")).toHaveTextContent("待确认偏好");
@@ -416,7 +479,7 @@ describe("file library", () => {
 
   it("filters shared files by topic and removes membership without deleting or disabling", async () => {
     const p = props();
-    render(<LibraryPage {...p} sources={[source, { ...source, id: 8, title: "集合外文件" }]}
+    renderWithTools(<LibraryPage {...p} sources={[source, { ...source, id: 8, title: "集合外文件" }]}
       collections={[{ id: 10, name: "阅读", source_ids: [7], file_count: 1 }, { id: 11, name: "研究", source_ids: [7], file_count: 1 }]} />);
     fireEvent.change(screen.getByLabelText("选择主题集合"), { target: { value: "10" } });
     expect(screen.queryByText("集合外文件")).not.toBeInTheDocument();
@@ -434,7 +497,7 @@ describe("file library", () => {
 
   it("creates collections and joins selected archives without enabling AI use", async () => {
     const p = props();
-    render(<LibraryPage {...p} sources={[{ ...source, enabled: false }]}
+    renderWithTools(<LibraryPage {...p} sources={[{ ...source, enabled: false }]}
       collections={[{ id: 10, name: "阅读", source_ids: [], file_count: 0 }]} />);
     fireEvent.click(screen.getByRole("button", { name: "添加" }));
     fireEvent.click(screen.getByRole("button", { name: "新建主题集合" }));
@@ -452,7 +515,7 @@ describe("file library", () => {
   it("retains selections and error feedback when collection membership fails", async () => {
     const p = props();
     p.onUpdateCollectionSources.mockRejectedValue(new Error("集合保存失败"));
-    render(<LibraryPage {...p} collections={[{ id: 10, name: "阅读", source_ids: [], file_count: 0 }]} />);
+    renderWithTools(<LibraryPage {...p} collections={[{ id: 10, name: "阅读", source_ids: [], file_count: 0 }]} />);
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 读书笔记" }));
     fireEvent.click(screen.getByRole("button", { name: "加入主题集合" }));
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "加入主题集合" }));
@@ -463,7 +526,7 @@ describe("file library", () => {
 
   it("creates a first collection with selected files in one step", async () => {
     const p = props();
-    render(<LibraryPage {...p} />);
+    renderWithTools(<LibraryPage {...p} />);
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 读书笔记" }));
     fireEvent.click(screen.getByRole("button", { name: "加入主题集合" }));
     expect(screen.getByLabelText("目标主题集合")).toHaveValue("new");
@@ -476,7 +539,7 @@ describe("file library", () => {
 
   it("deletes only the selected collection after explaining that files remain", async () => {
     const p = props();
-    render(<LibraryPage {...p} collections={[{ id: 10, name: "阅读", source_ids: [7], file_count: 1 }]} />);
+    renderWithTools(<LibraryPage {...p} collections={[{ id: 10, name: "阅读", source_ids: [7], file_count: 1 }]} />);
     fireEvent.change(screen.getByLabelText("选择主题集合"), { target: { value: "10" } });
     fireEvent.click(screen.getByLabelText("主题集合操作"));
     fireEvent.click(screen.getByRole("button", { name: "删除集合" }));
@@ -491,7 +554,7 @@ describe("file library", () => {
 
   it("blocks chat batches beyond the send limit and exposes long-term use in preview", async () => {
     const p = props();
-    const view = render(<LibraryPage {...p} sources={Array.from({ length: 9 }, (_, i) => ({ ...source, id: i + 7, title: `资料${i}` }))} />);
+    const view = renderWithTools(<LibraryPage {...p} sources={Array.from({ length: 9 }, (_, i) => ({ ...source, id: i + 7, title: `资料${i}` }))} />);
     fireEvent.click(screen.getByRole("checkbox", { name: "选择当前全部文件" }));
     expect(screen.getByRole("button", { name: "用于对话" })).toBeDisabled();
     expect(screen.getByRole("status")).toHaveTextContent("最多带入 8 个文件");
