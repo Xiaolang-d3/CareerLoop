@@ -107,6 +107,7 @@ const TOOL_ACTIVITY_LABELS: Record<string, string> = {
   completion_validator: "正在补齐必要步骤",
   citation_validator: "正在核对引用",
   agent_loop_guard: "正在纠正重复步骤",
+  agent_finalizer: "正在整理已有信息",
   agent_run_state: "正在同步任务状态",
   ask_user: "需要你确认",
   agent_tool: "正在执行任务"
@@ -227,7 +228,7 @@ const COMPLETED_ACTIVITY_LABELS: Record<string, string> = {
   search_library: "已检索资料", propose_library_knowledge: "已提交待确认知识",
   agent_planner: "已规划步骤", model_provider: "已生成回答",
   completion_validator: "已核对执行步骤", citation_validator: "已核对引用",
-  agent_loop_guard: "已调整执行步骤", agent_run_state: "已同步任务状态",
+  agent_loop_guard: "已处理重复请求", agent_finalizer: "已整理已有信息", agent_run_state: "已同步任务状态",
   ask_user: "等待你的确认", agent_tool: "已执行工具"
 };
 
@@ -428,7 +429,7 @@ function WebSourcesPanel({ sources, onOpen }: { sources: WebSource[]; onOpen?: (
         onClick={onOpen}
       >
         <span className="web-sources-symbol" aria-hidden="true"><BookOpen size={15} /></span>
-        <span className="web-sources-label">参考来源</span>
+        <span className="web-sources-label">检索来源</span>
         <span className="web-sources-count">{sources.length}</span>
         <ChevronRight className="web-sources-arrow" size={14} aria-hidden="true" />
       </button>
@@ -477,7 +478,7 @@ export function ResearchPanel({
       <header className="research-panel-header">
         <div>
           <BookOpen size={16} aria-hidden="true" />
-          <strong>参考来源</strong>
+          <strong>检索来源</strong>
           {streaming ? <span className="research-live-dot is-live" aria-hidden="true" /> : null}
           <small>{sources.length} 个来源</small>
         </div>
@@ -488,7 +489,7 @@ export function ResearchPanel({
 
       <div className="research-panel-scroll" ref={panelScrollRef}>
         <section className="research-section research-sources" aria-labelledby="research-sources-title" ref={sourceSectionRef}>
-          <h2 id="research-sources-title" className="sr-only">本次回答的参考资料</h2>
+          <h2 id="research-sources-title" className="sr-only">本次检索获得的资料</h2>
           {sources.length ? (
             <div className="research-source-list" aria-label="来源列表">
               {sources.map((source, index) => {

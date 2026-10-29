@@ -410,7 +410,7 @@
 }
 
 .chat-workspace .thinking-dots i {
-  background: #6557dc;
+  background: #1769c9;
 }
 
 .chat-workspace.is-empty {
@@ -520,8 +520,8 @@
 .chat-workspace .chat-composer .composer-input:focus-within,
 .chat-workspace.is-empty .composer-input:focus-within,
 .chat-workspace.is-empty .chat-composer .composer-input:focus-within {
-  border-color: #b8b0ee !important;
-  box-shadow: 0 0 0 4px rgba(101, 87, 220, .12), 0 18px 44px rgba(48, 38, 110, .1) !important;
+  border-color: #86c5ef !important;
+  box-shadow: 0 0 0 4px rgba(23, 105, 201, .12), 0 18px 44px rgba(48, 38, 110, .1) !important;
 }
 
 .chat-workspace .composer-input textarea,
@@ -608,7 +608,7 @@
   padding: 0;
   border-radius: 999px;
   background: var(--color-brand);
-  box-shadow: 0 8px 16px rgba(78, 66, 186, .2);
+  box-shadow: 0 8px 16px rgba(18, 86, 170, .2);
   transform: none;
 }
 
@@ -738,9 +738,9 @@
 }
 
 .research-live-dot.is-live {
-  border-color: #6557dc;
-  background: #6557dc;
-  box-shadow: 0 0 0 4px rgba(101, 87, 220, .12);
+  border-color: #1769c9;
+  background: #1769c9;
+  box-shadow: 0 0 0 4px rgba(23, 105, 201, .12);
 }
 
 .research-panel-header > button {
@@ -774,7 +774,7 @@
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, #6557dc, #8b9bff);
+  background: linear-gradient(90deg, #1769c9, #8b9bff);
   transition: width .24s ease;
 }
 
@@ -871,7 +871,7 @@
 }
 
 .research-process-list .is-running .research-step-state {
-  background: #6557dc;
+  background: #1769c9;
 }
 
 .research-process-list .is-running .research-step-state svg {
@@ -1655,3 +1655,24 @@
   .assistant-page .chat-workspace.has-history .message-markdown,
   .assistant-page .chat-workspace.has-history .message-markdown li { line-height: 1.7; }
 }
+.composer-model-feedback {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: fit-content;
+  max-width: min(100%, 680px);
+  margin: 16px auto 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 10px;
+  color: var(--color-text);
+  background: var(--color-surface-subtle);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+.composer-model-feedback.success { border-color: var(--color-success); background: var(--color-success-soft); }
+.composer-model-feedback.success > svg { color: var(--color-success); flex: none; }
+.composer-model-feedback.error { border-color: var(--color-danger); background: var(--color-danger-soft); }
+.composer-model-feedback.error > svg { color: var(--color-danger); flex: none; }
+.composer-model-feedback button { flex: none; margin-left: auto; color: inherit; border: 0; background: transparent; cursor: pointer; padding: 3px; }

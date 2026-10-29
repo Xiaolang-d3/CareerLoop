@@ -1,6 +1,9 @@
 html:has(.product-intro-page) { scrollbar-gutter: auto; }
 
 .product-intro-page {
+  --color-text: #162b40;
+  --color-brand: #1769c9;
+  --color-brand-strong: #1256aa;
   height: 100dvh;
   overflow: auto;
   color: var(--color-text);
@@ -18,13 +21,13 @@ html:has(.product-intro-page) { scrollbar-gutter: auto; }
 .product-intro-nav button:hover { color: var(--color-brand); }
 .product-intro-entry { display: inline-flex; justify-content: center; align-items: center; min-height: 40px; padding: 9px 22px; border-radius: 9px; color: #fff; background: var(--color-brand); font-size: 13px; font-weight: 700; text-decoration: none; white-space: nowrap; }
 .product-intro-entry:hover, .product-intro-action:hover { background: var(--color-brand-strong); }
-.product-intro-hero { background: #f7f6fb url('/intro-surface-v1.webp') center top / cover no-repeat; padding: 32px 0 0; }
+.product-intro-hero { background: radial-gradient(ellipse at 20% 0%, rgba(79, 202, 232, .19), transparent 48%), radial-gradient(ellipse at 80% 10%, rgba(54, 145, 239, .16), transparent 50%), #f5faff; padding: 32px 0 0; }
 .product-intro-hero-copy { text-align: center; }
 .product-intro-kicker { margin: 0 0 18px; color: var(--color-brand); font-size: 14px; font-weight: 700; letter-spacing: .04em; }
 .product-intro-hero h1 { margin: 0; color: #161735; font-family: var(--font-sans); font-size: clamp(36px, 4.05vw, 58px); font-weight: 800; line-height: 1.25; letter-spacing: -.05em; outline: none; box-shadow: none; text-wrap: balance; }
 .product-intro-description { margin: 14px auto 0; color: #57566f; font-size: 18px; line-height: 1.6; text-wrap: balance; }
 .product-intro-actions { display: flex; justify-content: center; align-items: center; gap: 28px; margin: 20px 0 16px; }
-.product-intro-action { display: inline-flex; justify-content: center; align-items: center; gap: 22px; min-height: 44px; padding: 10px 25px; border-radius: 10px; color: #fff; background: var(--color-brand); font-size: 14px; font-weight: 700; text-decoration: none; box-shadow: 0 7px 22px rgba(101, 87, 220, .14); transition: background .16s; }
+.product-intro-action { display: inline-flex; justify-content: center; align-items: center; gap: 22px; min-height: 44px; padding: 10px 25px; border-radius: 10px; color: #fff; background: var(--color-brand); font-size: 14px; font-weight: 700; text-decoration: none; box-shadow: 0 7px 22px rgba(23, 105, 201, .14); transition: background .16s; }
 .product-intro-explore { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 0; border: 0; background: transparent; color: #5a5678; font-size: 13px; font-weight: 650; cursor: pointer; }
 .product-intro-explore:hover { color: var(--color-brand-strong); }
 .product-intro-experience { position: relative; scroll-margin-top: 92px; border-radius: 22px; }
@@ -36,17 +39,17 @@ html:has(.product-intro-page) { scrollbar-gutter: auto; }
 .intro-demo-brand img { border-radius: 7px; }
 .intro-demo-nav { display: grid; gap: 3px; }
 .intro-demo-nav button { display: flex; align-items: center; gap: 12px; min-height: 39px; padding: 9px 12px; border: 0; border-radius: 7px; background: transparent; color: #57536d; text-align: left; cursor: pointer; }
-.intro-demo-nav button[aria-pressed="true"] { color: var(--color-brand); background: #eeecff; font-weight: 700; }
-.intro-demo-nav button:hover, .intro-demo-scenarios button:hover { background: #eeecff; }
+.intro-demo-nav button[aria-pressed="true"] { color: var(--color-brand); background: #e8f4ff; font-weight: 700; }
+.intro-demo-nav button:hover, .intro-demo-scenarios button:hover { background: #e8f4ff; }
 .intro-demo-scenarios { display: grid; gap: 5px; margin-top: 26px; padding-top: 15px; border-top: 1px solid #eae7f4; }
 .intro-demo-scenarios > p { margin: 0 12px 5px; color: #747088; font-size: 10px; }
 .intro-demo-scenarios button { position: relative; min-height: 34px; padding: 8px 12px; border: 0; border-radius: 3px; background: transparent; color: #625c7b; font-size: 11px; text-align: left; cursor: pointer; }
-.intro-demo-scenarios button[aria-pressed="true"] { box-shadow: inset 2px 0 var(--color-brand); background: #f0eef9; color: var(--color-brand-strong); }
+.intro-demo-scenarios button[aria-pressed="true"] { box-shadow: inset 2px 0 var(--color-brand); background: #e8f4ff; color: var(--color-brand-strong); }
 .intro-demo-sidebar-note { margin-top: auto; padding: 24px 12px 0; color: #79748d; font-size: 9px; }
 .intro-demo-main { display: flex; flex-direction: column; gap: 16px; min-width: 0; padding: 20px 28px 16px; border-block: 1px solid #edeaf6; background: #fff; }
 .intro-demo-question { display: flex; align-items: center; gap: 15px; scroll-margin-top: 90px; }
-.intro-demo-question p { margin: 0; padding: 13px 18px; border-radius: 10px; color: #34304e; background: #f0edff; font-size: 12px; line-height: 1.6; }
-.intro-demo-avatar { flex: 0 0 auto; padding: 5px; border-radius: 50%; color: #6557dc; background: #eeecff; }
+.intro-demo-question p { margin: 0; padding: 13px 18px; border-radius: 10px; color: #203f5e; background: #e8f4ff; font-size: 12px; line-height: 1.6; }
+.intro-demo-avatar { flex: 0 0 auto; padding: 5px; border-radius: 50%; color: #1769c9; background: #e8f4ff; }
 .intro-demo-response { display: flex; align-items: flex-start; gap: 15px; }
 .intro-demo-assistant { flex: 0 0 auto; margin-top: 5px; border-radius: 7px; }
 .intro-demo-answer { flex: 1; min-width: 0; padding: 15px 17px; border: 1px solid #efedf5; border-radius: 10px; color: #625c76; font-size: 12px; line-height: 1.7; }
@@ -64,7 +67,7 @@ html:has(.product-intro-page) { scrollbar-gutter: auto; }
 .intro-demo-citations button:hover { background: #f8f6ff; border-color: #cfc8ef; }
 .intro-demo-next { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 45px; margin: auto 0 0 43px; padding: 7px 9px 7px 15px; border: 1px solid #e5e0f1; border-radius: 10px; background: #fff; color: #767087; font-size: 11px; text-align: left; cursor: pointer; }
 .intro-demo-next:hover { background: #f9f7ff; }
-.intro-demo-send { display: grid; place-items: center; flex: 0 0 auto; width: 29px; height: 29px; border-radius: 50%; background: #9b8ce8; color: #fff; }
+.intro-demo-send { display: grid; place-items: center; flex: 0 0 auto; width: 29px; height: 29px; border-radius: 50%; background: #1769c9; color: #fff; }
 .intro-demo-sources { min-width: 0; padding: 20px 16px; border: 1px solid #edeaf6; border-radius: 0 16px 16px 0; background: #fdfcff; }
 .intro-demo-sources h3 { margin: 0 0 15px; color: #34304e; font-size: 13px; font-weight: 750; }
 .intro-demo-source-groups { display: flex; border-bottom: 1px solid #edeaf6; }

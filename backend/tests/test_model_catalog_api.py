@@ -39,6 +39,23 @@ def create(client, name, key):
     return catalog, connection, profile
 
 
+def test_reveal_connection_key_is_explicit_and_not_cached(client):
+    from fastapi.testclient import TestClient
+
+    _, connection, _ = create(client, "reveal", "synthetic-reveal-key")
+    path = f"/agent/model-connections/{connection['id']}/reveal-key"
+    assert "synthetic-reveal-key" not in client.get("/agent/model-connections").text
+    result = client.post(path)
+    assert result.status_code == 200
+    assert result.json() == {"api_key": "synthetic-reveal-key"}
+    assert result.headers["cache-control"] == "no-store"
+    missing = client.post("/agent/model-connections/missing/reveal-key")
+    assert missing.status_code == 400
+    assert missing.headers["cache-control"] == "no-store"
+    with TestClient(app) as anonymous:
+        assert anonymous.post(path).status_code == 401
+
+
 def test_connections_and_profiles_do_not_silently_change_default(client):
     original = client.get("/agent/model-connections").json()["default_profile_id"]
     catalog, first, profile = create(client, "first", "synthetic-first-key")

@@ -100,6 +100,12 @@ def should_abandon_snapshot(
         # an explicit abandon stays on the card until it is answered.
         return False
     if snapshot.clarification is not None:
+        # An explicit new image request starts a fresh run and model binding.
+        # Pending tool and search approvals above must never be bypassed.
+        from ..chat.image_assets import image_generation_intent
+
+        if image_generation_intent(text):
+            return True
         # An answer can change sources without abandoning the original goal.
         # The runtime re-understands ordinary replies instead of freezing a lane.
         return False

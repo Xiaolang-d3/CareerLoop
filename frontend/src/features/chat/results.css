@@ -42,7 +42,7 @@
 .chat-workspace .message-attachments .chat-history-attachment > .chat-history-attachment-save:hover { color: var(--color-brand-strong); background: var(--color-brand-soft); }
 @media (pointer: coarse) { .chat-workspace .message-attachments .chat-history-attachment > .chat-history-attachment-save { min-height: 40px; } }
 
-.chat-generated-image { margin: 0; width: min(100%, 640px); min-width: 0; }
+.chat-generated-image { margin: 0; width: min(100%, 400px); min-width: 0; }
 .chat-workspace .message-image-output { display: grid; justify-items: start; gap: 12px; min-width: 0; margin: 0; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
 .chat-generated-image .generated-image-preview { display: flex; flex-direction: column; align-items: flex-start; width: 100%; min-width: 0; margin: 0; padding: 0; border: 0; background: none; box-shadow: none; }
 .chat-workspace .chat-generated-image .generated-image-preview > button:first-child { position: relative; display: grid; place-items: center; box-sizing: border-box; width: 100%; min-width: 0; gap: 0; padding: 0; overflow: hidden; border: 0; border-radius: 12px; background: transparent; box-shadow: none; color: var(--color-text-muted); cursor: zoom-in; }
@@ -52,7 +52,7 @@
 .chat-workspace .chat-generated-image .generated-image-preview > button:first-child:is(:hover, :focus-visible) { background: transparent; box-shadow: none; }
 .chat-workspace .chat-generated-image .generated-image-preview > button:first-child:focus-visible { border-color: transparent; outline: 2px solid var(--color-brand); outline-offset: -2px; box-shadow: none; }
 .chat-workspace .chat-generated-image .generated-image-preview > button:first-child:is(:hover, :focus-visible)::after { opacity: 1; }
-.chat-generated-image .generated-image-preview img { display: block; width: 100%; height: auto; max-height: none; object-fit: contain; border-radius: 0; }
+.chat-generated-image .generated-image-preview img { display: block; width: auto; max-width: 100%; height: auto; max-height: 320px; object-fit: contain; border-radius: 0; }
 .chat-generated-image .generated-image-preview > button:not(:first-child) { margin-top: 6px; padding: 5px 0; border: 0; color: var(--color-text-muted); background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
 .chat-generated-image figcaption { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; margin-top: 6px; padding: 0 2px; color: var(--color-text-muted); font-size: 12px; }
 .generated-image-dimensions { color: var(--color-text-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }

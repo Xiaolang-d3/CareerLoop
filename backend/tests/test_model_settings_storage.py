@@ -286,7 +286,7 @@ def test_hosted_or_unsupported_platform_default_is_readonly(workspace, monkeypat
     assert not settings.get_agent_settings(path)["secret_storage_writable"]
     before = raw_settings(path)
     with pytest.raises(secret_store.SecretStoreUnavailable, match="只读环境密钥"):
-        settings.save_agent_settings({"api_key": "audit-fake-new-credential"}, path)
+        settings.save_agent_settings({"model_name": "test-model", "api_key": "audit-fake-new-credential"}, path)
     assert raw_settings(path) == before
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import sqlite3
 import threading
 from pathlib import Path
@@ -76,13 +77,14 @@ def _initialize_connection(db_path: str | Path | None) -> dict[str, Any]:
     if row.get("model_config_initialized") and row.get("connection_id"):
         return row
     config = get_settings()
+    hosted = os.getenv("CAREERLOOP_DEPLOYMENT_MODE", "local").strip().lower() == "hosted"
     # Import the old effective environment configuration once. Subsequent
     # explicit empty URLs are real choices and never fall back to the environment.
-    name = str(row.get("model_name") or config.model_name).strip()
-    base_url = str(row.get("model_base_url") or config.model_base_url or "").strip()
-    protocol = normalize_model_protocol(row.get("model_protocol") or config.model_protocol)
+    name = str(row.get("model_name") or ("" if hosted else config.model_name)).strip()
+    base_url = str(row.get("model_base_url") or ("" if hosted else config.model_base_url) or "").strip()
+    protocol = normalize_model_protocol(row.get("model_protocol") or ("auto" if hosted else config.model_protocol))
     reference = str(row.get("model_secret_ref") or "")
-    if not reference and not row.get("model_api_key") and config.openai_api_key:
+    if not hosted and not reference and not row.get("model_api_key") and config.openai_api_key:
         from ..model_connection import resolve_model_connection
 
         old_slot = ""
@@ -231,16 +233,17 @@ def _public_settings(row: dict[str, Any], db_path: str | Path | None) -> dict[st
 
 
 def _settings_fallback(config: Any) -> dict[str, Any]:
+    hosted = os.getenv("CAREERLOOP_DEPLOYMENT_MODE", "local").strip().lower() == "hosted"
     fallback = dict(DEFAULT_AGENT_SETTINGS)
     fallback.pop("model_api_key", None)
     fallback.update(
-        model_name=config.model_name,
-        model_base_url=config.model_base_url or "",
-        configured_model_base_url=config.model_base_url or "",
-        model_protocol=config.model_protocol,
-        resolved_model_protocol=resolve_model_protocol(config.model_name, config.model_protocol, config.model_base_url or ""),
-        api_key_configured=bool(config.openai_api_key),
-        api_key_source="environment" if config.openai_api_key else "none",
+        model_name="" if hosted else config.model_name,
+        model_base_url="" if hosted else config.model_base_url or "",
+        configured_model_base_url="" if hosted else config.model_base_url or "",
+        model_protocol="auto" if hosted else config.model_protocol,
+        resolved_model_protocol=resolve_model_protocol("" if hosted else config.model_name, "auto" if hosted else config.model_protocol, "" if hosted else config.model_base_url or ""),
+        api_key_configured=bool(config.openai_api_key) and not hosted,
+        api_key_source="environment" if config.openai_api_key and not hosted else "none",
         secret_storage=secret_backend_name(),
         secret_storage_writable=secret_storage_writable(),
         secret_migration_warning="",

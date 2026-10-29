@@ -14,6 +14,7 @@ it("shows source headings as direct links without summary controls", () => {
     { title: "公开资料", url: "https://example.com/first", snippet: "来源摘要" },
     { title: "另一份资料", url: "https://example.com/second", snippet: "第二份摘要" }
   ]} selectedSource={0} streaming={false} onClose={vi.fn()} />);
+  expect(screen.getByText("检索来源")).toBeInTheDocument();
   for (const [title, url] of [["公开资料", "https://example.com/first"], ["另一份资料", "https://example.com/second"]]) {
     const link = screen.getByRole("link", { name: title });
     expect(link).toHaveAttribute("href", url);

@@ -28,7 +28,10 @@ def get_routing_policy(db_path=None) -> dict[str, Any]:
     _ensure_catalog(db_path)
     with settings.connect(db_path) as conn:
         row = conn.execute("SELECT version, payload_json FROM model_routing_policy WHERE id=1").fetchone()
-    return {**RoutingPolicy.model_validate(json.loads(row["payload_json"])).model_dump(), "version": row["version"]}
+    payload = json.loads(row["payload_json"])
+    payload.pop("purpose_defaults", None)
+    payload.pop("service_connection_id", None)
+    return {**RoutingPolicy.model_validate(payload).model_dump(), "version": row["version"]}
 
 
 def save_routing_policy(values: dict[str, Any], db_path=None) -> dict[str, Any]:
@@ -49,7 +52,9 @@ def save_routing_policy(values: dict[str, Any], db_path=None) -> dict[str, Any]:
                 connection = _connection(conn, profile["connection_id"])
                 if not profile["enabled"] or not connection["enabled"]:
                     raise ValueError("阶段模型或连接已停用，请选择其他模型")
-        conn.execute("UPDATE model_routing_policy SET version=version+1, payload_json=? WHERE id=1", (policy.model_dump_json(),))
+        previous = json.loads(conn.execute("SELECT payload_json FROM model_routing_policy WHERE id=1").fetchone()[0])
+        merged = {**previous, **policy.model_dump()}
+        conn.execute("UPDATE model_routing_policy SET version=version+1, payload_json=? WHERE id=1", (json.dumps(merged),))
     return {**policy.model_dump(), "version": version + 1}
 
 
@@ -107,7 +112,7 @@ def _replace_executor(connection: dict[str, Any], chosen: dict[str, Any], reason
     }
 
 
-def bind_image_model(connection: dict[str, Any], *, catalog: dict[str, Any], resolve: Callable) -> dict[str, Any]:
+def bind_image_model(connection: dict[str, Any], *, catalog: dict[str, Any], resolve: Callable, explicit_profile: bool = False) -> dict[str, Any]:
     """Choose an enabled image executor once, before any call or run binding."""
     from ..model_protocol import is_image_generation_model, model_protocol_for_profile, resolve_model_protocol
 
@@ -120,6 +125,12 @@ def bind_image_model(connection: dict[str, Any], *, catalog: dict[str, Any], res
             and (not connection.get("strict_capabilities") or capability == "supported")
         )
 
+    preferred = catalog.get("purpose_defaults", {}).get("image")
+    if preferred and not (explicit_profile and eligible(connection)):
+        chosen = resolve(preferred)
+        if not eligible(chosen):
+            raise ValueError("默认图片模型不满足生图能力，请检查模型设置")
+        return _replace_executor(connection, chosen, "image_default")
     if eligible(connection):
         return connection
     connections = {item["id"]: item for item in catalog["connections"]}
@@ -160,7 +171,7 @@ def bind_text_model(connection: dict[str, Any], *, catalog: dict[str, Any], reso
         if not source.get("api_key_configured") and source["protocol"] != "ollama":
             continue
         candidates.append(profile)
-    preferred = [catalog.get("effective_execution_profile_id"), catalog.get("default_profile_id")]
+    preferred = [catalog.get("purpose_defaults", {}).get("chat"), catalog.get("effective_execution_profile_id"), catalog.get("default_profile_id")]
     candidates.sort(key=lambda item: preferred.index(item["id"]) if item["id"] in preferred else len(preferred))
     if not candidates:
         raise ValueError("已识别为文字请求，但没有可用的聊天模型。请在设置中配置并启用聊天模型。")

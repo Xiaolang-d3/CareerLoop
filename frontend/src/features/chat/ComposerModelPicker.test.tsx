@@ -156,7 +156,7 @@ describe("ComposerModelPicker", () => {
     });
     openMenu();
     view.rerender(<ComposerModelPicker {...props} serviceModels={{ ...props.serviceModels!, busy: true }} />);
-    expect(screen.getByRole("status")).toHaveTextContent("正在读取服务模型");
+    expect(screen.getByRole("status")).toHaveTextContent("正在更新模型列表");
     expect(screen.getByRole("option", { name: "gpt-5.5" })).toHaveAttribute("aria-selected", "true");
     expect(props.onDiscover).toHaveBeenCalledOnce();
     view.rerender(<ComposerModelPicker {...props} serviceModels={{ ...props.serviceModels!, error: "服务暂时不可用" }} />);

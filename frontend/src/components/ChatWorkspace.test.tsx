@@ -80,6 +80,8 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
   chatBusy?: boolean;
   latestAgent?: AgentRunResult;
   retryDraft?: ChatRetryDraft | null;
+  modelSelectionFeedback?: ChatWorkspaceProps["modelSelectionFeedback"];
+  onDismissModelSelectionFeedback?: () => void;
   modelChecking?: boolean;
   modelUnavailable?: string;
   sendError?: string;
@@ -106,6 +108,8 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
     composerDraft: extras.composerDraft,
     onComposerDraftConsumed: extras.onComposerDraftConsumed,
     density: extras.density,
+    modelSelectionFeedback: extras.modelSelectionFeedback,
+    onDismissModelSelectionFeedback: extras.onDismissModelSelectionFeedback,
     modelChecking: extras.modelChecking,
     modelUnavailable: extras.modelUnavailable,
     sendError: extras.sendError,
@@ -156,6 +160,16 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
 }
 
 describe("ChatWorkspace", () => {
+  it("shows dismissible model selection feedback in the composer", () => {
+    const dismiss = vi.fn();
+    const { view, ...props } = renderChat([message], { modelSelectionFeedback: { kind: "success", text: "已切换至图片模型" }, onDismissModelSelectionFeedback: dismiss });
+    expect(within(screen.getByRole("log")).getByText("已切换至图片模型").closest("[role=status]")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "关闭模型切换提示" }));
+    expect(dismiss).toHaveBeenCalledOnce();
+    view.rerender(<ChatWorkspace {...props} modelSelectionFeedback={{ kind: "error", text: "未能确认切换" }} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("未能确认切换");
+  });
+
   it("shows image-only messages without an empty text bubble and keeps the caption outside preview", () => {
     const attachment: ChatAttachment = { id: "photo", kind: "image", original_filename: "示意图.png", parse_status: "parsed", vision_status: "consented" };
     const { view } = renderChat([{ ...message, content: "", payload: { attachments: [attachment] } }]);
@@ -230,6 +244,7 @@ describe("ChatWorkspace", () => {
     expect(completedOutput).toHaveClass("message-image-output");
     expect(completedOutput).not.toHaveClass("message-dialog", "message-result");
     expect(screen.getByRole("figure", { name: "模型生成图片" }).parentElement).toBe(completedOutput);
+    expect(screen.getByRole("figure", { name: "模型生成图片" })).toHaveStyle({ maxWidth: `${320 * 1402 / 1122}px` });
     expect(completedOutput.querySelector(".generated-image-preview")).not.toBeNull();
     expect(completedOutput.querySelector(".chat-history-attachment")).toBeNull();
   });

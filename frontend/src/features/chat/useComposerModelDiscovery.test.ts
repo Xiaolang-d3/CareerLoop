@@ -22,10 +22,23 @@ describe("useComposerModelDiscovery", () => {
     await act(async () => { pending.resolve({ models: ["deepseek-flash"] }); await request; });
     expect(result.current.models).toEqual(["deepseek-flash"]);
     client.mockImplementation(path => path.includes("image-service") ? Promise.resolve({ models: ["gpt-image-2"] }) : Promise.reject(new Error("chat offline")));
-    await act(() => result.current.discover());
+    await act(() => result.current.discover(true));
     expect(result.current.error).toBe("chat offline");
     expect(result.current.catalogs.find(service => service.connection_id === "image-service")?.models).toEqual(["gpt-image-2"]);
     expect(result.current.catalogs.some(service => service.connection_id === "disabled-service")).toBe(false);
+  });
+
+  it("backs off failed requests while allowing an immediate manual retry", async () => {
+    let now = 1000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const client = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue({ models: ["recovered"] });
+    const { result } = renderHook(() => useComposerModelDiscovery({ fetchJson: client as ReturnType<typeof createApiClient>, scope: "user-a", connection }));
+    await act(() => result.current.discover());
+    await act(() => result.current.discover());
+    expect(client).toHaveBeenCalledTimes(1);
+    await act(() => result.current.discover(true));
+    expect(client).toHaveBeenCalledTimes(2);
+    expect(result.current.models).toEqual(["recovered"]);
   });
 
   it("drops an image service catalog when its connection is disabled during a request", async () => {
@@ -40,7 +53,9 @@ describe("useComposerModelDiscovery", () => {
     expect(client.mock.calls[0][1].signal.aborted).toBe(true);
   });
 
-  it("revalidates each opening, normalizes names, and replaces removed service models", async () => {
+  it("uses fresh cached lists and refreshes when expired or requested", async () => {
+    let now = 1000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
     const client = vi.fn().mockResolvedValueOnce({ models: [" grok-model ", "claude-model", "grok-model", " "] }).mockResolvedValue({ models: ["new-model"] });
     const { result } = renderHook(() => useComposerModelDiscovery({ fetchJson: client as ReturnType<typeof createApiClient>, scope: "user-a", connection }));
     expect(client).not.toHaveBeenCalled();
@@ -48,6 +63,10 @@ describe("useComposerModelDiscovery", () => {
     expect(result.current.models).toEqual(["grok-model", "claude-model"]);
     expect(client.mock.calls[0][0]).toBe("/agent/model-connections/service-a/discover");
     expect(client.mock.calls[0][1].body).toBeUndefined();
+    await act(() => result.current.discover());
+    expect(client).toHaveBeenCalledTimes(1);
+    expect(result.current.models).toEqual(["grok-model", "claude-model"]);
+    now += 300_001;
     await act(() => result.current.discover());
     expect(client).toHaveBeenCalledTimes(2);
     expect(result.current.models).toEqual(["new-model"]);
@@ -77,7 +96,7 @@ describe("useComposerModelDiscovery", () => {
     const { result } = renderHook(() => useComposerModelDiscovery({ fetchJson: client as ReturnType<typeof createApiClient>, scope: "user-a", connection }));
     await act(() => result.current.discover());
     let pending!: Promise<void>;
-    act(() => { pending = result.current.discover(); });
+    act(() => { pending = result.current.discover(true); });
     expect(result.current.busy).toBe(true);
     expect(result.current.models).toEqual(["known-model"]);
     await act(async () => { next.resolve({ models: ["latest-model"] }); await pending; });

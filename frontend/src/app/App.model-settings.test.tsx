@@ -252,7 +252,7 @@ describe("App model settings", () => {
     await screen.findByText("设置已保存，连接检测成功");
     await act(async () => { oldRead.resolve(savedSettings); });
     expect(await modelField("模型名称")).toHaveValue("new-model");
-    expect(screen.getByText("当前模型：new-model")).toBeInTheDocument();
+    expect(screen.getByText("new-model", { selector: ".model-current-summary strong" })).toBeInTheDocument();
   });
 
   it("unlocks saved fields while connection diagnostics are still running", async () => {
@@ -526,42 +526,40 @@ describe("App model settings", () => {
   });
 
 
-  it("refreshes the default three-field form only after explicitly applying another profile", async () => {
+  it("uses one service for new model choices while keeping old connections for history", async () => {
     mockApi();
-    const secondDiscovery = deferred<{ models: string[] }>();
     const catalog: ModelCatalog = {
       connections: [
         { id: "c1", name: "主连接", model_base_url: savedSettings.model_base_url, model_protocol: "responses", api_key_configured: true, enabled: true, revision: 1 },
-        { id: "c2", name: "备用连接", model_base_url: "https://second.example.test/v1", model_protocol: "openai", api_key_configured: true, enabled: true, revision: 1 }
+        { id: "c2", name: "历史图片连接", model_base_url: "https://second.example.test/v1", model_protocol: "openai", api_key_configured: true, enabled: true, revision: 1 }
       ],
       profiles: [
-        { id: "p1", connection_id: "c1", model_name: savedSettings.model_name, enabled: true, revision: 1 },
-        { id: "p2", connection_id: "c2", model_name: "second-model", enabled: true, revision: 1 }
-      ], default_profile_id: "p1"
+        { id: "p1", connection_id: "c1", model_name: savedSettings.model_name, enabled: true, revision: 1, supported_purposes: ["chat"] },
+        { id: "p2", connection_id: "c1", model_name: "second-model", enabled: true, revision: 1, supported_purposes: ["chat"] },
+        { id: "legacy", connection_id: "c2", model_name: "legacy-image", enabled: true, revision: 1, supported_purposes: ["image"] }
+      ], default_profile_id: "p1", service_connection_id: "c1", purpose_defaults: { chat: "p1", image: null }, purpose_version: 1
     };
     let changed = false;
+    const response = () => ({ ...catalog, default_profile_id: changed ? "p2" : "p1", purpose_defaults: { chat: changed ? "p2" : "p1", image: null }, purpose_version: changed ? 2 : 1 });
     replaceApi((path, options) => {
-      if (path === "/agent/model-connections/c2/discover") return secondDiscovery.promise;
-      if (path === "/agent/model-connections") return Promise.resolve({ ...catalog, default_profile_id: changed ? "p2" : "p1" });
-      if (path === "/agent/model-default") { changed = true; return Promise.resolve({ ...catalog, default_profile_id: "p2" }); }
-      if (path === "/agent/settings" && options?.method !== "PUT" && changed) return Promise.resolve({ ...savedSettings, model_name: "second-model", model_base_url: "https://second.example.test/v1", config_revision: 2 });
+      if (path === "/agent/model-connections") return Promise.resolve(response());
+      if (path === "/agent/model-defaults/chat") { changed = true; return Promise.resolve(response()); }
+      if (path === "/agent/settings" && options?.method !== "PUT" && changed) return Promise.resolve({ ...savedSettings, model_name: "second-model", config_revision: 2 });
       return undefined;
     });
     renderApp();
-    await screen.findByRole("heading", { name: "连接与模型" });
-    expect(screen.getByText(savedSettings.model_name, { selector: ".model-current-summary strong" })).toBeInTheDocument();
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /备用连接/ })); });
-    expect(api.fetchJson).toHaveBeenCalledWith("/agent/model-connections/c2/discover", expect.objectContaining({ method: "POST" }));
-    await act(async () => { secondDiscovery.resolve({ models: ["second-model"] }); });
-    fireEvent.click(screen.getByRole("button", { name: "second-model 设置" }));
-    fireEvent.click(screen.getByText("更多选项"));
-    fireEvent.click(screen.getByRole("button", { name: "设为默认" }));
-    await waitFor(() => expect(screen.getByText("second-model", { selector: ".model-current-summary strong" })).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "关闭模型设置" }));
-    await modelField("模型名称");
-    expect(screen.getByLabelText("Base URL")).toHaveValue("https://second.example.test/v1");
-    expect(await modelField("API Key")).toHaveValue("");
+    await screen.findByRole("heading", { name: "使用规则" });
+    expect(screen.queryByRole("button", { name: "添加连接" })).not.toBeInTheDocument();
+    expect(screen.queryByText("历史图片连接")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "更换聊天与工作模型" }));
+    expect(screen.queryByRole("option", { name: /legacy-image/ })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "聊天与工作默认模型" }), { target: { value: "p2" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存聊天与工作规则" }));
+    await waitFor(() => expect(screen.queryByRole("combobox")).not.toBeInTheDocument());
+    expect(screen.getByText("second-model", { selector: ".model-usage-value" })).toBeInTheDocument();
     expect(api.fetchJson.mock.calls.some(([path, options]) => path === "/agent/settings" && options?.method === "PUT")).toBe(false);
+    expect(api.fetchJson.mock.calls.some(([path]) => path.includes("c2/discover"))).toBe(false);
   });
 
 });

@@ -172,6 +172,8 @@ export type ChatWorkspaceProps = ResultServices & {
   selectedModelProfileId?: string | null;
   defaultModelName?: string;
   modelSelectionBusy?: boolean;
+  modelSelectionFeedback?: { kind: "success" | "error"; text: string } | null;
+  onDismissModelSelectionFeedback?: () => void;
   modelProfileUnavailable?: boolean;
   /** false 表示没有任何可用模型连接，输入框会提示去设置。 */
   modelConfigured?: boolean;
