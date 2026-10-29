@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChatAttachment, ChatWorkspaceProps } from "./types";
 import { downloadBlob } from "./result-files";
+import { PngExportButton } from "./PngExportButton";
 import { Download, ImagePlus, Palette, RefreshCw, Sparkles, X } from "lucide-react";
 import "./banner-workbench.css";
 
@@ -274,6 +275,7 @@ export function BannerWorkbench({ open, entries, loadOriginal, onUsePrompt, onCl
     <footer className="banner-workbench-footer">
       <p role="status">{busy ? "本轮请求处理中，已有方案会保留。" : promptStatus === "pending" ? "指令已准备，请先在输入框选择替换或保留草稿。" : promptStatus === "ready" ? "指令已就绪，在左侧确认模型后发送。" : "只准备指令，确认发送后才调用模型。"}</p>
       <div className="banner-footer-actions">
+        {selected && selectedOriginal?.file ? <PngExportButton key={entryKey(selected)} filename={selected.asset.original_filename} load={async () => selectedOriginal.file!} /> : null}
         <button type="button" disabled={!selectedOriginal?.file} onClick={() => { if (selected && selectedOriginal?.file) downloadBlob(selectedOriginal.file, selected.asset.original_filename); }}><Download size={14} aria-hidden="true" />下载原图</button>
         <button type="button" className={!briefOpen && selected ? "banner-prepare" : ""} disabled={(!subject.trim() && !selected?.prompt.trim()) || busy} onClick={() => prepare(true)}><RefreshCw size={14} aria-hidden="true" />另出一个方向</button>
         <button className={briefOpen || !selected ? "banner-prepare" : ""} type="submit" form="banner-brief-form" disabled={!subject.trim() || busy}><Sparkles size={15} aria-hidden="true" />准备生图指令</button>

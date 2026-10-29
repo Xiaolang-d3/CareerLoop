@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Download, FolderPlus, X } from "lucide-react";
 import { MarkdownContent } from "./ChatMarkdown";
 import { downloadBlob, downloadText, markdownToText } from "./result-files";
+import { PngExportButton } from "./PngExportButton";
 import type { ArtifactManifest, ResultServices } from "./result-types";
 import "./results.css";
 
@@ -100,6 +101,7 @@ export function ResultDialog({ messageId, selector = "answer", saving = false, s
         }}>{manifest.artifacts.map(item => <option key={item.selector} value={item.selector}>{item.filename}</option>)}</select></label>
           {artifact.content !== undefined ? <><button type="button" onClick={() => downloadText(artifact.content!, artifact.filename, artifact.mime_type)}><Download size={15} />{artifact.kind === "answer" ? "Markdown" : "下载源文件"}</button>{artifact.kind === "answer" ? <button type="button" onClick={() => downloadText(markdownToText(artifact.content!), artifact.filename.replace(/\.md$/, ".txt"))}>TXT</button> : null}</> : null}
           {services.onSaveResult ? <button type="button" aria-expanded={saveOpen} onClick={() => setSaveOpen(value => !value)}><FolderPlus size={15} />保存到文件库</button> : null}
+          {artifact.asset && services.onLoadAttachment ? <PngExportButton key={artifact.asset.id} filename={artifact.filename} disabled={busy} load={async signal => (await services.onLoadAttachment!(artifact.asset!, signal)).file} /> : null}
           {artifact.asset && services.onLoadAttachment ? <button type="button" disabled={busy} onClick={() => void downloadImage()}><Download size={15} />下载原图</button> : null}
         </div>
         {artifact.assets?.length ? <p className="chat-result-notice">Markdown 下载保留图片引用；图片可分别下载。保存到文件库会同时保存文字与图片副本。</p> : null}

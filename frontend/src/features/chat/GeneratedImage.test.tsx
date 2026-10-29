@@ -40,6 +40,31 @@ it("downloads privately and uses the generated resource for preview and archive"
   expect(save).toHaveBeenCalledWith(12, "asset:asset", true);
 });
 
+it("exports PNG with a PNG filename through the private original loader", async () => {
+  const file = new Blob(["png"], { type: "image/png" });
+  const load = vi.fn().mockResolvedValue({ file });
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+    expect(this.download).toBe("生成图片.png");
+  });
+  render(<AssetOriginalContext.Provider value={load}><GeneratedImage asset={asset} messageId={12} /></AssetOriginalContext.Provider>);
+  fireEvent.click(screen.getByRole("button", { name: "导出 PNG" }));
+  await waitFor(() => expect(HTMLAnchorElement.prototype.click).toHaveBeenCalledOnce());
+  expect(load).toHaveBeenCalledWith(asset, expect.any(AbortSignal));
+  expect(URL.createObjectURL).toHaveBeenCalledWith(file);
+});
+
+it("cancels PNG export when the image is unmounted", async () => {
+  let resolve!: (value: { file: Blob }) => void;
+  const load = vi.fn().mockImplementation(() => new Promise(r => { resolve = r; }));
+  const view = render(<AssetOriginalContext.Provider value={load}><GeneratedImage asset={asset} messageId={12} /></AssetOriginalContext.Provider>);
+  fireEvent.click(screen.getByRole("button", { name: "导出 PNG" }));
+  const signal = load.mock.calls[0][1] as AbortSignal;
+  view.unmount(); resolve({ file: new Blob(["png"], { type: "image/png" }) });
+  await Promise.resolve();
+  expect(signal.aborted).toBe(true);
+  expect(HTMLAnchorElement.prototype.click).not.toHaveBeenCalled();
+});
+
 it("aborts a pending private download on close without producing a late file", async () => {
   let resolve!: (value: { file: Blob }) => void;
   const load = vi.fn().mockImplementation(() => new Promise(r => { resolve = r; }));
