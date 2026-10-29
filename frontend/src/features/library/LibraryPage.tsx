@@ -783,10 +783,9 @@ export function LibraryPage(props: Props) {
                             : "这里还没有文件"}
                   </h3>
                   <p>
-                    {query || filterActive ? "试试其他关键词，或清除筛选扩大范围。" : category === "trash" ? "删除的文件会在这里保留，可以恢复。" : fileType === "video" ? "视频分类已准备好，当前暂不支持上传视频。" : "上传文件或新建笔记，开始整理资料。"}
+                    {query || filterActive ? "试试其他关键词，或清除筛选扩大范围。" : category === "trash" ? "删除的文件会在这里保留，可以恢复。" : fileType === "video" ? "视频分类已准备好，当前暂不支持上传视频。" : "将文件拖入此处，开始整理资料。"}
                   </p>
-                  {(query || filterActive) ? <button type="button" className="fl-button" onClick={() => { setQuery(""); resetFilters(); }}>清除搜索和筛选</button>
-                    : category === "all" && fileType !== "video" ? <button type="button" className="fl-button primary" disabled={disabled} onClick={() => input.current?.click()}><Upload size={16} />上传文件</button> : null}
+                  {(query || filterActive) && <button type="button" className="fl-button" onClick={() => { setQuery(""); resetFilters(); }}>清除搜索和筛选</button>}
                 </div>
               ) : (
                 <>{[

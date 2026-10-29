@@ -65,6 +65,19 @@ async function preview() {
 }
 describe("file library", () => {
   afterEach(cleanup);
+  it("accepts dropped files in the empty page without an upload button", async () => {
+    const p = props();
+    const view = render(<LibraryPage {...p} sources={[]} />);
+    expect(screen.queryByRole("button", { name: "上传文件" })).not.toBeInTheDocument();
+    expect(screen.getByText("将文件拖入此处，开始整理资料。")).toBeInTheDocument();
+    const browser = view.container.querySelector(".fl-browser")!;
+    const file = new File(["example"], "笔记.txt", { type: "text/plain" });
+    fireEvent.dragOver(browser, { dataTransfer: { files: [file] } });
+    expect(screen.getByText("松开即可添加文件")).toBeInTheDocument();
+    fireEvent.drop(browser, { dataTransfer: { files: [file] } });
+    await waitFor(() => expect(p.onImportFiles).toHaveBeenCalledWith([file], null, null));
+    expect(screen.queryByText("松开即可添加文件")).not.toBeInTheDocument();
+  });
   it("uses just four header tabs and hides the search/filter toolbar by default", () => {
     render(<LibraryPage {...props()} />);
     const tabs = screen.getByRole("navigation", { name: "文件类型" });
