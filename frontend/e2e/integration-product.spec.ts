@@ -56,11 +56,12 @@ test("new account imports, corrects and reviews knowledge through the real backe
   await expect(log).toContainText("等待你确认");
   await expect(page.getByRole("button", { name: "发送" })).toBeVisible();
   await page.goto("/#/library");
+  await page.getByRole("button", { name: "文件库更多选项" }).click();
   await page.getByRole("button", { name: "知识", exact: true }).click();
   await expect(page.getByRole("region", { name: "待确认内容" })).toContainText("每周整理一次阅读笔记");
   await page.getByRole("button", { name: "确认", exact: true }).click();
   await expect(page.getByRole("region", { name: "待确认内容" })).toContainText("暂无待确认知识");
-  await page.getByRole("button", { name: "文件", exact: true }).click();
+  await page.getByRole("button", { name: "全部", exact: true }).click();
   await page.getByRole("button", { name: "操作 reading" }).click();
   await page.getByRole("button", { name: "快速预览" }).click();
   // 勾选框由接口结果驱动，点击后等待保存完成再断言，而不是要求点击当下立即变化。
@@ -74,6 +75,8 @@ test("new account imports, corrects and reviews knowledge through the real backe
   await page.reload();
   await expect(list.locator("tbody tr")).toHaveCount(1);
   await expect(list).toContainText("仅存档");
+  await page.getByRole("button", { name: "文件库更多选项" }).click();
+  await page.getByRole("button", { name: "搜索与筛选" }).click();
   await page.getByRole("combobox", { name: "文件范围", exact: true }).selectOption("trash");
   await page.getByRole("button", { name: "恢复 notes" }).click();
   await expect(page.getByText("回收站是空的")).toBeVisible();

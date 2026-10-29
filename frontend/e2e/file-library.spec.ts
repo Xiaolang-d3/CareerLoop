@@ -92,6 +92,8 @@ for (const { width, theme } of [
     if (width === 375) await page.screenshot({ path: resolve(evidenceDir, "selection-mobile.png"), fullPage: true });
 
     await toolbar.getByRole("button", { name: "取消选择" }).click();
+    await page.getByRole("button", { name: "文件库更多选项" }).click();
+    await page.getByRole("button", { name: "搜索与筛选" }).click();
     await page.getByRole("button", { name: "筛选", exact: true }).click();
     await page.getByLabel("筛选来源").selectOption("note");
     await page.getByLabel("筛选来源").press("Escape");
