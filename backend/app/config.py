@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -79,6 +79,24 @@ def _int_env(name: str, default: int) -> int:
     return int(raw) if raw.isdigit() else default
 
 
+def _benchmark_api_key() -> str | None:
+    key = (os.getenv("ARTIFICIAL_ANALYSIS_API_KEY") or "").strip()
+    if key:
+        return key
+    # Hosted releases disable automatic dotenv loading. Read only this service
+    # credential from an explicitly selected file, without importing model keys
+    # or expanding references to other environment variables.
+    filename = (os.getenv("CAREERLOOP_BENCHMARK_ENV_FILE") or "").strip()
+    if not filename:
+        return None
+    try:
+        with Path(filename).open(encoding="utf-8-sig") as source:
+            values = dotenv_values(stream=source, interpolate=False)
+    except FileNotFoundError:
+        return None
+    return (values.get("ARTIFICIAL_ANALYSIS_API_KEY") or "").strip() or None
+
+
 def _resolve_allowed_origins(bind_host: str) -> list[str]:
     """Loopback origins always work; extra hosts must be named explicitly."""
     origins = _origins_for_hosts(["127.0.0.1", "localhost"])
@@ -132,5 +150,5 @@ def get_settings() -> Settings:
         agent_search_token=os.getenv("AGENT_SEARCH_TOKEN") or None,
         web_research_timeout_seconds=os.getenv("WEB_RESEARCH_TIMEOUT_SECONDS", "25"),
         web_research_max_sources=os.getenv("WEB_RESEARCH_MAX_SOURCES", "10"),
-        artificial_analysis_api_key=(os.getenv("ARTIFICIAL_ANALYSIS_API_KEY") or "").strip() or None,
+        artificial_analysis_api_key=_benchmark_api_key(),
     )
