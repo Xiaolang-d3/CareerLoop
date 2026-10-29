@@ -74,10 +74,10 @@ test("new account imports, corrects and reviews knowledge through the real backe
   await page.reload();
   await expect(list.locator("tbody tr")).toHaveCount(1);
   await expect(list).toContainText("仅存档");
-  await page.getByRole("button", { name: "回收站", exact: true }).click();
+  await page.getByRole("combobox", { name: "文件范围", exact: true }).selectOption("trash");
   await page.getByRole("button", { name: "恢复 notes" }).click();
   await expect(page.getByText("回收站是空的")).toBeVisible();
-  await page.getByRole("button", { name: "全部文件", exact: true }).click();
+  await page.getByRole("combobox", { name: "文件范围", exact: true }).selectOption("all");
   await expect(list.locator("tbody tr")).toHaveCount(2);
   await page.getByRole("checkbox", { name: "选择 notes", exact: true }).check();
   await page.getByRole("button", { name: "用于对话", exact: true }).click();
