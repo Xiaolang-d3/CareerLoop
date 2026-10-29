@@ -44,12 +44,12 @@ def test_clarification_keeps_full_execution_text_but_bounds_routing_preview(uplo
     assert len(context) < 1300
 
 
-def test_attachment_survives_more_than_four_clarification_replies(uploaded):
+def test_attachment_and_all_user_facts_survive_more_than_four_clarification_replies(uploaded):
     _, _, full, _, _ = uploaded
     state = snapshot(full)
     state.messages += [AgentMessage(role="user", content=f"补充答复 {i}") for i in range(6)]
     _, history, _ = clarification_context(state)
-    assert [m.content for m in history if m.role == "user"] == [full, *[f"补充答复 {i}" for i in range(2, 6)]]
+    assert [m.content for m in history if m.role == "user"] == [full, *[f"补充答复 {i}" for i in range(6)]]
     assert state.messages[0].content == full
 
 

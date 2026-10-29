@@ -74,7 +74,8 @@ from .orchestration import (
 )
 from .plan_builder import fallback_plan, plan_mode
 from .plan_validator import freeze_route_requirements, validate_plan
-from .resume_policy import clarification_context, clarification_from_events, needs_reply_replanning, resolve_resume_snapshot, user_intent_preview
+from .progress import DeliveryValidation, TASK_PROGRESS_GUIDANCE, clarification_repair_reason, delivery_review_messages, requests_writing_output
+from .resume_policy import clarification_context, clarification_from_events, needs_reply_replanning, relevant_clarification_history, resolve_resume_snapshot, user_intent_preview
 from .run_store import AgentRunStore, REPLAYABLE_RUN_STATUSES
 from .tool_executor import ToolExecutor
 
@@ -107,7 +108,7 @@ def _canonical_citation_url(value: str) -> str:
 def _web_source_urls(messages: list[AgentMessage]) -> set[str]:
     urls: set[str] = set()
     for message in messages:
-        if message.role != "tool" or message.payload.get("tool_name") not in WEB_RESEARCH_TOOLS:
+        if (message.role != "tool" and not message.payload.get("retained_evidence")) or message.payload.get("tool_name") not in WEB_RESEARCH_TOOLS:
             continue
         for source in message.payload.get("sources", []):
             if isinstance(source, dict) and isinstance(source.get("url"), str):
@@ -116,6 +117,7 @@ def _web_source_urls(messages: list[AgentMessage]) -> set[str]:
 
 
 def validate_web_citations(content: str, allowed_urls: set[str]) -> tuple[bool, str]:
+    """Validate link identities; evidence support is reviewed before publishing."""
     cited = cited_urls(content)
     allowed = {_canonical_citation_url(url) for url in allowed_urls}
     if not cited:
@@ -212,6 +214,9 @@ class RunContext:
     citation_draft: str = ""
     citation_sources: list[dict[str, Any]] = field(default_factory=list)
     citation_allowed_urls: list[str] = field(default_factory=list)
+    expects_draft: bool = False
+    delivery_retry_used: bool = False
+    degraded_tools: dict[str, ToolError] = field(default_factory=dict)
     budget: ExecutionBudget = field(default_factory=ExecutionBudget)
 
 
@@ -444,6 +449,7 @@ class AgentRuntime:
             if recent_user_context else routing_text
         )
         task_goal = (f"最新要求：{user_content}\n原任务：{task_context}" if task_context is not None else user_content)
+        expects_draft = requests_writing_output(routing_text)
         needs_public_web = requests_public_web(routing_text)
         if task_context is not None or should_classify_kind(route, routing_text):
             try:
@@ -466,6 +472,8 @@ class AgentRuntime:
                 )
                 understanding = parse_task_understanding(classified)
                 if understanding is not None:
+                    if understanding.expects_draft is not None:
+                        expects_draft = understanding.expects_draft
                     if understanding.goal.strip():
                         task_goal = understanding.goal.strip()
                     if understanding.sources is not None:
@@ -597,13 +605,19 @@ class AgentRuntime:
             events.append(event)
             await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
 
+        if expects_draft and plan is None:
+            plan = AgentPlan(goal=task_goal, route=route.kind, steps=[], expected_output=task_goal,
+                             success_criteria=["交付基于已知材料的实际草稿，缺失信息明确标注，不虚构事实"])
+        elif expects_draft and plan is not None and not plan.expected_output:
+            plan.expected_output = task_goal
+            plan.success_criteria = ["交付基于已知材料的实际草稿，缺失信息明确标注，不虚构事实"]
         if plan is not None:
             route = freeze_route_requirements(route, plan, tool_specs)
         egress = self._egress_context.get()
         if egress is not None:
             egress.mixed = private_context or is_mixed_run(route, tool_specs)
 
-        conversation_history = history or []
+        conversation_history = relevant_clarification_history(history or [], route.allowed_tools)
         messages = [*conversation_history]
         planned_tools = {step.tool_name for step in plan.steps} if plan is not None else set()
         interrupt_tools = INTERRUPT_TOOLS & set(self._tools.names())
@@ -668,6 +682,7 @@ class AgentRuntime:
                         "缺少继续执行所需的关键信息，或同一指代有多种合理解读时，"
                         "调用 ask_user 列出 2–4 个选项并等待用户选择，不要猜测后继续，"
                         "也不要只在正文里提问。"
+                        + TASK_PROGRESS_GUIDANCE
                     ),
                 )
             )
@@ -685,6 +700,7 @@ class AgentRuntime:
             messages=messages,
             events=events,
             interrupt_tools=interrupt_tools,
+            expects_draft=expects_draft,
             budget=ExecutionBudget(limits=self._execution_limits),
         )
         self._apply_tool_surface(ctx)
@@ -757,6 +773,9 @@ class AgentRuntime:
             citation_draft=resume.citation_draft,
             citation_sources=resume.citation_sources,
             citation_allowed_urls=resume.citation_allowed_urls,
+            expects_draft=resume.expects_draft,
+            delivery_retry_used=resume.delivery_retry_used,
+            degraded_tools=dict(resume.degraded_tools),
             budget=ExecutionBudget.restore(resume.execution_budget, messages, self._execution_limits),
         )
         approval = self._approval_context.get()
@@ -947,6 +966,9 @@ class AgentRuntime:
             citation_draft=ctx.citation_draft,
             citation_sources=ctx.citation_sources,
             citation_allowed_urls=ctx.citation_allowed_urls,
+            expects_draft=ctx.expects_draft,
+            delivery_retry_used=ctx.delivery_retry_used,
+            degraded_tools=ctx.degraded_tools,
             rounds_used=rounds_used,
             clarification=clarification,
             completed_tools=sorted(ctx.completed_tools),
@@ -1023,7 +1045,7 @@ class AgentRuntime:
         )
         ctx.events.append(event)
         await self._publish(ctx.event_callback, AgentStreamEvent(type="agent_event", event=event))
-        content = ctx.citation_draft + "\n\n> 来源引用校验未完成，已保留原始草稿；请勿将其视为已核验结论。"
+        content = "部分结论未能通过来源核验，本轮未生成可核验的最终答复。请补充可靠来源后继续。"
         await self._publish(ctx.event_callback, AgentStreamEvent(type="text_reset"))
         await self._publish(ctx.event_callback, AgentStreamEvent(type="text_delta", delta=content))
         return AgentRunResult(
@@ -1031,6 +1053,7 @@ class AgentRuntime:
             platform=ctx.platform, rounds=round_number, status="failed",
             error=ToolError(code="citation_validation_failed", message=message),
             events=ctx.events, plan=ctx.plan,
+            snapshot=self._build_snapshot(ctx, rounds_used=round_number),
         )
 
     async def _run_tool_loop(self, ctx: RunContext, *, start_round: int) -> AgentRunResult:
@@ -1053,17 +1076,17 @@ class AgentRuntime:
         completed_tool_calls = ctx.completed_tool_calls
         repeated_tool_calls = ctx.repeated_tool_calls
         tool_specs = {spec.name: spec for spec in self._tools.specs()}
-        unresolved_error: ToolError | None = None
+        unresolved_error: ToolError | None = next(iter(ctx.degraded_tools.values()), None)
         invalid_argument_retries = 0
         rejected_completions: set[tuple[str, ...]] = set()
         self._checkpoint_run(ctx, rounds_used=max(0, start_round - 1))
         # Messages appended after this point belong to the current run; anything
         # earlier is conversation history and must not be surfaced as a result.
         first_new_message = len(messages)
-        # Tool execution, final synthesis and citation formatting have separate
-        # bounded slots. Neither reserved slot is allowed to execute tools.
+        # Tool execution, final synthesis, one draft correction and citation
+        # review have bounded slots. Reserved slots cannot execute tools.
         finalization_started = False
-        for round_number in range(start_round, self._max_tool_rounds + 3):
+        for round_number in range(start_round, self._max_tool_rounds + 4):
             repairing_citations = bool(ctx.citation_draft)
             if not repairing_citations:
                 reason = ctx.budget.stop_reason()
@@ -1236,6 +1259,54 @@ class AgentRuntime:
                     continue
 
             if response.content and not response.tool_calls:
+                if ctx.expects_draft and not repairing_citations:
+                    review_error = ""
+                    try:
+                        review = await self._await_with_cancellation(asyncio.wait_for(
+                            self._generate_for_stage(provider=ctx.provider, stage="classify", request=ModelRequest(
+                                messages=delivery_review_messages(
+                                    ctx.plan.goal if ctx.plan else ctx.user_content,
+                                    ctx.plan.expected_output if ctx.plan else "交付实际草稿",
+                                    ctx.plan.success_criteria if ctx.plan else [],
+                                    messages, response.content,
+                                ), tools=[], tool_choice="none", reasoning_effort="low",
+                                parameters={"max_output_tokens": 800},
+                            )), timeout=15,
+                        ), run_id)
+                        raw_review = review.content.strip()
+                        if raw_review.startswith("```json") and raw_review.endswith("```"):
+                            raw_review = raw_review[7:-3].strip()
+                        if review.tool_calls:
+                            raise ValueError("验收不能调用工具")
+                        verdict = DeliveryValidation.model_validate_json(raw_review)
+                    except _RunCancellationRequested:
+                        return self._cancelled_run_result(selected_platform, round_number, events, ctx.plan)
+                    except Exception:
+                        review_error = "交付检查未能完成"
+                        verdict = DeliveryValidation(complete=False, reason=review_error)
+                    event = ToolEvent(
+                        round=round_number, tool_call_id=f"delivery-{round_number}", tool_name="delivery_validator",
+                        status="done" if verdict.complete else "failed" if review_error or ctx.delivery_retry_used else "running",
+                        message="草稿交付检查通过" if verdict.complete else verdict.reason or "尚未交付实际草稿",
+                    )
+                    events.append(event)
+                    await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
+                    if not verdict.complete:
+                        if ctx.delivery_retry_used or review_error:
+                            content = "本轮尚未交付符合要求的草稿：" + (verdict.reason or "没有实际成果")
+                            await self._publish(event_callback, AgentStreamEvent(type="text_reset"))
+                            await self._publish(event_callback, AgentStreamEvent(type="text_delta", delta=content))
+                            return AgentRunResult(content=content, provider=self._model_provider,
+                                platform=ctx.platform, rounds=round_number, status="failed",
+                                error=ToolError(code="delivery_requirements_unmet", message=event.message),
+                                events=events, plan=ctx.plan)
+                        ctx.delivery_retry_used = True
+                        messages.append(AgentMessage(role="assistant", content=response.content))
+                        messages.append(AgentMessage(role="system", content=(
+                            "候选正文未通过交付检查：" + verdict.reason + "。请现在直接修正并交付实际草稿，标明缺口，不再只给建议。"
+                        )))
+                        self._checkpoint_run(ctx, rounds_used=round_number)
+                        continue
                 allowed_source_urls = (
                     set(ctx.citation_allowed_urls) or {canonical_url(card["url"]) for card in ctx.citation_sources}
                     if repairing_citations else _web_source_urls(messages)
@@ -1245,14 +1316,14 @@ class AgentRuntime:
                         response.content,
                         allowed_source_urls,
                     )
-                    if not citations_valid and not ctx.citation_retry_used:
+                    if not ctx.citation_retry_used:
                         ctx.citation_retry_used = True
                         event = ToolEvent(
                             round=round_number,
                             tool_call_id=_citation_call_id(events, round_number),
                             tool_name="citation_validator",
                             status="running",
-                            message=f"{citation_error}，正在自动修正",
+                            message=f"{citation_error}，正在自动修正并核对证据" if citation_error else "正在核对正文结论与来源证据的支持关系",
                             data={"allowed_source_count": len(allowed_source_urls), "validation_reason": citation_error},
                         )
                         events.append(event)
@@ -1292,14 +1363,21 @@ class AgentRuntime:
                     if unresolved_error:
                         response = response.model_copy(update={"content": response.content + "\n\n> 任务尚未全部完成，以上仅为已获得信息的汇总。"})
                     await self._finalization_event(ctx, round_number, "failed" if unresolved_error else "done", "已整理已有信息，任务仍有未完成部分" if unresolved_error else "已根据已有信息完成汇总")
+                final_content = response.content
+                if ctx.degraded_tools:
+                    limitations = "；".join(f"{tool_specs[name].title}未完成" for name in ctx.degraded_tools)
+                    final_content = f"部分结果：{limitations}。以下仅基于已取得的材料，相关核验仍待完成。\n\n{final_content}"
+                    await self._publish(event_callback, AgentStreamEvent(type="text_reset"))
+                    await self._publish(event_callback, AgentStreamEvent(type="text_delta", delta=final_content))
                 return AgentRunResult(
-                    content=response.content,
+                    content=final_content,
                     provider=self._model_provider,
                     model_selection=self._current_model_selection(),
                     platform=selected_platform,
                     rounds=round_number,
                     status="failed" if unresolved_error else "done",
                     error=unresolved_error,
+                    stop_reason="partial_result" if ctx.degraded_tools else "",
                     events=events,
                     plan=ctx.plan,
                 )
@@ -1355,6 +1433,16 @@ class AgentRuntime:
                             payload={"tool_name": pending.name, "status": "blocked", "error": {"code": reason}},
                         ))
                     break
+                if tool_call.name == "ask_user" and (reason := clarification_repair_reason(route.kind, tool_call.arguments, messages)):
+                    event = ToolEvent(
+                        round=round_number, tool_call_id=tool_call.id, tool_name="clarification_validator",
+                        status="running", message=reason, data={"question": tool_call.arguments.get("question", "")},
+                    )
+                    events.append(event)
+                    await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
+                    messages.append(AgentMessage(role="tool", tool_call_id=tool_call.id,
+                                                 content=reason, payload={"tool_name": "ask_user", "status": "blocked", "message": reason}))
+                    continue
                 if tool_call.name not in ctx.executable_tools:
                     message = f"风险门已阻止计划外工具：{tool_call.name}"
                     event = ToolEvent(
@@ -1628,6 +1716,30 @@ class AgentRuntime:
                             self._apply_tool_surface(ctx)
                             round_error = None
                             break
+                    spec = tool_specs[tool_call.name]
+                    if (route.kind == "content_creation" and result.status == "failed"
+                            and spec.risk in {"read_only", "derived_analysis", "external_read"}
+                            and result.error is not None and result.error.code in {
+                                "tool_timeout", "tool_execution_failed", "service_unavailable",
+                                "agent_search_http_error", "agent_search_timeout", "agent_search_unavailable",
+                                "tavily_http_error", "tavily_timeout", "web_sources_not_found", "web_evidence_not_found",
+                            }):
+                        ctx.degraded_tools[tool_call.name] = result.error
+                        ctx.route = _drop_tool_from_route(ctx.route, tool_call.name)
+                        route = ctx.route
+                        ctx.plan = _drop_tool_from_plan(ctx.plan, route)
+                        self._apply_tool_surface(ctx)
+                        messages.append(AgentMessage(role="system", content=(
+                            f"{spec.title}失败，已停止继续调用该工具。本次只能部分交付，不能声称失败步骤已完成。"
+                            "请使用用户已提供材料和已取得证据继续生成可用草稿，标明待核验部分，"
+                            "不依赖失败来源补写事实，不要求用户重新开始整个任务。"
+                        )))
+                        event = ToolEvent(round=round_number, tool_call_id=f"degraded-{tool_call.id}",
+                            tool_name="task_degradation", status="done", message=f"{spec.title}未完成，继续处理已有材料",
+                            data={"failed_tool": tool_call.name, "error_code": result.error.code})
+                        events.append(event)
+                        await self._publish(event_callback, AgentStreamEvent(type="agent_event", event=event))
+                        continue
                     return AgentRunResult(
                         content=f"{result.message}。本次执行已终止，请处理后重新提问。",
                         provider=self._model_provider,
@@ -1646,7 +1758,7 @@ class AgentRuntime:
                         round_number=round_number,
                         error=result.error,
                     )
-            unresolved_error = round_error
+            unresolved_error = round_error or next(iter(ctx.degraded_tools.values()), None)
             self._checkpoint_run(ctx, rounds_used=round_number)
         notice = "工具执行已结束，最终汇总未能完成。已有执行记录和来源已保留，请重试。"
         partial = next(

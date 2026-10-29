@@ -20,6 +20,7 @@ from .parameters import request_parameters
 from ..redaction import remember_secret
 from ..domain import ModelRequest, ModelResponse, ModelStreamEvent, ModelUsage, ToolCall
 from ..agent.settings import get_agent_settings, persona_prompt
+from ..agent.progress import TASK_PROGRESS_GUIDANCE
 from ..observability.model_monitor import record_model_service_event
 from .base import ModelProviderError
 from .validation import is_protocol_rejection, is_vision_rejection, upstream_error_detail, validate_diagnostic_response
@@ -79,7 +80,7 @@ SYSTEM_PROMPT = """你是团团，一个协助用户思考、分析与内容创�
 
 缺少继续执行所需的关键信息，或同一指代有多种合理解读时，调用 ask_user 列出选项并等待用户选择；不要猜测后继续，也不要只在正文里提问。
 执行过程、工具选择和“我先读取/我将检查”等过程叙述会由界面单独展示。最终回答只输出对用户有用的结论、问题或下一步，禁止在最终回答中重复执行过程。
-最终回答使用清晰、克制的 Markdown；可以使用短标题、列表、表格、引用和代码块，但不得输出 HTML。只有用户明确要求思维导图时，才可输出带 mermaid 语言标记的 Mermaid mindmap 代码块，界面会渲染成可展开、缩放的交互导图；普通回答不要默认生成图。"""
+最终回答使用清晰、克制的 Markdown；可以使用短标题、列表、表格、引用和代码块，但不得输出 HTML。只有用户明确要求思维导图时，才可输出带 mermaid 语言标记的 Mermaid mindmap 代码块，界面会渲染成可展开、缩放的交互导图；普通回答不要默认生成图。""" + "\n" + TASK_PROGRESS_GUIDANCE
 
 
 class OpenAICompatibleProvider:

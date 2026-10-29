@@ -7,7 +7,7 @@ import pytest
 from app.domain import ModelResponse, ToolCall
 from app.models import ModelProviderError
 from app.models.configured import ConfiguredModelProvider
-from test_agent_runtime import CountingTool, ScriptedModel, runtime_for
+from test_agent_runtime import CountingTool, ScriptedModel, runtime_for, evidence_review
 
 
 INTENT = ModelResponse(content='{"kind":"conversation","sources":[],"needs_planning":false}')
@@ -41,6 +41,7 @@ def test_reports_the_phase_while_the_provider_is_still_working(phase):
                 ModelResponse(content='{"goal":"核对公开资料","steps":[{"tool_name":"search_public_web","title":"检索公开资料"}]}'),
                 ModelResponse(tool_calls=[ToolCall(id="search", name="search_public_web", arguments={"query":"公开资料"})]),
                 ModelResponse(content="已整理。[来源](https://example.com/source)"),
+                evidence_review(),
             ]
         class Gated(ScriptedModel):
             async def generate(self, request):

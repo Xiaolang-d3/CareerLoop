@@ -23,6 +23,7 @@ class AskUserArguments(BaseModel):
     question: str = Field(min_length=1, max_length=200)
     options: list[AskUserOption] = Field(min_length=2, max_length=6)
     allow_custom: bool = True
+    blocking_reason: str = Field(default="", max_length=300, description="为何此缺口阻止当前动作，不能先完成部分草稿；可选优化项不构成阻塞")
 
     @field_validator("question")
     @classmethod
@@ -66,6 +67,7 @@ class AskUserTool:
             "当继续执行缺少关键信息，或同一指代有多种合理解读时，向用户列出 2–4 个选项并暂停。"
             "不要猜测公司全称、具体岗位、项目名称或对比对象。"
             "用户点选或输入后，下一轮再继续。不要用它闲聊，也不要确认已经明确的信息。"
+            "可先完成部分草稿时先产出；真正无法继续时用 blocking_reason 说明具体阻塞。"
         ),
         input_schema=AskUserArguments.model_json_schema(),
     )

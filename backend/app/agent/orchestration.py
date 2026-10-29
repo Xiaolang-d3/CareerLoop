@@ -20,6 +20,7 @@ from .capability_resolver import (
     resolve_capabilities,
 )
 from .plan_builder import fallback_plan
+from .progress import requests_writing_output
 
 
 # Compatibility name for callers while route policy migrates to capabilities.
@@ -106,6 +107,9 @@ def route_task(
 
 def should_classify_kind(route: TaskRoute, content: str) -> bool:
     """Understand open tasks and creation requests with unspecified sources."""
+    if route.kind == "web_search" and requests_writing_output(content):
+        # Search is a source for the deliverable, not necessarily the objective.
+        return True
     if any(phrase in content for phrase in ("不要", "不需要", "不用", "无需", "不围绕")):
         return True
     if route.kind not in {"conversation", "content_creation"}:
@@ -123,7 +127,7 @@ def classifier_prompt(content: str) -> str:
     lanes = "\n".join(f"- {kind}: {label}" for kind, label in ROUTE_LABELS.items())
     today = datetime.now(timezone.utc).date().isoformat()
     return f"""分析用户当前要完成的任务及所需的信息来源。当前 UTC 日期：{today}。
-只返回 JSON：{{"kind":"车道名","goal":"结合上下文还原的当前完整目标","sources":["private_library","public_web"],"needs_planning":false}}
+只返回 JSON：{{"kind":"车道名","goal":"结合上下文还原的当前完整目标","sources":["private_library","public_web"],"needs_planning":false,"expects_draft":false}}
 允许的车道：
 {lanes}
 规则：kind 描述任务类型，sources 独立描述必要的信息来源，可以为空数组。
@@ -135,6 +139,7 @@ public_web 用于需要核实的近期情况、市场行情、公众讨论或用
 library_search 仅用于检索私人资料。不要因为历史中出现简历就选私人来源。
 只选一个车道；不确定则 kind 为 conversation；不要输出工具名；不要解释。来源需求不等于联网授权，程序会另行检查许可。
 研究、比较、综合行情与多来源讨论需要 needs_planning=true；单个事实查询、一般问答和简单改写为 false。
+用户要求实际起草、修改、提炼成简历条目、文案、文章等成果时，expects_draft=true；仅询问写法、提供材料的方式、一般知识或调研时为 false。已有写作目标后补充材料仍为 true，除非用户明确改了目标。
 用户消息：
 {content}"""
 
@@ -145,6 +150,7 @@ class TaskUnderstanding(BaseModel):
     # None supports kind-only output from older configured classifiers.
     sources: list[Literal["private_library", "public_web"]] | None = Field(default=None, max_length=2)
     needs_planning: bool = Field(default=False, strict=True)
+    expects_draft: bool | None = Field(default=None, strict=True)
 
 
 def parse_task_understanding(response: ModelResponse) -> TaskUnderstanding | None:

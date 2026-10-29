@@ -22,6 +22,10 @@ from app.tools import AskUserTool, ToolContext, ToolRegistry
 from app.tools.limits import MAX_RESULT_DATA_CHARS, MAX_RESULT_MESSAGE_CHARS
 
 
+def evidence_review():
+    return ModelResponse(content='{"verified":true,"patches":[]}')
+
+
 class ScriptedModel:
     name = "scripted"
 
@@ -235,7 +239,7 @@ class CurrentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         model = ScriptedModel([
             ModelResponse(content='{"kind":"web_search","sources":["public_web"]}'),
             ModelResponse(tool_calls=[ToolCall(id="research", name="search_public_web", arguments={"query": "这家"})]),
-            ModelResponse(content="已研究。[来源](https://example.com/source)"),
+            ModelResponse(content="已研究。[来源](https://example.com/source)"), evidence_review(),
         ])
         result = await runtime_for(model, tool).run("这家", resume=snapshot)
         self.assertEqual(result.status, "done")
@@ -298,7 +302,7 @@ class CurrentRuntimeTest(unittest.IsolatedAsyncioTestCase):
             ModelResponse(content='{"goal":"联网检索","steps":[{"tool_name":"search_public_web","title":"检索公开网页"}]}'),
             ModelResponse(tool_calls=[ToolCall(id="web-1", name="search_public_web", arguments={"query": "最新信息"})]),
             ModelResponse(content="示例信息。"),
-            ModelResponse(content=json.dumps({"patches": [{
+            ModelResponse(content=json.dumps({"verified": True, "patches": [{
                 "action": "cite_after", "target": "示例信息。", "source_id": "C1",
                 "quote": "示例信息仅用于验证公开来源的引用流程。",
             }]}, ensure_ascii=False)),
@@ -423,7 +427,7 @@ class MixedRunEgressTest(unittest.IsolatedAsyncioTestCase):
         search = CountingTool("search_public_web")
         model = ScriptedModel([
             ModelResponse(tool_calls=[ToolCall(id="web-2", name="search_public_web", arguments={"query": "最新 AI 趋势"})]),
-            ModelResponse(content="示例信息。[来源](https://example.com/source)"),
+            ModelResponse(content="示例信息。[来源](https://example.com/source)"), evidence_review(),
         ])
         resumed = await runtime_for(model, CountingTool("get_library_context"), search).run(
             APPROVE_OPTION_LABEL,
@@ -474,7 +478,7 @@ class MixedRunEgressTest(unittest.IsolatedAsyncioTestCase):
         search = CountingTool("search_public_web")
         model = ScriptedModel([
             ModelResponse(tool_calls=[ToolCall(id="web-2", name="search_public_web", arguments={"query": "最新 AI 趋势"})]),
-            ModelResponse(content="示例信息。[来源](https://example.com/source)"),
+            ModelResponse(content="示例信息。[来源](https://example.com/source)"), evidence_review(),
         ])
         resumed = await runtime_for(model, CountingTool("get_library_context"), search).run(
             "继续",
@@ -488,7 +492,7 @@ class MixedRunEgressTest(unittest.IsolatedAsyncioTestCase):
     async def test_authorized_pure_web_run_needs_no_per_query_approval(self) -> None:
         model = ScriptedModel([
             ModelResponse(tool_calls=[ToolCall(id="web-1", name="search_public_web", arguments={"query": "最新 AI 趋势"})]),
-            ModelResponse(content="示例信息。[来源](https://example.com/source)"),
+            ModelResponse(content="示例信息。[来源](https://example.com/source)"), evidence_review(),
         ])
         search = CountingTool("search_public_web")
         result = await runtime_for(model, search).run(
