@@ -34,6 +34,10 @@
 | **多模型连接** | 管理多个模型服务和模型档案，在对话中切换；支持 OpenAI 兼容接口、Responses、Anthropic、Gemini、Ollama，以及备用模型策略。 |
 | **开发者资讯首页** | 浏览 AI / Agent 动态、GitHub 日榜与周榜、关注仓库的 Releases 和工程实践；收藏线索，或带入对话继续分析。 |
 
+多用户托管在单台服务器时，设置 `CAREERLOOP_DEPLOYMENT_MODE=hosted` 和 `CAREERLOOP_SECRET_MASTER_KEY`，各用户可在“设置 → 模型设置”中保存自己的模型连接。用 `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` 生成主密钥；通过服务器安全配置注入并单独备份，禁止提交到仓库。备份用户工作区时须保留其中的 `.model-secrets` 目录，并恢复到原数据路径（凭证引用与路径绑定）；主密钥丢失后，用户需要重新配置密钥。新用户不会自动继承服务器的模型环境变量，已有环境密钥引用仍保持兼容。
+
+托管模式仅接受 HTTPS 和允许的模型服务域名：OpenAI、Anthropic、Gemini 官方域名默认允许，其他域名由管理员通过 `CAREERLOOP_MODEL_ALLOWED_HOSTS`（逗号分隔）添加。本地模式不受此限制。该域名限制不能防止 DNS 重绑定和服务端重定向；部署时必须使用出站防火墙或安全代理阻止访问本机、私有网络和云元数据地址，并使用 HTTPS 保护用户到服务器的连接。
+
 界面提供 **首页、AI 工作区、文件库、设置** 四个入口，支持浅色、深色和跟随系统外观。项目沿用 `CareerLoop` 仓库名，当前产品定位与功能以团团为准。
 
 ## 技术栈

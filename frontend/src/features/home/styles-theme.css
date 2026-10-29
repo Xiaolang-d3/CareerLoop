@@ -3,8 +3,8 @@
   --home-line: #e4e4e9; --home-line-2: #ececf0; --home-line-strong: #cfcfd8;
   --home-text: #18181b; --home-text-2: #4b4b55; --home-text-3: #686873;
   --home-hover: #f3f3f6; --home-hover-2: #ebebf0;
-  --home-accent: #5b5bd6; --home-accent-button: #5b5bd6; --home-accent-hover: #4c4cc4;
-  --home-accent-soft: #eef0ff; --home-accent-text: #4646c0;
+  --home-accent: #1769c9; --home-accent-button: #1769c9; --home-accent-hover: #1256aa;
+  --home-accent-soft: #e8f4ff; --home-accent-text: #1256aa;
   --home-warn-bg: #fff8eb; --home-warn-line: #f0d49c; --home-warn-text: #7a4a00;
   --home-danger-bg: #fdeeee; --home-danger-line: #f3c4c4; --home-danger-text: #a8200f;
   --home-delta: #15803d; --home-skeleton: #ececf0; --home-skeleton-2: #f6f6f8;
@@ -14,12 +14,12 @@
 }
 :root[data-theme="dark"] .home-page, :root[data-theme="dark"] .developer-home-shell {
   color-scheme: dark;
-  --home-bg: #0e0e11; --home-panel: #16161a; --home-panel-2: #1b1b20;
-  --home-line: #2e2e36; --home-line-2: #26262d; --home-line-strong: #45454f;
-  --home-text: #ededf0; --home-text-2: #b8b8c2; --home-text-3: #9393a0;
-  --home-hover: #1f1f25; --home-hover-2: #282830;
-  --home-accent: #8585f5; --home-accent-button: #5858d4; --home-accent-hover: #6464e0;
-  --home-accent-soft: #25254a; --home-accent-text: #b4b4ff;
+  --home-bg: var(--color-bg); --home-panel: var(--color-surface); --home-panel-2: var(--color-surface-subtle);
+  --home-line: var(--color-border); --home-line-2: var(--color-border); --home-line-strong: var(--color-border-strong);
+  --home-text: var(--color-text); --home-text-2: var(--color-text-secondary); --home-text-3: var(--color-text-muted);
+  --home-hover: var(--color-surface-subtle); --home-hover-2: var(--color-surface-emphasis);
+  --home-accent: #8bc8ff; --home-accent-button: #1769c9; --home-accent-hover: #237bdd;
+  --home-accent-soft: #183650; --home-accent-text: #b6e7ff;
   --home-warn-bg: #2b2110; --home-warn-line: #5a4520; --home-warn-text: #f2c46a;
   --home-danger-bg: #2e1515; --home-danger-line: #5c2a2a; --home-danger-text: #ffa196;
   --home-delta: #6ee7a0; --home-skeleton: #24242b; --home-skeleton-2: #30303a;
@@ -57,7 +57,7 @@
 .home-count { color: var(--home-text-3); background: var(--home-hover); }
 .home-module-foot, .home-more-link { color: var(--home-text-3) !important; }
 .home-more-link:hover { color: var(--home-accent-text) !important; }
-.home-card { background: var(--home-panel); border-color: var(--home-line-2); }
+.home-card { background: var(--home-panel-2); border-color: var(--home-line-2); }
 .home-card:hover { border-color: var(--home-line-strong); box-shadow: var(--home-shadow-small); }
 .home-card:has(.home-card-title a:focus-visible) { border-color: var(--home-accent); }
 .home-card-media { background: var(--home-hover); box-shadow: inset 0 0 0 1px var(--home-line-2); }

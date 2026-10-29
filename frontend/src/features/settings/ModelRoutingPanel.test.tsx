@@ -19,6 +19,25 @@ async function open() {
 }
 
 describe("ModelRoutingPanel", () => {
+  it("retains a historical role without offering other-service models as new choices", async () => {
+    const other = { id: "old", connection_id: "historical", model_name: "历史模型", enabled: true, revision: 1 };
+    const singleService: ModelCatalog = { ...catalog, service_connection_id: "c", connections: [...catalog.connections, { ...catalog.connections[0], id: "historical", name: "旧服务" }], profiles: [...catalog.profiles, other] };
+    const fetchJson = vi.fn().mockResolvedValue({ ...initial, roles: { plan: "old" } });
+    render(<ModelRoutingPanel fetchJson={fetchJson as unknown as Client} catalog={singleService} onApplied={vi.fn()} />);
+    await open();
+    expect(screen.getByRole("combobox", { name: "任务规划模型" })).toHaveValue("old");
+    expect(screen.getAllByRole("option", { name: "历史模型（历史服务配置）" })).toHaveLength(1);
+    expect(screen.getByRole("option", { name: "历史模型（历史服务配置）" })).toBeDisabled();
+    expect(screen.queryByRole("option", { name: "旧服务 / 历史模型" })).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("历史服务配置");
+    fireEvent.click(screen.getByRole("checkbox"));
+    expect(screen.getByRole("button", { name: "保存分工" })).toBeDisabled();
+    fireEvent.change(screen.getByRole("combobox", { name: "任务规划模型" }), { target: { value: "p" } });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "保存分工" })).toBeEnabled();
+    expect(fetchJson).toHaveBeenCalledTimes(1);
+  });
+
   it("loads only on demand and saves the three roles with version checking", async () => {
     const fetchJson = vi.fn().mockResolvedValueOnce(initial).mockResolvedValueOnce({ ...initial, version: 2, roles: { plan: "p", execute: "p" } });
     const onApplied = vi.fn().mockResolvedValue(undefined);

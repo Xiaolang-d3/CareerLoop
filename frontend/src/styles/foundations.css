@@ -10,15 +10,15 @@
   --color-bg: #f7f6fb;
   --color-surface: #ffffff;
   --color-surface-subtle: #f0eff8;
-  --color-surface-emphasis: #eeecff;
+  --color-surface-emphasis: #e8f4ff;
   --color-text: #20213a;
   --color-text-secondary: #50516a;
   --color-text-muted: #84859a;
   --color-border: #e4e2ef;
   --color-border-strong: #d3d0e3;
-  --color-brand: #6557dc;
-  --color-brand-strong: #4e42ba;
-  --color-brand-soft: #eeecff;
+  --color-brand: #1769c9;
+  --color-brand-strong: #1256aa;
+  --color-brand-soft: #e8f4ff;
   --color-success: #157b67;
   --color-success-soft: #e4f6ef;
   --color-warning: #a56a19;
@@ -45,7 +45,7 @@
 
   --shadow-sm: 0 1px 2px rgba(34, 28, 72, .03), 0 8px 24px rgba(34, 28, 72, .05);
   --shadow-md: 0 18px 48px rgba(37, 28, 80, .09);
-  --focus-ring: 0 0 0 3px rgba(101, 87, 220, .16);
+  --focus-ring: 0 0 0 3px rgba(23, 105, 201, .16);
 
   /* Compatibility aliases while feature styles are migrated. */
   --ink: var(--color-text);

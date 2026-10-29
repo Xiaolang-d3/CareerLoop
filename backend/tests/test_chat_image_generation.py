@@ -44,7 +44,7 @@ def images(tmp_path):
     return path, conversation['id']
 
 
-@pytest.mark.parametrize('prompt,expected', [('帮我生成一张图片：海边灯塔', True), ('画一只蓝色的猫', True),
+@pytest.mark.parametrize('prompt,expected', [('帮我生成一张图片：海边灯塔', True), ('“请生成这张图片：\n一只蓝色的小狗', True), ('画一只蓝色的猫', True),
     ('Generate an image of a cat', True), ('请解释如何生成图片', False), ('生成图片的原理是什么', False),
     ('总结这份文档\n帮我生成一张图片', False), ('整理成思维导图', False), ('生成一个图表', False),
     ('帮我画个思维导图', False), ('绘制流程图', False), ('可以生成图片吗', False), ('生成图片需要多少钱', False),

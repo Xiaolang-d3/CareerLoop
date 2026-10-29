@@ -247,6 +247,17 @@ def image_catalog(profiles):
     }
 
 
+def test_configured_image_default_wins_unless_user_explicitly_selects_image_model(catalog):
+    path, profiles = catalog
+    connection = {**bind(profiles, path), "model_name": "grok-4.7", "model_protocol": "responses"}
+    available = {**image_catalog(profiles), "purpose_defaults": {"image": "image-profile"}}
+    image = {**profiles["explicit"], "model_name": "gpt-image-2", "model_protocol": "images", "profile_id": "image-profile"}
+    chosen = bind_image_model(connection, catalog=available, resolve=lambda _: image)
+    assert chosen["selection_reason"] == "image_default"
+    assert chosen["stage_selections"]["execute"]["profile_id"] == "image-profile"
+    assert bind_image_model(connection, catalog=available, resolve=lambda _: pytest.fail("explicit model wins"), explicit_profile=True) is connection
+
+
 def test_image_intent_binds_image_executor_and_freezes_it_on_restore(catalog, monkeypatch):
     _, profiles = catalog
     image = {**profiles["explicit"], "model_name": "gpt-image-2", "model_protocol": "images", "profile_id": "image-profile"}

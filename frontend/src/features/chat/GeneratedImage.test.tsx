@@ -72,7 +72,7 @@ it("reveals and copies the full submitted prompt without previewing or regenerat
 it("does not invent prompts for historical images without one and keeps portrait frames fitted", () => {
   const view = render(<GeneratedImage asset={{ ...asset, width: 1402, height: 1122 }} messageId={12} />);
   expect(screen.queryByText("生成提示词")).not.toBeInTheDocument();
-  expect(parseFloat(view.container.querySelector("figure")!.style.maxWidth)).toBeCloseTo(460 * 1402 / 1122);
+  expect(parseFloat(view.container.querySelector("figure")!.style.maxWidth)).toBeCloseTo(320 * 1402 / 1122);
 });
 
 it("keeps the prompt readable when clipboard access fails", async () => {

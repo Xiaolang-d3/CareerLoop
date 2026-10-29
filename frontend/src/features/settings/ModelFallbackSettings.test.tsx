@@ -26,6 +26,31 @@ const policy: ModelFallbackPolicy = {
 };
 
 describe("ModelFallbackSettings", () => {
+  it("offers only current-service models while retaining saved historical selections", async () => {
+    const historical = { ...policy, enabled: true, fallback_profile_ids: ["p2"] };
+    const fetchJson = vi.fn().mockResolvedValueOnce(historical).mockImplementationOnce(async (_path: string, init: RequestInit) => ({ ...JSON.parse(String(init.body)), revision: 5, backend: "litellm" }));
+    render(<ModelFallbackSettings catalog={{ ...catalog, service_connection_id: "c1" }} fetchJson={fetchJson as unknown as Client} busy={false} />);
+    const retained = await screen.findByLabelText("备用模型：claude-sonnet-4-5（Claude）");
+    expect(retained).toBeChecked();
+    expect(screen.getByText(/历史选择已保留/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("备用模型：claude-haiku-4-5（Claude）")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("超长上下文时换用：claude-sonnet-4-5（Claude）")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("冷却时间（秒）"), { target: { value: "120" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存备用模型" }));
+    await waitFor(() => expect(fetchJson).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(fetchJson.mock.calls[1][1].body).fallback_profile_ids).toEqual(["p2"]);
+  });
+
+  it("removes a historical fallback only on explicit deselection and restores it on undo", async () => {
+    const fetchJson = vi.fn().mockResolvedValue({ ...policy, enabled: true, fallback_profile_ids: ["p2"] });
+    render(<ModelFallbackSettings catalog={{ ...catalog, service_connection_id: "c1" }} fetchJson={fetchJson as unknown as Client} busy={false} />);
+    fireEvent.click(await screen.findByLabelText("备用模型：claude-sonnet-4-5（Claude）"));
+    expect(screen.queryByLabelText("备用模型：claude-sonnet-4-5（Claude）")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "撤销修改" }));
+    expect(screen.getByLabelText("备用模型：claude-sonnet-4-5（Claude）")).toBeChecked();
+    expect(fetchJson).toHaveBeenCalledTimes(1);
+  });
+
   it("orders fallbacks, sets retries and cooldown, and saves with the revision", async () => {
     const fetchJson = vi.fn().mockResolvedValueOnce(policy).mockImplementationOnce(async (_path: string, init: RequestInit) => ({ ...JSON.parse(String(init.body)), revision: 5, backend: "litellm" }));
     render(<ModelFallbackSettings catalog={catalog} fetchJson={fetchJson as unknown as Client} busy={false} />);

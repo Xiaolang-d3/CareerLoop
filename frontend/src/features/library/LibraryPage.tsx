@@ -6,6 +6,7 @@ import {
   Expand,
   FileImage,
   FileText,
+  Film,
   Folder,
   FolderPlus,
   Info,
@@ -40,7 +41,7 @@ import { LibraryDialog } from "./LibraryDialog";
 import { LibraryFilters } from "./LibraryFilters";
 import { LibraryKnowledgePanel } from "./LibraryKnowledgePanel";
 import { LibraryCollections } from "./LibraryCollections";
-import { emptyFileFilters, hasReadableText, knowledgeLabel, knowledgeUse, visibleLibrarySources, type FileFilters, type LibraryCategory } from "./library-state";
+import { emptyFileFilters, hasReadableText, knowledgeLabel, knowledgeUse, visibleLibrarySources, type FileFilters, type LibraryCategory, type LibraryFileType } from "./library-state";
 import "./file-library.css";
 import "./library-architecture.css";
 
@@ -172,6 +173,7 @@ export function LibraryPage(props: Props) {
   const [collectionId, setCollectionId] = useState<number | null>(null);
   const [area, setArea] = useState<"files" | "knowledge">("files");
   const [filters, setFilters] = useState<FileFilters>(emptyFileFilters);
+  const [fileType, setFileType] = useState<LibraryFileType>("all");
   const [unfiled, setUnfiled] = useState(false);
   const [category, setCategory] = useState<Category>("all"),
     [folderId, setFolderId] = useState<number | null>(null);
@@ -240,13 +242,22 @@ export function LibraryPage(props: Props) {
   useEffect(() => {
     setSelected((current) => current.filter((id) => sources.some((source) => source.id === id)));
   }, [sources]);
-  const visible = visibleLibrarySources(sources, { category, folderId, unfiled, filters, query, searchIds, ascending, collectionSourceIds: collection?.source_ids });
-  const filterActive = collectionId !== null || folderId !== null || unfiled || filters.origin !== "all" || filters.knowledge !== "all";
+  const mediaLibrary = fileType === "image" || fileType === "video";
+  const effectiveFilters = mediaLibrary ? { ...filters, knowledge: "all" as const } : filters;
+  const visible = visibleLibrarySources(sources, { category, fileType, folderId, unfiled, filters: effectiveFilters, query, searchIds, ascending, collectionSourceIds: collection?.source_ids });
+  const typeCounts = { all: 0, image: 0, document: 0, video: 0 };
+  for (const source of sources) {
+    if (source.trashed_at) continue;
+    typeCounts.all++;
+    const type = source.mime_type.startsWith("image/") ? "image" : source.mime_type.startsWith("video/") ? "video" : "document";
+    typeCounts[type]++;
+  }
+  const filterActive = collectionId !== null || folderId !== null || unfiled || filters.origin !== "all" || effectiveFilters.knowledge !== "all";
   const scopeLabel = query
     ? "搜索结果"
     : category === "trash"
       ? "已删除文件"
-      : collection?.name || (filters.knowledge === "ready" ? "长期使用的资料" : category === "all" ? "" : categories.find(([key]) => key === category)?.[1] || "");
+      : collection?.name || (effectiveFilters.knowledge === "ready" ? "长期使用的资料" : category === "all" ? ({ all: "全部文件", image: "图片库", document: "文档库", video: "视频库" }[fileType]) : categories.find(([key]) => key === category)?.[1] || "");
   function resetFilters() {
     setFolderId(null);
     setUnfiled(false);
@@ -517,15 +528,18 @@ export function LibraryPage(props: Props) {
               if (key === "original") setDraft(null);
             }}
           >
-            {key === "original" ? "原文件" : "AI 读取内容"}
+            {key === "original" ? "原文件" : preview.mime_type.startsWith("image/") ? "图片文字与说明" : preview.mime_type.startsWith("video/") ? "视频说明" : "AI 读取内容"}
           </button>
         ))}
         <span>
           <Info size={15} />
-          {preview.privacy_mode === "original" ? "模型使用原文" : "模型使用脱敏文本"}
+          {preview.privacy_mode === "original" ? "模型使用原始文字" : "模型使用脱敏文字"}
         </span>
       </nav>
       <div className="fl-preview-scroll">
+        {(preview.mime_type.startsWith("image/") || preview.mime_type.startsWith("video/")) && <p className="fl-media-notice" role="note">
+          {preview.mime_type.startsWith("image/") ? "图片可预览；导入时会尝试在本机提取图片中的文字。用于对话时只提供提取或补充的文字，暂不直接分析画面。" : "视频暂不支持上传、播放或分析画面与声音。"}
+        </p>}
         {draft !== null ? (
           <label className="fl-text-page">
             编辑用于问答的文字
@@ -545,7 +559,7 @@ export function LibraryPage(props: Props) {
                 void run(async () => { await props.onUpdateSource(preview.id, { enabled }); await reloadPreview(preview.id); });
               }} />
           </label>
-          <p>{!hasReadableText(preview) ? "暂无可检索正文，请先补充 AI 读取内容。" : preview.enabled ? "可在后续对话中检索，遵循资料记忆设置。" : "仅存档。手动用于对话不会开启长期使用。"}</p>
+          <p>{!hasReadableText(preview) ? (preview.mime_type.startsWith("image/") || preview.mime_type.startsWith("video/") ? "暂无可检索文字，可添加说明后用于文字检索。" : "暂无可检索正文，请先补充 AI 读取内容。") : preview.enabled ? "可在后续对话中检索，遵循资料记忆设置。" : "仅存档。手动用于对话不会开启长期使用。"}</p>
           {collections.some((item) => item.source_ids.includes(preview.id)) && <small>主题：{collections.filter((item) => item.source_ids.includes(preview.id)).map((item) => item.name).join("、")}</small>}
         </section>
         <details>
@@ -565,7 +579,7 @@ export function LibraryPage(props: Props) {
         <div>
           {mode === "text" &&
             (draft === null ? (
-              <Button label="编辑正文" action={() => setDraft(preview.content)} />
+              <Button label={preview.mime_type.startsWith("image/") || preview.mime_type.startsWith("video/") ? "编辑文字说明" : "编辑正文"} action={() => setDraft(preview.content)} />
             ) : (
               <>
                 <Button
@@ -701,20 +715,19 @@ export function LibraryPage(props: Props) {
                 </label>
               </div>
               <div className="fl-module-navigation">
-                <nav aria-label="文件分类">
-                  {categories.map(([key, label]) => (
-                    <button
-                      type="button"
-                      key={key}
-                      className={`${category === key ? "active" : ""} ${key === "trash" ? "is-quiet" : ""}`}
-                      aria-current={category === key ? "page" : undefined}
-                      onClick={() => choose(key)}
-                    >
-                      {label}
-                    </button>
+                <nav aria-label="文件类型" title="数量为文件库中未删除文件总数">
+                  {([["all", "全部文件", Folder], ["image", "图片库", FileImage], ["document", "文档库", FileText], ["video", "视频库", Film]] as const).map(([key, label, Icon]) => (
+                    <button type="button" key={key} className={fileType === key ? "active" : ""}
+                      aria-current={fileType === key ? "page" : undefined}
+                      onClick={() => { setFileType(key); setSelected([]); closePreview(); }}><Icon size={16} aria-hidden="true" />{label}<span className="fl-type-count" aria-hidden="true">{typeCounts[key]}</span></button>
                   ))}
                 </nav>
                 <div className="fl-scope-controls">
+                  <label className="fl-scope-select">
+                    <select aria-label="文件范围" value={category} onChange={(event) => { setCategory(event.target.value as Category); setSelected([]); closePreview(); }}>
+                      {categories.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                    </select>
+                  </label>
                   <label className={`fl-scope-select${folderId !== null || unfiled ? " is-active" : ""}`} title="目录是存放位置，一份文件只属于一个目录">
                     <Folder size={14} />
                     <select aria-label="筛选目录" value={unfiled ? "unfiled" : folderId ?? "all"}
@@ -731,9 +744,9 @@ export function LibraryPage(props: Props) {
                     </select>
                   </label>
                   <LibraryCollections collections={collections} selectedId={collectionId} busy={working}
-                    onSelect={(id) => { choose("all"); setCollectionId(id); }}
+                    onSelect={(id) => { setCollectionId(id); setSelected([]); closePreview(); }}
                     onRename={(id) => show("renameCollection", [id])} onDelete={(id) => show("deleteCollection", [id])} />
-                  <LibraryFilters filters={filters} onChange={(next) => { setFilters(next); setSelected([]); }} />
+                  <LibraryFilters filters={filters} showKnowledge={!mediaLibrary} onChange={(next) => { setFilters(next); setSelected([]); }} />
                   <div className="fl-view-controls">
                     <button type="button" className="fl-sort" aria-pressed={ascending} aria-label={ascending ? "按时间从新到旧" : "按时间从旧到新"}
                       title={ascending ? "当前从旧到新，点击切换" : "当前从新到旧，点击切换"} onClick={() => setAscending(!ascending)}>
@@ -748,7 +761,7 @@ export function LibraryPage(props: Props) {
               </div>
               {selected.length > 8 && category !== "trash" && <p className="fl-use-warning" role="status">一次对话最多带入 8 个文件，请减少选择。</p>}
               {selected.some((id) => !hasReadableText(sources.find((source) => source.id === id)!)) && category !== "trash" &&
-                <p className="fl-use-warning" role="status">所选文件中有无可检索正文的文件。请先打开文件，补充 AI 读取内容。</p>}
+                <p className="fl-use-warning" role="status">所选文件中有无可检索文字的文件。请先打开文件，补充文字或说明；图片与视频画面不会直接用于分析。</p>}
               <div className="fl-files-heading">
                 <div className="fl-file-context">
                   <nav className="fl-breadcrumb" aria-label="文件路径">
@@ -777,8 +790,10 @@ export function LibraryPage(props: Props) {
                             : "这里还没有文件"}
                   </h3>
                   <p>
-                    {query || filterActive ? "试试其他关键词，或清除筛选扩大范围。" : category === "trash" ? "删除的文件会在这里保留，可以恢复。" : "上传文件或新建笔记，开始整理资料。"}
+                    {query || filterActive ? "试试其他关键词，或清除筛选扩大范围。" : category === "trash" ? "删除的文件会在这里保留，可以恢复。" : fileType === "video" ? "视频分类已准备好，当前暂不支持上传视频。" : "上传文件或新建笔记，开始整理资料。"}
                   </p>
+                  {(query || filterActive) ? <button type="button" className="fl-button" onClick={() => { setQuery(""); resetFilters(); }}>清除搜索和筛选</button>
+                    : category === "all" && fileType !== "video" ? <button type="button" className="fl-button primary" disabled={disabled} onClick={() => input.current?.click()}><Upload size={16} />上传文件</button> : null}
                 </div>
               ) : (
                 <table className={`fl-table ${grid ? "fl-grid" : ""}`} aria-label="文件列表">
@@ -795,7 +810,7 @@ export function LibraryPage(props: Props) {
                         />
                       </th>
                       <th>名称</th>
-                      <th className="fl-status">AI 使用</th>
+                      {!mediaLibrary && <th className="fl-status">AI 使用</th>}
                       <th className="fl-size">大小</th>
                       <th className="fl-date">修改时间</th>
                       <th className="fl-actions">
@@ -856,7 +871,7 @@ export function LibraryPage(props: Props) {
                             {source.favorite && <Star size={14} className="fl-favorite" fill="currentColor" />}
                           </div>
                         </td>
-                        <td className="fl-status"><span className={`fl-knowledge-badge ${source.trashed_at ? "archive" : knowledgeUse(source)}`}>{knowledgeLabel(source)}</span></td>
+                        {!mediaLibrary && <td className="fl-status"><span className={`fl-knowledge-badge ${source.trashed_at ? "archive" : knowledgeUse(source)}`}>{knowledgeLabel(source)}</span></td>}
                         <td className="fl-size">{sizeLabel(source)}</td>
                         <td className="fl-date" title={source.updated_at}>
                           {dateLabel(source.updated_at)}

@@ -21,8 +21,14 @@ export function ModelRoutingPanel({ fetchJson, catalog, disabled = false, onAppl
   const [notice, setNotice] = useState("");
   const task = useRef({ id: 0, writing: false, controller: null as AbortController | null });
   useEffect(() => () => { task.current.id += 1; task.current.controller?.abort(); }, [fetchJson]);
-  const profiles = catalog.profiles.filter(profile => profile.enabled && catalog.connections.some(connection => connection.id === profile.connection_id && connection.enabled));
+  const profiles = catalog.profiles.filter(profile => profile.enabled
+    && (!catalog.service_connection_id || profile.connection_id === catalog.service_connection_id)
+    && catalog.connections.some(connection => connection.id === profile.connection_id && connection.enabled));
   const missing = Boolean(draft && Object.values(draft.roles).some(id => id && !profiles.some(profile => profile.id === id)));
+  const historical = Boolean(catalog.service_connection_id && draft && Object.values(draft.roles).some(id => {
+    const profile = catalog.profiles.find(item => item.id === id);
+    return profile && profile.connection_id !== catalog.service_connection_id;
+  }));
   const dirty = Boolean(draft && saved && JSON.stringify(draft) !== JSON.stringify(saved));
 
   async function request(save: boolean) {
@@ -70,13 +76,13 @@ export function ModelRoutingPanel({ fetchJson, catalog, disabled = false, onAppl
         {stages.map(([stage, title, description]) => <label key={stage}><span>{title}<small>{description}</small></span>
           <select aria-label={`${title}模型`} value={draft.roles[stage] || ""} onChange={event => setDraft({ ...draft, roles: { ...draft.roles, [stage]: event.target.value || null } })}>
             <option value="">使用账号默认模型</option>
-            {draft.roles[stage] && !profiles.some(profile => profile.id === draft.roles[stage]) ? <option value={draft.roles[stage]!}>已停用或不存在的模型</option> : null}
+            {draft.roles[stage] && !profiles.some(profile => profile.id === draft.roles[stage]) ? <option value={draft.roles[stage]!} disabled>{catalog.profiles.find(profile => profile.id === draft.roles[stage])?.model_name || "已停用或不存在的模型"}{catalog.profiles.some(profile => profile.id === draft.roles[stage] && catalog.service_connection_id && profile.connection_id !== catalog.service_connection_id) ? "（历史服务配置）" : ""}</option> : null}
             {profiles.map(profile => <option key={profile.id} value={profile.id}>{catalog.connections.find(connection => connection.id === profile.connection_id)?.name} / {profile.model_name}</option>)}
           </select></label>)}
         <label className="model-routing-strict"><input type="checkbox" checked={draft.strict_capabilities} onChange={event => setDraft({ ...draft, strict_capabilities: event.target.checked })} />仅使用已确认支持所需能力的模型</label>
         <p className="model-connections-hint">开启后，图片、工具或流式能力未知的模型会被阻止调用。默认允许尝试未知能力，并明确记录为未验证。</p>
       </fieldset> : null}
-      {missing ? <p role="alert" className="model-capability-error">所选阶段模型已停用或不存在，请重新选择。</p> : null}
+      {missing ? <p role="alert" className="model-capability-error">{historical ? "所选阶段模型包含历史服务配置，请更换为当前服务的模型。" : "所选阶段模型已停用或不存在，请重新选择。"}</p> : null}
       <div className="model-connection-actions"><button type="button" disabled={busy || disabled || !dirty || missing} onClick={() => void request(true)}>{busy && saved ? "正在保存…" : "保存分工"}</button>
         <button type="button" disabled={busy} onClick={() => void request(false)}>重新读取</button>
         {dirty ? <button type="button" disabled={busy} onClick={() => { setDraft(saved); setError(""); }}>取消修改</button> : null}</div>

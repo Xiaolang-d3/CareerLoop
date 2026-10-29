@@ -54,13 +54,19 @@ class ProfileUpdateIn(BaseModel):
     enabled: bool | None = None
     parameters: dict[str, float | int] | None = None
     context_limit: int | None = Field(default=None, ge=1)
-    capabilities: dict[Literal["vision", "tools", "streaming", "image_generation"], Literal["supported", "unsupported", "unknown"]] | None = None
+    capabilities: dict[Literal["vision", "tools", "streaming", "chat", "image_generation", "video_generation"], Literal["supported", "unsupported", "unknown"]] | None = None
     reasoning_effort: ReasoningEffort | None = None
 
 
 class DefaultProfileIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     profile_id: str = Field(min_length=1, max_length=120)
+
+
+class PurposeDefaultIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    profile_id: str | None = Field(default=None, min_length=1, max_length=120)
+    expected_version: int = Field(ge=1)
 
 
 class ConversationModelUpdate(ConversationUpdate):

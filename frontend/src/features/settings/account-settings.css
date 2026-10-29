@@ -27,7 +27,7 @@
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, .36),
     inset 0 -1px 1px rgba(49, 40, 120, .2),
-    0 0 0 1px rgba(101, 87, 220, .22),
+    0 0 0 1px rgba(23, 105, 201, .22),
     0 8px 20px rgba(34, 28, 72, .16);
   font: inherit;
   font-size: 30px;
@@ -74,9 +74,9 @@
 .account-avatar:focus-visible .account-avatar-overlay,
 .account-avatar-block.is-busy .account-avatar-overlay,
 .account-avatar-block.is-drop .account-avatar-overlay { opacity: 1; }
-.account-avatar:focus-visible { outline: 2px solid var(--color-brand, #6557dc); outline-offset: 3px; }
+.account-avatar:focus-visible { outline: 2px solid var(--color-brand, #1769c9); outline-offset: 3px; }
 .account-avatar:disabled { cursor: wait; }
-.account-avatar-block.is-drop .account-avatar { box-shadow: 0 0 0 3px rgba(101, 87, 220, .28); }
+.account-avatar-block.is-drop .account-avatar { box-shadow: 0 0 0 3px rgba(23, 105, 201, .28); }
 .account-avatar-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
 .account-avatar-actions button {
   display: inline-flex;
@@ -93,7 +93,7 @@
   font-weight: 650;
   cursor: pointer;
 }
-.account-avatar-actions button:hover { color: var(--color-brand, #6557dc); border-color: #c9c3ee; }
+.account-avatar-actions button:hover { color: var(--color-brand, #1769c9); border-color: #c9c3ee; }
 .account-avatar-actions button:disabled { opacity: .6; cursor: wait; }
 .account-avatar-block small,
 .account-fields small { color: var(--color-text-muted, #84859a); font-size: 11px; text-align: center; line-height: 1.45; }
@@ -130,7 +130,7 @@
 }
 .account-name-input small.is-limit { color: #b42318; font-weight: 700; }
 .account-fields input:focus,
-.account-password-input input:focus { border-color: var(--color-brand, #6557dc); box-shadow: var(--focus-ring); }
+.account-password-input input:focus { border-color: var(--color-brand, #1769c9); box-shadow: var(--focus-ring); }
 .account-fields input[aria-invalid="true"],
 .account-password-input input[aria-invalid="true"] { border-color: #d92d20; }
 .account-email-line {

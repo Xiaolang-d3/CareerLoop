@@ -1,4 +1,4 @@
-import { Check, ChevronRight, ChevronUp, Image, MessageSquare, Settings2, TriangleAlert, Video } from "lucide-react";
+import { Check, ChevronRight, ChevronUp, Image, RefreshCw, MessageSquare, Settings2, TriangleAlert, Video } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import type { ChatWorkspaceProps, ServiceModelCatalog } from "./types";
@@ -152,14 +152,15 @@ export function ComposerModelPicker(props: Props) {
             ) : null}
             {groups.map(({ service, models }) => <div key={service.connection_id} className="model-menu-group" role="group" aria-label={service.connection_name}>
               {groups.length > 1 ? <p className="model-menu-group-title">{service.connection_name}</p> : null}
-              {service.busy ? <p className="model-menu-status" role="status">正在读取服务模型…</p> : null}
-              {service.error ? <p className="model-menu-status model-menu-error" role="alert">{service.error} <button type="button" disabled={service.busy || disabled} onClick={() => void props.onDiscover?.(true)}>重试</button></p> : null}
+              {service.busy ? <p className="model-menu-status" role="status">{service.models.length ? "正在更新模型列表…" : "正在读取服务模型…"}</p> : null}
+              {service.error ? <p className="model-menu-status model-menu-error" role="alert">{service.models.length ? "更新失败，显示上次读取的模型。" : "读取失败。"} {service.error} <button type="button" disabled={service.busy || disabled} onClick={() => void props.onDiscover?.(true)}>重试</button></p> : null}
               {models.map(profile => option(profile.id, profile.model_name, service))}
             </div>)}
-            {groups.every(({ service, models }) => !models.length && !service.busy && !service.error) ? <p className="model-menu-status">{category === "chat" ? "服务尚未返回可选模型，可重新打开或前往管理模型" : category === "image" ? "暂无图片模型，可前往管理模型添加生图服务" : "暂无视频模型"}</p> : null}
+            {groups.every(({ service, models }) => !models.length && !service.busy && !service.error) ? <p className="model-menu-status">{category === "chat" ? "服务尚未返回可选模型，可刷新列表或前往管理模型" : category === "image" ? "暂无图片模型，可前往管理模型添加生图服务" : "暂无视频模型"}</p> : null}
           </div>
           </div>
           </>}
+          {props.onDiscover && !parametersPanel ? <button type="button" className="model-menu-footer" disabled={disabled || services.some(service => service.busy)} onClick={() => void props.onDiscover?.(true)}><RefreshCw size={14} aria-hidden="true" /><span>刷新模型列表</span></button> : null}
           {props.onOpenSettings && !parametersPanel ? (
             <button type="button" className="model-menu-footer" onClick={() => { setOpen(false); props.onOpenSettings?.(); }}>
               <Settings2 size={14} aria-hidden="true" /><span>管理模型</span><ChevronRight size={14} className="model-menu-footer-arrow" aria-hidden="true" />

@@ -311,3 +311,64 @@
 @media (max-width: 420px) {
   .fl-workspace-navigation > button { padding-inline: 10px; }
 }
+
+/* Give the library types their own navigation tier and keep tools together. */
+.file-library .fl-browser { padding: 20px 22px 14px; border-radius: 14px; }
+.file-library .fl-search-row { margin-bottom: 18px; }
+.file-library .fl-search { max-width: 480px; height: 40px; border-radius: 10px; }
+.file-library .fl-module-navigation { display: block; padding-bottom: 0; }
+.file-library .fl-module-navigation nav {
+  gap: 8px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--fl-line);
+}
+.file-library .fl-module-navigation nav button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--fl-line);
+  border-radius: 10px;
+}
+.file-library .fl-module-navigation nav button.active {
+  border-color: color-mix(in srgb, var(--fl-brand) 35%, var(--fl-line));
+}
+.file-library .fl-scope-controls { padding: 16px 0 12px; }
+.file-library .fl-files-heading { min-height: 44px; padding: 4px 0 10px; }
+.file-library .fl-breadcrumb strong { font-size: 16px; }
+.file-library .fl-file-context > span {
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--fl-subtle);
+}
+.file-library .fl-table thead { height: 40px; }
+.file-library .fl-table tbody tr { height: 60px; }
+@container library-browser (max-width: 560px) {
+  .file-library .fl-browser { padding: 14px 12px; }
+  .file-library .fl-module-navigation nav { gap: 6px; }
+  .file-library .fl-module-navigation nav button { flex: 1 1 40%; justify-content: center; padding: 0 8px; }
+  .file-library .fl-scope-controls { padding-top: 12px; }
+}
+.fl-type-count {
+  min-width: 20px;
+  padding: 2px 5px;
+  border-radius: 5px;
+  color: var(--fl-muted);
+  background: var(--fl-subtle);
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: center;
+}
+.fl-module-navigation .active .fl-type-count { color: inherit; background: var(--fl-panel); }
+.file-library .fl-empty .fl-button { margin-top: 18px; }
+.fl-media-notice {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--fl-line);
+  border-radius: 8px;
+  background: var(--fl-subtle);
+  color: var(--fl-secondary);
+  font-size: 12px;
+  line-height: 1.7;
+}

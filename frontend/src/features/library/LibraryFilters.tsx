@@ -2,8 +2,9 @@ import { useEffect, useId, useRef, useState } from "react";
 import { ChevronDown, SlidersHorizontal, X } from "lucide-react";
 import { emptyFileFilters, type FileFilters, type KnowledgeUse, type SourceOrigin } from "./library-state";
 
-export function LibraryFilters({ filters, onChange }: {
+export function LibraryFilters({ filters, onChange, showKnowledge = true }: {
   filters: FileFilters;
+  showKnowledge?: boolean;
   onChange: (filters: FileFilters) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -18,10 +19,10 @@ export function LibraryFilters({ filters, onChange }: {
     document.addEventListener("pointerdown", closeOutside);
     return () => document.removeEventListener("pointerdown", closeOutside);
   }, [open]);
-  const active = filters.origin !== emptyFileFilters.origin || filters.knowledge !== emptyFileFilters.knowledge;
+  const active = filters.origin !== emptyFileFilters.origin || (showKnowledge && filters.knowledge !== emptyFileFilters.knowledge);
   const labels = [
     { all: "", upload: "导入文件", note: "文本笔记", chat: "对话成果" }[filters.origin],
-    { all: "", ready: "长期使用", archive: "仅存档", needs_text: "无可检索正文" }[filters.knowledge]
+    showKnowledge ? { all: "", ready: "长期使用", archive: "仅存档", needs_text: "无可检索正文" }[filters.knowledge] : ""
   ].filter(Boolean);
   return <div className="fl-filter-disclosure" ref={panel} onKeyDown={(event) => {
     if (event.key === "Escape" && open) {
@@ -49,7 +50,7 @@ export function LibraryFilters({ filters, onChange }: {
         <option value="chat">对话成果</option>
       </select>
     </label>
-    <label>AI 使用
+    {showKnowledge && <label>AI 使用
       <select aria-label="筛选 AI 使用" value={filters.knowledge}
         onChange={(event) => onChange({ ...filters, knowledge: event.target.value as KnowledgeUse })}>
         <option value="all">全部状态</option>
@@ -57,7 +58,7 @@ export function LibraryFilters({ filters, onChange }: {
         <option value="archive">仅存档</option>
         <option value="needs_text">无可检索正文</option>
       </select>
-    </label>
+    </label>}
     {active && <button type="button" className="fl-filter-reset" onClick={() => onChange(emptyFileFilters)}>重置条件</button>}
     </div>}
   </div>;

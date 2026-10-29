@@ -169,6 +169,7 @@ def _ensure_catalog(db_path) -> None:
 
 
 def get_model_catalog(db_path: str | Path | None = None) -> dict[str, Any]:
+    from .model_purposes import purpose_defaults, model_output_types, supported_purposes
     _ensure_catalog(db_path)
     with connect(db_path) as conn:
         connections = [_decode_connection(row) for row in conn.execute("SELECT * FROM model_connections ORDER BY created_at, id")]
@@ -176,7 +177,21 @@ def get_model_catalog(db_path: str | Path | None = None) -> dict[str, Any]:
         row = conn.execute("SELECT default_model_profile_id, config_revision FROM agent_settings WHERE id = 1").fetchone()
         policy = conn.execute("SELECT payload_json FROM model_routing_policy WHERE id=1").fetchone()
         execution_profile = (json.loads(policy[0]) if policy else {}).get("roles", {}).get("execute") or row["default_model_profile_id"]
-    return {"connections": [_public_connection(item, db_path) for item in connections], "profiles": profiles, "default_profile_id": row["default_model_profile_id"], "effective_execution_profile_id": execution_profile, "config_revision": row["config_revision"]}
+        defaults, purpose_version = purpose_defaults(conn)
+    sources = {item["id"]: item for item in connections}
+    default_profile = next((item for item in profiles if item["id"] == row["default_model_profile_id"]), None)
+    routing_payload = json.loads(policy[0]) if policy else {}
+    preferred_connection = routing_payload.get("service_connection_id") or (default_profile["connection_id"] if default_profile else None)
+    service = next((item for item in connections if item["id"] == preferred_connection and item["enabled"]), None) or next((item for item in connections if item["enabled"]), None)
+    if service and not routing_payload.get("service_connection_id"):
+        # Add only this metadata key atomically; do not replace concurrent role edits.
+        with connect(db_path) as conn:
+            conn.execute("UPDATE model_routing_policy SET payload_json=json_set(payload_json, '$.service_connection_id', ?) WHERE id=1 AND json_extract(payload_json, '$.service_connection_id') IS NULL", (service["id"],))
+    for profile in profiles:
+        source = sources[profile["connection_id"]]
+        types, origin = model_output_types(profile, source)
+        profile.update(output_types=types, output_types_source=origin, supported_purposes=supported_purposes(profile, source))
+    return {"connections": [_public_connection(item, db_path) for item in connections], "profiles": profiles, "default_profile_id": row["default_model_profile_id"], "effective_execution_profile_id": execution_profile, "config_revision": row["config_revision"], "purpose_defaults": defaults, "purpose_version": purpose_version, "service_connection_id": service["id"] if service else None}
 
 
 def get_service_connection(connection_id: str, db_path: str | Path | None = None) -> dict[str, Any]:
@@ -398,8 +413,19 @@ def _updated_connection(conn, connection_id, values, db_path, candidates, model_
     if updated["protocol"] != "auto" or any(updated[key] != current[key] for key in ("base_url", "effective_base_url", "protocol", "secret_ref")):
         updated["detected_protocol"] = None
     default_id = conn.execute("SELECT default_model_profile_id FROM agent_settings WHERE id = 1").fetchone()[0]
-    if not updated["enabled"] and _profile(conn, default_id)["connection_id"] == connection_id:
+    if not updated["enabled"] and default_id and _profile(conn, default_id)["connection_id"] == connection_id:
         raise ValueError("请先选择其他默认模型，再停用当前默认连接")
+    if not updated["enabled"]:
+        from .model_purposes import protect_purpose_defaults
+        protect_purpose_defaults(conn, connection_id=connection_id)
+    if updated["protocol"] != current["protocol"]:
+        from .model_purposes import purpose_defaults, supported_purposes
+        defaults, _ = purpose_defaults(conn)
+        for kind, profile_id in defaults.items():
+            if profile_id:
+                profile = _profile(conn, profile_id)
+                if profile["connection_id"] == connection_id and kind not in supported_purposes(profile, updated):
+                    raise ValueError("此连接包含默认用途模型，请先更换默认模型再修改协议")
     _write_connection(conn, updated)
     if key or updated["effective_base_url"] != current["effective_base_url"] or updated["protocol"] != current["protocol"]:
         # Image availability is specific to a service/account. Replacement
@@ -431,7 +457,7 @@ def _validated_profile(values, current=None):
     if "max_output_tokens" in parameters and (isinstance(parameters["max_output_tokens"], bool) or not isinstance(parameters["max_output_tokens"], int) or parameters["max_output_tokens"] <= 0):
         raise ValueError("max_output_tokens 需要为正整数")
     capabilities = {name: "unknown" for name in _CAPABILITY_NAMES} | dict(result.get("capabilities") or {})
-    if set(capabilities) - set(_CAPABILITY_NAMES) or any(value not in {"supported", "unsupported", "unknown"} for value in capabilities.values()):
+    if set(capabilities) - set((*_CAPABILITY_NAMES, "chat", "video_generation")) or any(value not in {"supported", "unsupported", "unknown"} for value in capabilities.values()):
         raise ValueError("模型能力需要为 supported、unsupported 或 unknown")
     context_limit = result.get("context_limit")
     if context_limit is not None and (isinstance(context_limit, bool) or not isinstance(context_limit, int) or context_limit <= 0):
@@ -506,6 +532,13 @@ def update_model_profile(profile_id: str, values: dict[str, Any], db_path: str |
         record = {**current, **_validated_profile(changes, current), "revision": current["revision"] + 1}
         if not record["enabled"] and conn.execute("SELECT default_model_profile_id FROM agent_settings WHERE id=1").fetchone()[0] == profile_id:
             raise ValueError("请先选择其他默认模型，再停用当前默认模型")
+        from .model_purposes import protect_purpose_defaults, purpose_defaults, supported_purposes
+        if not record["enabled"]:
+            protect_purpose_defaults(conn, profile_id=profile_id)
+        defaults, _ = purpose_defaults(conn)
+        for kind, selected in defaults.items():
+            if selected == profile_id and kind not in supported_purposes(record, _connection(conn, record["connection_id"])):
+                raise ValueError("此模型正用于默认用途，请先更换默认模型再修改能力")
         _write_profile(conn, record)
         return _profile(conn, profile_id)
     return _mutate(f"update_profile:{profile_id}", values, db_path, operation)
@@ -520,6 +553,18 @@ def set_default_model_profile(profile_id: str, values: dict[str, Any] | None = N
         row = conn.execute("SELECT config_revision FROM agent_settings WHERE id=1").fetchone()
         if (values or {}).get("expected_revision") is not None and int(values["expected_revision"]) != row[0]:
             raise settings.AgentSettingsConflict("默认模型已更新，请重新读取")
+        from .model_purposes import purpose_defaults, supported_purposes, model_output_types
+        types, _ = model_output_types(profile, connection)
+        if types == ["video"]:
+            raise ValueError("视频生成接口暂未接入，不能设为默认模型")
+        defaults, _ = purpose_defaults(conn)
+        kinds = supported_purposes(profile, connection)
+        for kind in kinds:
+            defaults[kind] = profile_id
+        # Keep legacy clients in sync with the same per-purpose rules.
+        payload = json.loads(conn.execute("SELECT payload_json FROM model_routing_policy WHERE id=1").fetchone()[0])
+        payload["purpose_defaults"] = defaults
+        conn.execute("UPDATE model_routing_policy SET version=version+1, payload_json=? WHERE id=1", (_json(payload),))
         conn.execute("UPDATE agent_settings SET default_model_profile_id=? WHERE id=1", (profile_id,))
         return profile
     _mutate(f"set_default:{profile_id}", values or {}, db_path, operation)
