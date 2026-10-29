@@ -140,12 +140,12 @@ def needs_reply_replanning(snapshot: AgentRunSnapshot) -> bool:
     )
 
 
-def user_intent_preview(message: AgentMessage) -> str:
+def user_intent_preview(message: AgentMessage, *, limit: int | None = 1000) -> str:
     # Attachment excerpts are source data, not a preview of the user's intent.
     # A partial excerpt can otherwise be mistaken for a truncated source file.
     prefix = "\n\n以下为用户主动上传附件的本地解析文本，请基于此内容回答：\n"
     request, marker, _ = message.content.partition(prefix)
-    return request[:1000] + ("\n（附件全文保留在执行上下文中，此处仅展示用户请求。）" if marker else "")
+    return (request if limit is None else request[:limit]) + ("\n（附件全文保留在执行上下文中，此处仅展示用户请求。）" if marker else "")
 
 
 def clarification_context(snapshot: AgentRunSnapshot) -> tuple[str, list[AgentMessage], bool]:
@@ -156,7 +156,7 @@ def clarification_context(snapshot: AgentRunSnapshot) -> tuple[str, list[AgentMe
     signed reasoning, old plans, approvals or executable tool calls.
     """
     user_messages = [message for message in snapshot.messages if message.role == "user"]
-    context = "\n".join(message.content for message in user_messages)
+    context = "\n".join(user_intent_preview(message, limit=None) for message in user_messages)
     history: list[AgentMessage] = []
     for message in snapshot.messages:
         if message.role == "user":
