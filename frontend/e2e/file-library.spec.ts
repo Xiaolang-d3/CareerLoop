@@ -58,8 +58,9 @@ for (const { width, theme } of [
     await page.setViewportSize({ width, height: 900 });
     await page.goto("/#/library");
     const list = page.getByRole("table", { name: "文件列表" });
-    await expect(list.locator("tbody tr")).toHaveCount(4);
-    await expect(page.getByRole("button", { name: "网格视图" })).toBeVisible();
+    await expect(list.locator("tbody tr")).toHaveCount(3);
+    await expect(page.getByRole("group", { name: "图片列表" }).getByRole("button", { name: "预览 产品参考.png" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "网格视图" })).toHaveCount(0);
     const assertNoOverflow = async () => {
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
       expect(await page.locator(".fl-browser").evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
