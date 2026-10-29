@@ -111,7 +111,7 @@ def _prepare() -> None:
     except ImportError:
         with _state_lock:
             _state = "error"
-            _error = "离线语音组件尚未安装，请更新并重启灯灯。"
+            _error = "离线语音组件尚未安装，请更新并重启团团。"
     except Exception:
         logger.exception("Offline speech model preparation failed")
         with _state_lock:

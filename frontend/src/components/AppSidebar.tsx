@@ -2,12 +2,15 @@ import {
   Folder,
   Home,
   MessageCircle,
+  Moon,
+  Sun,
   PanelLeft
 } from "lucide-react";
 import { type ReactNode } from "react";
 import { sidebarHighlightForView, type SidebarHighlight } from "../constants";
 import type { ViewKey } from "../types";
 import type { SettingsPage } from "../routing";
+import { useTheme } from "../features/appearance/ThemeProvider";
 
 export type ProductNavKey = "dashboard" | "chat" | "library";
 
@@ -45,6 +48,9 @@ export function AppSidebar({
   onSelectNav,
   identity
 }: AppSidebarProps) {
+  const { resolved, setPreference } = useTheme();
+  const nextTheme = resolved === "dark" ? "light" : "dark";
+  const themeLabel = nextTheme === "light" ? "切换到浅色主题" : "切换到深色主题";
   const highlighted = sidebarHighlightForView(activeView, { settingsPage, libraryOpen });
   const isActive = (key: SidebarHighlight) => highlighted === key;
 
@@ -76,11 +82,11 @@ export function AppSidebar({
       <div className="brand">
         <button className="brand-home" type="button" onClick={onGoHome} aria-label="返回首页" title="返回首页">
           <span className="brand-mark" aria-hidden="true">
-            <img className="brand-mark-image" src="/dengdeng-icon-v1.png" alt="" />
+            <img className="brand-mark-image" src="/tuantuan-logo.png" alt="" />
           </span>
           <span className="brand-copy">
-            <strong>灯灯</strong>
-            <small>一起想清楚，一步步做好</small>
+            <strong>团团</strong>
+            <small>理解你的想法，帮你把事情做好。</small>
           </span>
         </button>
         <button
@@ -94,7 +100,7 @@ export function AppSidebar({
         >
           {collapsed ? (
             <span className="sidebar-toggle-logo" aria-hidden="true">
-              <img src="/dengdeng-icon-v1.png" alt="" />
+              <img src="/tuantuan-logo.png" alt="" />
             </span>
           ) : null}
           <PanelLeft className="sidebar-toggle-icon" size={20} strokeWidth={1.8} aria-hidden="true" />
@@ -109,7 +115,18 @@ export function AppSidebar({
         {primaryItems.map((item) => renderItem(item, "mobile-nav-item"))}
       </nav>
 
-      {identity ? <div className="sidebar-identity-slot">{identity}</div> : null}
+      <div className="sidebar-identity-slot">
+        {identity}
+        <button
+          className="sidebar-theme-toggle"
+          type="button"
+          onClick={() => setPreference(nextTheme)}
+          aria-label={themeLabel}
+          title={themeLabel}
+        >
+          {nextTheme === "light" ? <Sun size={18} aria-hidden="true" /> : <Moon size={18} aria-hidden="true" />}
+        </button>
+      </div>
     </aside>
   );
 }

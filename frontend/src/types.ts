@@ -119,12 +119,18 @@ export type ModelProfile = {
   capabilities?: Record<string, unknown> | null;
   context_limit?: number | null;
   reasoning_effort?: ReasoningEffort | null;
+  output_types?: Array<"chat" | "image" | "video">;
+  output_types_source?: "configured" | "inferred" | "unknown";
+  supported_purposes?: Array<"chat" | "image">;
 };
 export type ModelCatalog = {
   connections: ModelConnection[];
   profiles: ModelProfile[];
   default_profile_id: string | null;
   effective_execution_profile_id?: string | null;
+  purpose_defaults?: { chat: string | null; image: string | null };
+  purpose_version?: number;
+  service_connection_id?: string | null;
 };
 
 export type AgentSettings = {
@@ -151,7 +157,7 @@ export type AgentSettings = {
   secret_storage_writable?: boolean;
   api_key_source?: string;
   last_save_request_id?: string | null;
-  secret_storage?: "keyring" | "environment" | "memory";
+  secret_storage?: "keyring" | "environment" | "memory" | "encrypted";
   secret_migration_warning?: string;
 };
 

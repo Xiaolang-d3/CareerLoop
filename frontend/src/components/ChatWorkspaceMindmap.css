@@ -157,7 +157,7 @@
   min-height: 40px;
   border-color: #8d82dc;
   color: #fff;
-  background: linear-gradient(135deg, #7a6ce0, #5b4dce);
+  background: linear-gradient(135deg, #7a6ce0, #1769c9);
   box-shadow: 0 8px 18px rgba(91, 77, 206, .22);
   font-size: 13px;
 }
@@ -187,14 +187,14 @@
   height: 18px;
   padding: 0 5px;
   border-radius: 999px;
-  color: #5b4dce;
+  color: #1769c9;
   background: #eeeaff;
   font-size: 10px;
   font-weight: 750;
 }
 
 :is(.chat-workspace, .chat-result-body, .chat-attachment-markdown, .fl-text-page) .chat-mindmap-node.is-root small {
-  color: #5b4dce;
+  color: #1769c9;
   background: #fff;
 }
 

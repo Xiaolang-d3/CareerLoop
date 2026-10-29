@@ -100,6 +100,7 @@ const AccountSettingsPage = lazy(() => loadAccountSettingsPage().then((module) =
 const ModelConnectionManager = lazy(() => import("../features/settings/ModelConnectionManager").then((module) => ({ default: module.ModelConnectionManager })));
 const ModelRoutingPanel = lazy(() => import("../features/settings/ModelRoutingPanel").then((module) => ({ default: module.ModelRoutingPanel })));
 const ModelFallbackSettings = lazy(() => import("../features/settings/ModelFallbackSettings").then((module) => ({ default: module.ModelFallbackSettings })));
+const ModelUsageRules = lazy(() => import("../features/settings/ModelUsageRules").then((module) => ({ default: module.ModelUsageRules })));
 
 const ModelSettingsPage = lazy(() => import("../features/settings/ModelSettingsPage").then((module) => ({
   default: module.ModelSettingsPage
@@ -242,6 +243,7 @@ export function App({
   const [modelSettingsLoaded, setModelSettingsLoaded] = useState(false);
   const [modelSettingsLoadError, setModelSettingsLoadError] = useState("");
   const [modelSelectionBusy, setModelSelectionBusy] = useState(false);
+  const [modelSelectionFeedback, setModelSelectionFeedback] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const modelSelectionRequestRef = useRef<{ id: number; controller: AbortController | null }>({ id: 0, controller: null });
   const [modelSaveUnknown, setModelSaveUnknown] = useState<string | null>(null);
   const modelSettingsScopeRef = useRef<ModelSettingsScope | null>(null);
@@ -293,9 +295,10 @@ export function App({
   const defaultModelProfile = modelCatalog.catalog.profiles.find(profile => profile.id === (modelCatalog.catalog.effective_execution_profile_id || modelCatalog.catalog.default_profile_id));
   const currentModelName = selectedModelProfile?.model_name || defaultModelProfile?.model_name || capabilities?.active_model_name || (modelSettingsReady ? savedAgentSettings.model_name : "尚未配置");
   const modelProfileUnavailable = Boolean(currentConversation?.model_profile_id && selectedModelProfile && !activeModelProfiles.some(profile => profile.id === currentConversation.model_profile_id));
-  const composerConnection = modelCatalog.catalog.connections.find(connection => connection.id === (selectedModelProfile || defaultModelProfile)?.connection_id && connection.enabled);
-  const composerDiscovery = useComposerModelDiscovery({ fetchJson, scope: modelSettingsScope, connection: composerConnection });
-  const disabledServiceModels = new Set(modelCatalog.catalog.profiles.filter(profile => profile.connection_id === composerConnection?.id && !profile.enabled && !activeModelProfiles.some(active => active.connection_id === profile.connection_id && active.model_name === profile.model_name)).map(profile => profile.model_name));
+  const composerServiceConnections = modelCatalog.catalog.service_connection_id ? modelCatalog.catalog.connections.filter(connection => connection.id === modelCatalog.catalog.service_connection_id) : modelCatalog.catalog.connections;
+  const composerConnection = composerServiceConnections.find(connection => connection.id === (modelCatalog.catalog.service_connection_id || (selectedModelProfile || defaultModelProfile)?.connection_id) && connection.enabled);
+  const composerDiscovery = useComposerModelDiscovery({ fetchJson, scope: modelSettingsScope, connection: composerConnection, connections: composerServiceConnections });
+  const composerServiceCatalogs = composerDiscovery.catalogs.map(service => ({ ...service, models: service.models.filter(name => !modelCatalog.catalog.profiles.some(profile => profile.connection_id === service.connection_id && profile.model_name === name && !profile.enabled) || activeModelProfiles.some(profile => profile.connection_id === service.connection_id && profile.model_name === name)) }));
   const defaultModelHasDraft = Boolean(agentSettings.api_key.trim()) || agentSettings.model_name !== savedAgentSettings.model_name
     || agentSettings.model_base_url !== savedAgentSettings.model_base_url || agentSettings.model_protocol !== savedAgentSettings.model_protocol;
 
@@ -303,6 +306,7 @@ export function App({
     modelSelectionRequestRef.current.id += 1;
     modelSelectionRequestRef.current.controller?.abort();
     setModelSelectionBusy(false);
+    setModelSelectionFeedback(null);
     return () => { modelSelectionRequestRef.current.id += 1; modelSelectionRequestRef.current.controller?.abort(); };
   }, [currentConversationId, fetchJson, userEmail]);
 
@@ -791,6 +795,8 @@ export function App({
     const current = () => !controller.signal.aborted && modelSelectionRequestRef.current.id === requestId
       && modelSettingsScopeRef.current === modelSettingsScope && currentConversationIdRef.current === conversationId;
     setModelSelectionBusy(true);
+    setModelSelectionFeedback(null);
+    const targetName = serviceModel?.modelName || activeModelProfiles.find(profile => profile.id === profileId)?.model_name || defaultModelProfile?.model_name || "默认模型";
     try {
       if (serviceModel) {
         profileId = await modelCatalog.ensureProfile(serviceModel.connectionId, serviceModel.modelName, serviceModel.revision);
@@ -804,9 +810,9 @@ export function App({
       invalidateConversationReads?.();
       setConversations(items => items.map(item => item.id === conversationId ? { ...item, ...updated, model_profile_id: profileId } : item));
       setModelUnavailable(null);
-      setNoticeMessage("会话模型已更新，从下一条消息生效。");
+      setModelSelectionFeedback({ kind: "success", text: `已切换至 ${targetName}。新任务生效，待确认任务仍使用原模型。` });
     } catch (reason) {
-      if (current()) setErrorMessage(reason instanceof Error ? reason.message : "切换会话模型失败，继续使用原模型。");
+      if (current()) setModelSelectionFeedback({ kind: "error", text: `未能确认切换至 ${targetName}。${reason instanceof Error ? reason.message : "请重试或刷新会话。"}` });
     } finally { if (current()) setModelSelectionBusy(false); }
   }
 
@@ -870,12 +876,12 @@ export function App({
           "当前数据库格式无法自动升级。\n\n继续前会自动生成带时间戳的完整备份；备份可用于恢复原数据库。是否现在备份并重建？"
         );
         if (!confirmed) {
-          throw new Error("已取消数据库重建。当前旧数据库保持不变，确认后才能进入灯灯。");
+          throw new Error("已取消数据库重建。当前旧数据库保持不变，确认后才能进入团团。");
         }
         await fetchJson("/system/database-rebuild", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ confirmation: "确认重建灯灯数据库" })
+          body: JSON.stringify({ confirmation: "确认重建团团数据库" })
         });
       }
       setDatabaseReady(true);
@@ -954,7 +960,7 @@ export function App({
   const topbarSection = topbarTitle ? topbarSectionForPage(appRoute.section, topbarTitle) : undefined;
 
   useEffect(() => {
-    document.title = `${documentPageTitle}｜灯灯`;
+    document.title = `${documentPageTitle}｜团团`;
   }, [documentPageTitle]);
 
   const identityMenu = (
@@ -1137,16 +1143,19 @@ export function App({
               {appRoute.page === "model" ? (
                 modelSettingsReady ? (
                   <ModelSettingsPage
+                    fetchJson={fetchJson}
                     error={errorMessage}
+                    purposeManager={modelCatalog.catalog.purpose_defaults ? <ModelUsageRules catalog={modelCatalog.catalog} busy={modelCatalog.busy || agentSettingsBusy} loading={modelCatalog.loading} onMutate={modelCatalog.mutate} onApplied={refreshDefaultModelSelection} /> : modelCatalog.loading ? <p role="status">正在读取使用规则…</p> : undefined}
                     routingManager={<><ModelFallbackSettings fetchJson={fetchJson} catalog={modelCatalog.catalog} busy={modelCatalog.busy || agentSettingsBusy} /><ModelRoutingPanel key={userEmail} fetchJson={fetchJson} catalog={modelCatalog.catalog}
                       disabled={agentSettingsBusy || modelCatalog.busy || Boolean(modelSaveUnknown)}
                       onApplied={async () => { await modelCatalog.reload(); await refreshDefaultModelSelection(); }} /></>}
                     connectionManager={<ModelConnectionManager
+                      singleService
                       fetchJson={fetchJson} catalog={modelCatalog.catalog} loading={modelCatalog.loading}
                       busy={modelCatalog.busy || agentSettingsBusy} error={modelCatalog.error}
                       secretWritable={savedAgentSettings.secret_storage_writable}
                       defaultLocked={defaultModelHasDraft || Boolean(modelSaveUnknown)}
-                      onReload={modelCatalog.reload} onMutate={modelCatalog.mutate}
+                      onReload={modelCatalog.reload} onMutate={modelCatalog.mutate} onEnsureProfile={modelCatalog.ensureProfile}
                       onDefaultChanged={refreshDefaultModelSelection}
                     />}
                     settings={agentSettings}
@@ -1209,10 +1218,11 @@ export function App({
             conversationTitle={currentConversation?.title}
             currentModelName={currentModelName}
             defaultModelName={defaultModelProfile?.model_name || capabilities?.active_model_name}
-            modelProfiles={activeModelProfiles.map(profile => ({ id: profile.id, model_name: profile.model_name, connection_id: profile.connection_id, connection_name: modelCatalog.catalog.connections.find(connection => connection.id === profile.connection_id)?.name || "模型连接" }))}
-            serviceModels={composerConnection ? { connection_id: composerConnection.id, connection_name: composerConnection.name || "当前服务", revision: composerConnection.revision, models: composerDiscovery.models.filter(name => !disabledServiceModels.has(name)), busy: composerDiscovery.busy, error: composerDiscovery.error } : undefined}
+            modelProfiles={activeModelProfiles.map(profile => ({ id: profile.id, model_name: profile.model_name, connection_id: profile.connection_id, capabilities: profile.capabilities, connection_name: modelCatalog.catalog.connections.find(connection => connection.id === profile.connection_id)?.name || "模型连接" }))}
+            serviceModels={composerServiceCatalogs.find(service => service.connection_id === composerConnection?.id)}
+            additionalServiceModels={composerServiceCatalogs.filter(service => service.connection_id !== composerConnection?.id)}
             onDiscoverServiceModels={composerDiscovery.discover}
-            onServiceModelChange={async modelName => { if (composerConnection) await selectConversationModel(null, { connectionId: composerConnection.id, modelName, revision: composerConnection.revision }); }}
+            onServiceModelChange={async (modelName, connectionId) => { const connection = modelCatalog.catalog.connections.find(item => item.id === (connectionId ?? composerConnection?.id) && item.enabled); if (connection) await selectConversationModel(null, { connectionId: connection.id, modelName, revision: connection.revision }); else setModelSelectionFeedback({ kind: "error", text: "模型连接不可用，请刷新列表后重试。" }); }}
             selectedModelProfileId={(selectedModelProfile || defaultModelProfile)?.id ?? null}
             modelSettings={(selectedModelProfile || defaultModelProfile) ? {
               profile: (selectedModelProfile || defaultModelProfile)!,
@@ -1220,6 +1230,8 @@ export function App({
               fetchJson, onSave: saveComposerModelParameters, error: modelCatalog.error
             } : undefined}
             modelSelectionBusy={modelSelectionBusy || modelCatalog.busy}
+            modelSelectionFeedback={modelSelectionFeedback}
+            onDismissModelSelectionFeedback={() => setModelSelectionFeedback(null)}
             modelProfileUnavailable={modelProfileUnavailable}
             modelConfigured={capabilities ? capabilities.configured !== false : undefined}
             onModelProfileChange={selectConversationModel}

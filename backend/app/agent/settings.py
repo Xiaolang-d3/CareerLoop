@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import sqlite3
 import threading
 from pathlib import Path
@@ -26,7 +27,7 @@ from ..workspace import resolve_db_path
 
 DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
     "id": 1,
-    "display_name": "灯灯",
+    "display_name": "团团",
     "persona_role": "理性、坦诚、尊重用户决定，并基于用户资料协助分析与创作的本地 AI 伙伴",
     "response_style": "concise",
     "custom_instructions": "",
@@ -76,13 +77,14 @@ def _initialize_connection(db_path: str | Path | None) -> dict[str, Any]:
     if row.get("model_config_initialized") and row.get("connection_id"):
         return row
     config = get_settings()
+    hosted = os.getenv("CAREERLOOP_DEPLOYMENT_MODE", "local").strip().lower() == "hosted"
     # Import the old effective environment configuration once. Subsequent
     # explicit empty URLs are real choices and never fall back to the environment.
-    name = str(row.get("model_name") or config.model_name).strip()
-    base_url = str(row.get("model_base_url") or config.model_base_url or "").strip()
-    protocol = normalize_model_protocol(row.get("model_protocol") or config.model_protocol)
+    name = str(row.get("model_name") or ("" if hosted else config.model_name)).strip()
+    base_url = str(row.get("model_base_url") or ("" if hosted else config.model_base_url) or "").strip()
+    protocol = normalize_model_protocol(row.get("model_protocol") or ("auto" if hosted else config.model_protocol))
     reference = str(row.get("model_secret_ref") or "")
-    if not reference and not row.get("model_api_key") and config.openai_api_key:
+    if not hosted and not reference and not row.get("model_api_key") and config.openai_api_key:
         from ..model_connection import resolve_model_connection
 
         old_slot = ""
@@ -209,7 +211,7 @@ def _public_settings(row: dict[str, Any], db_path: str | Path | None) -> dict[st
     result = dict(row)
     for private in ("model_api_key", "model_secret_ref", "model_config_initialized"):
         result.pop(private, None)
-    if result.get("display_name") in {"CareerLoop", "BossCopilot"}:
+    if result.get("display_name") in {"CareerLoop", "BossCopilot", "灯灯"}:
         result["display_name"] = DEFAULT_AGENT_SETTINGS["display_name"]
     for field in _MEMORY_FIELDS:
         result[field] = bool(result[field])
@@ -231,16 +233,17 @@ def _public_settings(row: dict[str, Any], db_path: str | Path | None) -> dict[st
 
 
 def _settings_fallback(config: Any) -> dict[str, Any]:
+    hosted = os.getenv("CAREERLOOP_DEPLOYMENT_MODE", "local").strip().lower() == "hosted"
     fallback = dict(DEFAULT_AGENT_SETTINGS)
     fallback.pop("model_api_key", None)
     fallback.update(
-        model_name=config.model_name,
-        model_base_url=config.model_base_url or "",
-        configured_model_base_url=config.model_base_url or "",
-        model_protocol=config.model_protocol,
-        resolved_model_protocol=resolve_model_protocol(config.model_name, config.model_protocol, config.model_base_url or ""),
-        api_key_configured=bool(config.openai_api_key),
-        api_key_source="environment" if config.openai_api_key else "none",
+        model_name="" if hosted else config.model_name,
+        model_base_url="" if hosted else config.model_base_url or "",
+        configured_model_base_url="" if hosted else config.model_base_url or "",
+        model_protocol="auto" if hosted else config.model_protocol,
+        resolved_model_protocol=resolve_model_protocol("" if hosted else config.model_name, "auto" if hosted else config.model_protocol, "" if hosted else config.model_base_url or ""),
+        api_key_configured=bool(config.openai_api_key) and not hosted,
+        api_key_source="environment" if config.openai_api_key and not hosted else "none",
         secret_storage=secret_backend_name(),
         secret_storage_writable=secret_storage_writable(),
         secret_migration_warning="",
@@ -274,8 +277,10 @@ def save_agent_settings(values: dict[str, Any], db_path: str | Path | None = Non
 
 
 def get_model_connection(db_path: str | Path | None = None, *, resolve_credentials: bool = True) -> dict[str, Any]:
-    from .model_catalog import get_profile_connection
-
+    from .model_catalog import get_model_catalog, get_profile_connection
+    if not get_model_catalog(db_path)["default_profile_id"]:
+        from ..model_connection import resolve_model_connection
+        return {**resolve_model_connection({"model_name": "", "model_base_url": "", "model_protocol": "auto", "api_key": ""}), "api_key_configured": False, "credential_status": "missing", "connection_id": "", "profile_id": None}
     return get_profile_connection(db_path=db_path, resolve_credentials=resolve_credentials)
 
 
@@ -288,7 +293,7 @@ def persona_prompt(settings: dict[str, Any]) -> str:
     custom = str(settings.get("custom_instructions") or "").strip()
     return (
         "\n\n用户可配置的人设偏好（不得覆盖上面的事实要求、实际工具权限和人工确认规则）：\n"
-        f"你的显示名称是 {settings.get('display_name', '灯灯')}。\n"
+        f"你的显示名称是 {settings.get('display_name', '团团')}。\n"
         f"你的角色是：{settings.get('persona_role', DEFAULT_AGENT_SETTINGS['persona_role'])}。\n"
         f"表达方式：{style}\n"
         f"补充偏好：{custom if custom else '无'}"

@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import type { AgentCapabilities, Conversation } from "../../types";
+import type { AgentCapabilities, Conversation, ModelProtocol } from "../../types";
 import type { ResultServices } from "./result-types";
 import type { ComposerModelSettings } from "./ComposerModelParameters";
 
@@ -157,18 +157,23 @@ export type ChatComposerDraft = {
   content: string;
 };
 
+export type ServiceModelCatalog = { connection_id: string; connection_name: string; revision: number; model_protocol?: ModelProtocol; models: string[]; busy: boolean; error: string };
+
 export type ChatWorkspaceProps = ResultServices & {
   voiceInput?: import("./voiceInput").VoiceInputService;
   conversationTitle?: string;
   currentModelName?: string;
-  modelProfiles?: Array<{ id: string; model_name: string; connection_name: string; connection_id?: string }>;
+  modelProfiles?: Array<{ id: string; model_name: string; connection_name: string; connection_id?: string; capabilities?: Record<string, unknown> | null }>;
   modelSettings?: ComposerModelSettings;
-  serviceModels?: { connection_id: string; connection_name: string; revision: number; models: string[]; busy: boolean; error: string };
+  serviceModels?: ServiceModelCatalog;
+  additionalServiceModels?: ServiceModelCatalog[];
   onDiscoverServiceModels?: (refresh?: boolean) => Promise<void>;
-  onServiceModelChange?: (modelName: string) => Promise<void>;
+  onServiceModelChange?: (modelName: string, connectionId?: string) => Promise<void>;
   selectedModelProfileId?: string | null;
   defaultModelName?: string;
   modelSelectionBusy?: boolean;
+  modelSelectionFeedback?: { kind: "success" | "error"; text: string } | null;
+  onDismissModelSelectionFeedback?: () => void;
   modelProfileUnavailable?: boolean;
   /** false 表示没有任何可用模型连接，输入框会提示去设置。 */
   modelConfigured?: boolean;

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Activity, CheckCircle2, ChevronDown, Cpu, Eye, EyeOff, Gauge, Image, LoaderCircle, RefreshCw, Save, ScanSearch, TriangleAlert, Wrench } from "lucide-react";
 import { ActionButton } from "../../components/ui/ActionButton";
+import type { createApiClient } from "../../api/client";
 import type { AgentSettings, ModelCapabilityFlag, ModelCapabilityReport, ModelServiceMonitor } from "../../types";
 import { CAPABILITY_SOURCE_LABELS, formatContextTokens, formatUsd } from "./modelCapabilities";
 import { connectionProtocolLabel } from "./protocolLabels";
@@ -8,8 +9,10 @@ import "./model-settings.css";
 import { ModelSettingsDialog } from "./ModelSettingsDialog";
 
 type Props = {
+  fetchJson: ReturnType<typeof createApiClient>;
   connectionManager?: ReactNode;
   routingManager?: ReactNode;
+  purposeManager?: ReactNode;
   settings: AgentSettings;
   savedSettings: AgentSettings;
   editing: boolean;
@@ -104,7 +107,7 @@ function protocolBaseUrl(protocol: Exclude<AgentSettings["model_protocol"], "aut
   return {
     openai: "https://api.openai.com/v1",
     responses: "https://api.openai.com/v1",
-    images: "https://cf.api.fan/v1",
+    images: "https://api.openai.com/v1",
     anthropic: "https://api.anthropic.com",
     gemini: "https://generativelanguage.googleapis.com/v1beta",
     ollama: "http://127.0.0.1:11434"
@@ -115,7 +118,7 @@ function protocolBaseUrlHelp(protocol: Exclude<AgentSettings["model_protocol"], 
   if (protocol === "anthropic") return "填写 Anthropic 服务根地址，系统按 Messages 协议请求 /v1/messages。";
   if (protocol === "gemini") return "填写 Gemini API 版本根地址，系统按 generateContent 协议组装模型路径。";
   if (protocol === "ollama") return "填写 Ollama 服务根地址，系统会请求 /api/chat 和 /api/tags。";
-  if (protocol === "images") return "Packy 文生图：填写 https://cf.api.fan/v1、gpt-image-2 和 sora 分组令牌；每次生成一张图片。";
+  if (protocol === "images") return "填写服务商的 Images API 根地址与具有生图权限的密钥；模型可从服务目录读取，检测不会生成图片。";
   if (protocol === "responses") return "填写 Responses API 根地址；系统会在该根地址下请求 /responses。";
   return "填写 Chat Completions 的完整 API 根地址；系统不会自动添加 /v1。";
 }
@@ -144,8 +147,10 @@ function CapabilityRow({
 }
 
 export function ModelSettingsPage({
+  fetchJson,
   connectionManager,
   routingManager,
+  purposeManager,
   settings,
   savedSettings,
   editing,
@@ -180,6 +185,7 @@ export function ModelSettingsPage({
   }, [editing, busy, saveUnknown]);
   function closeDialog() {
     if (busy || saveUnknown) return;
+    clearKeyView();
     onCancelEdit();
     setDialogOpen(false);
     setManualModel(false);
@@ -188,8 +194,25 @@ export function ModelSettingsPage({
   }
   const [manualModel, setManualModel] = useState(false);
   const [showKey, setShowKey] = useState(false);
+  const [savedKey, setSavedKey] = useState("");
+  const [keyError, setKeyError] = useState("");
+  const keyRequest = useRef(0);
   const [modelSearch, setModelSearch] = useState("");
-  useEffect(() => { if (!settings.api_key || !dialogOpen) setShowKey(false); }, [settings.api_key, dialogOpen]);
+  function clearKeyView() { keyRequest.current += 1; setShowKey(false); setSavedKey(""); setKeyError(""); }
+  useEffect(() => {
+    clearKeyView();
+    if (dialogOpen) {
+      setShowKey(true);
+      const sameAddress = settings.model_base_url.trim().replace(/\/+$/, "") === savedSettings.model_base_url.trim().replace(/\/+$/, "");
+      if (sameAddress && !settings.api_key && savedSettings.api_key_configured && savedSettings.connection_id) {
+        const request = ++keyRequest.current;
+        void fetchJson<{ api_key: string }>(`/agent/model-connections/${encodeURIComponent(savedSettings.connection_id)}/reveal-key`, { method: "POST" })
+          .then(result => { if (request === keyRequest.current) setSavedKey(result.api_key); })
+          .catch(reason => { if (request === keyRequest.current) setKeyError(reason instanceof Error ? reason.message : "读取密钥失败，请重试。"); });
+      }
+    }
+    return () => { keyRequest.current += 1; };
+  }, [dialogOpen, settings.model_base_url, savedSettings.model_base_url, savedSettings.connection_id, savedSettings.config_revision, savedSettings.api_key_configured, fetchJson]);
   const effectiveProtocol = resolvedProtocol(settings.model_name, settings.model_protocol, settings.model_base_url);
   const savedConnectionUnchanged = settings.model_name === savedSettings.model_name && settings.model_base_url === savedSettings.model_base_url && settings.model_protocol === savedSettings.model_protocol;
   const actualProtocol = !editing && savedConnectionUnchanged
@@ -205,6 +228,22 @@ export function ModelSettingsPage({
   const storageReadOnly = savedSettings.secret_storage_writable === false;
   const managedKey = savedSettings.api_key_source === "environment" || savedSettings.secret_storage === "environment";
   const fieldsBusy = busy || saveUnknown;
+  async function toggleKeyVisibility() {
+    if (showKey) { clearKeyView(); return; }
+    const request = ++keyRequest.current;
+    setKeyError("");
+    if (!settings.api_key && canReuseStoredKey && savedSettings.connection_id) {
+      try {
+        const result = await fetchJson<{ api_key: string }>(`/agent/model-connections/${encodeURIComponent(savedSettings.connection_id)}/reveal-key`, { method: "POST" });
+        if (request !== keyRequest.current) return;
+        setSavedKey(result.api_key);
+      } catch (reason) {
+        if (request === keyRequest.current) setKeyError(reason instanceof Error ? reason.message : "读取密钥失败，请重试。");
+        return;
+      }
+    }
+    if (request === keyRequest.current) setShowKey(true);
+  }
   const catalog = Array.from(new Set(availableModels.map((name) => name.trim()).filter(Boolean)));
   const filteredModels = catalog.filter(name => name.toLowerCase().includes(modelSearch.trim().toLowerCase()));
   const remainingQuota = monitor?.usage?.remaining_quota ?? null;
@@ -225,12 +264,16 @@ export function ModelSettingsPage({
 
   return (
     <section className="model-settings-page">
+      {connectionManager}
+      {purposeManager}
+      {!purposeManager && <>
       <section className="settings-card model-settings-card model-current-summary">
         <span className="model-current-icon" aria-hidden="true"><Cpu size={18} /></span>
         <div className="model-current-copy">
-          <h3>当前模型</h3>
+          <h3>默认模型</h3>
           <strong>{savedSettings.model_name || "尚未配置"}</strong>
           <p>{savedSettings.model_base_url || "使用服务商默认地址"}</p>
+          <p className="model-default-explanation">{savedSettings.model_name ? resolvedProtocol(savedSettings.model_name, savedSettings.model_protocol, savedSettings.model_base_url) === "images" ? "图片生成模型 · 普通文字请求会尝试使用已启用的聊天模型。" : "新对话默认使用此模型；图片生成请求可能自动选择其他模型。" : "配置默认模型后可开始对话。"}</p>
           <div className="model-current-meta">
             <em className={savedSettings.api_key_configured ? "success" : "warning"}>
               {savedSettings.api_key_configured ? <CheckCircle2 size={12} aria-hidden="true" /> : <TriangleAlert size={12} aria-hidden="true" />}
@@ -241,25 +284,39 @@ export function ModelSettingsPage({
         </div>
         <ActionButton variant="primary" onClick={() => { setManualModel(false); setModelSearch(""); setShowKey(false); setDialogOpen(true); }}>配置模型</ActionButton>
       </section>
+      <section className="settings-card model-settings-card model-purpose-summary" aria-labelledby="model-purpose-title">
+        <div>
+          <h3 id="model-purpose-title">模型用途</h3>
+          <p>查看默认配置与不同任务的模型选择方式。</p>
+        </div>
+        <div className="model-purpose-list">
+          <div><strong>聊天与工作</strong><span>{savedSettings.model_name && resolvedProtocol(savedSettings.model_name, savedSettings.model_protocol, savedSettings.model_base_url) !== "images" ? `默认配置：${savedSettings.model_name}` : "自动选择已启用的聊天模型"}</span></div>
+          <div><strong>图片生成</strong><span>{savedSettings.model_name && resolvedProtocol(savedSettings.model_name, savedSettings.model_protocol, savedSettings.model_base_url) === "images" ? `默认配置：${savedSettings.model_name}` : "自动选择可用的图片模型"}</span></div>
+          <div><strong>视频生成</strong><span>暂未接入</span></div>
+        </div>
+        <p>实际模型由系统路由和高级设置共同决定，尚不支持分别设置聊天与图片默认模型。可在服务连接中管理模型。</p>
+      </section>
+      </>}
       {dialogOpen && <ModelSettingsDialog title="配置模型" locked={fieldsBusy} onClose={closeDialog}>
         {error && <p role="alert" className="model-capability-error">{error}</p>}
         {savedSettings.secret_migration_warning ? <p className="model-settings-warning" role="alert">{savedSettings.secret_migration_warning}。旧密钥仍保留在本地数据库中，修复钥匙串后再次保存即可迁移。</p> : null}
         {storageReadOnly ? <p className="model-settings-warning" role="status">{managedKey ? "当前使用只读环境变量密钥，页面无法更换；本地 macOS 可使用系统钥匙串保存个人密钥。" : "本机密钥存储暂不可写。已保存密钥仍可使用；更换密钥前请修复系统钥匙串。"}</p> : null}
         {saveUnknown ? <p className="model-settings-warning" role="status">保存结果待确认，请重新读取服务端状态；不会自动重复提交。</p> : null}
         <section className="settings-card model-settings-card model-connection-card">
-          <p className="model-dialog-intro">填写服务地址和密钥，再选择模型。配置仅保存在本机。</p>
+          <p className="model-dialog-intro">填写服务地址和密钥，再选择默认模型。图片生成和文字请求可能使用不同模型。</p>
           <label>
             <span id="model-base-url-label">Base URL</span>
-            <input aria-labelledby="model-base-url-label" aria-describedby="model-base-url-help" type="url" autoComplete="off" spellCheck={false} value={settings.model_base_url} disabled={fieldsBusy} placeholder={protocolBaseUrl(effectiveProtocol)} onChange={(event) => changeSettings({ ...settings, model_base_url: event.target.value })} onBlur={discoverOnBlur} />
+            <input aria-labelledby="model-base-url-label" aria-describedby="model-base-url-help" type="url" autoComplete="off" spellCheck={false} value={settings.model_base_url} disabled={fieldsBusy} placeholder={protocolBaseUrl(effectiveProtocol)} onChange={(event) => { clearKeyView(); changeSettings({ ...settings, model_base_url: event.target.value }); }} onBlur={discoverOnBlur} />
             <small id="model-base-url-help">填写服务商提供的 API 地址，包含其要求的 /v1 等路径。</small>
           </label>
           <div className="model-key-field">
             <div className="model-field-heading"><label id="model-api-key-label" htmlFor="model-api-key">API Key</label>{canReuseStoredKey && <span className="model-key-badge">已配置</span>}</div>
             <div className="model-key-input">
-              <input id="model-api-key" aria-labelledby="model-api-key-label" aria-describedby="model-api-key-help" type={showKey ? "text" : "password"} autoComplete="new-password" value={settings.api_key} disabled={fieldsBusy || storageReadOnly} placeholder={effectiveProtocol === "ollama" ? "本地 Ollama 可留空" : canReuseStoredKey ? "已配置，留空则继续使用" : "请输入 API Key"} onChange={(event) => changeSettings({ ...settings, api_key: event.target.value })} onBlur={discoverOnBlur} />
-              <button type="button" aria-label={showKey ? "隐藏本次输入的密钥" : "显示本次输入的密钥"} aria-pressed={showKey} disabled={fieldsBusy || !settings.api_key} onClick={() => setShowKey(!showKey)}>{showKey ? <EyeOff size={16} /> : <Eye size={16} />}</button>
+              <input id="model-api-key" aria-labelledby="model-api-key-label" aria-describedby="model-api-key-help" type={showKey ? "text" : "password"} autoComplete="new-password" value={settings.api_key || savedKey} disabled={fieldsBusy || storageReadOnly} placeholder={effectiveProtocol === "ollama" ? "本地 Ollama 可留空" : canReuseStoredKey ? "已配置，留空则继续使用" : "请输入 API Key"} onChange={(event) => { keyRequest.current += 1; setSavedKey(""); changeSettings({ ...settings, api_key: event.target.value }); }} onBlur={discoverOnBlur} />
+              <button type="button" aria-label={showKey ? "隐藏 API Key" : "查看 API Key"} aria-pressed={showKey} disabled={fieldsBusy || (!settings.api_key && !(canReuseStoredKey && savedSettings.connection_id))} onClick={() => void toggleKeyVisibility()}>{showKey ? <EyeOff size={16} /> : <Eye size={16} />}</button>
             </div>
-            <small id="model-api-key-help">{effectiveProtocol === "ollama" ? "本地 Ollama 可不填写密钥。" : addressChanged ? "服务地址已更改，请填写该服务的密钥；不会复用旧地址的密钥。" : canReuseStoredKey ? managedKey ? "当前使用环境变量中的密钥，页面不显示原文。" : "已保存密钥；留空继续使用，不显示原文。" : "填写服务商提供的密钥。"}</small>
+            <small id="model-api-key-help">{effectiveProtocol === "ollama" ? "本地 Ollama 可不填写密钥。" : addressChanged ? "服务地址已更改，请填写该服务的密钥；不会复用旧地址的密钥。" : canReuseStoredKey ? "密钥可见；清空后保存将继续使用已保存的密钥。" : "填写服务商提供的密钥。"}</small>
+            {keyError && <small role="alert">{keyError}</small>}
           </div>
           <div className="model-name-setting">
             <div className="model-field-heading">
@@ -273,7 +330,8 @@ export function ModelSettingsPage({
             {catalog.length > 0 && !manualModel ? (
               <select id="model-name-input" value={settings.model_name} disabled={fieldsBusy} onChange={(event) => changeSettings({ ...settings, model_name: event.target.value })}>
                 {!settings.model_name && <option value="">选择模型</option>}
-                {Array.from(new Set([settings.model_name, ...filteredModels].filter(Boolean))).map((model) => <option key={model} value={model}>{model}</option>)}
+                {settings.model_name && !filteredModels.includes(settings.model_name) ? <option value={settings.model_name} disabled>{settings.model_name}（当前配置，服务未返回）</option> : null}
+                {filteredModels.map((model) => <option key={model} value={model}>{model}</option>)}
               </select>
             ) : (
               <input id="model-name-input" value={settings.model_name} disabled={fieldsBusy} placeholder="输入模型名称" onChange={(event) => changeSettings({ ...settings, model_name: event.target.value })} />
@@ -291,7 +349,7 @@ export function ModelSettingsPage({
             </small>
           </div>
           <details className="model-dialog-protocol">
-            <summary>接口选项</summary>
+            <summary>高级选项：接口协议（默认自动匹配）</summary>
             <section className="settings-card model-settings-card model-protocol-card">
               <label>
                 <span id="model-protocol-label">接口协议</span>
@@ -305,26 +363,25 @@ export function ModelSettingsPage({
                   <option value="ollama">Ollama Chat API</option>
                 </select>
                 {!editing && savedSettings.model_protocol === "auto" && savedSettings.detected_model_protocol ? <small className="model-detected-protocol">{connectionProtocolLabel("auto", savedSettings.detected_model_protocol)}</small> : null}
-                <small>默认自动匹配；服务明确拒绝协议时会尝试兼容接口，成功后记住选择。</small>
+                <small>默认根据服务地址和模型推断协议；遇到明确的协议不兼容时会尝试受支持的替代接口。特殊服务可手动选择。</small>
                 <small>{protocolBaseUrlHelp(effectiveProtocol)}</small>
               </label>
               {discoveryError && <p className="model-capability-error" role="alert">模型列表读取失败：{discoveryError}</p>}
             </section>
           </details>
           <div className="model-settings-actions">
-            <p role="status">{saveUnknown ? "保存结果待确认" : busy ? "正在保存配置…" : !settings.model_name.trim() ? "请先选择或填写模型名称" : keyRequired ? "请填写当前服务的 API Key" : editing ? "有未保存的修改" : `当前模型：${savedSettings.model_name || "尚未配置"}`}</p>
+            <p role="status">{saveUnknown ? "保存结果待确认" : busy ? "正在保存配置…" : !settings.model_name.trim() ? "请先选择或填写模型名称" : keyRequired ? "请填写当前服务的 API Key" : editing ? "有未保存的修改" : `默认模型：${savedSettings.model_name || "尚未配置"}`}</p>
             {saveUnknown && <ActionButton variant="secondary" disabled={busy} onClick={onResumeEditing}>读取最新配置并继续编辑</ActionButton>}
             {!saveUnknown && <ActionButton variant="secondary" disabled={fieldsBusy} onClick={closeDialog}>取消</ActionButton>}
-            {saveUnknown ? <ActionButton variant="primary" disabled={busy} onClick={onConfirmSave}>{busy ? "确认中…" : "重新确认保存结果"}</ActionButton> : <ActionButton variant="primary" disabled={busy || !editing || !settings.model_name.trim() || keyRequired || (storageReadOnly && Boolean(settings.api_key.trim()))} onClick={onSave}>
+            {saveUnknown ? <ActionButton variant="primary" disabled={busy} onClick={onConfirmSave}>{busy ? "确认中…" : "重新确认保存结果"}</ActionButton> : <ActionButton variant="primary" disabled={busy || !editing || !settings.model_name.trim() || keyRequired || (storageReadOnly && Boolean(settings.api_key.trim()))} onClick={() => { clearKeyView(); onSave(); }}>
               {busy ? <LoaderCircle className="spinning" size={16} /> : <Save size={16} />}{busy ? "保存中…" : "保存并应用"}
             </ActionButton>}
           </div>
           <p className="model-save-note">{monitorBusy && !busy ? "配置已保存，连接检测中；可以继续编辑。" : "保存后从下一次对话生效。"}</p>
         </section>
       </ModelSettingsDialog>}
-      {connectionManager}
       <details className="model-advanced-settings">
-        <summary><strong>高级设置</strong><span>备用模型、自动分工与诊断</span><ChevronDown size={16} /></summary>
+        <summary><strong>{purposeManager ? "高级规则" : "高级设置"}</strong><span>备用模型、自动分工与诊断</span><ChevronDown size={16} /></summary>
         {routingManager}
         <div className="model-settings-panels">
           <p className="model-diagnostics-note">以下诊断来自已保存的连接。{editing ? "保存修改后可重新检测。" : ""}</p>

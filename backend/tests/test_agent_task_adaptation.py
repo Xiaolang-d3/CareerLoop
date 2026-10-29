@@ -273,3 +273,15 @@ def test_automatic_search_permission_does_not_force_search_for_a_greeting():
         assert result.status == "done"
         assert search.calls == 0
     asyncio.run(scenario())
+
+
+def test_explicit_image_request_starts_fresh_from_clarification():
+    snapshot = AgentRunSnapshot(
+        route_kind="conversation", needs_plan=False,
+        clarification=AgentClarification(question="希望怎么处理？", options=[
+            ClarificationOption(label="优化提示词"),
+        ]),
+    )
+    assert should_abandon_snapshot("“请生成这张图片：\n一只蓝色的小狗", snapshot)
+    assert not should_abandon_snapshot("优化提示词", snapshot)
+    assert not should_abandon_snapshot("只要提示词，不要生成图片", snapshot)

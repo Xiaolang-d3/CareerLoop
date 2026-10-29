@@ -39,6 +39,23 @@ def create(client, name, key):
     return catalog, connection, profile
 
 
+def test_reveal_connection_key_is_explicit_and_not_cached(client):
+    from fastapi.testclient import TestClient
+
+    _, connection, _ = create(client, "reveal", "synthetic-reveal-key")
+    path = f"/agent/model-connections/{connection['id']}/reveal-key"
+    assert "synthetic-reveal-key" not in client.get("/agent/model-connections").text
+    result = client.post(path)
+    assert result.status_code == 200
+    assert result.json() == {"api_key": "synthetic-reveal-key"}
+    assert result.headers["cache-control"] == "no-store"
+    missing = client.post("/agent/model-connections/missing/reveal-key")
+    assert missing.status_code == 400
+    assert missing.headers["cache-control"] == "no-store"
+    with TestClient(app) as anonymous:
+        assert anonymous.post(path).status_code == 401
+
+
 def test_connections_and_profiles_do_not_silently_change_default(client):
     original = client.get("/agent/model-connections").json()["default_profile_id"]
     catalog, first, profile = create(client, "first", "synthetic-first-key")
@@ -151,3 +168,54 @@ def test_routing_policy_api_checks_versions_and_effective_execution_model(client
     assert client.delete(f"/agent/model-connections/{connection['id']}").status_code == 200
     unavailable = client.get("/agent/capabilities")
     assert unavailable.status_code == 400 and "停用" in unavailable.json()["detail"]
+
+
+def test_connection_directory_without_placeholder_profile(client, monkeypatch):
+    response = client.post('/agent/model-connections', json={
+        'name': 'shared-service', 'model_base_url': 'https://shared.example.test/v1',
+        'model_protocol': 'openai', 'api_key': 'synthetic-service-key',
+    })
+    assert response.status_code == 200, response.text
+    catalog = response.json()
+    connection = next(item for item in catalog['connections'] if item['name'] == 'shared-service')
+    assert not any(profile['connection_id'] == connection['id'] for profile in catalog['profiles'])
+    provider = SimpleNamespace(name='openai', models_url='https://shared.example.test/v1/models', list_models=AsyncMock(return_value=['chat-model', 'gpt-image-2']))
+    factory = Mock(return_value=provider)
+    monkeypatch.setattr(model, 'build_model_provider', factory)
+    for action in ('discover', 'check'):
+        result = client.post(f"/agent/model-connections/{connection['id']}/{action}")
+        assert result.status_code == 200, result.text
+        assert result.json()['models'] == ['chat-model', 'gpt-image-2']
+    assert factory.call_args.kwargs['api_key'] == 'synthetic-service-key'
+    refreshed = client.get('/agent/model-connections').json()
+    assert refreshed['profiles'] == catalog['profiles']
+    assert 'synthetic-service-key' not in str(refreshed)
+    selected = client.post(f"/agent/model-connections/{connection['id']}/profiles/ensure", json={'model_name': 'gpt-image-2', 'expected_revision': connection['revision']})
+    assert selected.status_code == 200, selected.text
+    from app.agent.model_catalog import get_profile_connection
+    image = next(profile for profile in selected.json()['profiles'] if profile['connection_id'] == connection['id'])
+    resolved = get_profile_connection(image['id'])
+    assert resolved['api_key'] == 'synthetic-service-key'
+    assert resolved['resolved_model_protocol'] == 'images'
+    assert resolved['model_base_url'] == connection['model_base_url']
+    assert len(selected.json()['connections']) == len(catalog['connections'])
+
+
+def test_fresh_workspace_has_no_seeded_connections_or_models(client, monkeypatch):
+    monkeypatch.setattr(settings, 'get_settings', lambda: SimpleNamespace(model_name='', model_base_url=None, model_protocol='auto', openai_api_key=None))
+    catalog = client.get('/agent/model-connections').json()
+    assert catalog['connections'] == []
+    assert catalog['profiles'] == []
+    assert not catalog['default_profile_id']
+    empty = client.get('/agent/settings')
+    assert empty.status_code == 200
+    assert empty.json()['model_name'] == ''
+    assert client.get('/agent/capabilities').json()['configured'] is False
+    from app.agent.model_router import get_routing_policy, save_routing_policy
+    assert get_routing_policy() == {'version': 1, 'roles': {}, 'strict_capabilities': False}
+    assert save_routing_policy({'expected_version': 1, 'roles': {}})['version'] == 2
+    saved = client.post('/agent/model-connections', json={'name': 'service', 'model_base_url': 'https://service.example.test/v1', 'api_key': 'synthetic-only-key'})
+    assert saved.status_code == 200, saved.text
+    assert len(saved.json()['connections']) == 1
+    assert saved.json()['profiles'] == []
+    assert not saved.json()['default_profile_id']

@@ -8,11 +8,11 @@ export function ProductIntroPage({ returnHash, signedIn = false }: { returnHash:
   const experienceRef = useRef<HTMLElement>(null);
   const workflowRef = useRef<HTMLElement>(null);
   const privacyRef = useRef<HTMLElement>(null);
-  const actionLabel = signedIn ? "继续使用 灯灯" : "开始使用";
+  const actionLabel = signedIn ? "继续使用 团团" : "开始使用";
 
   useEffect(() => {
     const previousTitle = document.title;
-    document.title = "产品介绍｜灯灯";
+    document.title = "产品介绍｜团团";
     headingRef.current?.focus({ preventScroll: true });
     return () => { document.title = previousTitle; };
   }, []);
@@ -26,9 +26,9 @@ export function ProductIntroPage({ returnHash, signedIn = false }: { returnHash:
     <main className="product-intro-page">
       <header className="product-intro-header">
         <div className="product-intro-header-inner">
-          <a className="product-intro-brand" href={returnHash} aria-label="灯灯 入口">
-            <img src="/dengdeng-mark-v1.png" alt="" width="36" height="36" draggable={false} />
-            <span>灯灯</span>
+          <a className="product-intro-brand" href={returnHash} aria-label="团团 入口">
+            <img src="/tuantuan-logo.png" alt="" width="36" height="36" draggable={false} />
+            <span>团团</span>
           </a>
           <nav className="product-intro-nav" aria-label="产品介绍导航">
             <button type="button" onClick={() => explore(experienceRef.current)}>产品体验</button>
@@ -41,8 +41,8 @@ export function ProductIntroPage({ returnHash, signedIn = false }: { returnHash:
       <section className="product-intro-hero" aria-labelledby="product-intro-title">
         <div className="product-intro-container">
           <div className="product-intro-hero-copy">
-            <p className="product-intro-kicker">灯灯 · 你的日常 AI 助手</p>
-            <h1 id="product-intro-title" ref={headingRef} tabIndex={-1}><span>一起想清楚，</span><span>一步步做好。</span></h1>
+            <p className="product-intro-kicker">团团 · 智能工作伙伴</p>
+            <h1 id="product-intro-title" ref={headingRef} tabIndex={-1}><span>理解你的想法，</span><span>帮你把事情做好。</span></h1>
             <p className="product-intro-description">说说你的想法，一起分析、起草和修改。需要依据时，再带入资料，让对话走向可用的成果。</p>
             <div className="product-intro-actions">
               <a className="product-intro-action" href={returnHash}>{actionLabel}<ArrowRight size={18} aria-hidden="true" /></a>
@@ -77,7 +77,7 @@ export function ProductIntroPage({ returnHash, signedIn = false }: { returnHash:
         </div>
       </section>
       <footer className="product-intro-footer product-intro-container">
-        <span>灯灯 <span className="product-intro-footer-tagline">一起想清楚，一步步做好</span></span>
+        <span>团团 <span className="product-intro-footer-tagline">理解你的想法，帮你把事情做好。</span></span>
         <a className="product-intro-back" href={returnHash}><ArrowLeft size={15} aria-hidden="true" />{signedIn ? "回到工作空间" : "返回登录"}</a>
       </footer>
     </main>

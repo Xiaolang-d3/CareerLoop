@@ -96,7 +96,8 @@ describe("file library", () => {
     expect(screen.queryByRole("button", { name: "预览 读书笔记" })).not.toBeInTheDocument();
     fireEvent.change(collection, { target: { value: "10" } });
     expect(collection.closest("label")).toHaveClass("is-active");
-    expect(screen.getByRole("button", { name: "预览 读书笔记" })).toBeInTheDocument();
+    expect(directory).toHaveValue("3");
+    expect(screen.getByText("没有找到匹配的文件")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
     expect(directory).toHaveValue("all");
     expect(collection).toHaveValue("all");
@@ -184,7 +185,7 @@ describe("file library", () => {
   it("keeps categories in the module and protects AI text", async () => {
     const p = props();
     render(<LibraryPage {...p} />);
-    expect(screen.getByRole("navigation", { name: "文件分类" })).toHaveTextContent("全部文件最近使用收藏回收站");
+    expect(screen.getByRole("navigation", { name: "文件类型" })).toHaveTextContent(/全部文件.*图片库.*文档库.*视频库/);
     const pane = await preview();
     await waitFor(() => expect(p.onOrganizeSource).toHaveBeenCalledWith(7, { opened: true }));
     fireEvent.click(within(pane).getByRole("button", { name: "AI 读取内容" }));
@@ -194,6 +195,56 @@ describe("file library", () => {
     fireEvent.change(screen.getByLabelText("编辑资料正文"), { target: { value: "校正内容" } });
     fireEvent.click(screen.getByRole("button", { name: "保存正文" }));
     await waitFor(() => expect(p.onUpdateSource).toHaveBeenCalledWith(7, { content: "校正内容" }));
+  });
+  it("filters files by type", () => {
+    const p = props();
+    render(<LibraryPage {...p} sources={[source, { ...source, id: 8, title: "照片", mime_type: "image/png" }, { ...source, id: 9, title: "影片", mime_type: "video/mp4" }]} />);
+    fireEvent.click(screen.getByRole("button", { name: "图片库" }));
+    expect(screen.getByText("照片")).toBeInTheDocument();
+    expect(screen.queryByText("影片")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "视频库" }));
+    expect(screen.getByText("影片")).toBeInTheDocument();
+    expect(screen.queryByText("照片")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "文档库" }));
+    expect(screen.getByText("读书笔记")).toBeInTheDocument();
+    expect(screen.queryByText("影片")).not.toBeInTheDocument();
+  });
+  it("hides text-use controls in media libraries without applying a hidden filter", () => {
+    const image = { ...source, id: 8, title: "照片", mime_type: "image/png", enabled: false };
+    render(<LibraryPage {...props()} sources={[source, image]} />);
+    fireEvent.click(screen.getByRole("button", { name: "筛选" }));
+    fireEvent.change(screen.getByLabelText("筛选 AI 使用"), { target: { value: "ready" } });
+    fireEvent.click(screen.getByRole("button", { name: "图片库" }));
+    expect(screen.queryByRole("columnheader", { name: "AI 使用" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("筛选 AI 使用")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "预览 照片" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "文档库" }));
+    expect(screen.getByRole("columnheader", { name: "AI 使用" })).toBeInTheDocument();
+    expect(screen.getByLabelText("筛选 AI 使用")).toHaveValue("ready");
+  });
+  it("preserves search and directory when changing file type and clears empty results", () => {
+    render(<LibraryPage {...props()} />);
+    fireEvent.change(screen.getByLabelText("筛选目录"), { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText("搜索文件名或内容"), { target: { value: "笔记" } });
+    fireEvent.click(screen.getByRole("button", { name: "图片库" }));
+    expect(screen.getByLabelText("筛选目录")).toHaveValue("3");
+    expect(screen.getByLabelText("搜索文件名或内容")).toHaveValue("笔记");
+    fireEvent.click(screen.getByRole("button", { name: "清除搜索和筛选" }));
+    expect(screen.getByLabelText("筛选目录")).toHaveValue("all");
+    expect(screen.getByLabelText("搜索文件名或内容")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "图片库" })).toHaveAttribute("aria-current", "page");
+  });
+  it("explains that image use is based on text rather than visual analysis", async () => {
+    const image = { ...source, mime_type: "image/png", parse_status: "failed" as const, character_count: 0 };
+    const p = props();
+    p.onLoadSource.mockResolvedValue({ ...detail, ...image, content: "", redacted_content: "" });
+    render(<LibraryPage {...p} sources={[image]} />);
+    fireEvent.click(screen.getByRole("button", { name: "预览 读书笔记" }));
+    const pane = await screen.findByRole("complementary", { name: "文件快速预览" });
+    expect(within(pane).getByText(/暂不直接分析画面/)).toBeInTheDocument();
+    fireEvent.click(within(pane).getByRole("button", { name: "图片文字与说明" }));
+    expect(within(pane).getByRole("button", { name: "编辑文字说明" })).toBeInTheDocument();
+    expect(within(pane).getByRole("button", { name: "用于对话" })).toBeDisabled();
   });
   it("creates redacted notes in the current folder", async () => {
     const p = props();
@@ -218,7 +269,7 @@ describe("file library", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     view.rerender(<LibraryPage {...p} sources={[{ ...source, trashed_at: "2026-10-06T08:00:00Z" }]} />);
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "回收站" }));
+    fireEvent.change(screen.getByLabelText("文件范围"), { target: { value: "trash" } });
     fireEvent.click(screen.getByRole("button", { name: "恢复 读书笔记" }));
     await waitFor(() => expect(p.onOrganizeSource).toHaveBeenCalledWith(7, { trashed: false }));
     await waitFor(() => expect(screen.getByRole("button", { name: "恢复 读书笔记" })).not.toBeDisabled());
@@ -337,7 +388,7 @@ describe("file library", () => {
     expect(screen.getByRole("button", { name: "用于对话" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "更多文件操作" }));
     expect(screen.getByRole("button", { name: "开启长期使用" })).toBeDisabled();
-    expect(screen.getByRole("status")).toHaveTextContent("补充 AI 读取内容");
+    expect(screen.getByRole("status")).toHaveTextContent("补充文字或说明");
     expect(screen.getByRole("button", { name: "下载" })).not.toBeDisabled();
   });
   it("enables selected readable archives as knowledge sources explicitly", async () => {

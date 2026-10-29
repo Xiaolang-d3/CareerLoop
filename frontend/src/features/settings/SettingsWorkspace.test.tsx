@@ -32,7 +32,7 @@ describe("SettingsOverview", () => {
     expect(screen.queryByText("owner@example.com")).not.toBeInTheDocument();
     expect(screen.getByText("文件库管理")).toBeInTheDocument();
     expect(screen.getByText("文件、主题集合与知识")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "了解 灯灯" })).toHaveAttribute("href", "#/about");
+    expect(screen.getByRole("link", { name: "了解 团团" })).toHaveAttribute("href", "#/about");
 
     fireEvent.click(screen.getByRole("button", { name: /账号与安全/ }));
     expect(onOpen).toHaveBeenCalledWith("account");

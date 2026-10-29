@@ -47,7 +47,10 @@ export function ModelFallbackSettings({ catalog, fetchJson, busy }: { catalog: M
 
   if (!draft || !saved) return error ? <section className="settings-card model-settings-card model-connections-card model-fallback-card"><p className="model-capability-error" role="alert">{error}</p></section> : null;
 
-  const profiles = catalog.profiles.filter(profile => profile.enabled && catalog.connections.some(item => item.id === profile.connection_id && item.enabled));
+  const profiles = catalog.profiles.filter(profile => profile.enabled
+    && (!catalog.service_connection_id || profile.connection_id === catalog.service_connection_id)
+    && catalog.connections.some(item => item.id === profile.connection_id && item.enabled));
+  const retainedIds = new Set(LISTS.flatMap(list => draft[list.key]).filter(id => !profiles.some(profile => profile.id === id)));
   const connectionName = (connectionId: string) => { const item = catalog.connections.find(entry => entry.id === connectionId); return item?.name || item?.model_base_url || "默认服务"; };
   const dirty = JSON.stringify({ ...draft, revision: 0 }) !== JSON.stringify({ ...saved, revision: 0 });
   const native = draft.backend === "native";
@@ -89,15 +92,17 @@ export function ModelFallbackSettings({ catalog, fetchJson, busy }: { catalog: M
       <label className="model-fallback-switch"><input type="checkbox" checked={draft.enabled} disabled={disabled} onChange={event => { setMessage(""); setDraft({ ...draft, enabled: event.target.checked }); }} />启用备用模型</label></div>
     {native ? <p className="model-connections-hint">当前使用原生模型层（DENGDENG_MODEL_BACKEND=native），备用模型设置会保存，但不会生效。</p> : null}
     {profiles.length < 2 ? <p className="model-connections-hint">至少需要两个可用模型才能设置备用模型，请先在上方添加模型。</p> : null}
+    {retainedIds.size ? <p className="model-connections-hint">历史选择已保留，可移除后改选当前服务的模型；不会自动替换。</p> : null}
     {draft.enabled ? <>
       {LISTS.map(list => <fieldset key={list.key} className="model-fallback-list" disabled={disabled}>
         <legend>{list.title}<small>最多 {list.limit} 个 · {list.help}</small></legend>
-        <div>{profiles.map(profile => {
+        <div>{[...profiles, ...draft[list.key].filter(id => !profiles.some(profile => profile.id === id)).map(id => catalog.profiles.find(profile => profile.id === id) ?? { id, connection_id: "", model_name: `不存在的模型（${id}）` })].map(profile => {
           const position = draft[list.key].indexOf(profile.id);
+          const retained = retainedIds.has(profile.id);
           return <label key={profile.id} className={position >= 0 ? "selected" : ""}>
             <input type="checkbox" checked={position >= 0} onChange={() => toggle(list.key, profile.id, list.limit)} aria-label={`${list.title}：${profile.model_name}（${connectionName(profile.connection_id)}）`} />
             {position >= 0 && list.key === "fallback_profile_ids" ? <b>{position + 1}</b> : null}
-            <span>{profile.model_name}<small>{connectionName(profile.connection_id)}{profile.id === catalog.default_profile_id ? " · 默认模型" : ""}</small></span>
+            <span>{profile.model_name}<small>{connectionName(profile.connection_id)}{retained ? " · 历史配置" : ""}{profile.id === catalog.default_profile_id ? " · 默认模型" : ""}</small></span>
           </label>;
         })}</div>
       </fieldset>)}

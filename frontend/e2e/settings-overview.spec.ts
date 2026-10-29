@@ -46,7 +46,7 @@ for (const theme of ["light", "dark"] as const) {
         expect(contentWidth - box.x - box.width).toBeLessThanOrEqual(24);
       }
       for (const entry of await entries.all()) await expect(entry).toBeInViewport();
-      await expect(page.getByRole("link", { name: "了解 灯灯", exact: true })).toBeInViewport();
+      await expect(page.getByRole("link", { name: "了解 团团", exact: true })).toBeInViewport();
       if (width === 996 || width === 390) {
         const output = resolve("..", "..", "output", "settings-overview");
         await mkdir(output, { recursive: true });

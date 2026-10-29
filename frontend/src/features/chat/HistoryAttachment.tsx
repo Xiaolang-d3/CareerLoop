@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
-import { FileText, ImagePlus } from "lucide-react";
+import { FileText, FolderPlus, ImagePlus } from "lucide-react";
 import type { ChatAttachment, ChatWorkspaceProps } from "./types";
 import "./results.css";
 
@@ -34,12 +34,17 @@ export function HistoryAttachment({ attachment, onPreview, onSave, variant = "at
     }).catch(() => { if (!abort.signal.aborted) setFailed(true); });
     return () => { abort.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [attachment.id, attachment.kind, visible, attempt]);
+  const imageAttachment = attachment.kind === "image" && variant !== "generated";
   return <div className={variant === "generated" ? "generated-image-preview" : `chat-history-attachment${attachment.kind === "image" ? " is-image" : ""}`} ref={ref}>
     <button type="button" onClick={onPreview} aria-label={`预览 ${attachment.original_filename}`}>
       {url && !failed ? <img src={url} alt="" onError={() => setFailed(true)} /> : attachment.kind === "image" ? <ImagePlus size={16} /> : <FileText size={16} />}
-      {variant !== "generated" ? <span>{attachment.original_filename}{attachment.vision_status === "consented" ? <em>模型看图</em> : null}</span> : null}
+      {variant !== "generated" && !imageAttachment ? <span>{attachment.original_filename}</span> : null}
     </button>
+    {imageAttachment ? <div className="chat-history-attachment-meta">
+      <span className="chat-history-attachment-name" title={attachment.original_filename}>{attachment.original_filename}</span>
+      {attachment.vision_status === "consented" ? <em>模型看图</em> : null}
+    </div> : null}
     {failed ? <button type="button" onClick={() => setAttempt(value => value + 1)}>缩略图加载失败，重试</button> : null}
-    {onSave ? <button type="button" onClick={onSave} aria-label={`保存 ${attachment.original_filename} 到文件库`}>保存到文件库</button> : null}
+    {onSave ? <button type="button" className="chat-history-attachment-save" onClick={onSave} aria-label={`保存 ${attachment.original_filename} 到文件库`}><FolderPlus size={13} aria-hidden="true" />保存到文件库</button> : null}
   </div>;
 }

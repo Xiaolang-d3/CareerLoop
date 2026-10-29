@@ -10,7 +10,7 @@ from ..agent.snapshots import clear_run_snapshot, save_run_snapshot
 from ..attachments.service import get_attachment, prepare_attachment_vision_url
 from .conversations import create_conversation, list_conversations
 from ..db import connect, json_dump, row_to_dict
-from ..domain import AgentMessage, AgentRunResult, ToolEvent
+from ..domain import AgentMessage, AgentRunResult, AgentRunSnapshot, ToolEvent
 from ..observability.model_context import public_model_selection
 
 
@@ -61,6 +61,59 @@ def _history_content(row: Any) -> str:
     return row["content"]
 
 
+def with_attachment_context(content: str, text: str) -> str:
+    return content + "\n\n以下为用户主动上传附件的本地解析文本，请基于此内容回答：\n" + text if text else content
+
+
+def _history_message(row: Any, conversation_id: int) -> AgentMessage:
+    content = _history_content(row)
+    if row["role"] != "user":
+        return AgentMessage(role=row["role"], content=content)
+    try:
+        payload = json.loads(row["payload_json"] or "{}")
+    except (ValueError, TypeError):
+        payload = {}
+    attachments = payload.get("attachments", []) if isinstance(payload, dict) else []
+    blocks, ids = [], []
+    for item in attachments if isinstance(attachments, list) else []:
+        attachment_id = item.get("id") if isinstance(item, dict) else None
+        if not isinstance(attachment_id, str) or attachment_id in ids:
+            continue
+        attachment = get_attachment(attachment_id)
+        if (not attachment or attachment["conversation_id"] != conversation_id or attachment["kind"] != "document"
+                or attachment["parse_status"] != "parsed" or not attachment["redacted_text"]):
+            continue
+        ids.append(attachment_id)
+        blocks.append(f"[脱敏资料：{attachment['original_filename']}]\n{attachment['redacted_text']}")
+    return AgentMessage(role="user", content=with_attachment_context(content, "\n\n".join(blocks)),
+                        payload={"document_attachment_ids": ids} if ids else {})
+
+
+def restore_snapshot_attachment_text(conversation_id: int, snapshot: AgentRunSnapshot) -> AgentRunSnapshot:
+    """Repair legacy 1000-character previews only when the original matches exactly."""
+    if snapshot.resume_mode != "waiting_user" or snapshot.pending_search_queries or snapshot.pending_tool_approval is not None:
+        return snapshot
+    previews = [message for message in snapshot.messages if message.role == "user" and "\n[脱敏资料：" in message.content]
+    if not previews:
+        return snapshot
+    with connect() as conn:
+        rows = conn.execute(
+            """SELECT role, content, payload_json FROM chat_messages
+               WHERE conversation_id = ? AND role = 'user'
+                 AND id > COALESCE((SELECT context_cutoff_message_id FROM conversations WHERE id = ?), 0)
+                 AND payload_json LIKE '%"attachments"%'""",
+            (conversation_id, conversation_id),
+        ).fetchall()
+    originals = [_history_message(row, conversation_id) for row in rows]
+    messages = []
+    for message in snapshot.messages:
+        matches = {original.content: original for original in originals
+                   if message.role == "user" and "\n[脱敏资料：" in message.content
+                   and original.payload.get("document_attachment_ids") and original.content.startswith(message.content)}
+        messages.append(next(iter(matches.values())) if len(matches) == 1 else message)
+    return snapshot.model_copy(update={"messages": messages})
+
+
 def agent_history(conversation_id: int, before_message_id: int) -> list[AgentMessage]:
     settings = get_agent_settings()
     if not settings["conversation_memory_enabled"]:
@@ -90,7 +143,7 @@ def agent_history(conversation_id: int, before_message_id: int) -> list[AgentMes
             )
         )
     history.extend(
-        AgentMessage(role=row["role"], content=_history_content(row))
+        _history_message(row, conversation_id)
         for row in reversed(rows)
     )
     return history

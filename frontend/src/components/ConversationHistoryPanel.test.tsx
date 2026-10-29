@@ -34,7 +34,7 @@ function renderPanel(open = true) {
 }
 
 describe("ConversationHistoryPanel", () => {
-  afterEach(cleanup);
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
   it("searches titles and summaries, identifies the current conversation and clears an empty search with Escape", () => {
     const { view, ...props } = renderPanel();
@@ -66,6 +66,57 @@ describe("ConversationHistoryPanel", () => {
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
     expect(props.onClose).not.toHaveBeenCalled();
+  });
+
+  it("renders the complete menu outside the short list and handles pointer actions there", () => {
+    const props = renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: "项目表达练习 的更多操作" }));
+    const menu = screen.getByRole("menu");
+    expect(props.view.container.querySelector(".conversation-history-list")).not.toContainElement(menu);
+    expect(screen.getByRole("complementary", { name: "对话记录" })).toContainElement(menu);
+    const archive = screen.getByRole("menuitem", { name: "归档" });
+    fireEvent.pointerDown(archive);
+    expect(menu).toBeInTheDocument();
+    fireEvent.click(archive);
+    expect(props.onArchive).toHaveBeenCalledWith(conversation);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("uses available space rather than record count and repositions on resize", () => {
+    const props = renderPanel();
+    const panel = screen.getByRole("complementary", { name: "对话记录" });
+    const trigger = screen.getByRole("button", { name: "项目表达练习 的更多操作" });
+    const rect = (top: number, left: number, width: number, height: number) => ({ top, left, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON: () => ({}) });
+    vi.spyOn(panel, "getBoundingClientRect").mockReturnValue(rect(0, 0, 276, 480));
+    Object.defineProperties(panel, { clientWidth: { value: 276 }, clientHeight: { value: 480 } });
+    const triggerRect = vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue(rect(60, 240, 28, 28));
+    for (const [key, value] of Object.entries({ offsetHeight: 130, clientHeight: 128, scrollHeight: 128, offsetWidth: 128 })) {
+      vi.spyOn(HTMLElement.prototype, key as "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+        return this.classList.contains("conversation-history-menu") ? value : 0;
+      });
+    }
+    fireEvent.click(trigger);
+    const menu = screen.getByRole("menu");
+    expect(menu).toHaveStyle({ top: "92px", left: "140px" });
+    triggerRect.mockReturnValue(rect(416, 240, 28, 28));
+    fireEvent(window, new Event("resize"));
+    expect(menu).toHaveStyle({ top: "282px", maxHeight: "404px" });
+    expect(screen.getByRole("menuitem", { name: "重命名" })).toHaveFocus();
+    const list = props.view.container.querySelector(".conversation-history-list")!;
+    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(32, 0, 276, 440));
+    fireEvent.scroll(list);
+    expect(menu).toBeInTheDocument();
+    triggerRect.mockReturnValue(rect(-60, 240, 28, 28));
+    fireEvent.scroll(list);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("dismisses the menu when clicking outside it", () => {
+    renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: "项目表达练习 的更多操作" }));
+    fireEvent.pointerDown(screen.getByRole("searchbox"));
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 
   it("creates a conversation from the chat-side history panel", () => {

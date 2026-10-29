@@ -60,7 +60,7 @@ else
 fi
 
 if [ "$EXPOSED" = "1" ]; then
-  echo "灯灯 is reachable from other devices on this network."
+  echo "团团 is reachable from other devices on this network."
 else
-  echo "灯灯 is listening on this machine only."
+  echo "团团 is listening on this machine only."
 fi

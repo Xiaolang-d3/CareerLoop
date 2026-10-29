@@ -16,7 +16,7 @@ export function GeneratedImage({ asset, messageId, prompt }: { asset: ChatAttach
   const [error, setError] = useState("");
   const [copyState, setCopyState] = useState("");
   const imageWidth = asset.width && asset.height && asset.width > 0 && asset.height > 0
-    ? Math.min(640, 460 * asset.width / asset.height) : undefined;
+    ? Math.min(400, 320 * asset.width / asset.height) : undefined;
   const controller = useRef<AbortController | null>(null);
   useEffect(() => () => controller.current?.abort(), []);
   async function download() {

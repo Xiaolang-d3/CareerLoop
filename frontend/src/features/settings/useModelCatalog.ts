@@ -6,9 +6,12 @@ type Client = ReturnType<typeof createApiClient>;
 function publicCatalog(catalog: ModelCatalog): ModelCatalog {
   return {
     connections: catalog.connections.map(({ id, name, model_base_url, model_protocol, detected_protocol, protocol_label, api_key_configured, enabled, revision }) => ({ id, name, model_base_url, model_protocol, detected_protocol, protocol_label, api_key_configured, enabled, revision })),
-    profiles: catalog.profiles.map(({ id, connection_id, model_name, enabled, revision, parameters, capabilities, context_limit, reasoning_effort }) => ({ id, connection_id, model_name, enabled, revision, parameters, capabilities, context_limit, reasoning_effort })),
+    profiles: catalog.profiles.map(({ id, connection_id, model_name, enabled, revision, parameters, capabilities, context_limit, reasoning_effort, output_types, output_types_source, supported_purposes }) => ({ id, connection_id, model_name, enabled, revision, parameters, capabilities, context_limit, reasoning_effort, output_types, output_types_source, supported_purposes })),
     default_profile_id: catalog.default_profile_id,
-    effective_execution_profile_id: catalog.effective_execution_profile_id
+    effective_execution_profile_id: catalog.effective_execution_profile_id,
+    purpose_defaults: catalog.purpose_defaults,
+    purpose_version: catalog.purpose_version,
+    service_connection_id: catalog.service_connection_id
   };
 }
 const emptyCatalog: ModelCatalog = { connections: [], profiles: [], default_profile_id: null };

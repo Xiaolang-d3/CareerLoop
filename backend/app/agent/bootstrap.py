@@ -246,7 +246,7 @@ def get_agent_runtime(profile_id: str | None = None, *, selection: dict[str, Any
 
             image_only = resolve_model_protocol(connection["model_name"], connection.get("model_protocol"), connection.get("model_base_url", "")) == "images"
             if image_generation_intent(user_content, image_model_selected=image_only):
-                connection = bind_image_model(connection, catalog=get_model_catalog(), resolve=get_profile_connection)
+                connection = bind_image_model(connection, catalog=get_model_catalog(), resolve=get_profile_connection, explicit_profile=profile_id is not None)
             elif image_only:
                 connection = bind_text_model(connection, catalog=get_model_catalog(), resolve=get_profile_connection)
     runtime, _ = _cached_components(connection)
@@ -256,6 +256,9 @@ def get_agent_runtime(profile_id: str | None = None, *, selection: dict[str, Any
 def get_agent_capabilities() -> dict[str, Any]:
     from .settings import _settings_lock
     from ..secret_store import secret_backend_name
+    from .model_catalog import get_model_catalog
+    if not get_model_catalog()["default_profile_id"]:
+        return _build_unconfigured_capabilities({"model_name": "", "model_base_url": "", "model_protocol": "auto", "api_key": ""})
 
     if secret_backend_name() == "keyring":
         # Capability display is not permission to unlock every stage's key.

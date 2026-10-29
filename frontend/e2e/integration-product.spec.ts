@@ -11,9 +11,9 @@ test("new account imports, corrects and reviews knowledge through the real backe
   await expect(page.getByRole("heading", { name: /reader/ })).toBeVisible();
   await page.goto("/#/settings");
   const token = await page.evaluate(() => localStorage.getItem("careerloop-auth-token"));
-  await page.getByRole("link", { name: "了解 灯灯" }).click();
+  await page.getByRole("link", { name: "了解 团团" }).click();
   await expect(page).toHaveURL(/#\/about$/);
-  await expect(page.getByRole("heading", { name: /一起想清楚/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /理解你的想法/ })).toBeVisible();
   await page.getByRole("link", { name: "返回应用", exact: true }).click();
   await expect(page).toHaveURL(/#\/settings$/);
   await expect(page.getByRole("button", { name: /账号与安全/ })).toBeVisible();
@@ -74,10 +74,10 @@ test("new account imports, corrects and reviews knowledge through the real backe
   await page.reload();
   await expect(list.locator("tbody tr")).toHaveCount(1);
   await expect(list).toContainText("仅存档");
-  await page.getByRole("button", { name: "回收站", exact: true }).click();
+  await page.getByRole("combobox", { name: "文件范围", exact: true }).selectOption("trash");
   await page.getByRole("button", { name: "恢复 notes" }).click();
   await expect(page.getByText("回收站是空的")).toBeVisible();
-  await page.getByRole("button", { name: "全部文件", exact: true }).click();
+  await page.getByRole("combobox", { name: "文件范围", exact: true }).selectOption("all");
   await expect(list.locator("tbody tr")).toHaveCount(2);
   await page.getByRole("checkbox", { name: "选择 notes", exact: true }).check();
   await page.getByRole("button", { name: "用于对话", exact: true }).click();

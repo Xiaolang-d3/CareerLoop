@@ -17,7 +17,7 @@ jobs:
   publish:
     # PRs, forks, manual CI runs and failed CI never publish deployment code.
     if: >-
-      github.repository == 'Xiaolang-d3/CareerLoop' &&
+      (github.repository == 'Xiaolang-d3/CareerLoop' || github.repository == 'Xiaolang-d3/TuanTuan') &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main' &&

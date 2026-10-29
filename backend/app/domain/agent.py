@@ -142,6 +142,15 @@ class PendingToolApproval(BaseModel):
     summary: str = ""
 
 
+class ExecutionBudgetState(BaseModel):
+    tool_calls: int = Field(default=0, ge=0)
+    web_search_calls: int = Field(default=0, ge=0)
+    searches_without_progress: int = Field(default=0, ge=0)
+    web_evidence: dict[str, list[str]] = Field(default_factory=dict)
+    active_seconds: float = Field(default=0, ge=0)
+    finalization_reason: str = ""
+
+
 class AgentRunSnapshot(BaseModel):
     # Internal immutable identity only. Credentials are resolved from versioned storage.
     model_selection: dict[str, Any] = Field(default_factory=dict)
@@ -166,6 +175,7 @@ class AgentRunSnapshot(BaseModel):
     completed_tools: list[str] = Field(default_factory=list)
     completed_tool_calls: list[str] = Field(default_factory=list)
     repeated_tool_calls: dict[str, int] = Field(default_factory=dict)
+    execution_budget: ExecutionBudgetState | None = None
     approved_search_queries: list[str] = Field(default_factory=list)
     pending_search_queries: list[str] = Field(default_factory=list)
     approved_tool_fingerprints: list[str] = Field(default_factory=list)

@@ -26,7 +26,7 @@ import { AssistantRuntimeProvider, ComposerPrimitive, ThreadPrimitive, type Thre
 import { flushTapSync } from "@assistant-ui/tap";
 import { useAui, useAuiState } from "@assistant-ui/store";
 
-import { ArrowUp, ArrowUpRight, Download, FileText, History, ImagePlus, LoaderCircle, Mic, Paperclip, Plus, RefreshCw, Square, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, ArrowUpRight, CheckCircle2, Download, FileText, History, ImagePlus, LoaderCircle, Mic, Paperclip, Plus, RefreshCw, Square, TriangleAlert, X } from "lucide-react";
 
 const MAX_ATTACHMENTS = 8;
 
@@ -178,6 +178,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
   const [conversationListOpen, setConversationListOpen] = useState(false);
   const [researchPanelOpen, setResearchPanelOpen] = useState(false);
   const scrolling = useConversationScroll(props.currentConversationId, props.messages, researchPanelOpen);
+  useEffect(() => { if (props.modelSelectionFeedback) scrolling.jumpToLatest(); }, [props.modelSelectionFeedback, scrolling.jumpToLatest]);
   const researchReturn = useRef<{ top: number; element: HTMLElement | null } | null>(null);
   const [researchSelection, setResearchSelection] = useState<{
     agent?: AgentRunResult;
@@ -416,6 +417,11 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
             <div className="message assistant"><div className="message-content"><RunProcess streaming stopping={props.taskCancelBusy} /></div></div>
           ) : null}
 
+          {props.modelSelectionFeedback && <div className={`composer-model-feedback ${props.modelSelectionFeedback.kind}`} role={props.modelSelectionFeedback.kind === "error" ? "alert" : "status"}>
+            {props.modelSelectionFeedback.kind === "error" ? <TriangleAlert size={16} aria-hidden="true" /> : <CheckCircle2 size={16} aria-hidden="true" />}
+            <span>{props.modelSelectionFeedback.text}</span>
+            <button type="button" aria-label="关闭模型切换提示" onClick={props.onDismissModelSelectionFeedback}><X size={14} /></button>
+          </div>}
           <div ref={props.chatEndRef} />
           </div>
         </ThreadPrimitive.Viewport>
@@ -584,6 +590,7 @@ function ChatWorkspaceContent(props: ChatWorkspaceContentProps) {
                     defaultModelName={props.defaultModelName}
                     profiles={props.modelProfiles ?? []}
                     serviceModels={props.serviceModels}
+                    additionalServiceModels={props.additionalServiceModels}
                     onDiscover={props.onDiscoverServiceModels}
                     onServiceChange={props.onServiceModelChange}
                     selectedProfileId={props.selectedModelProfileId ?? null}

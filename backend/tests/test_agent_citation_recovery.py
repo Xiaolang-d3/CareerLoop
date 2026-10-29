@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import pytest
-from app.agent.citations import apply_citation_patches, evidence_cards, repair_messages
+from app.agent.citations import apply_citation_patches, evaluate_citation_patches, evidence_cards, repair_messages
 from app.agent.runtime import validate_web_citations
 from app.domain import AgentMessage, AgentPlan, AgentPlanStep, AgentRunSnapshot, ModelResponse, ToolCall, ToolResult
 from app.models import ModelProviderError
@@ -86,6 +86,41 @@ def test_invalid_or_off_topic_repairs_are_rejected(response):
 def test_insertion_cannot_change_existing_link_labels_or_urls():
     assert apply_citation_patches(DRAFT, CARDS, patch_response("cite_after", "https://invented.example/report")) is None
 
+
+@pytest.mark.parametrize("fence", ["```json\n{}\n```", "```\n{}\n```", "```JSON\n{}\n```", "```json{}```"])
+def test_json_fences_preserve_the_same_strict_patch_validation(fence):
+    valid = patch_response()
+    assert apply_citation_patches(DRAFT, CARDS, ModelResponse(content=fence.format(valid.content))) == DRAFT.replace("https://invented.example/report", URL)
+    assert evaluate_citation_patches(DRAFT, CARDS, ModelResponse(content=fence.format('{"patches":[]}'))) == (None, "empty_patches")
+
+
+@pytest.mark.parametrize("response,code", [
+    (ModelResponse(content="private-raw-response"), "invalid_format"),
+    (ModelResponse(content='{"patches":[]}'), "empty_patches"),
+    (patch_response(source_id="C99"), "unknown_source"),
+    (patch_response(quote="从未出现在证据中的杜撰引文内容"), "quote_not_found"),
+    (patch_response(target="https://missing.example/"), "target_not_found"),
+    (patch_response("cite_after", "不在原文中出现的句子"), "invalid_anchor"),
+])
+def test_rejected_patches_return_specific_diagnostics_without_raw_response(response, code):
+    assert evaluate_citation_patches(DRAFT, CARDS, response) == (None, code)
+
+
+def test_failed_review_updates_one_node_with_diagnostics_without_publishing_unverified_draft():
+    async def scenario():
+        model = ScriptedModel([web_call(), ModelResponse(content="本平台社招职位存在变化。"), ModelResponse(content='{"patches":[]}')])
+        result = await runtime_for(model, EvidenceTool()).run("联网整理社招讨论")
+        events = [event for event in result.events if event.tool_name == "citation_validator"]
+        assert result.status == "failed" and result.error.code == "citation_validation_failed"
+        assert "本平台社招职位存在变化。" not in result.content
+        assert "来源核验" in result.content
+        assert result.snapshot.citation_draft == "本平台社招职位存在变化。"
+        assert len(events) == 2 and events[0].tool_call_id == events[1].tool_call_id
+        assert events[-1].data["repair_error_code"] == "empty_patches"
+        assert "未找到可确认的引用补丁" in result.error.message
+        assert "没有使用 Markdown" in events[0].data["validation_reason"]
+    asyncio.run(scenario())
+
 def test_repair_uses_compact_evidence_and_no_historical_instructions():
     messages = [AgentMessage(role="system", content="obsolete-planning-instruction")]
     messages.extend(AgentMessage(role="tool", tool_call_id=str(index), payload={"tool_name": "search_public_web", "sources": [{"url": URL, "title": "社招报告", "content": QUOTE}], "evidence": CARDS}) for index in range(11))
@@ -111,6 +146,7 @@ def test_runtime_repairs_last_round_without_another_search_or_streaming_json():
         assert model.requests[-1].parameters["max_output_tokens"] == 3000
         assert not any('"patches"' in part for part in streamed)
         assert result.events[-1].tool_name == "citation_validator" and result.events[-1].status == "done"
+        assert len({event.tool_call_id for event in result.events if event.tool_name == "citation_validator"}) == 1
     asyncio.run(scenario())
 
 

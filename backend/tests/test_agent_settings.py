@@ -26,6 +26,7 @@ class AgentSettingsTest(unittest.TestCase):
 
     def test_model_api_key_uses_secret_store_instead_of_sqlite(self) -> None:
         settings = get_agent_settings(self.db_path)
+        settings["model_name"] = "secret-storage-test-model"
         settings["api_key"] = "test-secret-not-for-network"
 
         saved = save_agent_settings(settings, self.db_path)
@@ -42,10 +43,11 @@ class AgentSettingsTest(unittest.TestCase):
         )
 
     def test_rebrand_preserves_custom_names_and_normalizes_legacy_defaults(self) -> None:
-        self.assertEqual(get_agent_settings(self.db_path)["display_name"], "灯灯")
+        self.assertEqual(get_agent_settings(self.db_path)["display_name"], "团团")
         for stored_name, expected in [
-            ("CareerLoop", "灯灯"),
-            ("BossCopilot", "灯灯"),
+            ("CareerLoop", "团团"),
+            ("BossCopilot", "团团"),
+            ("灯灯", "团团"),
             ("我的研究搭档", "我的研究搭档"),
         ]:
             with self.subTest(stored_name=stored_name):

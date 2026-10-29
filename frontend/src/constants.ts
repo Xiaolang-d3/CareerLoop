@@ -2,7 +2,7 @@ import type { AgentSettings, LibraryEditor, ViewKey } from "./types";
 import type { SettingsPage } from "./routing";
 
 export const defaultAgentSettings: AgentSettings = {
-  display_name: "灯灯",
+  display_name: "团团",
   persona_role: "主动、清晰、基于用户资料协助分析、研究和内容创作的 AI 伙伴",
   response_style: "concise",
   custom_instructions: "",
@@ -11,7 +11,7 @@ export const defaultAgentSettings: AgentSettings = {
   knowledge_memory_enabled: true,
   summary_enabled: true,
   context_message_limit: 12,
-  model_name: "gpt-5.5",
+  model_name: "",
   model_base_url: "",
   model_protocol: "auto",
   api_key: "",

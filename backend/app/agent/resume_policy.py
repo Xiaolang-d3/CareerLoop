@@ -101,6 +101,12 @@ def should_abandon_snapshot(
         # an explicit abandon stays on the card until it is answered.
         return False
     if snapshot.clarification is not None:
+        # An explicit new image request starts a fresh run and model binding.
+        # Pending tool and search approvals above must never be bypassed.
+        from ..chat.image_assets import image_generation_intent
+
+        if image_generation_intent(text):
+            return True
         # An answer can change sources without abandoning the original goal.
         # The runtime re-understands ordinary replies instead of freezing a lane.
         return False
@@ -132,6 +138,14 @@ def needs_reply_replanning(snapshot: AgentRunSnapshot) -> bool:
         and not snapshot.pending_search_queries
         and snapshot.pending_tool_approval is None
     )
+
+
+def user_intent_preview(message: AgentMessage) -> str:
+    # Attachment excerpts are source data, not a preview of the user's intent.
+    # A partial excerpt can otherwise be mistaken for a truncated source file.
+    prefix = "\n\n以下为用户主动上传附件的本地解析文本，请基于此内容回答：\n"
+    request, marker, _ = message.content.partition(prefix)
+    return request[:1000] + ("\n（附件全文保留在执行上下文中，此处仅展示用户请求。）" if marker else "")
 
 
 def clarification_context(snapshot: AgentRunSnapshot) -> tuple[str, list[AgentMessage], bool]:

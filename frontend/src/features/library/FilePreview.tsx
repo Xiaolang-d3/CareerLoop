@@ -69,7 +69,7 @@ export function FilePreview({
         <small>{source.privacy_mode === "original" ? "模型可读取原文" : "模型读取脱敏文本"}</small>
         <pre>
           {(source.privacy_mode === "original" ? source.content : source.redacted_content) ||
-            "暂无可读取文字，可编辑正文补充。"}
+            (source.mime_type.startsWith("image/") || source.mime_type.startsWith("video/") ? "暂无可读取文字，可添加文字说明。" : "暂无可读取文字，可编辑正文补充。")}
         </pre>
       </article>
     );

@@ -97,10 +97,23 @@ for (const theme of ["light", "dark"] as const) {
         const toggle = page.getByRole("button", { name: collapsed ? "展开侧边栏" : "收起侧边栏", exact: true });
         await expect(toggle).toHaveAttribute("aria-expanded", String(!collapsed));
         await expect.poll(async () => Math.round((await sidebar.boundingBox())!.width)).toBe(collapsed ? 72 : 232);
-        const [sideBox, accountBox, toggleBox, brandBox] = await Promise.all([
-          sidebar.boundingBox(), account.boundingBox(), toggle.boundingBox(), sidebar.locator(".brand").boundingBox()
+        const themeShortcut = sidebar.getByRole("button", { name: /切换到[浅深]色主题/ });
+        await expect(themeShortcut).toBeInViewport();
+        const [sideBox, identityBox, accountBox, themeBox, toggleBox, brandBox] = await Promise.all([
+          sidebar.boundingBox(), sidebar.locator(".sidebar-identity-slot").boundingBox(),
+          account.boundingBox(), themeShortcut.boundingBox(), toggle.boundingBox(), sidebar.locator(".brand").boundingBox()
         ]);
-        expect(accountBox!.y + accountBox!.height).toBeGreaterThan(sideBox!.y + sideBox!.height - 24);
+        expect(identityBox!.y + identityBox!.height).toBeGreaterThan(sideBox!.y + sideBox!.height - 24);
+        expect(accountBox!.y).toBeGreaterThanOrEqual(identityBox!.y);
+        expect(accountBox!.y + accountBox!.height).toBeLessThanOrEqual(identityBox!.y + identityBox!.height);
+        expect(themeBox!.y + themeBox!.height).toBeLessThanOrEqual(identityBox!.y + identityBox!.height);
+        if (collapsed) {
+          expect(themeBox!.y).toBeGreaterThanOrEqual(accountBox!.y + accountBox!.height);
+          expect(themeBox!.x + themeBox!.width / 2).toBeCloseTo(accountBox!.x + accountBox!.width / 2, 0);
+        } else {
+          expect(themeBox!.x).toBeGreaterThanOrEqual(accountBox!.x + accountBox!.width);
+          expect(themeBox!.y + themeBox!.height / 2).toBeCloseTo(accountBox!.y + accountBox!.height / 2, 0);
+        }
         expect(accountBox!.x).toBeGreaterThanOrEqual(sideBox!.x + 8);
         expect(accountBox!.x + accountBox!.width).toBeLessThan(sideBox!.x + sideBox!.width);
         expect(toggleBox!.y).toBeGreaterThanOrEqual(brandBox!.y);
@@ -223,6 +236,17 @@ test("long conversations keep one scroll viewport without blank space above the 
     expect(viewportBox!.height).toBeCloseTo(surfaceBox!.height, 0);
   };
   await assertSingleViewport();
+  const composer = page.locator(".chat-composer");
+  expect((await composer.boundingBox())!.height).toBeLessThanOrEqual(140);
+  const [questionBox, answerBox] = await Promise.all([
+    // The question includes its in-flow toolbar, even while the controls are hidden.
+    page.locator(".message.user").last().boundingBox(),
+    page.locator(".message.assistant").last().boundingBox()
+  ]);
+  expect(answerBox!.y - questionBox!.y - questionBox!.height).toBeLessThanOrEqual(24);
+  const idleHeight = (await viewport.boundingBox())!.height;
+  await page.getByRole("textbox", { name: "输入消息" }).focus();
+  expect((await viewport.boundingBox())!.height).toBeCloseTo(idleHeight, 0);
   await page.getByRole("button", { name: "查看全部 1 个来源", exact: true }).last().click();
   const panel = page.getByRole("complementary", { name: "来源详情" });
   await expect(panel).toBeVisible();

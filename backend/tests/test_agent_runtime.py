@@ -803,14 +803,14 @@ class RoundLimitKeepsPartialTextTest(unittest.TestCase):
         self.assertEqual(result.status, "failed")
         self.assertEqual(result.stop_reason, "round_limit_reached")
         self.assertTrue(result.content.startswith("已经查到关键线索"))
-        self.assertIn("最大工具调用轮数", result.content)
+        self.assertIn("最终汇总未能完成", result.content)
 
     def test_without_text_returns_the_notice_only(self) -> None:
         result = self._run(self._tool_only_model())
 
         self.assertEqual(
             result.content,
-            "Agent 已达到最大工具调用轮数（1），本次执行已终止，请缩小任务范围后重新提问。",
+            "工具执行已结束，最终汇总未能完成。已有执行记录和来源已保留，请重试。",
         )
 
     def test_does_not_reuse_an_answer_from_history(self) -> None:

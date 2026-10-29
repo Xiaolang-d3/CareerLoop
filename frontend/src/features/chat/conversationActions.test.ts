@@ -19,6 +19,6 @@ describe("conversation text actions", () => {
       message(-1, "assistant", "还在生成"),
       message(4, "assistant", "回答")
     ]);
-    expect(markdown).toBe("# 项目\n\n## 你\n\n问题\n\n## 灯灯\n\n回答\n");
+    expect(markdown).toBe("# 项目\n\n## 你\n\n问题\n\n## 团团\n\n回答\n");
   });
 });

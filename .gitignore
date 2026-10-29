@@ -22,6 +22,7 @@ backend/logs/
 frontend/logs/
 logs/
 tmp/
+output/
 *.log
 frontend/test-results/
 frontend/playwright-report/

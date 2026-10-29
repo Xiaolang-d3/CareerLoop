@@ -21,8 +21,13 @@ from ..workspace import resolve_document_dir
 def image_generation_intent(text: str, *, image_model_selected: bool = False) -> bool:
     # Only an instruction in this turn enables the billed native tool. Quoted
     # documents, past turns and requests to explain image generation do not.
-    first = text.strip().split("\n", 1)[0]
-    instruction_block = text.strip().split("\n\n", 1)[0]
+    instruction_text = text.strip()
+    # A pasted opening quote can prefix a request heading, e.g. “请生成这张图片：\n…”.
+    # Only normalize a heading that introduces a separate description.
+    if "\n" in instruction_text and re.match(r'^[“"「『](?:请|帮我|麻烦|生成|绘制|画).*[：:]\s*\n', instruction_text):
+        instruction_text = instruction_text[1:]
+    first = instruction_text.split("\n", 1)[0]
+    instruction_block = instruction_text.split("\n\n", 1)[0]
     if re.search(r"(?:图片|图像)(?:的(?:原理|功能|接口|能力)|功能|接口|能力|是什么|支持吗|怎么用)", first):
         return False
     if re.search(r"(?:图片|图像|插画|海报|壁纸|封面|照片|图)(?:的)?(?:提示词|prompt|原理|教程|代码|费用|价格)", first, re.I):

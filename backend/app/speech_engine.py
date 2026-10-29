@@ -12,7 +12,7 @@ SAMPLE_RATE = 16_000
 ONLINE_CHUNK = 9600  # Official [5, 10, 5] Paraformer chunks: 600 ms.
 MAX_SENTENCE = 25 * SAMPLE_RATE
 PRE_ROLL = SAMPLE_RATE
-DEFAULT_HOTWORDS = ("灯灯", "语音转写", "工作区")
+DEFAULT_HOTWORDS = ("团团", "语音转写", "工作区")
 
 
 def _text(result: Any) -> str:

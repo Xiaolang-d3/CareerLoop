@@ -12,7 +12,7 @@ export function AssistantSurface({ page, open, busy, onClose, onExpand, children
   function close() { onClose(); }
   return <>
     <aside ref={panel} id="assistant-surface" tabIndex={-1} hidden={!visible} role={page ? undefined : "dialog"} aria-label={page ? "AI 工作区" : "AI 助手"} className={`chat-dock assistant-surface ${page ? "assistant-page" : "assistant-popup"}`} onKeyDown={(event) => { if (event.key === "Escape" && !page) { event.stopPropagation(); close(); } }}>
-      {!page ? <header className="chat-dock-header"><div><strong>灯灯 助手</strong><small>{busy ? "正在处理你的任务" : "一起想清楚，一步步做好"}</small></div>
+      {!page ? <header className="chat-dock-header"><div><strong>团团 助手</strong><small>{busy ? "正在处理你的任务" : "理解你的想法，帮你把事情做好。"}</small></div>
         <div className="assistant-controls"><button type="button" onClick={onExpand} aria-label="在独立页面打开对话" title="在独立页面打开"><Maximize2 size={18} /></button><button type="button" onClick={close} aria-label="关闭对话框"><X size={20} /></button></div>
       </header> : null}
       <div className="chat-dock-body">{children}</div>

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from ..agent import get_agent_capabilities
 from ..agent.bootstrap import reload_agent_components
 from ..agent.model_capabilities import apply_actual_protocol, build_model_list, infer_model_capabilities
@@ -19,7 +19,7 @@ from ..observability.model_context import model_call_scope
 from ..models import ModelProviderError, OpenAICompatibleProvider, build_model_provider
 from ..model_protocol import connection_protocol_label, normalize_model_protocol, protocol_requires_api_key
 from .schemas import AgentSettingsIn, ModelCapabilitiesIn, ModelDiscoveryIn
-from .model_contracts import CapabilityOverridesIn, ConnectionCreateIn, ConnectionUpdateIn, DefaultProfileIn, FallbackPolicyIn, ProfileCreateIn, ProfileUpdateIn, RoutingPolicyIn, ServiceModelIn
+from .model_contracts import CapabilityOverridesIn, ConnectionCreateIn, ConnectionUpdateIn, DefaultProfileIn, FallbackPolicyIn, ProfileCreateIn, ProfileUpdateIn, RoutingPolicyIn, ServiceModelIn, PurposeDefaultIn
 
 
 router = APIRouter()
@@ -149,6 +149,19 @@ def model_connections_get() -> dict[str, Any]:
     return get_model_catalog()
 
 
+@router.post("/agent/model-connections/{connection_id}/reveal-key")
+def model_connection_reveal_key(connection_id: str, response: Response) -> dict[str, str]:
+    from ..agent.model_catalog import get_service_connection
+
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return {"api_key": get_service_connection(connection_id)["api_key"]}
+    except SecretStoreUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc), headers={"Cache-Control": "no-store"}) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc), headers={"Cache-Control": "no-store"}) from exc
+
+
 @router.post("/agent/model-connections")
 def model_connections_create(payload: ConnectionCreateIn) -> dict[str, Any]:
     from ..agent.model_catalog import create_model_connection
@@ -198,13 +211,25 @@ def model_profiles_default(payload: DefaultProfileIn) -> dict[str, Any]:
     return _catalog_mutation(set_default_model_profile, payload.profile_id)
 
 
+@router.post("/agent/model-defaults/{purpose}")
+def model_purpose_default(purpose: str, payload: PurposeDefaultIn) -> dict[str, Any]:
+    from ..agent.model_purposes import save_purpose_default
+
+    return _catalog_mutation(save_purpose_default, purpose, payload.model_dump())
+
+
 def _profile_for_connection(connection_id: str) -> dict[str, Any]:
-    from ..agent.model_catalog import get_model_catalog, get_profile_connection
+    from ..agent.model_catalog import get_model_catalog, get_profile_connection, get_service_connection
 
     catalog = get_model_catalog()
     profiles = [profile for profile in catalog["profiles"] if profile["connection_id"] == connection_id and profile["enabled"]]
     if not profiles:
-        raise HTTPException(status_code=400, detail="连接没有启用的模型档案")
+        try:
+            return get_service_connection(connection_id)
+        except SecretStoreUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     profile = next((item for item in profiles if item["id"] == catalog["default_profile_id"]), profiles[0])
     try:
         return get_profile_connection(profile["id"])
@@ -223,6 +248,9 @@ async def model_connection_discover(connection_id: str) -> dict[str, Any]:
 @router.post("/agent/model-connections/{connection_id}/check")
 async def model_connection_check(connection_id: str) -> dict[str, Any]:
     connection = _profile_for_connection(connection_id)
+    if not connection["model_name"]:
+        result = await _discover_connection(connection)
+        return {"available": True, "check_error_message": "", "check_scope": "catalog", "models": result["models"]}
     return await _check_connection(connection)
 
 

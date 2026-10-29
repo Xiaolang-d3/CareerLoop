@@ -1,6 +1,7 @@
 import type { LibrarySource } from "../../types";
 
 export type LibraryCategory = "all" | "recent" | "favorites" | "trash";
+export type LibraryFileType = "all" | "image" | "document" | "video";
 export type KnowledgeUse = "all" | "ready" | "archive" | "needs_text";
 export type SourceOrigin = "all" | "upload" | "note" | "chat";
 export type FileFilters = { origin: SourceOrigin; knowledge: KnowledgeUse };
@@ -28,6 +29,7 @@ export function sourceOrigin(source: LibrarySource): Exclude<SourceOrigin, "all"
 
 export function visibleLibrarySources(sources: LibrarySource[], options: {
   category: LibraryCategory;
+  fileType?: LibraryFileType;
   folderId: number | null;
   unfiled: boolean;
   filters: FileFilters;
@@ -42,6 +44,7 @@ export function visibleLibrarySources(sources: LibrarySource[], options: {
   const collectionMembers = options.collectionSourceIds ? new Set(options.collectionSourceIds) : null;
   return sources.filter((source) =>
     (category === "trash" ? Boolean(source.trashed_at) : !source.trashed_at) &&
+    (!options.fileType || options.fileType === "all" || (options.fileType === "image" ? source.mime_type.startsWith("image/") : options.fileType === "video" ? source.mime_type.startsWith("video/") : !source.mime_type.startsWith("image/") && !source.mime_type.startsWith("video/"))) &&
     (category !== "favorites" || source.favorite) &&
     (category !== "recent" || source.last_opened_at) &&
     (folderId === null || source.folder_id === folderId) &&

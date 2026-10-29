@@ -29,7 +29,17 @@ export function toolCallDetails(event: RunEvent, running: boolean): Detail[] {
     details.push({ label: "检索", text: query });
   }
   if (event.status === "failed" || event.status === "blocked") {
-    return [...details, { label: "原因", text: text(event.message, 300) || "本次调用未记录失败原因。" }];
+    if (event.tool_name === "citation_validator" && text(data.validation_reason)) {
+      const reason = text(data.validation_reason).replace("回答没有使用 Markdown 链接引用本轮搜索来源", "回答未附本轮来源链接");
+      details.push({ label: "检查", text: reason });
+    }
+    const reason = event.tool_name === "citation_validator" && data.repair_error_code === "invalid_format"
+      ? "自动补引用返回格式不正确。" : text(event.message, 300) || "本次调用未记录失败原因。";
+    details.push({ label: "原因", text: reason });
+    if (event.tool_name === "citation_validator" && data.original_draft_preserved === true) {
+      details.push({ label: "处理", text: "原始草稿已保留，来源引用尚未核验。" });
+    }
+    return details;
   }
   if (running) return details;
   if (event.status === "running") return details;
@@ -68,6 +78,9 @@ export function toolCallDetails(event: RunEvent, running: boolean): Detail[] {
     const statements = list(data.proposals).map(item => text(item.statement, 150)).filter(Boolean).slice(0, 3);
     if (statements.length) details.push({ text: statements.join("；") });
   } else if (["citation_validator", "completion_validator", "image_generation"].includes(event.tool_name)) {
+    if (event.tool_name === "citation_validator" && running === false && event.status === "done") {
+      details.push({ text: "引用链接已匹配本轮搜索来源；不代表逐条事实已核验。" });
+    }
     const summary = text(data.summary);
     if (summary) details.push({ text: summary });
   }

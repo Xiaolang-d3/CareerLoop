@@ -42,11 +42,11 @@ describe("public product entry", () => {
     render(<Bootstrap />);
 
     await act(async () => {});
-    expect(screen.getByRole("heading", { name: /一起想清楚/ })).toHaveFocus();
+    expect(screen.getByRole("heading", { name: /理解你的想法/ })).toHaveFocus();
     expect(screen.getByRole("list", { name: "产品特点" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "登录 / 注册" })).toHaveAttribute("href", "#/home");
     expect(screen.queryByLabelText("邮箱")).not.toBeInTheDocument();
-    expect(document.title).toBe("产品介绍｜灯灯");
+    expect(document.title).toBe("产品介绍｜团团");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -58,7 +58,7 @@ describe("public product entry", () => {
     render(<Bootstrap />);
 
     await act(async () => {});
-    expect(screen.getByRole("heading", { name: /一起想清楚/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /理解你的想法/ })).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
     navigate("#/home");

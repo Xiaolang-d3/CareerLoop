@@ -80,6 +80,8 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
   chatBusy?: boolean;
   latestAgent?: AgentRunResult;
   retryDraft?: ChatRetryDraft | null;
+  modelSelectionFeedback?: ChatWorkspaceProps["modelSelectionFeedback"];
+  onDismissModelSelectionFeedback?: () => void;
   modelChecking?: boolean;
   modelUnavailable?: string;
   sendError?: string;
@@ -106,6 +108,8 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
     composerDraft: extras.composerDraft,
     onComposerDraftConsumed: extras.onComposerDraftConsumed,
     density: extras.density,
+    modelSelectionFeedback: extras.modelSelectionFeedback,
+    onDismissModelSelectionFeedback: extras.onDismissModelSelectionFeedback,
     modelChecking: extras.modelChecking,
     modelUnavailable: extras.modelUnavailable,
     sendError: extras.sendError,
@@ -156,6 +160,28 @@ function renderChat(messages: ChatMessage[] = [message], extras: {
 }
 
 describe("ChatWorkspace", () => {
+  it("shows dismissible model selection feedback in the composer", () => {
+    const dismiss = vi.fn();
+    const { view, ...props } = renderChat([message], { modelSelectionFeedback: { kind: "success", text: "已切换至图片模型" }, onDismissModelSelectionFeedback: dismiss });
+    expect(within(screen.getByRole("log")).getByText("已切换至图片模型").closest("[role=status]")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "关闭模型切换提示" }));
+    expect(dismiss).toHaveBeenCalledOnce();
+    view.rerender(<ChatWorkspace {...props} modelSelectionFeedback={{ kind: "error", text: "未能确认切换" }} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("未能确认切换");
+  });
+
+  it("shows image-only messages without an empty text bubble and keeps the caption outside preview", () => {
+    const attachment: ChatAttachment = { id: "photo", kind: "image", original_filename: "示意图.png", parse_status: "parsed", vision_status: "consented" };
+    const { view } = renderChat([{ ...message, content: "", payload: { attachments: [attachment] } }]);
+    const userMessage = view.container.querySelector(".message.user")!;
+    expect(userMessage.querySelector(".message-dialog")).toBeNull();
+    const preview = screen.getByRole("button", { name: "预览 示意图.png" });
+    expect(preview).not.toHaveTextContent("示意图.png");
+    expect(screen.getByText("示意图.png")).toHaveAttribute("title", "示意图.png");
+    expect(screen.getByText("模型看图")).toBeInTheDocument();
+    expect(within(userMessage as HTMLElement).getByRole("button", { name: "编辑消息" })).toBeEnabled();
+  });
+
   it("sends a natural image request directly without a design form or rewriting the prompt", async () => {
     const p = renderChat();
     const input = screen.getByRole("textbox", { name: "输入消息" });
@@ -218,6 +244,7 @@ describe("ChatWorkspace", () => {
     expect(completedOutput).toHaveClass("message-image-output");
     expect(completedOutput).not.toHaveClass("message-dialog", "message-result");
     expect(screen.getByRole("figure", { name: "模型生成图片" }).parentElement).toBe(completedOutput);
+    expect(screen.getByRole("figure", { name: "模型生成图片" })).toHaveStyle({ maxWidth: `${320 * 1402 / 1122}px` });
     expect(completedOutput.querySelector(".generated-image-preview")).not.toBeNull();
     expect(completedOutput.querySelector(".chat-history-attachment")).toBeNull();
   });
@@ -884,7 +911,7 @@ describe("ChatWorkspace", () => {
     expect(screen.queryByRole("button", { name: "重命名对话" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();
     expect(screen.queryByText("准备中")).not.toBeInTheDocument();
-    expect(screen.queryByText("灯灯 · 面试准备")).not.toBeInTheDocument();
+    expect(screen.queryByText("团团 · 面试准备")).not.toBeInTheDocument();
   });
 
   it("continues an interrupted durable run through the retry callback", () => {
@@ -1268,7 +1295,7 @@ describe("ChatWorkspace", () => {
     expect(onSuggestedAction).not.toHaveBeenCalled();
   });
 
-  it("opens recorded process summaries inline without offering an empty source panel", () => {
+  it("does not expose raw historical reasoning or offer an empty process panel", () => {
     renderChat([{
       id: 12,
       role: "assistant",
@@ -1294,9 +1321,8 @@ describe("ChatWorkspace", () => {
     expect(screen.queryByRole("button", { name: "查看过程，打开研究详情" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "来源详情" })).not.toBeInTheDocument();
     expect(screen.queryByRole("complementary", { name: "来源详情" })).not.toBeInTheDocument();
-    expect(screen.getByText("先确认项目范围，再追问取舍。")).not.toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "展开思考与执行过程" }));
-    expect(screen.getByText("先确认项目范围，再追问取舍。")).toBeVisible();
+    expect(screen.queryByText("先确认项目范围，再追问取舍。")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "展开思考与执行过程" })).not.toBeInTheDocument();
   });
 
   it("expands thinking with live tool work and hides the local route summary", () => {
@@ -1326,7 +1352,8 @@ describe("ChatWorkspace", () => {
                 tool_call_id: "plan-1",
                 tool_name: "agent_planner",
                 status: "done",
-                message: "已规划 1 个步骤：核验腾讯科技公开信息"
+                message: "已规划 1 个步骤：核验腾讯科技公开信息",
+                data: { plan: { steps: [{ title: "核验腾讯科技公开信息", tool_name: "search_public_web" }] } }
               },
               {
                 round: 1,
@@ -1347,7 +1374,10 @@ describe("ChatWorkspace", () => {
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     const body = screen.getByRole("region", { name: "思考与执行过程" });
     expect(body).not.toHaveTextContent("已识别为公司公开信息研究，需要先规划并限制可用工具");
-    expect(body).toHaveTextContent("已规划 1 个步骤：核验腾讯科技公开信息");
+    expect(body).toHaveTextContent("已规划 1 个步骤");
+    expect(body).not.toHaveTextContent("已规划 1 个步骤：核验腾讯科技公开信息");
+    fireEvent.click(screen.getByRole("button", { name: "展开已规划 1 个步骤的执行说明" }));
+    expect(body).toHaveTextContent("核验腾讯科技公开信息");
     expect(body).toHaveTextContent("腾讯科技");
     expect(body.closest(".chat-composer")).toBeNull();
     expect(screen.queryByRole("complementary", { name: "来源详情" })).not.toBeInTheDocument();
@@ -1591,7 +1621,7 @@ describe("ChatWorkspace", () => {
     expect(screen.getAllByText(/正在进行：搜索公司资料/)).toHaveLength(2);
     expect(toggle).toHaveTextContent("搜索公司资料");
     expect(toggle).not.toHaveTextContent(thoughtBody);
-    expect(screen.getByText(thoughtBody)).toBeVisible();
+    expect(screen.queryByText(thoughtBody)).not.toBeInTheDocument();
     expect(toggle.closest(".chat-composer")).toBeNull();
   });
 
@@ -1625,7 +1655,7 @@ describe("ChatWorkspace", () => {
     expect(screen.getByRole("button", { name: "收起思考与执行过程" })).toHaveTextContent("正在从简历中定位项目证据");
   });
 
-  it("shows the returned process summary in the dialogue without an empty source panel", () => {
+  it("shows a thinking status without exposing raw reasoning or an empty source panel", () => {
     const thoughtBody = "我先读取简历，再对比岗位要求，然后整理成面试可讲的要点。";
     renderChat([
       message,
@@ -1654,8 +1684,8 @@ describe("ChatWorkspace", () => {
 
     expect(screen.queryByRole("button", { name: "查看过程，打开研究详情" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "来源详情" })).not.toBeInTheDocument();
-    expect(screen.getByText(thoughtBody)).toBeVisible();
-    expect(screen.getByText(thoughtBody).closest(".run-process")).not.toBeNull();
+    expect(screen.queryByText(thoughtBody)).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("正在思考");
   });
 
   it("renders in-text source links as numbered citation previews", async () => {

@@ -31,7 +31,7 @@ async def lifespan(_: FastAPI):
     yield
 
 app = FastAPI(
-    title="灯灯 API",
+    title="团团 API",
     version=APP_VERSION,
     docs_url="/docs" if _settings.api_docs_enabled else None,
     redoc_url="/redoc" if _settings.api_docs_enabled else None,
@@ -55,6 +55,8 @@ _PUBLIC_FRONTEND_FILES = {
     "/favicon.ico",
     "/vite.svg",
     "/careerloop-mark-v2.png",
+    "/tuantuan-logo.png",
+    "/tuantuan-favicon.png",
     "/dengdeng-icon-v1.png",
     "/dengdeng-mark-v1.png",
     "/dengdeng-favicon-v1.png",
@@ -74,7 +76,7 @@ async def require_login(request: Request, call_next: Any) -> Any:
     if maintenance_file and Path(maintenance_file).is_file() and path != "/health":
         return JSONResponse(
             status_code=503,
-            content={"detail": "灯灯正在更新，请稍后重试"},
+            content={"detail": "团团正在更新，请稍后重试"},
             headers={"Cache-Control": "no-store", "Retry-After": "30"},
         )
     is_frontend_asset = path == "/" or path.startswith("/assets/") or path in _PUBLIC_FRONTEND_FILES

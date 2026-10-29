@@ -3,11 +3,20 @@
   grid-template-columns: minmax(0, 1fr);
   gap: 15px;
   width: 100%;
-  max-width: 760px;
+  max-width: 940px;
   margin: 0 auto;
 }
 .model-settings-page .settings-card { color: var(--color-text); background: var(--color-surface); border-color: var(--color-border); box-shadow: var(--shadow-sm); }
 .model-settings-page .settings-card-heading p { color: var(--color-text-muted); }
+
+.model-purpose-summary { display: grid; gap: 12px; }
+.model-purpose-summary h3, .model-purpose-summary p { margin: 0; }
+.model-purpose-summary p { color: var(--color-text-muted); font-size: 12px; line-height: 1.5; }
+.model-purpose-list { border: 1px solid var(--color-border); border-radius: 10px; }
+.model-purpose-list > div { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px; }
+.model-purpose-list > div + div { border-top: 1px solid var(--color-border); }
+.model-purpose-list span { color: var(--color-text-muted); text-align: right; overflow-wrap: anywhere; }
+@media (max-width: 480px) { .model-purpose-list > div { align-items: flex-start; flex-direction: column; gap: 5px; } .model-purpose-list span { text-align: left; } }
 
 .model-settings-warning {
   margin: 0;
@@ -69,14 +78,14 @@
   gap: 5px;
   padding: 0;
   border: 0;
-  color: var(--color-brand, #6557dc);
+  color: var(--color-brand, #1769c9);
   background: transparent;
   font-size: 12px;
   font-weight: 750;
   cursor: pointer;
 }
 
-.model-discovery-button:hover { color: var(--color-brand-strong, #4e42ba); }
+.model-discovery-button:hover { color: var(--color-brand-strong, #1256aa); }
 .model-discovery-button:disabled { cursor: wait; opacity: .55; }
 
 .model-settings-card input,
@@ -101,7 +110,7 @@
 
 .model-settings-card input:focus,
 .model-settings-card select:focus {
-  border-color: var(--color-brand, #6557dc);
+  border-color: var(--color-brand, #1769c9);
   box-shadow: var(--focus-ring);
 }
 
@@ -268,8 +277,8 @@
   width: 28px;
   height: 28px;
   border-radius: 8px;
-  color: var(--color-brand, #6557dc);
-  background: var(--color-brand-soft, #eeecff);
+  color: var(--color-brand, #1769c9);
+  background: var(--color-brand-soft, #e8f4ff);
 }
 .model-capability-row div { display: grid; gap: 2px; }
 .model-capability-row strong { color: var(--color-text, #20213a); font-size: 13px; }

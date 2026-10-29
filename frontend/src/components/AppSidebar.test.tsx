@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ThemeProvider, THEME_STORAGE_KEY } from "../features/appearance/ThemeProvider";
 import { AppSidebar } from "./AppSidebar";
 import type { SettingsPage } from "../routing";
 import type { ViewKey } from "../types";
@@ -21,17 +22,51 @@ function renderSidebar(
     identity,
     ...extras
   };
-  render(<AppSidebar {...props} />);
+  render(<ThemeProvider><AppSidebar {...props} /></ThemeProvider>);
   return props;
 }
 
 describe("AppSidebar", () => {
-  afterEach(cleanup);
+  beforeEach(() => localStorage.clear());
+  afterEach(() => {
+    cleanup();
+    delete document.documentElement.dataset.theme;
+    document.documentElement.style.colorScheme = "";
+  });
+
+  it("switches the theme immediately and preserves the choice after a collapsed sidebar remount", () => {
+    localStorage.setItem(THEME_STORAGE_KEY, "dark");
+    renderSidebar();
+    const light = screen.getByRole("button", { name: "切换到浅色主题" });
+    expect(light.closest(".sidebar-identity-slot")).toBeTruthy();
+    fireEvent.click(light);
+    expect(document.documentElement).toHaveAttribute("data-theme", "light");
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("light");
+    cleanup();
+    renderSidebar(undefined, true);
+    const dark = screen.getByRole("button", { name: "切换到深色主题" });
+    expect(dark).toHaveAttribute("title", "切换到深色主题");
+    fireEvent.click(dark);
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("dark");
+  });
 
   it("returns to home from the brand mark", () => {
     const props = renderSidebar();
     fireEvent.click(screen.getByRole("button", { name: "返回首页" }));
     expect(props.onGoHome).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])("places an icon-only theme switch after the account control (collapsed=%s)", collapsed => {
+    const account = vi.fn();
+    renderSidebar(<button type="button" aria-label="账号菜单" onClick={account}>账户</button>, collapsed);
+    const trigger = screen.getByRole("button", { name: "账号菜单" });
+    const theme = screen.getByRole("button", { name: /切换到[深浅]色主题/ });
+    expect(trigger.compareDocumentPosition(theme) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(theme.textContent).toBe("");
+    expect(theme.querySelector('svg[aria-hidden="true"]')).toBeTruthy();
+    fireEvent.click(theme);
+    expect(account).not.toHaveBeenCalled();
   });
 
   it("identifies the controlled navigation and reports the expanded state", () => {
@@ -52,7 +87,7 @@ describe("AppSidebar", () => {
     const collapsed = renderSidebar(undefined, true);
     const toggle = screen.getByRole("button", { name: "展开侧边栏" });
     const logo = toggle.querySelector("img");
-    expect(logo).toHaveAttribute("src", "/dengdeng-icon-v1.png");
+    expect(logo).toHaveAttribute("src", "/tuantuan-logo.png");
     expect(logo).toHaveAttribute("alt", "");
     expect(logo?.parentElement).toHaveAttribute("aria-hidden", "true");
     expect(toggle).toHaveAttribute("aria-expanded", "false");

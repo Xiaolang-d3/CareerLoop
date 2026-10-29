@@ -1,5 +1,6 @@
 import type { ReactElement } from "react";
-import { cleanup, fireEvent, render as baseRender, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render as baseRender, screen, waitFor, within } from "@testing-library/react";
+import type { createApiClient } from "../../api/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultAgentSettings } from "../../constants";
 import type { AgentSettings, ModelCapabilityReport, ModelServiceMonitor } from "../../types";
@@ -62,6 +63,7 @@ const capabilities: ModelCapabilityReport = {
 
 function props(overrides: Partial<Parameters<typeof ModelSettingsPage>[0]> = {}) {
   return {
+    fetchJson: vi.fn() as unknown as ReturnType<typeof createApiClient>,
     settings,
     savedSettings: settings,
     editing: false,
@@ -91,7 +93,7 @@ function render(ui: ReactElement) {
 }
 
 function openAdvancedSettings() {
-  const protocol = screen.queryByText("接口选项")?.closest("details");
+  const protocol = screen.queryByText("高级选项：接口协议（默认自动匹配）")?.closest("details");
   if (protocol) protocol.open = true;
   const summary = screen.getByText("高级设置");
   fireEvent.click(summary);
@@ -105,14 +107,36 @@ describe("ModelSettingsPage", () => {
     vi.unstubAllGlobals();
   });
 
+  it("opens connection management instead of duplicating connection fields", () => {
+    baseRender(<ModelSettingsPage {...props({ connectionManager: <h3 id="model-connections-title">服务连接</h3>, purposeManager: <h3>使用规则</h3> })} />);
+    expect(screen.getByText("服务连接")).toBeInTheDocument();
+    expect(screen.getByText("使用规则")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "配置模型" })).not.toBeInTheDocument();
+  });
+
   it("shows the saved model, key state and connection status without opening the dialog", () => {
     baseRender(<ModelSettingsPage {...props()} />);
-    const summary = screen.getByRole("heading", { name: "当前模型" }).closest("section");
+    const summary = screen.getByRole("heading", { name: "默认模型" }).closest("section");
     expect(summary).not.toBeNull();
     expect(within(summary!).getByText("gpt-5.5")).toBeInTheDocument();
     expect(within(summary!).getByText("密钥已配置")).toBeInTheDocument();
     expect(within(summary!).getByText("运行正常")).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("explains image defaults and text routing", () => {
+    render(<ModelSettingsPage {...props({ savedSettings: { ...settings, model_name: "gpt-image-2.5-sunburst" } })} />);
+    expect(screen.getByRole("heading", { name: "默认模型" })).toBeInTheDocument();
+    expect(screen.getByText(/图片生成模型 · 普通文字请求会尝试使用已启用的聊天模型/)).toBeInTheDocument();
+  });
+
+  it("distinguishes image configuration from chat routing and unavailable video", () => {
+    baseRender(<ModelSettingsPage {...props({ savedSettings: { ...settings, model_name: "gpt-image-2.5-sunburst" } })} />);
+    const summary = screen.getByRole("heading", { name: "模型用途" }).closest("section")!;
+    expect(within(summary).getByText("默认配置：gpt-image-2.5-sunburst")).toBeInTheDocument();
+    expect(within(summary).getByText("自动选择已启用的聊天模型")).toBeInTheDocument();
+    expect(within(summary).getByText("暂未接入")).toBeInTheDocument();
   });
 
   it("keeps fields in a dialog and restores focus after cancel", () => {
@@ -158,16 +182,37 @@ describe("ModelSettingsPage", () => {
     expect(dialog).toBeInTheDocument();
   });
 
-  it("reveals only a newly entered key and hides it again after clearing", () => {
+  it("shows newly entered keys by default and allows hiding them", () => {
     const page = props({ editing: true });
     const { rerender } = render(<ModelSettingsPage {...page} />);
-    expect(screen.getByRole("button", { name: "显示本次输入的密钥" })).toBeDisabled();
     rerender(<ModelSettingsPage {...page} settings={{ ...settings, api_key: "test-only-draft" }} />);
-    fireEvent.click(screen.getByRole("button", { name: "显示本次输入的密钥" }));
     expect(screen.getByLabelText("API Key")).toHaveAttribute("type", "text");
-    rerender(<ModelSettingsPage {...page} />);
+    fireEvent.click(screen.getByRole("button", { name: "隐藏 API Key" }));
     expect(screen.getByLabelText("API Key")).toHaveAttribute("type", "password");
-    expect(screen.getByRole("button", { name: "显示本次输入的密钥" })).toBeDisabled();
+  });
+
+  it("shows the saved key on opening without changing the draft", async () => {
+    const fetchJson = vi.fn().mockResolvedValue({ api_key: "stored-test-key" });
+    const onSettingsChange = vi.fn();
+    const savedSettings = { ...settings, connection_id: "c1" };
+    render(<ModelSettingsPage {...props({ fetchJson: fetchJson as unknown as ReturnType<typeof createApiClient>, savedSettings, onSettingsChange })} />);
+    await waitFor(() => expect(screen.getByLabelText("API Key")).toHaveValue("stored-test-key"));
+    expect(screen.getByLabelText("API Key")).toHaveAttribute("type", "text");
+    expect(fetchJson).toHaveBeenCalledWith("/agent/model-connections/c1/reveal-key", { method: "POST" });
+    expect(onSettingsChange).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "隐藏 API Key" }));
+    expect(screen.getByLabelText("API Key")).toHaveValue("");
+    expect(screen.getByLabelText("API Key")).toHaveAttribute("type", "password");
+  });
+
+  it("ignores a delayed saved key when the service address changes", async () => {
+    let resolveKey!: (value: { api_key: string }) => void;
+    const fetchJson = vi.fn().mockImplementation(() => new Promise(resolve => { resolveKey = resolve; }));
+    const page = props({ fetchJson: fetchJson as unknown as ReturnType<typeof createApiClient>, savedSettings: { ...settings, connection_id: "c1" } });
+    const { rerender } = render(<ModelSettingsPage {...page} />);
+    rerender(<ModelSettingsPage {...page} settings={{ ...settings, model_base_url: "https://new.example.test" }} />);
+    resolveKey({ api_key: "stored-test-key" });
+    await waitFor(() => expect(screen.getByLabelText("API Key")).toHaveValue(""));
   });
 
   it("filters a large catalog while preserving the selected model", () => {
